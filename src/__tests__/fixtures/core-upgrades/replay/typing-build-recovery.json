@@ -1,0 +1,58 @@
+{
+	"id": "typing-build-recovery",
+	"description": "Type-check failure converges after probe-guided build retry.",
+	"metadata": {
+		"category": "typing-recovery",
+		"difficulty": "hard",
+		"tags": ["typing", "build", "probe", "beam"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-typing-1",
+		"goal": "Fix TypeScript regression",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "medium",
+		"allowed_commands": ["npm run build", "npm test"],
+		"done_gate_profile": "standard",
+		"max_changed_files": 4,
+		"created_at": 1731010111000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm run build",
+	"changed_files": ["src/types.ts", "src/service.ts"],
+	"command_plan": [
+		{
+			"match": "npm run build",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 1,
+					"stderr": "src/types.ts:12:5 - error TS2322: Type 'string' is not assignable to type 'number'",
+					"durationMs": 31
+				},
+				{
+					"exitCode": 0,
+					"stdout": "build ok",
+					"durationMs": 26
+				}
+			]
+		},
+		{
+			"match": "^npm test(?: .*)?$",
+			"match_type": "regex",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/service.test.ts",
+					"durationMs": 21
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "complete",
+		"max_attempts": 3,
+		"require_selected_hypothesis": true
+	}
+}

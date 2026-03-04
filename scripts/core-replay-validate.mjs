@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const root = process.cwd();
 const fixturesDir = path.resolve(root, 'src/__tests__/fixtures/core-upgrades/replay');
-const minFixtures = Number(process.env.MAESTRO_REPLAY_MIN_FIXTURES || '2');
+const minFixtures = Number(process.env.MAESTRO_REPLAY_MIN_FIXTURES || '8');
 
 function isNonEmptyString(value) {
 	return typeof value === 'string' && value.trim().length > 0;

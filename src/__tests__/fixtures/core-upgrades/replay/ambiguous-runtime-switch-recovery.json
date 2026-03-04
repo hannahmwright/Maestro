@@ -1,0 +1,69 @@
+{
+	"id": "ambiguous-runtime-switch-recovery",
+	"description": "Ambiguous runtime/test failure converges after adaptive beam and probe selection.",
+	"metadata": {
+		"category": "runtime-ambiguity",
+		"difficulty": "extreme",
+		"tags": ["runtime", "ambiguity", "beam", "probe", "context"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-runtime-1",
+		"goal": "Stabilize failing service workflow",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "medium",
+		"allowed_commands": ["npm test", "npm run build"],
+		"done_gate_profile": "standard",
+		"max_changed_files": 6,
+		"created_at": 1731010116000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm test",
+	"changed_files": ["src/service.ts", "src/service.test.ts", "src/runtime/adapter.ts"],
+	"command_plan": [
+		{
+			"match": "npm test",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 1,
+					"stderr": "ReferenceError: serviceRuntime is not defined at src/service.test.ts:42",
+					"durationMs": 28
+				},
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/service.test.ts",
+					"durationMs": 24
+				}
+			]
+		},
+		{
+			"match": "npm run build",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "build ok",
+					"durationMs": 31
+				}
+			]
+		},
+		{
+			"match": "^npm test -- .+$",
+			"match_type": "regex",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "PASS targeted service tests",
+					"durationMs": 20
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "complete",
+		"max_attempts": 4,
+		"require_selected_hypothesis": true
+	}
+}

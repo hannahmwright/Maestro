@@ -9,7 +9,7 @@ const modulePath = path.resolve(root, 'dist/main/core-upgrades/index.js');
 const baselinePath = path.resolve(fixturesDir, 'baseline.json');
 const updateBaseline = process.argv.includes('--update-baseline');
 const tolerance = Number(process.env.MAESTRO_REPLAY_GATE_TOLERANCE || '0.0001');
-const minFixtures = Number(process.env.MAESTRO_REPLAY_MIN_FIXTURES || '2');
+const minFixtures = Number(process.env.MAESTRO_REPLAY_MIN_FIXTURES || '8');
 
 async function loadFixtures() {
 	const names = (await fs.readdir(fixturesDir))

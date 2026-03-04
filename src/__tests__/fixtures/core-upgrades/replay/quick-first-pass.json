@@ -1,0 +1,41 @@
+{
+	"id": "quick-first-pass",
+	"description": "Quick profile task completes cleanly in one attempt to track first-pass health.",
+	"metadata": {
+		"category": "first-pass",
+		"difficulty": "hard",
+		"tags": ["first-pass", "quick-gate"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-firstpass-1",
+		"goal": "Run focused tests",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "low",
+		"allowed_commands": ["npm test"],
+		"done_gate_profile": "quick",
+		"max_changed_files": 2,
+		"created_at": 1731010115000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm test",
+	"changed_files": ["src/math.ts", "src/math.test.ts"],
+	"command_plan": [
+		{
+			"match": "npm test",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/math.test.ts",
+					"durationMs": 18
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "complete",
+		"max_attempts": 1
+	}
+}

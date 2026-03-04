@@ -1,0 +1,69 @@
+{
+	"id": "dependency-bridge-recovery",
+	"description": "Missing module failure resolves after graph-aware dependency hypothesis selection.",
+	"metadata": {
+		"category": "dependency-recovery",
+		"difficulty": "extreme",
+		"tags": ["dependency", "graph", "bridge", "strategy"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-dependency-1",
+		"goal": "Resolve missing shared module",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "medium",
+		"allowed_commands": ["npm test", "npm run build"],
+		"done_gate_profile": "standard",
+		"max_changed_files": 5,
+		"created_at": 1731010113000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm test",
+	"changed_files": ["src/runtime/loader.ts", "src/runtime/loader.test.ts"],
+	"command_plan": [
+		{
+			"match": "npm test",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 1,
+					"stderr": "Error: Cannot find module './shared/runtime-config' from src/runtime/loader.ts",
+					"durationMs": 29
+				},
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/runtime/loader.test.ts",
+					"durationMs": 24
+				}
+			]
+		},
+		{
+			"match": "npm run build",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "build ok",
+					"durationMs": 33
+				}
+			]
+		},
+		{
+			"match": "^npm test -- .+$",
+			"match_type": "regex",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "PASS targeted tests",
+					"durationMs": 22
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "complete",
+		"max_attempts": 4,
+		"require_selected_hypothesis": true
+	}
+}

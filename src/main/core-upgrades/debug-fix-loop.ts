@@ -94,6 +94,12 @@ interface AdaptiveLoopConfig {
 	hardModeEnabled: boolean;
 }
 
+interface AmbiguitySignals {
+	ambiguous: boolean;
+	topScoreGap: number;
+	scoreSpread: number;
+}
+
 const DEFAULT_LOOP_SCORING_WEIGHTS: LoopScoringWeights = {
 	probe_gain: 0.6,
 	probe_evidence_delta: 0.5,
@@ -295,6 +301,7 @@ export class DebugFixLoopEngine {
 	private static readonly DEFAULT_FIX_PATH_CANDIDATES = 3;
 	private static readonly DEFAULT_FIX_PATH_BRANCHES = 2;
 	private static readonly CONTEXT_LOW_CONFIDENCE_THRESHOLD = 0.65;
+	private static readonly AMBIGUITY_SCORE_GAP_THRESHOLD = 0.1;
 	private static readonly LOW_GAIN_THRESHOLD = 0.4;
 	private static readonly MAX_REPEAT_COMMAND_ATTEMPTS = 1;
 
@@ -665,6 +672,7 @@ export class DebugFixLoopEngine {
 		classification: FailureClassification;
 		stagnationCount: number;
 		lowGainRounds: number;
+		ambiguous: boolean;
 	}): number {
 		let width = Math.max(1, input.triageBeamWidth || 2);
 		const needsExploration =
@@ -672,7 +680,8 @@ export class DebugFixLoopEngine {
 			input.classification === 'unknown' ||
 			input.classification === 'runtime_error' ||
 			input.stagnationCount >= 1 ||
-			input.lowGainRounds >= 1;
+			input.lowGainRounds >= 1 ||
+			input.ambiguous;
 		if (needsExploration) {
 			width += 1;
 		}
@@ -686,6 +695,7 @@ export class DebugFixLoopEngine {
 		stagnationCount: number;
 		candidateCount: number;
 		hardModeEnabled: boolean;
+		ambiguous: boolean;
 	}): { budget: number; timeoutMs: number } {
 		let budget = DebugFixLoopEngine.DEFAULT_PROBE_BUDGET;
 		let timeoutMs = DebugFixLoopEngine.DEFAULT_PROBE_TIMEOUT_MS;
@@ -701,6 +711,10 @@ export class DebugFixLoopEngine {
 			budget += 1;
 			timeoutMs += 2_000;
 		}
+		if (input.ambiguous) {
+			budget += 1;
+			timeoutMs += 2_000;
+		}
 		if (input.lowGainRounds >= 1 || input.stagnationCount >= 1) {
 			budget += 1;
 		}
@@ -710,6 +724,26 @@ export class DebugFixLoopEngine {
 		budget = Math.max(1, Math.min(budget, 4));
 		timeoutMs = Math.max(10_000, Math.min(timeoutMs, 30_000));
 		return { budget, timeoutMs };
+	}
+
+	private computeAmbiguitySignals(
+		ranking: Array<{ hypothesis_id: string; score: number }>,
+		confidence: number
+	): AmbiguitySignals {
+		if (ranking.length <= 1) {
+			return {
+				ambiguous: confidence < DebugFixLoopEngine.CONTEXT_LOW_CONFIDENCE_THRESHOLD,
+				topScoreGap: 1,
+				scoreSpread: 0,
+			};
+		}
+		const [first, second] = ranking;
+		const topScoreGap = Math.max(0, first.score - second.score);
+		const scoreSpread = Math.max(0, first.score - ranking[ranking.length - 1].score);
+		const ambiguous =
+			topScoreGap < DebugFixLoopEngine.AMBIGUITY_SCORE_GAP_THRESHOLD ||
+			confidence < DebugFixLoopEngine.CONTEXT_LOW_CONFIDENCE_THRESHOLD;
+		return { ambiguous, topScoreGap, scoreSpread };
 	}
 
 	private scoreValidationAlignment(hypothesis: FixHypothesis, signal: string): number {
@@ -1249,7 +1283,7 @@ export class DebugFixLoopEngine {
 	async run(input: DebugFixLoopInput, deps: DebugFixLoopDependencies): Promise<DebugFixLoopResult> {
 		const memoryState = normalizeMemory(input.prior_memory);
 		const adaptiveConfig = this.computeAdaptiveLoopConfig(input, memoryState);
-		const maxAttempts = adaptiveConfig.maxAttempts;
+		let maxAttempts = adaptiveConfig.maxAttempts;
 		const scoringWeights = loadLoopScoringWeights(input.task.repo_root);
 		const attempts: DebugFixLoopAttempt[] = [];
 		let currentCommand = input.initial_command;
@@ -1372,6 +1406,7 @@ export class DebugFixLoopEngine {
 						memoryState
 					);
 				}
+				const ambiguitySignals = this.computeAmbiguitySignals(triage.ranking, triage.confidence);
 				const failureFingerprintKey = this.failureFingerprintKey({
 					classification: triage.classification,
 					probableFiles: triage.probable_files,
@@ -1382,15 +1417,26 @@ export class DebugFixLoopEngine {
 				const classificationChanged =
 					previousClassification !== null && previousClassification !== triage.classification;
 				const filesDiverged = likelyFilesDiverged(previousLikelyFiles, triage.probable_files);
-				const expansionDecision = this.shouldExpandContext({
+				const forceContextExpansion =
+					forceFamilySwitchNextAttempt || (ambiguitySignals.ambiguous && attempt <= 2);
+				const baseExpansionDecision = this.shouldExpandContext({
 					confidence: triage.confidence,
 					classification: triage.classification,
 					classificationChanged,
 					likelyFilesDiverged: filesDiverged,
 					probeConflict: false,
 					contextInitialized,
-					forceFamilySwitch: forceFamilySwitchNextAttempt,
+					forceFamilySwitch: forceContextExpansion,
 				});
+				const expansionDecision =
+					ambiguitySignals.ambiguous && baseExpansionDecision.depth === 1 && attempt <= 2
+						? {
+								...baseExpansionDecision,
+								shouldExpand: true as const,
+								depth: 2 as const,
+								reason: 'low_confidence' as const,
+							}
+						: baseExpansionDecision;
 
 				if (expansionDecision.shouldExpand && deps.getContextPack) {
 					try {
@@ -1400,7 +1446,12 @@ export class DebugFixLoopEngine {
 							seedSymbols: triage.probable_symbols,
 							depth: expansionDecision.depth,
 							reason: expansionDecision.reason,
-							maxFiles: expansionDecision.depth === 2 ? 20 : 6,
+							maxFiles:
+								expansionDecision.depth === 2
+									? ambiguitySignals.ambiguous || adaptiveConfig.hardModeEnabled
+										? 24
+										: 20
+									: 6,
 						});
 						if (contextPack && contextPack.selectedFiles.length > 0) {
 							contextFiles = new Set(
@@ -1434,6 +1485,7 @@ export class DebugFixLoopEngine {
 					classification: triage.classification,
 					stagnationCount: memoryState.stagnation_count,
 					lowGainRounds,
+					ambiguous: ambiguitySignals.ambiguous,
 				});
 				let candidateHypotheses = triage.hypotheses.slice(
 					0,
@@ -1458,6 +1510,7 @@ export class DebugFixLoopEngine {
 					stagnationCount: memoryState.stagnation_count,
 					candidateCount: candidateHypotheses.length,
 					hardModeEnabled: adaptiveConfig.hardModeEnabled,
+					ambiguous: ambiguitySignals.ambiguous,
 				});
 				const probeExecution = await this.probeEngine.execute(
 					{
@@ -1512,7 +1565,12 @@ export class DebugFixLoopEngine {
 								...new Set(candidateHypotheses.flatMap((hypothesis) => hypothesis.likely_files)),
 							],
 							seedSymbols: triage.probable_symbols,
-							maxDepth: memoryState.stagnation_count >= 1 ? 8 : 6,
+							maxDepth:
+								memoryState.stagnation_count >= 1 ||
+								adaptiveConfig.hardModeEnabled ||
+								ambiguitySignals.ambiguous
+									? 10
+									: 6,
 						});
 						if (graphResult) {
 							graphQueryResult = graphResult;
@@ -1656,7 +1714,10 @@ export class DebugFixLoopEngine {
 				}
 				const branchCount = Math.max(
 					1,
-					Math.min(adaptiveConfig.maxFixPathBranches, fixPathCandidates.length)
+					Math.min(
+						adaptiveConfig.maxFixPathBranches + (ambiguitySignals.ambiguous ? 1 : 0),
+						fixPathCandidates.length
+					)
 				);
 				const branchedFixPathCandidates = fixPathCandidates.slice(0, branchCount);
 				attempts[attempts.length - 1].hypothesis_branch_count = branchedFixPathCandidates.length;
@@ -1721,6 +1782,16 @@ export class DebugFixLoopEngine {
 
 				const noProgressDetected =
 					lowGainRounds >= 2 || (memoryState.stagnation_count >= 3 && rankingStable);
+				const canExtendAttempts =
+					input.max_attempts === undefined &&
+					attempt === maxAttempts &&
+					maxAttempts < DebugFixLoopEngine.HARD_MODE_MAX_ATTEMPTS &&
+					!noProgressDetected &&
+					(ambiguitySignals.ambiguous || memoryState.stagnation_count >= 1) &&
+					averageProbeGain >= DebugFixLoopEngine.LOW_GAIN_THRESHOLD * 0.75;
+				if (canExtendAttempts) {
+					maxAttempts += 1;
+				}
 				if (noProgressDetected) {
 					this.recordDeadEndFingerprint(
 						memoryState,

@@ -215,7 +215,7 @@ describe('DebugFixLoopEngine', () => {
 
 		expect(result.attempts.length).toBe(2);
 		expect(result.attempts[0].fix_path_candidates?.length || 0).toBeGreaterThan(0);
-		expect(result.attempts[0].fix_path_candidates?.length || 0).toBeLessThanOrEqual(2);
+		expect(result.attempts[0].fix_path_candidates?.length || 0).toBeLessThanOrEqual(3);
 		expect(result.attempts[0].selected_command).toBeDefined();
 		expect(result.attempts[1].command).not.toBe(result.attempts[0].command);
 		expect(Object.keys(result.memory_state?.failure_fingerprints || {})).toHaveLength(1);

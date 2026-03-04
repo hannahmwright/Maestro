@@ -1,0 +1,47 @@
+{
+	"id": "lint-scope-recovery",
+	"description": "Scoped lint failures resolve with targeted lint rerun.",
+	"metadata": {
+		"category": "lint-recovery",
+		"difficulty": "hard",
+		"tags": ["lint", "targeted-check", "probe"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-lint-1",
+		"goal": "Fix lint error in handler",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "low",
+		"allowed_commands": ["npm run lint"],
+		"done_gate_profile": "quick",
+		"max_changed_files": 3,
+		"created_at": 1731010112000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm run lint",
+	"changed_files": ["src/handler.ts"],
+	"command_plan": [
+		{
+			"match": "^npm run lint(?: .*)?$",
+			"match_type": "regex",
+			"responses": [
+				{
+					"exitCode": 1,
+					"stderr": "src/handler.ts\n  7:3  error  Unexpected any  @typescript-eslint/no-explicit-any",
+					"durationMs": 23
+				},
+				{
+					"exitCode": 0,
+					"stdout": "lint ok",
+					"durationMs": 19
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "complete",
+		"max_attempts": 3,
+		"require_selected_hypothesis": true
+	}
+}

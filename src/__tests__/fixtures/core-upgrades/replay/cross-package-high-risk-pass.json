@@ -1,0 +1,57 @@
+{
+	"id": "cross-package-high-risk-pass",
+	"description": "Cross-package high-risk change enforces full-suite gate and still completes in first attempt.",
+	"metadata": {
+		"category": "gate-high-risk",
+		"difficulty": "hard",
+		"tags": ["gate", "full-suite", "cross-package"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-gate-1",
+		"goal": "Validate cross-package fix",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "high",
+		"allowed_commands": ["npm test -- packages/pkg-a", "npm test", "npm run build"],
+		"done_gate_profile": "standard",
+		"max_changed_files": 8,
+		"created_at": 1731010114000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm test -- packages/pkg-a",
+	"full_suite_command": "npm test",
+	"changed_files": [
+		"/tmp/project/packages/pkg-a/src/index.ts",
+		"/tmp/project/packages/pkg-a/src/index.test.ts",
+		"/tmp/project/packages/pkg-b/src/consumer.ts"
+	],
+	"command_plan": [
+		{
+			"match": "npm test -- packages/pkg-a",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "PASS packages/pkg-a",
+					"durationMs": 27
+				}
+			]
+		},
+		{
+			"match": "npm test",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "PASS full suite",
+					"durationMs": 41
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "complete",
+		"max_attempts": 1
+	}
+}
