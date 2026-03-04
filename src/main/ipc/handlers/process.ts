@@ -23,10 +23,19 @@ import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBu
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
+import {
+	isCoreUpgradesEnabled,
+	createTaskContract,
+	DebugFixLoopEngine,
+	RepoContextService,
+} from '../../core-upgrades';
+import type { ProposedFileEdit, TaskContractInput } from '../../core-upgrades/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
 
 const LOG_CONTEXT = '[ProcessManager]';
+const debugFixLoopEngine = new DebugFixLoopEngine();
+const repoContextService = new RepoContextService();
 
 /**
  * Helper to create handler options with consistent context
@@ -679,8 +688,17 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 
+	ipcMain.handle(
+		'process:createTaskContract',
+		withIpcErrorLogging(handlerOpts('createTaskContract'), async (input: TaskContractInput) => {
+			return createTaskContract(input);
+		})
+	);
+
 	// Run a single command and capture only stdout/stderr (no PTY echo/prompts)
 	// Supports SSH remote execution when sessionSshRemoteConfig is provided
+	// When taskContractInput is supplied and MAESTRO_CORE_UPGRADES!=off, this executes
+	// through the strict debug/fix loop with triage/review/gate lifecycle events.
 	ipcMain.handle(
 		'process:runCommand',
 		withIpcErrorLogging(
@@ -690,31 +708,31 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				command: string;
 				cwd: string;
 				shell?: string;
-				// Per-session SSH remote config (same as process:spawn)
 				sessionSshRemoteConfig?: {
 					enabled: boolean;
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				taskContractInput?: Partial<TaskContractInput>;
+				proposedEdits?: ProposedFileEdit[];
+				relatedFiles?: string[];
+				changedFiles?: string[];
+				diffText?: string;
+				fullSuiteCommand?: string;
 			}) => {
 				const processManager = requireProcessManager(getProcessManager);
 
-				// Get the shell from settings if not provided
-				// Custom shell path takes precedence over the selected shell ID
+				// Get the shell from settings if not provided.
 				let shell = config.shell || settingsStore.get('defaultShell', 'zsh');
 				const customShellPath = settingsStore.get('customShellPath', '');
 				if (customShellPath && customShellPath.trim()) {
 					shell = customShellPath.trim();
 				}
 
-				// Get shell env vars for passing to runCommand
 				const shellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
 
-				// ========================================================================
-				// SSH Remote Execution: Resolve SSH config if provided
-				// ========================================================================
+				// Resolve SSH remote config when provided.
 				let sshRemoteConfig: SshRemoteConfig | null = null;
-
 				if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig?.remoteId) {
 					const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
 					const sshResult = getSshRemoteConfig(sshStoreAdapter, {
@@ -732,22 +750,89 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					}
 				}
 
+				const runSingleCommand = (commandToRun: string) =>
+					processManager.runCommand(
+						config.sessionId,
+						commandToRun,
+						config.cwd,
+						shell,
+						shellEnvVars,
+						sshRemoteConfig
+					);
+
 				logger.debug(`Running command: ${config.command}`, LOG_CONTEXT, {
 					sessionId: config.sessionId,
 					cwd: config.cwd,
 					shell,
 					hasCustomEnvVars: Object.keys(shellEnvVars).length > 0,
 					sshRemote: sshRemoteConfig?.name || null,
+					coreUpgrades: isCoreUpgradesEnabled(),
+					hasTaskContractInput: !!config.taskContractInput,
 				});
 
-				return processManager.runCommand(
-					config.sessionId,
-					config.command,
-					config.cwd,
-					shell,
-					shellEnvVars,
-					sshRemoteConfig
-				);
+				if (isCoreUpgradesEnabled() && config.taskContractInput) {
+					const task = createTaskContract({
+						goal: config.taskContractInput.goal || `Resolve command task: ${config.command}`,
+						repo_root: config.taskContractInput.repo_root || config.cwd,
+						language_profile: config.taskContractInput.language_profile || 'ts_js',
+						risk_level: config.taskContractInput.risk_level || 'medium',
+						allowed_commands: config.taskContractInput.allowed_commands || [
+							config.command,
+							'npm test',
+							'npm run build',
+						],
+						done_gate_profile: config.taskContractInput.done_gate_profile,
+						max_changed_files: config.taskContractInput.max_changed_files,
+						metadata: config.taskContractInput.metadata,
+					});
+
+					let contextPack: Awaited<ReturnType<typeof repoContextService.getContextPack>> | null =
+						null;
+					try {
+						contextPack = await repoContextService.getContextPack({
+							repoRoot: task.repo_root,
+							mode: 'failure_focused',
+							seedFiles: config.relatedFiles || config.changedFiles || [],
+							maxFiles: 6,
+						});
+					} catch (error) {
+						logger.warn('Failed to build context pack for task loop', LOG_CONTEXT, {
+							sessionId: config.sessionId,
+							error: String(error),
+						});
+					}
+
+					const loopResult = await debugFixLoopEngine.run(
+						{
+							session_id: config.sessionId,
+							task,
+							cwd: config.cwd,
+							initial_command: config.command,
+							full_suite_command: config.fullSuiteCommand,
+							proposed_edits: config.proposedEdits,
+							related_files: config.relatedFiles,
+							changed_files: config.changedFiles,
+							diff_text: config.diffText,
+						},
+						{
+							runCommand: runSingleCommand,
+							emitLifecycle: (event) =>
+								processManager.emit('task-lifecycle', config.sessionId, event),
+						}
+					);
+
+					const finalAttempt = loopResult.attempts[loopResult.attempts.length - 1];
+					return {
+						exitCode: loopResult.status === 'complete' ? 0 : (finalAttempt?.result.exit_code ?? 1),
+						stdout: finalAttempt?.result.stdout,
+						stderr: finalAttempt?.result.stderr,
+						durationMs: finalAttempt?.result.duration_ms,
+						taskResult: loopResult,
+						contextPack,
+					};
+				}
+
+				return runSingleCommand(config.command);
 			}
 		)
 	);

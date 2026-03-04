@@ -26,6 +26,7 @@ export class SshCommandRunner {
 		sshConfig: SshRemoteConfig,
 		shellEnvVars?: Record<string, string>
 	): Promise<CommandResult> {
+		const startedAt = Date.now();
 		// Build SSH arguments
 		const sshArgs: string[] = [];
 
@@ -104,6 +105,8 @@ export class SshCommandRunner {
 		const expandedEnv = getExpandedEnv();
 
 		return new Promise((resolve) => {
+			let stdoutBuffer = '';
+			let stderrBuffer = '';
 			const childProcess = spawn(sshPath, sshArgs, {
 				env: {
 					...expandedEnv,
@@ -115,6 +118,7 @@ export class SshCommandRunner {
 			// Handle stdout
 			childProcess.stdout?.on('data', (data: Buffer) => {
 				const output = data.toString();
+				stdoutBuffer += output;
 				if (output.trim()) {
 					logger.debug('[ProcessManager] runCommandViaSsh stdout', 'ProcessManager', {
 						sessionId,
@@ -127,6 +131,7 @@ export class SshCommandRunner {
 			// Handle stderr
 			childProcess.stderr?.on('data', (data: Buffer) => {
 				const output = data.toString();
+				stderrBuffer += output;
 				logger.debug('[ProcessManager] runCommandViaSsh stderr', 'ProcessManager', {
 					sessionId,
 					output: output.substring(0, 200),
@@ -152,7 +157,12 @@ export class SshCommandRunner {
 					exitCode: code,
 				});
 				this.emitter.emit('command-exit', sessionId, code || 0);
-				resolve({ exitCode: code || 0 });
+				resolve({
+					exitCode: code || 0,
+					stdout: stdoutBuffer,
+					stderr: stderrBuffer,
+					durationMs: Date.now() - startedAt,
+				});
 			});
 
 			// Handle errors
@@ -163,7 +173,12 @@ export class SshCommandRunner {
 				});
 				this.emitter.emit('stderr', sessionId, `SSH Error: ${error.message}`);
 				this.emitter.emit('command-exit', sessionId, 1);
-				resolve({ exitCode: 1 });
+				resolve({
+					exitCode: 1,
+					stdout: stdoutBuffer,
+					stderr: `${stderrBuffer}\nSSH Error: ${error.message}`.trim(),
+					durationMs: Date.now() - startedAt,
+				});
 			});
 		});
 	}

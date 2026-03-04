@@ -34,6 +34,7 @@ describe('Forwarding Listeners', () => {
 		expect(mockProcessManager.on).toHaveBeenCalledWith('tool-execution', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('stderr', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('command-exit', expect.any(Function));
+		expect(mockProcessManager.on).toHaveBeenCalledWith('task-lifecycle', expect.any(Function));
 	});
 
 	it('should forward slash-commands events to renderer', () => {
@@ -102,5 +103,76 @@ describe('Forwarding Listeners', () => {
 		handler?.(testSessionId, testExitCode);
 
 		expect(mockSafeSend).toHaveBeenCalledWith('process:command-exit', testSessionId, testExitCode);
+	});
+
+	it('should forward task lifecycle events to renderer channels', () => {
+		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+
+		const handler = eventHandlers.get('task-lifecycle');
+		const testSessionId = 'task-session-123';
+
+		handler?.(testSessionId, { type: 'triage-started', attempt: 1, signal_excerpt: 'fail' });
+		handler?.(testSessionId, {
+			type: 'hypothesis-generated',
+			attempt: 1,
+			triage: {
+				classification: 'test_failure',
+				confidence: 0.8,
+				probable_files: [],
+				probable_symbols: [],
+				hypotheses: [],
+				raw_signal_excerpt: '',
+			},
+		});
+		handler?.(testSessionId, {
+			type: 'edit-plan-applied',
+			attempt: 1,
+			edit_plan: {
+				valid: true,
+				blocked: false,
+				blocked_reasons: [],
+				file_plans: [],
+				changed_file_budget: 3,
+				requested_file_count: 1,
+			},
+		});
+		handler?.(testSessionId, { type: 'review-findings', attempt: 1, findings: [] });
+		handler?.(testSessionId, {
+			type: 'gate-result',
+			attempt: 1,
+			decision: {
+				decision: 'complete',
+				requires_full_suite: false,
+				blocking_reasons: [],
+				blocking_findings: [],
+				next_actions: [],
+			},
+		});
+
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'task:triage-started',
+			testSessionId,
+			expect.objectContaining({ type: 'triage-started' })
+		);
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'task:hypothesis-generated',
+			testSessionId,
+			expect.objectContaining({ type: 'hypothesis-generated' })
+		);
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'task:edit-plan-applied',
+			testSessionId,
+			expect.objectContaining({ type: 'edit-plan-applied' })
+		);
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'task:review-findings',
+			testSessionId,
+			expect.objectContaining({ type: 'review-findings' })
+		);
+		expect(mockSafeSend).toHaveBeenCalledWith(
+			'task:gate-result',
+			testSessionId,
+			expect.objectContaining({ type: 'gate-result' })
+		);
 	});
 });

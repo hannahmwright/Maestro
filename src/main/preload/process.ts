@@ -10,6 +10,14 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type {
+	ProposedFileEdit,
+	TaskContractInput,
+	CompletionDecision,
+	ReviewFinding,
+	TriageResult,
+	EditPlan,
+} from '../core-upgrades/types';
 
 /**
  * Helper to log via the main process logger.
@@ -64,6 +72,23 @@ export interface RunCommandConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	// Optional strict task loop context. When present and core upgrades are enabled,
+	// main process runs triage/review/gate lifecycle around this command.
+	taskContractInput?: Partial<TaskContractInput>;
+	proposedEdits?: ProposedFileEdit[];
+	relatedFiles?: string[];
+	changedFiles?: string[];
+	diffText?: string;
+	fullSuiteCommand?: string;
+}
+
+export interface RunCommandResult {
+	exitCode: number;
+	stdout?: string;
+	stderr?: string;
+	durationMs?: number;
+	taskResult?: unknown;
+	contextPack?: unknown;
 }
 
 /**
@@ -168,8 +193,14 @@ export function createProcessApi() {
 		 * Run a single command and capture only stdout/stderr (no PTY echo/prompts)
 		 * Supports SSH remote execution when sessionSshRemoteConfig is provided
 		 */
-		runCommand: (config: RunCommandConfig): Promise<{ exitCode: number }> =>
+		runCommand: (config: RunCommandConfig): Promise<RunCommandResult> =>
 			ipcRenderer.invoke('process:runCommand', config),
+
+		/**
+		 * Create a validated task contract in the main process.
+		 */
+		createTaskContract: (input: TaskContractInput) =>
+			ipcRenderer.invoke('process:createTaskContract', input),
 
 		/**
 		 * Get all active processes from ProcessManager
@@ -433,6 +464,81 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string, code: number) => callback(sessionId, code);
 			ipcRenderer.on('process:command-exit', handler);
 			return () => ipcRenderer.removeListener('process:command-exit', handler);
+		},
+
+		onTaskTriageStarted: (
+			callback: (
+				sessionId: string,
+				event: { type: 'triage-started'; attempt: number; signal_excerpt: string }
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				event: { type: 'triage-started'; attempt: number; signal_excerpt: string }
+			) => callback(sessionId, event);
+			ipcRenderer.on('task:triage-started', handler);
+			return () => ipcRenderer.removeListener('task:triage-started', handler);
+		},
+
+		onTaskHypothesisGenerated: (
+			callback: (
+				sessionId: string,
+				event: { type: 'hypothesis-generated'; attempt: number; triage: TriageResult }
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				event: { type: 'hypothesis-generated'; attempt: number; triage: TriageResult }
+			) => callback(sessionId, event);
+			ipcRenderer.on('task:hypothesis-generated', handler);
+			return () => ipcRenderer.removeListener('task:hypothesis-generated', handler);
+		},
+
+		onTaskEditPlanApplied: (
+			callback: (
+				sessionId: string,
+				event: { type: 'edit-plan-applied'; attempt: number; edit_plan: EditPlan }
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				event: { type: 'edit-plan-applied'; attempt: number; edit_plan: EditPlan }
+			) => callback(sessionId, event);
+			ipcRenderer.on('task:edit-plan-applied', handler);
+			return () => ipcRenderer.removeListener('task:edit-plan-applied', handler);
+		},
+
+		onTaskReviewFindings: (
+			callback: (
+				sessionId: string,
+				event: { type: 'review-findings'; attempt: number; findings: ReviewFinding[] }
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				event: { type: 'review-findings'; attempt: number; findings: ReviewFinding[] }
+			) => callback(sessionId, event);
+			ipcRenderer.on('task:review-findings', handler);
+			return () => ipcRenderer.removeListener('task:review-findings', handler);
+		},
+
+		onTaskGateResult: (
+			callback: (
+				sessionId: string,
+				event: { type: 'gate-result'; attempt: number; decision: CompletionDecision }
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				event: { type: 'gate-result'; attempt: number; decision: CompletionDecision }
+			) => callback(sessionId, event);
+			ipcRenderer.on('task:gate-result', handler);
+			return () => ipcRenderer.removeListener('task:gate-result', handler);
 		},
 
 		/**

@@ -260,7 +260,46 @@ interface MaestroAPI {
 				remoteId: string | null;
 				workingDirOverride?: string;
 			};
-		}) => Promise<{ exitCode: number }>;
+			taskContractInput?: {
+				task_id?: string;
+				goal?: string;
+				repo_root?: string;
+				language_profile?: 'ts_js' | 'generic';
+				risk_level?: 'low' | 'medium' | 'high';
+				allowed_commands?: string[];
+				done_gate_profile?: 'quick' | 'standard' | 'high_risk';
+				max_changed_files?: number;
+				metadata?: Record<string, unknown>;
+			};
+			proposedEdits?: Array<{
+				file_path: string;
+				reason: string;
+				hunk_count?: number;
+				changed_lines?: number;
+			}>;
+			relatedFiles?: string[];
+			changedFiles?: string[];
+			diffText?: string;
+			fullSuiteCommand?: string;
+		}) => Promise<{
+			exitCode: number;
+			stdout?: string;
+			stderr?: string;
+			durationMs?: number;
+			taskResult?: unknown;
+			contextPack?: unknown;
+		}>;
+		createTaskContract: (input: {
+			task_id?: string;
+			goal: string;
+			repo_root: string;
+			language_profile?: 'ts_js' | 'generic';
+			risk_level?: 'low' | 'medium' | 'high';
+			allowed_commands?: string[];
+			done_gate_profile?: 'quick' | 'standard' | 'high_risk';
+			max_changed_files?: number;
+			metadata?: Record<string, unknown>;
+		}) => Promise<unknown>;
 		getActiveProcesses: () => Promise<
 			Array<{
 				sessionId: string;
@@ -312,6 +351,36 @@ interface MaestroAPI {
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
+		onTaskTriageStarted: (
+			callback: (
+				sessionId: string,
+				event: { type: 'triage-started'; attempt: number; signal_excerpt: string }
+			) => void
+		) => () => void;
+		onTaskHypothesisGenerated: (
+			callback: (
+				sessionId: string,
+				event: { type: 'hypothesis-generated'; attempt: number; triage: unknown }
+			) => void
+		) => () => void;
+		onTaskEditPlanApplied: (
+			callback: (
+				sessionId: string,
+				event: { type: 'edit-plan-applied'; attempt: number; edit_plan: unknown }
+			) => void
+		) => () => void;
+		onTaskReviewFindings: (
+			callback: (
+				sessionId: string,
+				event: { type: 'review-findings'; attempt: number; findings: unknown[] }
+			) => void
+		) => () => void;
+		onTaskGateResult: (
+			callback: (
+				sessionId: string,
+				event: { type: 'gate-result'; attempt: number; decision: unknown }
+			) => void
+		) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
 		onAgentError: (
 			callback: (

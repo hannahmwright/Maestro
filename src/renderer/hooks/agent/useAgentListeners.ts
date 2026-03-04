@@ -1244,6 +1244,79 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			}
 		);
 
+		const appendTaskLifecycleLog = (rawSessionId: string, text: string) => {
+			const sessionId = parseSessionId(rawSessionId).baseSessionId;
+			setSessions((prev) =>
+				prev.map((session) => {
+					if (session.id !== sessionId) return session;
+					const systemLog: LogEntry = {
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'system',
+						text,
+					};
+					return {
+						...session,
+						aiLogs: [...session.aiLogs, systemLog],
+					};
+				})
+			);
+		};
+
+		const unsubscribeTaskTriageStarted = window.maestro.process.onTaskTriageStarted?.(
+			(sessionId, event) => {
+				appendTaskLifecycleLog(
+					sessionId,
+					`Task triage started (attempt ${event.attempt}): ${event.signal_excerpt.slice(0, 120)}`
+				);
+			}
+		);
+
+		const unsubscribeTaskHypothesisGenerated = window.maestro.process.onTaskHypothesisGenerated?.(
+			(sessionId, event) => {
+				const triage = event.triage as { classification?: string; confidence?: number } | undefined;
+				appendTaskLifecycleLog(
+					sessionId,
+					`Task hypothesis generated (attempt ${event.attempt}): ${triage?.classification || 'unknown'} (${Math.round((triage?.confidence || 0) * 100)}% confidence)`
+				);
+			}
+		);
+
+		const unsubscribeTaskEditPlanApplied = window.maestro.process.onTaskEditPlanApplied?.(
+			(sessionId, event) => {
+				const editPlan = event.edit_plan as
+					| { valid?: boolean; blocked_reasons?: string[] }
+					| undefined;
+				appendTaskLifecycleLog(
+					sessionId,
+					editPlan?.valid
+						? `Task edit plan validated (attempt ${event.attempt}).`
+						: `Task edit plan blocked (attempt ${event.attempt}): ${(editPlan?.blocked_reasons || []).join(', ') || 'unknown'}`
+				);
+			}
+		);
+
+		const unsubscribeTaskReviewFindings = window.maestro.process.onTaskReviewFindings?.(
+			(sessionId, event) => {
+				appendTaskLifecycleLog(
+					sessionId,
+					`Task review completed (attempt ${event.attempt}): ${event.findings.length} finding(s).`
+				);
+			}
+		);
+
+		const unsubscribeTaskGateResult = window.maestro.process.onTaskGateResult?.(
+			(sessionId, event) => {
+				const decision = event.decision as
+					| { decision?: string; blocking_reasons?: string[] }
+					| undefined;
+				appendTaskLifecycleLog(
+					sessionId,
+					`Task gate result (attempt ${event.attempt}): ${decision?.decision || 'unknown'}${decision?.blocking_reasons?.length ? ` [${decision.blocking_reasons.join(', ')}]` : ''}`
+				);
+			}
+		);
+
 		// ================================================================
 		// onUsage — Handle usage statistics (BATCHED)
 		// ================================================================
@@ -1875,6 +1948,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeSlashCommands();
 			unsubscribeStderr();
 			unsubscribeCommandExit();
+			unsubscribeTaskTriageStarted?.();
+			unsubscribeTaskHypothesisGenerated?.();
+			unsubscribeTaskEditPlanApplied?.();
+			unsubscribeTaskReviewFindings?.();
+			unsubscribeTaskGateResult?.();
 			unsubscribeUsage();
 			unsubscribeAgentError();
 			unsubscribeThinkingChunk?.();

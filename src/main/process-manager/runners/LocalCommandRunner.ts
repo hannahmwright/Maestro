@@ -27,6 +27,9 @@ export class LocalCommandRunner {
 		shellEnvVars?: Record<string, string>
 	): Promise<CommandResult> {
 		return new Promise((resolve) => {
+			const startedAt = Date.now();
+			let stdoutBuffer = '';
+			let stderrBuffer = '';
 			const isWindows = process.platform === 'win32';
 			const defaultShell = isWindows ? 'powershell.exe' : 'bash';
 			const shellToUse = shell || defaultShell;
@@ -106,6 +109,7 @@ export class LocalCommandRunner {
 			// Handle stdout - emit data events for real-time streaming
 			childProcess.stdout?.on('data', (data: Buffer) => {
 				let output = data.toString();
+				stdoutBuffer += output;
 				logger.debug('[ProcessManager] runCommand stdout RAW', 'ProcessManager', {
 					sessionId,
 					rawLength: output.length,
@@ -146,6 +150,7 @@ export class LocalCommandRunner {
 			// Handle stderr
 			childProcess.stderr?.on('data', (data: Buffer) => {
 				const output = data.toString();
+				stderrBuffer += output;
 				this.emitter.emit('stderr', sessionId, output);
 			});
 
@@ -156,7 +161,12 @@ export class LocalCommandRunner {
 					exitCode: code,
 				});
 				this.emitter.emit('command-exit', sessionId, code || 0);
-				resolve({ exitCode: code || 0 });
+				resolve({
+					exitCode: code || 0,
+					stdout: stdoutBuffer,
+					stderr: stderrBuffer,
+					durationMs: Date.now() - startedAt,
+				});
 			});
 
 			// Handle errors
@@ -167,7 +177,12 @@ export class LocalCommandRunner {
 				});
 				this.emitter.emit('stderr', sessionId, `Error: ${error.message}`);
 				this.emitter.emit('command-exit', sessionId, 1);
-				resolve({ exitCode: 1 });
+				resolve({
+					exitCode: 1,
+					stdout: stdoutBuffer,
+					stderr: `${stderrBuffer}\nError: ${error.message}`.trim(),
+					durationMs: Date.now() - startedAt,
+				});
 			});
 		});
 	}

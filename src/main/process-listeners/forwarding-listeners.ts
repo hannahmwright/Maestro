@@ -42,4 +42,25 @@ export function setupForwardingListeners(
 	processManager.on('command-exit', (sessionId: string, code: number) => {
 		safeSend('process:command-exit', sessionId, code);
 	});
+
+	// Forward core-upgrade task lifecycle events for status badges/log surfaces.
+	processManager.on('task-lifecycle', (sessionId: string, event) => {
+		switch (event.type) {
+			case 'triage-started':
+				safeSend('task:triage-started', sessionId, event);
+				break;
+			case 'hypothesis-generated':
+				safeSend('task:hypothesis-generated', sessionId, event);
+				break;
+			case 'edit-plan-applied':
+				safeSend('task:edit-plan-applied', sessionId, event);
+				break;
+			case 'review-findings':
+				safeSend('task:review-findings', sessionId, event);
+				break;
+			case 'gate-result':
+				safeSend('task:gate-result', sessionId, event);
+				break;
+		}
+	});
 }
