@@ -35,6 +35,7 @@ describe('Forwarding Listeners', () => {
 		expect(mockProcessManager.on).toHaveBeenCalledWith('stderr', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('command-exit', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('task-lifecycle', expect.any(Function));
+		expect(mockProcessManager.on).toHaveBeenCalledWith('task-status', expect.any(Function));
 	});
 
 	it('should forward slash-commands events to renderer', () => {
@@ -174,5 +175,31 @@ describe('Forwarding Listeners', () => {
 			testSessionId,
 			expect.objectContaining({ type: 'gate-result' })
 		);
+	});
+
+	it('should forward aggregated task status events', () => {
+		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+
+		const handler = eventHandlers.get('task-status');
+		const testSessionId = 'task-session-123';
+		const testStatus = {
+			task_id: 'task-1',
+			status: 'failed',
+			attempt_count: 2,
+			blocking_reasons: ['full_suite_failed'],
+			full_suite_required: true,
+			lifecycle_counts: {
+				triage_started: 1,
+				hypothesis_generated: 1,
+				edit_plan_applied: 0,
+				review_findings: 1,
+				gate_result: 1,
+			},
+			generated_at: Date.now(),
+		};
+
+		handler?.(testSessionId, testStatus);
+
+		expect(mockSafeSend).toHaveBeenCalledWith('task:status', testSessionId, testStatus);
 	});
 });

@@ -972,6 +972,14 @@ describe('process IPC handlers', () => {
 				'session-1',
 				expect.objectContaining({ type: 'review-findings' })
 			);
+			expect(mockProcessManager.emit).toHaveBeenCalledWith(
+				'task-status',
+				'session-1',
+				expect.objectContaining({
+					status: 'complete',
+					attempt_count: 1,
+				})
+			);
 		});
 	});
 

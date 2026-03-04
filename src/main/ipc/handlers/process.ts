@@ -883,6 +883,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						retrievalMode,
 						contextSelectedFiles: contextPack?.selectedFiles.length,
 					});
+					processManager.emit('task-status', config.sessionId, taskDiagnostics);
 
 					const finalAttempt = loopResult.attempts[loopResult.attempts.length - 1];
 					try {

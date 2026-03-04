@@ -63,4 +63,8 @@ export function setupForwardingListeners(
 				break;
 		}
 	});
+
+	processManager.on('task-status', (sessionId: string, status) => {
+		safeSend('task:status', sessionId, status);
+	});
 }

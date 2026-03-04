@@ -2,7 +2,12 @@ import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
-import type { TaskContract, TaskContractInput, TaskLifecycleEvent } from '../core-upgrades/types';
+import type {
+	TaskContract,
+	TaskContractInput,
+	TaskLifecycleEvent,
+	TaskDiagnosticsSummary,
+} from '../core-upgrades/types';
 
 /**
  * Configuration for spawning a new process
@@ -128,6 +133,7 @@ export interface ProcessManagerEvents {
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;
 	'task-lifecycle': (sessionId: string, event: TaskLifecycleEvent) => void;
+	'task-status': (sessionId: string, status: TaskDiagnosticsSummary) => void;
 }
 
 export interface ToolExecution {

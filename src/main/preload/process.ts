@@ -552,6 +552,15 @@ export function createProcessApi() {
 			return () => ipcRenderer.removeListener('task:gate-result', handler);
 		},
 
+		onTaskStatus: (
+			callback: (sessionId: string, status: TaskDiagnosticsSummary) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, status: TaskDiagnosticsSummary) =>
+				callback(sessionId, status);
+			ipcRenderer.on('task:status', handler);
+			return () => ipcRenderer.removeListener('task:status', handler);
+		},
+
 		/**
 		 * Subscribe to usage statistics from AI responses
 		 */

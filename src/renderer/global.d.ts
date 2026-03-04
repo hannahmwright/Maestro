@@ -459,6 +459,37 @@ interface MaestroAPI {
 				event: { type: 'gate-result'; attempt: number; decision: unknown }
 			) => void
 		) => () => void;
+		onTaskStatus: (
+			callback: (
+				sessionId: string,
+				status: {
+					task_id: string;
+					status: 'complete' | 'failed';
+					attempt_count: number;
+					final_decision?: 'complete' | 'continue' | 'blocked';
+					failure_code?:
+						| 'edit_plan_blocked'
+						| 'no_hypothesis_generated'
+						| 'non_progressing_hypothesis_loop'
+						| 'gate_blocked'
+						| 'max_attempts_reached';
+					blocking_reasons: string[];
+					full_suite_required: boolean;
+					lifecycle_counts: {
+						triage_started: number;
+						hypothesis_generated: number;
+						edit_plan_applied: number;
+						review_findings: number;
+						gate_result: number;
+					};
+					last_command?: string;
+					last_exit_code?: number;
+					retrieval_mode?: 'failure_focused' | 'edit_focused' | 'review_focused';
+					context_selected_files?: number;
+					generated_at: number;
+				}
+			) => void
+		) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
 		onAgentError: (
 			callback: (

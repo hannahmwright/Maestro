@@ -233,6 +233,40 @@ describe('Process Preload API', () => {
 		});
 	});
 
+	describe('onTaskStatus', () => {
+		it('should register event listener for task:status', () => {
+			const callback = vi.fn();
+			let registeredHandler: (event: unknown, sessionId: string, status: unknown) => void;
+
+			mockOn.mockImplementation((channel: string, handler: typeof registeredHandler) => {
+				if (channel === 'task:status') {
+					registeredHandler = handler;
+				}
+			});
+
+			api.onTaskStatus(callback);
+
+			const status = {
+				task_id: 'task-1',
+				status: 'complete',
+				attempt_count: 1,
+				blocking_reasons: [],
+				full_suite_required: false,
+				lifecycle_counts: {
+					triage_started: 0,
+					hypothesis_generated: 0,
+					edit_plan_applied: 0,
+					review_findings: 1,
+					gate_result: 1,
+				},
+				generated_at: Date.now(),
+			};
+			registeredHandler!({}, 'session-123', status);
+
+			expect(callback).toHaveBeenCalledWith('session-123', status);
+		});
+	});
+
 	describe('onAgentError', () => {
 		it('should register event listener for agent:error', () => {
 			const callback = vi.fn();
