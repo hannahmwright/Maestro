@@ -332,11 +332,12 @@ describe('AutoRun + Batch Processing Integration', () => {
 			const props = createDefaultProps({ batchRunState, mode: 'preview' });
 			renderWithProvider(<AutoRun {...props} />);
 
-			// Preview button should be styled as selected when locked (has font-semibold class)
+			// Preview stays active while batch lock disables edit mode
 			const previewButton = screen.getByRole('button', { name: /preview/i });
-			// font-semibold in Tailwind applies font-weight: 600, but toHaveStyle doesn't work well with Tailwind
-			// Instead, check the class is applied
-			expect(previewButton).toHaveClass('font-semibold');
+			const editButton = screen.getByTitle(/Editing disabled while Auto Run active/i);
+			expect(previewButton).toBeEnabled();
+			expect(editButton).toBeDisabled();
+			expect(previewButton.style.border).not.toBe(editButton.style.border);
 		});
 	});
 
@@ -622,6 +623,39 @@ describe('AutoRun + Batch Processing Integration', () => {
 			// Clicking Stop should NOT open batch runner
 			fireEvent.click(stopButton);
 			expect(onOpenBatchRunner).not.toHaveBeenCalled();
+		});
+
+		it('shows strict gate pause banner and exposes resume/abort actions', () => {
+			const onResumeAfterError = vi.fn();
+			const onAbortBatchOnError = vi.fn();
+			const batchRunState = createBatchRunState({
+				isRunning: true,
+				errorPaused: true,
+				error: {
+					type: 'unknown',
+					message: 'Strict completion gate failed: npm run lint failed',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				},
+			});
+			const props = createDefaultProps({
+				batchRunState,
+				onResumeAfterError,
+				onAbortBatchOnError,
+			});
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByText('Auto Run Paused')).toBeInTheDocument();
+			expect(
+				screen.getByText(/Strict completion gate failed: npm run lint failed/i)
+			).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /resume/i }));
+			expect(onResumeAfterError).toHaveBeenCalledTimes(1);
+
+			fireEvent.click(screen.getByRole('button', { name: /abort run/i }));
+			expect(onAbortBatchOnError).toHaveBeenCalledTimes(1);
 		});
 	});
 

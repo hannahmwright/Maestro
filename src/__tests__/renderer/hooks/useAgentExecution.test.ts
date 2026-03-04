@@ -259,6 +259,8 @@ describe('useAgentExecution', () => {
 		);
 		expect(resultData.success).toBe(false);
 		expect(resultData.failureKind).toBe('strict_gate');
+		expect(resultData.response).toContain('strict_completion_gate_failed');
+		expect(resultData.response).toContain('command "npm run lint"');
 		expect(resultData.response).toContain('lint failed');
 	});
 

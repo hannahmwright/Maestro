@@ -1270,6 +1270,15 @@ export function useBatchProcessor({
 
 							if (!success && failureKind === 'strict_gate') {
 								const strictReason = failureReason || fullSynopsis;
+								window.maestro.logger.autorun(
+									`Strict gate blocked completion for ${docEntry.filename}`,
+									session.name,
+									{
+										document: docEntry.filename,
+										loopNumber: loopIteration + 1,
+										reason: strictReason,
+									}
+								);
 								pauseBatchOnError(
 									sessionId,
 									{

@@ -313,9 +313,47 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 			});
 
 			if (gateResult.exitCode !== 0) {
+				const normalizeDiagnostic = (value: string, maxLength = 220): string =>
+					value
+						.replace(/\x1B\[[0-9;]*m/g, '')
+						.replace(/\s+/g, ' ')
+						.trim()
+						.slice(0, maxLength);
+
+				const taskResult = (gateResult.taskResult || {}) as {
+					reason?: string;
+					decision?: { blocking_reasons?: unknown };
+					attempts?: Array<{
+						command?: string;
+						result?: { stderr?: string };
+					}>;
+				};
+				const blockingReasons = Array.isArray(taskResult.decision?.blocking_reasons)
+					? taskResult.decision?.blocking_reasons
+							.filter(
+								(value): value is string => typeof value === 'string' && value.trim().length > 0
+							)
+							.slice(0, 2)
+					: [];
+				const lastAttempt = Array.isArray(taskResult.attempts)
+					? taskResult.attempts[taskResult.attempts.length - 1]
+					: undefined;
+				const failedCommand = lastAttempt?.command || targetedCommand;
+				const stderrSnippet = gateResult.stderr || lastAttempt?.result?.stderr;
+				const diagnostics = [
+					`strict_completion_gate_failed: command "${failedCommand}" exited with code ${gateResult.exitCode}`,
+					taskResult.reason ? `loop: ${normalizeDiagnostic(taskResult.reason, 160)}` : undefined,
+					blockingReasons.length > 0
+						? `blocked: ${blockingReasons.map((reason) => normalizeDiagnostic(reason, 120)).join('; ')}`
+						: undefined,
+					stderrSnippet ? `stderr: ${normalizeDiagnostic(stderrSnippet)}` : undefined,
+				]
+					.filter((value): value is string => Boolean(value))
+					.join(' | ');
+
 				return {
 					success: false,
-					reason: gateResult.stderr || 'strict_completion_gate_failed',
+					reason: diagnostics || 'strict_completion_gate_failed',
 				};
 			}
 

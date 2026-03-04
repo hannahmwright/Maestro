@@ -2686,6 +2686,12 @@ describe('useBatchProcessor hook', () => {
 			expect(result.current.getBatchState('test-session-id').error?.message).toContain(
 				'npm run lint failed'
 			);
+			const strictHistoryEntry = mockOnAddHistoryEntry.mock.calls.find(
+				(call) =>
+					typeof call[0]?.fullResponse === 'string' &&
+					call[0].fullResponse.includes('strict_completion_gate_failed')
+			);
+			expect(strictHistoryEntry).toBeTruthy();
 
 			act(() => {
 				result.current.resumeAfterError('test-session-id');
