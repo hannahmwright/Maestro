@@ -27,6 +27,23 @@ const renderWithProvider = (ui: React.ReactElement) => {
 	};
 };
 
+const normalizeTextContent = (value: string | null | undefined) =>
+	value?.replace(/\s+/g, ' ').trim() ?? '';
+
+const getByExactTextContent = (expected: string) =>
+	screen.getByText((_, element) => {
+		if (!element) {
+			return false;
+		}
+		const elementText = normalizeTextContent(element.textContent);
+		if (elementText !== expected) {
+			return false;
+		}
+		return Array.from(element.children).every(
+			(child) => normalizeTextContent(child.textContent) !== expected
+		);
+	});
+
 // Mock external dependencies
 vi.mock('react-markdown', () => ({
 	default: ({ children }: { children: string }) => (
@@ -436,7 +453,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
 			// Verify initial task count (3 tasks, 0 completed)
-			expect(screen.getByText(/0 of 3 tasks completed/i)).toBeInTheDocument();
+			expect(getByExactTextContent('0 of 3 tasks completed')).toBeInTheDocument();
 
 			// Simulate task completion - content updated externally
 			const updatedContent = `- [x] Task 1
@@ -446,7 +463,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 
 			// Task count should update
 			await waitFor(() => {
-				expect(screen.getByText(/1 of 3 tasks completed/i)).toBeInTheDocument();
+				expect(getByExactTextContent('1 of 3 tasks completed')).toBeInTheDocument();
 			});
 		});
 
@@ -461,7 +478,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			});
 			renderWithProvider(<AutoRun {...props} />);
 
-			expect(screen.getByText(/2 of 3 tasks completed/i)).toBeInTheDocument();
+			expect(getByExactTextContent('2 of 3 tasks completed')).toBeInTheDocument();
 		});
 
 		it('shows success styling when all tasks are completed', async () => {
@@ -473,11 +490,12 @@ describe('AutoRun + Batch Processing Integration', () => {
 - [x] Task 3`,
 				mode: 'preview',
 			});
-			const { container } = renderWithProvider(<AutoRun {...props} />);
+			renderWithProvider(<AutoRun {...props} />);
 
-			// Find the task count element and verify it has success color
-			const taskCountElement = screen.getByText(/3 of 3 tasks completed/i);
-			expect(taskCountElement).toHaveStyle({ color: createMockTheme().colors.success });
+			// Success color is applied to the completed-count segment when all tasks are done
+			const taskCountElement = getByExactTextContent('3 of 3 tasks completed');
+			const completedCountElement = taskCountElement.querySelector('span');
+			expect(completedCountElement).toHaveStyle({ color: createMockTheme().colors.success });
 		});
 
 		it('reflects content version changes by syncing with external updates', async () => {
@@ -494,7 +512,7 @@ describe('AutoRun + Batch Processing Integration', () => {
 			rerender(<AutoRun {...props} content="- [x] Initial task" contentVersion={1} />);
 
 			await waitFor(() => {
-				expect(screen.getByText(/1 of 1 task completed/i)).toBeInTheDocument();
+				expect(getByExactTextContent('1 of 1 task completed')).toBeInTheDocument();
 			});
 		});
 
@@ -660,31 +678,30 @@ describe('AutoRun + Batch Processing Integration', () => {
 	});
 
 	describe('Image Upload Disabled During Batch Run', () => {
-		it('disables image upload button during batch run', () => {
+		it('does not render image upload button during batch run', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState });
 			renderWithProvider(<AutoRun {...props} />);
 
-			// Image button should be disabled/ghosted
-			const imageButton = screen.getByTitle(/Switch to Edit mode to add images/i);
-			expect(imageButton).toBeDisabled();
+			expect(screen.queryByTitle(/Switch to Edit mode to add images/i)).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/Add image \(or paste from clipboard\)/i)).not.toBeInTheDocument();
 		});
 
-		it('enables image upload button when batch run ends', () => {
+		it('does not render image upload button when batch run ends', () => {
 			const props = createDefaultProps();
 			renderWithProvider(<AutoRun {...props} />);
 
-			const imageButton = screen.getByTitle(/Add image \(or paste from clipboard\)/i);
-			expect(imageButton).not.toBeDisabled();
+			expect(screen.queryByTitle(/Add image \(or paste from clipboard\)/i)).not.toBeInTheDocument();
 		});
 
-		it('shows correct tooltip for image button during batch run', () => {
+		it('keeps image upload file input hidden', () => {
 			const batchRunState = createBatchRunState({ isRunning: true });
 			const props = createDefaultProps({ batchRunState });
-			renderWithProvider(<AutoRun {...props} />);
+			const { container } = renderWithProvider(<AutoRun {...props} />);
 
-			const imageButton = screen.getByTitle(/Switch to Edit mode to add images/i);
-			expect(imageButton).toBeInTheDocument();
+			const fileInput = container.querySelector('input[type="file"][accept="image/*"]');
+			expect(fileInput).toBeInTheDocument();
+			expect(fileInput).toHaveClass('hidden');
 		});
 	});
 
