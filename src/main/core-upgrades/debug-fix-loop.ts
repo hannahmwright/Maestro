@@ -44,15 +44,34 @@ export class DebugFixLoopEngine {
 	private readonly reviewEngine = new ReviewRigorEngine();
 	private readonly editPlanner = new EditPlanner();
 	private readonly editApplier = new EditApplier();
+	private static readonly DERIVED_COMMAND_BLOCKLIST = /(?:&&|\|\||;|\||`|\$\()/;
 
 	private normalizeCommand(command: string): string {
 		return command.trim();
 	}
 
-	private isCommandAllowed(input: DebugFixLoopInput, command: string): boolean {
+	private isDerivedAllowed(baseCommand: string, candidateCommand: string): boolean {
+		const base = this.normalizeCommand(baseCommand);
+		const candidate = this.normalizeCommand(candidateCommand);
+		if (candidate === base) return true;
+		if (!candidate.startsWith(`${base} `)) return false;
+
+		const suffix = candidate.slice(base.length).trim();
+		if (!suffix) return true;
+		return !DebugFixLoopEngine.DERIVED_COMMAND_BLOCKLIST.test(suffix);
+	}
+
+	private isExplicitlyAllowed(input: DebugFixLoopInput, command: string): boolean {
 		const normalized = this.normalizeCommand(command);
 		return input.task.allowed_commands.some(
 			(allowedCommand) => this.normalizeCommand(allowedCommand) === normalized
+		);
+	}
+
+	private isCommandAllowed(input: DebugFixLoopInput, command: string): boolean {
+		const normalized = this.normalizeCommand(command);
+		return input.task.allowed_commands.some((allowedCommand) =>
+			this.isDerivedAllowed(allowedCommand, normalized)
 		);
 	}
 
@@ -74,6 +93,23 @@ export class DebugFixLoopEngine {
 		candidates: string[]
 	): string | null {
 		const normalizedCurrent = this.normalizeCommand(currentCommand);
+		if (
+			normalizedCurrent &&
+			DebugFixLoopEngine.DERIVED_COMMAND_BLOCKLIST.test(normalizedCurrent) &&
+			!this.isExplicitlyAllowed(input, normalizedCurrent)
+		) {
+			return null;
+		}
+
+		const firstCandidate = this.normalizeCommand(candidates[0] || '');
+		if (
+			firstCandidate &&
+			firstCandidate === normalizedCurrent &&
+			this.isCommandAllowed(input, normalizedCurrent)
+		) {
+			return normalizedCurrent;
+		}
+
 		for (const candidate of candidates) {
 			const normalizedCandidate = this.normalizeCommand(candidate);
 			if (!normalizedCandidate || normalizedCandidate === normalizedCurrent) continue;
@@ -104,6 +140,39 @@ export class DebugFixLoopEngine {
 		return this.resolveNextCommand(input, '', candidates);
 	}
 
+	private preferredCommandsForClassification(
+		input: DebugFixLoopInput,
+		classification:
+			| 'test_failure'
+			| 'type_error'
+			| 'syntax_error'
+			| 'module_not_found'
+			| 'lint_error'
+			| 'permission_error'
+			| 'command_not_found'
+			| 'runtime_error'
+			| 'unknown'
+	): string[] {
+		const includeToken = (token: string) =>
+			input.task.allowed_commands.filter((command) => command.toLowerCase().includes(token));
+
+		switch (classification) {
+			case 'lint_error':
+				return includeToken('lint');
+			case 'test_failure':
+				return includeToken('test');
+			case 'type_error':
+			case 'module_not_found':
+			case 'syntax_error':
+			case 'runtime_error':
+				return [...includeToken('test'), ...includeToken('build')];
+			case 'permission_error':
+			case 'command_not_found':
+			case 'unknown':
+				return [...includeToken('test'), ...includeToken('build'), ...includeToken('lint')];
+		}
+	}
+
 	private buildFailureResult(
 		attempts: DebugFixLoopAttempt[],
 		code: DebugFixFailureCode,
@@ -129,6 +198,9 @@ export class DebugFixLoopEngine {
 		let previousHypothesisSignature: string | null = null;
 		let previousTopMetadataHash: string | null = null;
 		let effectiveChangedFiles = [...(input.changed_files || [])];
+		const triageContextFiles = [
+			...new Set([...(input.related_files || []), ...(input.changed_files || [])]),
+		];
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			const executableCommand = this.resolveNextCommand(input, currentCommand, [currentCommand]);
@@ -208,6 +280,7 @@ export class DebugFixLoopEngine {
 					exit_code: check.exit_code,
 					stdout: check.stdout,
 					stderr: check.stderr,
+					context_fallback_files: triageContextFiles.slice(0, 8),
 				});
 				attempts[attempts.length - 1].triage = triage;
 				deps.emitLifecycle?.({ type: 'hypothesis-generated', attempt, triage });
@@ -247,11 +320,10 @@ export class DebugFixLoopEngine {
 				previousHypothesisSignature = hypothesisSignature;
 				previousTopMetadataHash = topHypothesis.metadata_hash;
 
-				const suggestedNext = this.resolveNextCommand(
-					input,
-					currentCommand,
-					topHypothesis.suggested_commands
-				);
+				const suggestedNext = this.resolveNextCommand(input, currentCommand, [
+					...topHypothesis.suggested_commands,
+					...this.preferredCommandsForClassification(input, triage.classification),
+				]);
 				if (!suggestedNext) {
 					return this.buildFailureResult(
 						attempts,

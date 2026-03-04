@@ -63,16 +63,51 @@ function classifyFailure(signal: string): {
 	return { classification: 'unknown', confidence: 0.35 };
 }
 
-function extractProbableFiles(signal: string): string[] {
-	const files = new Set<string>();
+function rankFileCandidates(files: string[], classification: FailureClassification): string[] {
+	const unique = [...new Set(files.map((filePath) => filePath.replace(/\\/g, '/')))];
+	const score = (filePath: string): number => {
+		const isTestFile = TEST_FILE_REGEX.test(filePath);
+		switch (classification) {
+			case 'test_failure':
+				return (isTestFile ? 4 : 0) + (filePath.includes('__tests__') ? 2 : 0);
+			case 'lint_error':
+			case 'type_error':
+			case 'module_not_found':
+			case 'syntax_error':
+				return (isTestFile ? 0 : 3) + (filePath.includes('/src/') ? 1 : 0);
+			default:
+				return isTestFile ? 1 : 2;
+		}
+	};
+
+	return unique.sort((a, b) => score(b) - score(a));
+}
+
+function normalizeContextFallbackFiles(files: string[]): string[] {
+	return files
+		.map((filePath) => filePath.trim())
+		.filter(Boolean)
+		.filter((filePath) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(filePath))
+		.map((filePath) => filePath.replace(/\\/g, '/'))
+		.filter((filePath) => !filePath.includes('node_modules'));
+}
+
+function extractProbableFiles(
+	signal: string,
+	classification: FailureClassification,
+	contextFallbackFiles: string[] = []
+): string[] {
+	const files: string[] = [];
 	let match: RegExpExecArray | null;
 	while ((match = FILE_PATH_REGEX.exec(signal))) {
 		const filePath = match[1];
 		if (filePath && !filePath.includes('node_modules')) {
-			files.add(filePath.replace(/\\/g, '/'));
+			files.push(filePath.replace(/\\/g, '/'));
 		}
 	}
-	return [...files].slice(0, 8);
+
+	const combined = [...files, ...normalizeContextFallbackFiles(contextFallbackFiles)];
+	return rankFileCandidates(combined, classification).slice(0, 8);
 }
 
 function extractProbableSymbols(signal: string): string[] {
@@ -86,13 +121,19 @@ function extractProbableSymbols(signal: string): string[] {
 
 function buildMetadataHash(
 	classification: FailureClassification,
+	command: string,
 	files: string[],
 	symbols: string[]
 ): string {
 	return crypto
 		.createHash('sha1')
 		.update(
-			JSON.stringify({ classification, files: files.slice(0, 5), symbols: symbols.slice(0, 5) })
+			JSON.stringify({
+				classification,
+				command,
+				files: files.slice(0, 5),
+				symbols: symbols.slice(0, 5),
+			})
 		)
 		.digest('hex');
 }
@@ -142,6 +183,7 @@ function uniqueCommands(commands: string[]): string[] {
 
 function buildHypotheses(
 	classification: FailureClassification,
+	command: string,
 	confidence: number,
 	likelyFiles: string[],
 	likelySymbols: string[]
@@ -157,7 +199,7 @@ function buildHypotheses(
 		likely_files: likelyFiles,
 		likely_symbols: likelySymbols,
 		suggested_commands: uniqueCommands([...targetedCommands, baseCommand]),
-		metadata_hash: buildMetadataHash(classification, likelyFiles, likelySymbols),
+		metadata_hash: buildMetadataHash(classification, command, likelyFiles, likelySymbols),
 	};
 
 	const fallback: FixHypothesis = {
@@ -171,6 +213,7 @@ function buildHypotheses(
 		suggested_commands: uniqueCommands([targetedCommands[0] || '', 'npm test', 'npm run build']),
 		metadata_hash: buildMetadataHash(
 			classification,
+			command,
 			likelyFiles.slice(0, 3),
 			likelySymbols.slice(0, 3)
 		),
@@ -184,9 +227,19 @@ export class FailureTriageEngine {
 		const combinedSignal = `${signal.stderr || ''}\n${signal.stdout || ''}`.trim();
 		const excerpt = combinedSignal.slice(0, 1200);
 		const { classification, confidence } = classifyFailure(combinedSignal);
-		const probableFiles = extractProbableFiles(combinedSignal);
+		const probableFiles = extractProbableFiles(
+			combinedSignal,
+			classification,
+			signal.context_fallback_files || []
+		);
 		const probableSymbols = extractProbableSymbols(combinedSignal);
-		const hypotheses = buildHypotheses(classification, confidence, probableFiles, probableSymbols);
+		const hypotheses = buildHypotheses(
+			classification,
+			signal.command,
+			confidence,
+			probableFiles,
+			probableSymbols
+		);
 
 		return {
 			classification,

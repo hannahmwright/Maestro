@@ -47,6 +47,7 @@ export interface FailureSignal {
 	exit_code: number;
 	stdout?: string;
 	stderr?: string;
+	context_fallback_files?: string[];
 }
 
 export interface FixHypothesis {

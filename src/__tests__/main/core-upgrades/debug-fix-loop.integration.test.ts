@@ -65,7 +65,7 @@ describe('DebugFixLoopEngine integration scenarios', () => {
 
 		expect(result.status).toBe('complete');
 		expect(runCommand).toHaveBeenCalledTimes(2);
-		expect(runCommand).toHaveBeenNthCalledWith(2, 'npm test -- --runInBand');
+		expect(runCommand).toHaveBeenNthCalledWith(2, 'npm test -- src/math.test.ts');
 		expect(events).toEqual([
 			'triage-started',
 			'hypothesis-generated',

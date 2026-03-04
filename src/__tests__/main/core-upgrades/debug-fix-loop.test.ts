@@ -44,6 +44,7 @@ describe('DebugFixLoopEngine', () => {
 		const runCommand = vi
 			.fn()
 			.mockResolvedValueOnce({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 })
+			.mockResolvedValueOnce({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 })
 			.mockResolvedValueOnce({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 });
 
 		const result = await engine.run(
@@ -61,7 +62,7 @@ describe('DebugFixLoopEngine', () => {
 		expect(result.failure).toEqual(
 			expect.objectContaining({
 				code: 'non_progressing_hypothesis_loop',
-				attempt: 2,
+				attempt: 3,
 				hypothesis: expect.objectContaining({
 					previous_signature: expect.any(String),
 					current_signature: expect.any(String),
@@ -107,6 +108,48 @@ describe('DebugFixLoopEngine', () => {
 				task: { ...task, allowed_commands: [] },
 				cwd: '/tmp/project',
 				initial_command: 'npm test',
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('failed');
+		expect(result.failure?.code).toBe('command_not_allowed');
+		expect(runCommand).not.toHaveBeenCalled();
+	});
+
+	it('allows derived command variants from an allowed base command', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn().mockResolvedValue({
+			exitCode: 0,
+			stdout: 'PASS',
+			durationMs: 12,
+		});
+
+		const result = await engine.run(
+			{
+				session_id: 'session-5',
+				task: { ...task, done_gate_profile: 'quick' },
+				cwd: '/tmp/project',
+				initial_command: 'npm test -- src/math.test.ts',
+				changed_files: ['src/math.test.ts'],
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('complete');
+		expect(runCommand).toHaveBeenCalledWith('npm test -- src/math.test.ts');
+	});
+
+	it('blocks derived commands that add shell control operators', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn();
+
+		const result = await engine.run(
+			{
+				session_id: 'session-6',
+				task: { ...task, done_gate_profile: 'quick' },
+				cwd: '/tmp/project',
+				initial_command: 'npm test -- src/math.test.ts && rm -rf /',
 			},
 			{ runCommand }
 		);
