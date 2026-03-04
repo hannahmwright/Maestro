@@ -157,6 +157,193 @@ export function getErrorTitleForType(type: AgentError['type']): string {
 	}
 }
 
+/**
+ * Normalize various tool status strings into UI-supported status values.
+ * Some providers emit aliases like "success"/"failed"/"pending".
+ */
+function normalizeToolStatus(status: unknown): 'running' | 'completed' | 'error' {
+	if (status === 'completed' || status === 'success') return 'completed';
+	if (status === 'error' || status === 'failed') return 'error';
+	return 'running';
+}
+
+/**
+ * Normalize tool names (provider variants) to stable matching form.
+ */
+function normalizeToolName(toolName: string): string {
+	return toolName.toLowerCase().replace(/_/g, ':');
+}
+
+function isWebSearchTool(toolName: string): boolean {
+	return normalizeToolName(toolName) === 'web:search';
+}
+
+/**
+ * Extract a stable tool invocation ID from provider-specific state payloads.
+ */
+function extractToolInvocationId(state: Record<string, unknown>): string | undefined {
+	const candidates = ['id', 'toolCallId', 'tool_call_id', 'callId', 'call_id', 'invocationId'];
+	for (const key of candidates) {
+		const value = state[key];
+		if (typeof value === 'string' && value.trim()) return value;
+	}
+	return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	return value as Record<string, unknown>;
+}
+
+function extractStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter(
+		(entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
+	);
+}
+
+function extractWebSearchQueries(state: Record<string, unknown>): string[] {
+	const querySet = new Set<string>();
+	const push = (value: unknown) => {
+		if (typeof value !== 'string') return;
+		const query = value.trim();
+		if (!query) return;
+		querySet.add(query);
+	};
+
+	const directInput = asRecord(state.input);
+	push(state.query);
+	push(directInput?.query);
+
+	const actionSources = [state.action, directInput?.action];
+	for (const actionSource of actionSources) {
+		const action = asRecord(actionSource);
+		push(action?.query);
+		for (const query of extractStringArray(action?.queries)) {
+			push(query);
+		}
+	}
+
+	const output = asRecord(state.output);
+	push(output?.query);
+	for (const query of extractStringArray(output?.queries)) {
+		push(query);
+	}
+
+	return [...querySet];
+}
+
+interface WebSearchAggregateEntry {
+	id: string;
+	invocationId?: string;
+	query: string;
+	status: 'running' | 'completed' | 'error';
+	timestamp: number;
+}
+
+function getWebSearchAggregateEntries(
+	toolState: Record<string, unknown>
+): WebSearchAggregateEntry[] {
+	const raw = toolState.searches;
+	if (!Array.isArray(raw)) return [];
+	const entries: WebSearchAggregateEntry[] = [];
+	for (const item of raw) {
+		const record = asRecord(item);
+		if (!record) continue;
+		if (typeof record.query !== 'string' || !record.query.trim()) continue;
+		const status = normalizeToolStatus(record.status);
+		const timestamp = typeof record.timestamp === 'number' ? record.timestamp : Date.now();
+		entries.push({
+			id:
+				typeof record.id === 'string' && record.id.trim()
+					? record.id
+					: `search-${record.query}-${timestamp}`,
+			invocationId:
+				typeof record.invocationId === 'string' && record.invocationId.trim()
+					? record.invocationId
+					: undefined,
+			query: record.query.trim(),
+			status,
+			timestamp,
+		});
+	}
+	return entries;
+}
+
+function mergeWebSearchAggregateEntries(
+	existingEntries: WebSearchAggregateEntry[],
+	invocationId: string | undefined,
+	status: 'running' | 'completed' | 'error',
+	queries: string[],
+	timestamp: number
+): WebSearchAggregateEntry[] {
+	const merged = [...existingEntries];
+
+	if (queries.length > 0) {
+		for (const query of queries) {
+			const idx = merged.findIndex((entry) =>
+				invocationId
+					? entry.invocationId === invocationId && entry.query === query
+					: entry.query === query
+			);
+
+			if (idx >= 0) {
+				merged[idx] = {
+					...merged[idx],
+					status,
+					timestamp,
+				};
+			} else {
+				merged.push({
+					id: `${invocationId || 'query'}:${query}`,
+					invocationId,
+					query,
+					status,
+					timestamp,
+				});
+			}
+		}
+		return merged;
+	}
+
+	// Some provider updates may not repeat query text on completion events.
+	if (invocationId) {
+		let touched = false;
+		for (let i = 0; i < merged.length; i++) {
+			if (merged[i].invocationId === invocationId) {
+				merged[i] = {
+					...merged[i],
+					status,
+					timestamp,
+				};
+				touched = true;
+			}
+		}
+		if (touched) return merged;
+	}
+
+	return merged;
+}
+
+function getWebSearchAggregateStatus(
+	entries: WebSearchAggregateEntry[],
+	fallback: 'running' | 'completed' | 'error'
+): 'running' | 'completed' | 'error' {
+	if (entries.some((entry) => entry.status === 'running')) return 'running';
+	if (entries.some((entry) => entry.status === 'error')) return 'error';
+	if (entries.length > 0) return 'completed';
+	return fallback;
+}
+
+/**
+ * Returns true when a tool log still represents an active invocation.
+ * Completed/failed logs are treated as closed.
+ */
+function isOpenToolLog(log: LogEntry): boolean {
+	const status = log.metadata?.toolState?.status;
+	return status !== 'completed' && status !== 'error';
+}
+
 // ============================================================================
 // Hook
 // ============================================================================
@@ -1503,6 +1690,17 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
+				const toolName = toolEvent.toolName || 'tool';
+				const isWebSearch = isWebSearchTool(toolName);
+				const incomingState =
+					toolEvent.state && typeof toolEvent.state === 'object'
+						? (toolEvent.state as Record<string, unknown>)
+						: {};
+				const incomingToolId = extractToolInvocationId(incomingState);
+				const hasIncomingStatus = incomingState.status !== undefined;
+				const normalizedStatus = hasIncomingStatus
+					? normalizeToolStatus(incomingState.status)
+					: undefined;
 
 				setSessions((prev) =>
 					prev.map((s) => {
@@ -1511,15 +1709,145 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab?.showThinking || targetTab.showThinking === 'off') return s;
 
-						const toolLog: LogEntry = {
-							id: `tool-${Date.now()}-${toolEvent.toolName}`,
-							timestamp: toolEvent.timestamp,
-							source: 'tool',
-							text: toolEvent.toolName,
-							metadata: {
-								toolState: toolEvent.state as NonNullable<LogEntry['metadata']>['toolState'],
-							},
-						};
+						// Prefer in-place updates so RUN -> DONE/ERROR appears as one timeline card.
+						let openToolLogIndex = -1;
+						if (isWebSearch) {
+							// Group web searches per turn: one aggregate timeline card after the latest user prompt.
+							let latestUserLogIndex = -1;
+							for (let i = targetTab.logs.length - 1; i >= 0; i--) {
+								if (targetTab.logs[i].source === 'user') {
+									latestUserLogIndex = i;
+									break;
+								}
+							}
+
+							for (let i = targetTab.logs.length - 1; i > latestUserLogIndex; i--) {
+								const candidate = targetTab.logs[i];
+								if (candidate.source !== 'tool') continue;
+								if (!isWebSearchTool(candidate.text)) continue;
+								openToolLogIndex = i;
+								break;
+							}
+						} else {
+							for (let i = targetTab.logs.length - 1; i >= 0; i--) {
+								const candidate = targetTab.logs[i];
+								if (candidate.source !== 'tool') continue;
+								const candidateState =
+									(candidate.metadata?.toolState as Record<string, unknown> | undefined) || {};
+								const candidateToolId = extractToolInvocationId(candidateState);
+
+								// Highest priority: stable invocation ID match (works for updates/completion).
+								if (incomingToolId && candidateToolId && incomingToolId === candidateToolId) {
+									openToolLogIndex = i;
+									break;
+								}
+
+								// Fallback for providers without IDs: match open entry by tool name.
+								if (candidate.text === toolName && isOpenToolLog(candidate)) {
+									openToolLogIndex = i;
+									break;
+								}
+							}
+						}
+
+						let updatedLogs = targetTab.logs;
+						if (openToolLogIndex >= 0) {
+							const existingLog = targetTab.logs[openToolLogIndex];
+							type ToolState = NonNullable<NonNullable<LogEntry['metadata']>['toolState']>;
+							const existingState = (existingLog.metadata?.toolState || {}) as ToolState;
+							const existingStateRecord = existingState as Record<string, unknown>;
+							let mergedState: ToolState;
+
+							if (isWebSearch) {
+								const queries = extractWebSearchQueries(incomingState);
+								const fallbackStatus = normalizedStatus || existingState.status || 'running';
+								const existingEntries = getWebSearchAggregateEntries(existingStateRecord);
+								const mergedEntries = mergeWebSearchAggregateEntries(
+									existingEntries,
+									incomingToolId,
+									fallbackStatus,
+									queries,
+									toolEvent.timestamp
+								);
+								mergedState = {
+									...existingState,
+									...incomingState,
+									id:
+										incomingToolId ||
+										extractToolInvocationId(existingStateRecord) ||
+										existingState.id,
+									mode: 'web_search_batch',
+									searches: mergedEntries,
+									status: getWebSearchAggregateStatus(mergedEntries, fallbackStatus),
+									input:
+										incomingState.input !== undefined ? incomingState.input : existingState.input,
+									output:
+										incomingState.output !== undefined
+											? incomingState.output
+											: existingState.output,
+								};
+							} else {
+								mergedState = {
+									...existingState,
+									...incomingState,
+									status: normalizedStatus || existingState.status || 'running',
+									id:
+										incomingToolId ||
+										extractToolInvocationId(existingStateRecord) ||
+										existingState.id,
+									input:
+										incomingState.input !== undefined ? incomingState.input : existingState.input,
+									output:
+										incomingState.output !== undefined
+											? incomingState.output
+											: existingState.output,
+								};
+							}
+
+							updatedLogs = [...targetTab.logs];
+							updatedLogs[openToolLogIndex] = {
+								...existingLog,
+								timestamp: toolEvent.timestamp,
+								metadata: {
+									...existingLog.metadata,
+									toolState: mergedState,
+								},
+							};
+						} else {
+							const fallbackStatus = normalizedStatus || 'running';
+							const webSearchEntries = isWebSearch
+								? mergeWebSearchAggregateEntries(
+										[],
+										incomingToolId,
+										fallbackStatus,
+										extractWebSearchQueries(incomingState),
+										toolEvent.timestamp
+									)
+								: [];
+
+							const toolLog: LogEntry = {
+								id: `tool-${Date.now()}-${toolName}`,
+								timestamp: toolEvent.timestamp,
+								source: 'tool',
+								text: toolName,
+								metadata: {
+									toolState: {
+										...incomingState,
+										id: incomingToolId,
+										status: isWebSearch
+											? getWebSearchAggregateStatus(webSearchEntries, fallbackStatus)
+											: fallbackStatus,
+										...(isWebSearch
+											? {
+													mode: 'web_search_batch',
+													searches: webSearchEntries,
+												}
+											: {}),
+									} as NonNullable<LogEntry['metadata']>['toolState'],
+								},
+							};
+							updatedLogs = [...targetTab.logs, toolLog];
+						}
 
 						return {
 							...s,
@@ -1527,7 +1855,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								tab.id === tabId
 									? {
 											...tab,
-											logs: [...tab.logs, toolLog],
+											logs: updatedLogs,
 										}
 									: tab
 							),

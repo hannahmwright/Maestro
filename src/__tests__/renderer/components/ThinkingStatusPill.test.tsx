@@ -164,6 +164,53 @@ describe('ThinkingStatusPill', () => {
 		});
 	});
 
+	describe('activity label', () => {
+		it('shows tool-specific activity while a web search tool is running', () => {
+			const item = createThinkingItemWithTab(
+				{},
+				{
+					logs: [
+						{
+							id: 'tool-1',
+							timestamp: Date.now(),
+							source: 'tool',
+							text: 'web:search',
+							metadata: {
+								toolState: {
+									status: 'running',
+									input: { query: 'latest market headlines' },
+								},
+							},
+						},
+					],
+				}
+			);
+
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(screen.getByText(/Searching web:/)).toBeInTheDocument();
+			expect(screen.getByText(/latest market headlines/)).toBeInTheDocument();
+		});
+
+		it('falls back to latest thinking line when no tool is running', () => {
+			const item = createThinkingItemWithTab(
+				{},
+				{
+					logs: [
+						{
+							id: 'thinking-1',
+							timestamp: Date.now(),
+							source: 'thinking',
+							text: '**Planning web search**\n\n**Assessing source credibility**',
+						},
+					],
+				}
+			);
+
+			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			expect(screen.getByText('Assessing source credibility...')).toBeInTheDocument();
+		});
+	});
+
 	describe('ElapsedTimeDisplay component', () => {
 		it('displays seconds and minutes', () => {
 			const startTime = Date.now() - 75000; // 1m 15s ago

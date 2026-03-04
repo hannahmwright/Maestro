@@ -130,6 +130,8 @@ interface CodexRawMessage {
 	type?:
 		| 'thread.started'
 		| 'turn.started'
+		| 'item.started'
+		| 'item.updated'
 		| 'item.completed'
 		| 'turn.completed'
 		| 'turn.failed'
@@ -145,11 +147,24 @@ interface CodexRawMessage {
  */
 interface CodexItem {
 	id?: string;
-	type?: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result';
+	type?: string;
 	text?: string;
 	tool?: string;
 	args?: Record<string, unknown>;
+	query?: string;
+	action?: unknown;
 	output?: string | number[];
+	status?: string;
+	command?: string | string[];
+	aggregated_output?: string | number[];
+	exit_code?: number;
+	error?: unknown;
+	invocation?: {
+		type?: string;
+		server?: string;
+		tool?: string;
+		arguments?: Record<string, unknown>;
+	};
 }
 
 /**
@@ -248,6 +263,16 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 
 		// Handle item.completed events (reasoning, agent_message, tool_call, tool_result)
+		if (msg.type === 'item.started' && msg.item) {
+			return this.transformItemStarted(msg.item, msg);
+		}
+
+		// Handle item.updated events (live tool progress updates in newer Codex schema)
+		if (msg.type === 'item.updated' && msg.item) {
+			return this.transformItemUpdated(msg.item, msg);
+		}
+
+		// Handle item.completed events (reasoning, agent_message, tool_call, tool_result, web_search)
 		if (msg.type === 'item.completed' && msg.item) {
 			return this.transformItemCompleted(msg.item, msg);
 		}
@@ -297,6 +322,56 @@ export class CodexOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Transform an item.started event (newer Codex tool lifecycle shape)
+	 */
+	private transformItemStarted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
+		// Only tool-like items are relevant for timeline display.
+		if (!this.isToolLikeItem(item.type)) {
+			return {
+				type: 'system',
+				raw: msg,
+			};
+		}
+
+		const toolName = this.getToolName(item);
+		return {
+			type: 'tool_use',
+			toolName,
+			toolState: {
+				id: item.id,
+				status: this.normalizeToolStatus(item.status, 'running'),
+				input: this.buildToolInput(item),
+				output: this.buildToolOutput(item),
+			},
+			raw: msg,
+		};
+	}
+
+	/**
+	 * Transform an item.updated event (live tool progress updates)
+	 */
+	private transformItemUpdated(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
+		if (!this.isToolLikeItem(item.type)) {
+			return {
+				type: 'system',
+				raw: msg,
+			};
+		}
+
+		return {
+			type: 'tool_use',
+			toolName: this.getToolName(item),
+			toolState: {
+				id: item.id,
+				status: this.normalizeToolStatus(item.status, 'running'),
+				input: this.buildToolInput(item),
+				output: this.buildToolOutput(item),
+			},
+			raw: msg,
+		};
+	}
+
+	/**
 	 * Transform an item.completed event based on item type
 	 */
 	private transformItemCompleted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
@@ -330,6 +405,7 @@ export class CodexOutputParser implements AgentOutputParser {
 					type: 'tool_use',
 					toolName: item.tool,
 					toolState: {
+						id: item.id,
 						status: 'running',
 						input: item.args,
 					},
@@ -344,6 +420,7 @@ export class CodexOutputParser implements AgentOutputParser {
 					type: 'tool_use',
 					toolName,
 					toolState: {
+						id: item.id,
 						status: 'completed',
 						output: this.decodeToolOutput(item.output),
 					},
@@ -352,12 +429,116 @@ export class CodexOutputParser implements AgentOutputParser {
 			}
 
 			default:
-				// Unknown item type - preserve as system event
+				// Newer Codex emits tool lifecycle items like "web_search" instead of
+				// legacy tool_call/tool_result pairs. Treat any tool-like item type as
+				// a completed tool event so the renderer can update the timeline card.
+				if (this.isToolLikeItem(item.type)) {
+					return {
+						type: 'tool_use',
+						toolName: this.getToolName(item),
+						toolState: {
+							id: item.id,
+							status: this.normalizeToolStatus(item.status, 'completed'),
+							input: this.buildToolInput(item),
+							output: this.buildToolOutput(item),
+						},
+						raw: msg,
+					};
+				}
+				// Unknown non-tool item type - preserve as system event
 				return {
 					type: 'system',
 					raw: msg,
 				};
 		}
+	}
+
+	private isToolLikeItem(type: string | undefined): boolean {
+		if (!type) return false;
+		return type !== 'reasoning' && type !== 'agent_message';
+	}
+
+	private getToolName(item: CodexItem): string | undefined {
+		let name = item.tool || item.type;
+		if (item.type === 'mcp_tool_call') {
+			const server = item.invocation?.server;
+			const tool = item.invocation?.tool;
+			if (server && tool) {
+				name = `mcp_${server}_${tool}`;
+			}
+		}
+		if (item.type === 'command_execution') {
+			name = 'bash';
+		}
+		if (!name) return undefined;
+		// Match the existing UI style (e.g., web:search instead of web_search).
+		return name.includes('_') ? name.replace(/_/g, ':') : name;
+	}
+
+	private buildToolInput(item: CodexItem): Record<string, unknown> | undefined {
+		if (item.args && typeof item.args === 'object') {
+			return item.args;
+		}
+
+		const input: Record<string, unknown> = {};
+		if (item.command !== undefined) {
+			input.command = item.command;
+		}
+		if (typeof item.query === 'string' && item.query.trim()) {
+			input.query = item.query;
+		}
+		if (item.action !== undefined) {
+			input.action = item.action;
+		}
+		if (item.invocation?.server) {
+			input.server = item.invocation.server;
+		}
+		if (item.invocation?.tool) {
+			input.tool = item.invocation.tool;
+		}
+		if (item.invocation?.arguments && typeof item.invocation.arguments === 'object') {
+			input.arguments = item.invocation.arguments;
+		}
+		return Object.keys(input).length > 0 ? input : undefined;
+	}
+
+	private buildToolOutput(item: CodexItem): unknown {
+		if (item.aggregated_output !== undefined) {
+			return this.decodeToolOutput(item.aggregated_output);
+		}
+		if (item.output !== undefined) {
+			return this.decodeToolOutput(item.output);
+		}
+		if (item.exit_code !== undefined || item.error !== undefined) {
+			const result: Record<string, unknown> = {};
+			if (item.exit_code !== undefined) result.exitCode = item.exit_code;
+			if (item.error !== undefined) result.error = item.error;
+			if (Object.keys(result).length > 0) return result;
+		}
+		if (item.action !== undefined) {
+			return item.action;
+		}
+		return undefined;
+	}
+
+	private normalizeToolStatus(
+		status: string | undefined,
+		fallback: 'running' | 'completed' | 'error'
+	): 'running' | 'completed' | 'error' {
+		if (!status) return fallback;
+		const normalized = status.toLowerCase();
+		if (
+			normalized === 'completed' ||
+			normalized === 'success' ||
+			normalized === 'succeeded' ||
+			normalized === 'done'
+		) {
+			return 'completed';
+		}
+		if (normalized === 'failed' || normalized === 'error' || normalized === 'cancelled') {
+			return 'error';
+		}
+		return 'running';
 	}
 
 	/**

@@ -21,6 +21,8 @@ import type {
 	FilePreviewTab,
 	ThinkingItem,
 	AgentError,
+	ReasoningEffort,
+	AgentExecutionMode,
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
@@ -174,8 +176,10 @@ export interface UseMainPanelPropsDeps {
 	handleTabStar: (tabId: string, starred: boolean) => void;
 	handleTabMarkUnread: (tabId: string) => void;
 	handleToggleTabReadOnlyMode: () => void;
+	handleSetTabExecutionMode: (mode: AgentExecutionMode) => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleSetTabReasoningEffort: (effort: ReasoningEffort) => void;
 	toggleUnreadFilter: () => void;
 	handleOpenTabSearch: () => void;
 	handleCloseAllTabs: () => void;
@@ -355,6 +359,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onTabStar: deps.handleTabStar,
 			onTabMarkUnread: deps.handleTabMarkUnread,
 			onToggleTabReadOnlyMode: deps.handleToggleTabReadOnlyMode,
+			onSetTabExecutionMode: deps.handleSetTabExecutionMode,
 			onToggleUnreadFilter: deps.toggleUnreadFilter,
 			onOpenTabSearch: deps.handleOpenTabSearch,
 			onCloseAllTabs: deps.handleCloseAllTabs,
@@ -374,6 +379,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onReloadFileTab: deps.handleReloadFileTab,
 			onToggleTabSaveToHistory: deps.handleToggleTabSaveToHistory,
 			onToggleTabShowThinking: deps.handleToggleTabShowThinking,
+			onSetTabReasoningEffort: deps.handleSetTabReasoningEffort,
 			onScrollPositionChange: deps.handleScrollPositionChange,
 			onAtBottomChange: deps.handleAtBottomChange,
 			onInputBlur: deps.handleMainPanelInputBlur,
@@ -555,8 +561,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleTabStar,
 			deps.handleTabMarkUnread,
 			deps.handleToggleTabReadOnlyMode,
+			deps.handleSetTabExecutionMode,
 			deps.handleToggleTabSaveToHistory,
 			deps.handleToggleTabShowThinking,
+			deps.handleSetTabReasoningEffort,
 			deps.toggleUnreadFilter,
 			deps.handleOpenTabSearch,
 			deps.handleCloseAllTabs,

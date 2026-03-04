@@ -762,6 +762,28 @@ describe('useTabHandlers', () => {
 			expect(getSession().aiTabs[0].showThinking).toBe('off');
 		});
 
+		it('handleSetTabReasoningEffort updates active tab effort', () => {
+			const tab = createMockAITab({ id: 'tab-1' });
+			const { result } = renderWithSession([tab]);
+
+			act(() => {
+				result.current.handleSetTabReasoningEffort('low');
+			});
+
+			expect((getSession().aiTabs[0] as any).reasoningEffort).toBe('low');
+		});
+
+		it('handleSetTabReasoningEffort clears override when set to default', () => {
+			const tab = createMockAITab({ id: 'tab-1', reasoningEffort: 'high' } as any);
+			const { result } = renderWithSession([tab]);
+
+			act(() => {
+				result.current.handleSetTabReasoningEffort('default');
+			});
+
+			expect((getSession().aiTabs[0] as any).reasoningEffort).toBeUndefined();
+		});
+
 		it('handleUpdateTabByClaudeSessionId updates tab by agent session id', () => {
 			const tab = createMockAITab({
 				id: 'tab-1',

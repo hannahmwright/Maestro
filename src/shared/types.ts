@@ -11,6 +11,13 @@ export type ToolType = 'claude-code' | 'opencode' | 'codex' | 'terminal' | 'fact
  */
 export type ThinkingMode = 'off' | 'on' | 'sticky';
 
+/**
+ * Reasoning effort controls how much internal reasoning the model performs.
+ * - 'default': Use the agent/provider default
+ * - 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh': Explicit override
+ */
+export type ReasoningEffort = 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
 // Session group
 export interface Group {
 	id: string;

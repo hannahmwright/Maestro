@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, startTransition } from 'react';
+import React, { useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import {
 	Terminal,
 	Cpu,
@@ -16,8 +16,23 @@ import {
 	Brain,
 	Wand2,
 	Pin,
+	Sparkles,
+	FileEdit,
+	Bot,
+	ConciergeBell,
+	ChevronDown,
+	Zap,
 } from 'lucide-react';
-import type { Session, Theme, BatchRunState, Shortcut, ThinkingMode, ThinkingItem } from '../types';
+import type {
+	Session,
+	Theme,
+	BatchRunState,
+	Shortcut,
+	ThinkingMode,
+	ThinkingItem,
+	ReasoningEffort,
+	AgentExecutionMode,
+} from '../types';
 import {
 	formatShortcutKeys,
 	formatEnterToSend,
@@ -118,6 +133,8 @@ interface InputAreaProps {
 	// Read-only mode toggle (per-tab)
 	tabReadOnlyMode?: boolean;
 	onToggleTabReadOnlyMode?: () => void;
+	tabExecutionMode?: AgentExecutionMode;
+	onSetTabExecutionMode?: (mode: AgentExecutionMode) => void;
 	// Save to History toggle (per-tab)
 	tabSaveToHistory?: boolean;
 	onToggleTabSaveToHistory?: () => void;
@@ -127,10 +144,13 @@ interface InputAreaProps {
 	shortcuts?: Record<string, Shortcut>;
 	// Flash notification callback
 	showFlashNotification?: (message: string) => void;
-	// Show Thinking toggle (per-tab) - three states: 'off' | 'on' | 'sticky'
+	// Reasoning view toggle (per-tab) - three states: 'off' | 'on' | 'sticky'
 	tabShowThinking?: ThinkingMode;
 	onToggleTabShowThinking?: () => void;
 	supportsThinking?: boolean; // From agent capabilities
+	tabReasoningEffort?: ReasoningEffort;
+	onSetTabReasoningEffort?: (effort: ReasoningEffort) => void;
+	supportsReasoningEffort?: boolean;
 	// Context warning sash props (Phase 6)
 	contextUsage?: number; // 0-100 percentage
 	contextWarningsEnabled?: boolean;
@@ -214,6 +234,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onOpenQueueBrowser,
 		tabReadOnlyMode = false,
 		onToggleTabReadOnlyMode,
+		tabExecutionMode,
+		onSetTabExecutionMode,
 		tabSaveToHistory = false,
 		onToggleTabSaveToHistory,
 		onOpenPromptComposer,
@@ -222,6 +244,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		tabShowThinking = 'off',
 		onToggleTabShowThinking,
 		supportsThinking = false,
+		tabReasoningEffort = 'default',
+		onSetTabReasoningEffort,
+		supportsReasoningEffort = false,
 		// Context warning sash props (Phase 6)
 		contextUsage = 0,
 		contextWarningsEnabled = false,
@@ -249,6 +274,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onToggleWizardShowThinking,
 	} = props;
 
+	// Keep "Effort" display concrete (no "default" label in UI).
+	// When no tab override exists, show the inherited baseline as High.
+	const effectiveReasoningEffortForDisplay = useMemo<Exclude<ReasoningEffort, 'default'>>(() => {
+		if (
+			tabReasoningEffort === 'low' ||
+			tabReasoningEffort === 'medium' ||
+			tabReasoningEffort === 'high' ||
+			tabReasoningEffort === 'xhigh'
+		) {
+			return tabReasoningEffort;
+		}
+		return 'high';
+	}, [tabReasoningEffort]);
+
 	const setCommandHistoryFilterRef = React.useCallback((el: HTMLInputElement | null) => {
 		if (el) {
 			el.focus();
@@ -257,6 +296,102 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 
 	// Get agent capabilities for conditional feature rendering
 	const { hasCapability } = useAgentCapabilities(session.toolType);
+
+	type InteractionMode = 'plan' | 'ask' | 'agent';
+	const supportsInteractionModes =
+		session.inputMode === 'ai' && hasCapability('supportsReadOnlyMode') && !!onSetTabExecutionMode;
+	const interactionMode = useMemo<InteractionMode>(() => {
+		if (tabExecutionMode === 'ask' || tabExecutionMode === 'plan' || tabExecutionMode === 'agent') {
+			return tabExecutionMode;
+		}
+		if (!tabReadOnlyMode) return 'agent';
+		return 'ask';
+	}, [tabExecutionMode, tabReadOnlyMode]);
+	const setInteractionMode = React.useCallback(
+		(mode: InteractionMode) => {
+			if (!supportsInteractionModes) return;
+			onSetTabExecutionMode?.(mode);
+		},
+		[supportsInteractionModes, onSetTabExecutionMode]
+	);
+	const [modeMenuOpen, setModeMenuOpen] = useState(false);
+	const [effortMenuOpen, setEffortMenuOpen] = useState(false);
+	const modeMenuRef = useRef<HTMLDivElement | null>(null);
+	const effortMenuRef = useRef<HTMLDivElement | null>(null);
+
+	const modeOptions = useMemo(
+		() => [
+			{
+				id: 'plan' as const,
+				label: 'Plan',
+				icon: FileEdit,
+				description: 'Read-only. Produces a documented execution plan.',
+			},
+			{
+				id: 'ask' as const,
+				label: 'Ask',
+				icon: ConciergeBell,
+				description: 'Read-only Q&A. Does not change files.',
+			},
+			{
+				id: 'agent' as const,
+				label: 'Agent',
+				icon: Bot,
+				description: 'Full editing mode. Can modify files.',
+			},
+		],
+		[]
+	);
+	const selectedModeOption = useMemo(
+		() => modeOptions.find((option) => option.id === interactionMode) ?? modeOptions[2],
+		[modeOptions, interactionMode]
+	);
+	const effortOptions = useMemo(
+		() => [
+			{
+				id: 'low' as const,
+				label: 'Low',
+				icon: Brain,
+			},
+			{
+				id: 'medium' as const,
+				label: 'Medium',
+				icon: Cpu,
+			},
+			{
+				id: 'high' as const,
+				label: 'High',
+				icon: Zap,
+			},
+			{
+				id: 'xhigh' as const,
+				label: 'Extra High',
+				icon: Sparkles,
+			},
+		],
+		[]
+	);
+	const selectedEffortOption = useMemo(
+		() =>
+			effortOptions.find((option) => option.id === effectiveReasoningEffortForDisplay) ??
+			effortOptions[2],
+		[effortOptions, effectiveReasoningEffortForDisplay]
+	);
+
+	useEffect(() => {
+		const handleClickOutside = (event: MouseEvent) => {
+			const target = event.target as Node;
+			if (modeMenuRef.current && !modeMenuRef.current.contains(target)) {
+				setModeMenuOpen(false);
+			}
+			if (effortMenuRef.current && !effortMenuRef.current.contains(target)) {
+				setEffortMenuOpen(false);
+			}
+		};
+
+		document.addEventListener('mousedown', handleClickOutside);
+		return () => document.removeEventListener('mousedown', handleClickOutside);
+	}, []);
 
 	// PERF: Memoize activeTab lookup to avoid O(n) search on every render
 	const activeTab = useMemo(
@@ -1040,9 +1175,61 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										<span>History</span>
 									</button>
 								)}
-								{/* Read-only mode toggle - AI mode only, if agent supports it */}
-								{/* User can freely toggle read-only during Auto Run */}
+								{/* Modes selector (Cursor-style) */}
+								{supportsInteractionModes && (
+									<div className="relative" ref={modeMenuRef}>
+										<button
+											onClick={() => setModeMenuOpen((prev) => !prev)}
+											className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border transition-all hover:opacity-90"
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.accent,
+												backgroundColor: `${theme.colors.accent}12`,
+											}}
+											title={`Mode: ${selectedModeOption.label}`}
+										>
+											<selectedModeOption.icon className="w-3.5 h-3.5" />
+											<ChevronDown className="w-3 h-3 opacity-70" />
+										</button>
+										{modeMenuOpen && (
+											<div
+												className="absolute bottom-full right-0 mb-2 rounded-lg border shadow-xl p-1 z-50 min-w-[210px]"
+												style={{
+													backgroundColor: theme.colors.bgSidebar,
+													borderColor: theme.colors.border,
+												}}
+											>
+												{modeOptions.map((option) => {
+													const active = interactionMode === option.id;
+													const Icon = option.icon;
+													return (
+														<button
+															key={option.id}
+															onClick={() => {
+																setInteractionMode(option.id);
+																setModeMenuOpen(false);
+															}}
+															className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all"
+															style={{
+																backgroundColor: active
+																	? `${theme.colors.accent}25`
+																	: 'transparent',
+																color: active ? theme.colors.accent : theme.colors.textMain,
+															}}
+															title={option.description}
+														>
+															<Icon className="w-3.5 h-3.5" />
+															<span className="text-xs">{option.label}</span>
+														</button>
+													);
+												})}
+											</div>
+										)}
+									</div>
+								)}
+								{/* Read-only toggle fallback for agents without interaction modes */}
 								{session.inputMode === 'ai' &&
+									!supportsInteractionModes &&
 									onToggleTabReadOnlyMode &&
 									hasCapability('supportsReadOnlyMode') && (
 										<button
@@ -1065,47 +1252,58 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 											<span>Read-only</span>
 										</button>
 									)}
-								{/* Show Thinking toggle - AI mode only, for agents that support it
-								    Three states: 'off' (hidden), 'on' (temporary), 'sticky' (persistent) */}
-								{session.inputMode === 'ai' && supportsThinking && onToggleTabShowThinking && (
-									<button
-										onClick={onToggleTabShowThinking}
-										className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
-											tabShowThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
-										}`}
-										style={{
-											backgroundColor:
-												tabShowThinking === 'sticky'
-													? `${theme.colors.warning}30`
-													: tabShowThinking === 'on'
-														? `${theme.colors.accentText}25`
-														: 'transparent',
-											color:
-												tabShowThinking === 'sticky'
-													? theme.colors.warning
-													: tabShowThinking === 'on'
-														? theme.colors.accentText
-														: theme.colors.textDim,
-											border:
-												tabShowThinking === 'sticky'
-													? `1px solid ${theme.colors.warning}50`
-													: tabShowThinking === 'on'
-														? `1px solid ${theme.colors.accentText}50`
-														: '1px solid transparent',
-										}}
-										title={
-											tabShowThinking === 'off'
-												? 'Show Thinking - Click to stream AI reasoning'
-												: tabShowThinking === 'on'
-													? 'Thinking (temporary) - Click for sticky mode'
-													: 'Thinking (sticky) - Click to turn off'
-										}
-									>
-										<Brain className="w-3 h-3" />
-										<span>Thinking</span>
-										{tabShowThinking === 'sticky' && <Pin className="w-2.5 h-2.5" />}
-									</button>
-								)}
+								{session.inputMode === 'ai' &&
+									supportsReasoningEffort &&
+									onSetTabReasoningEffort && (
+										<div className="relative" ref={effortMenuRef}>
+											<button
+												onClick={() => setEffortMenuOpen((prev) => !prev)}
+												className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border transition-all hover:opacity-90"
+												style={{
+													borderColor: theme.colors.border,
+													color: theme.colors.accentText,
+													backgroundColor: `${theme.colors.accentText}12`,
+												}}
+												title={`Reasoning effort: ${selectedEffortOption.label}`}
+											>
+												<Brain className="w-3.5 h-3.5" />
+												<ChevronDown className="w-3 h-3 opacity-70" />
+											</button>
+											{effortMenuOpen && (
+												<div
+													className="absolute bottom-full right-0 mb-2 rounded-lg border shadow-xl p-1 z-50 min-w-[150px]"
+													style={{
+														backgroundColor: theme.colors.bgSidebar,
+														borderColor: theme.colors.border,
+													}}
+												>
+													{effortOptions.map((option) => {
+														const active = option.id === effectiveReasoningEffortForDisplay;
+														const Icon = option.icon;
+														return (
+															<button
+																key={option.id}
+																onClick={() => {
+																	onSetTabReasoningEffort(option.id);
+																	setEffortMenuOpen(false);
+																}}
+																className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all"
+																style={{
+																	backgroundColor: active
+																		? `${theme.colors.accentText}25`
+																		: 'transparent',
+																	color: active ? theme.colors.accentText : theme.colors.textMain,
+																}}
+															>
+																<Icon className="w-3.5 h-3.5" />
+																<span className="text-xs">{option.label}</span>
+															</button>
+														);
+													})}
+												</div>
+											)}
+										</div>
+									)}
 								<button
 									onClick={() => setEnterToSend(!enterToSend)}
 									className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"

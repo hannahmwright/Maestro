@@ -430,7 +430,7 @@ export function PromptComposerModal({
 							</button>
 						)}
 
-						{/* Show Thinking toggle - three states: 'off' | 'on' | 'sticky' */}
+						{/* Reasoning View toggle - three states: 'off' | 'on' | 'sticky' */}
 						{supportsThinking && onToggleTabShowThinking && (
 							<button
 								onClick={onToggleTabShowThinking}
@@ -459,14 +459,14 @@ export function PromptComposerModal({
 								}}
 								title={
 									tabShowThinking === 'off'
-										? 'Show Thinking - Click to stream AI reasoning'
+										? 'Reasoning View hidden - click to stream live reasoning and tool activity'
 										: tabShowThinking === 'on'
-											? 'Thinking (temporary) - Click for sticky mode'
-											: 'Thinking (sticky) - Click to turn off'
+											? 'Reasoning View (live) - click for pinned mode'
+											: 'Reasoning View (pinned) - click to hide'
 								}
 							>
 								<Brain className="w-3 h-3" />
-								<span>Thinking</span>
+								<span>Reasoning View</span>
 								{tabShowThinking === 'sticky' && <Pin className="w-2.5 h-2.5" />}
 							</button>
 						)}

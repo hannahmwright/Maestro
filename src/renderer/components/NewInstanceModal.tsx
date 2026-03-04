@@ -1543,7 +1543,7 @@ export function EditAgentModal({
 		<div onKeyDown={handleKeyDown} role="group" aria-label="Edit agent dialog">
 			<Modal
 				theme={theme}
-				title={`Edit Agent: ${session.name}`}
+				title="Agent Settings"
 				priority={MODAL_PRIORITIES.NEW_INSTANCE}
 				onClose={onClose}
 				width={600}
@@ -1553,9 +1553,14 @@ export function EditAgentModal({
 						className="p-4 border-b flex items-center justify-between shrink-0"
 						style={{ borderColor: theme.colors.border }}
 					>
-						<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-							Edit Agent: {session.name}
-						</h2>
+						<div className="min-w-0">
+							<h2 className="text-sm font-bold truncate" style={{ color: theme.colors.textMain }}>
+								Agent Settings
+							</h2>
+							<p className="text-xs truncate mt-0.5" style={{ color: theme.colors.textDim }}>
+								{session.name}
+							</p>
+						</div>
 						<div className="flex items-center gap-2">
 							<button
 								type="button"
@@ -1595,129 +1600,132 @@ export function EditAgentModal({
 					/>
 				}
 			>
-				<div className="space-y-5">
-					{/* Agent Name */}
-					<FormInput
-						ref={nameInputRef}
-						id="edit-agent-name-input"
-						theme={theme}
-						label="Agent Name"
-						value={instanceName}
-						onChange={setInstanceName}
-						placeholder=""
-						error={validation.errorField === 'name' ? validation.error : undefined}
-						heightClass="p-2"
-					/>
-
-					{/* Agent Provider */}
-					<div>
-						<div
-							className="block text-xs font-bold opacity-70 uppercase mb-2"
-							style={{ color: theme.colors.textMain }}
-						>
-							Agent Provider
+				<div className="space-y-4">
+					<div
+						className="p-3 rounded border space-y-3"
+						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					>
+						<div className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>
+							Basics
 						</div>
-						<select
-							value={selectedToolType}
-							onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
-							className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-							style={{
-								borderColor: theme.colors.border,
-								color: theme.colors.textMain,
-								backgroundColor: theme.colors.bgMain,
-							}}
-						>
-							{SUPPORTED_AGENTS.map((agentId) => (
-								<option key={agentId} value={agentId}>
-									{agentNameMap[agentId] || agentId}
-								</option>
-							))}
-						</select>
-						{providerChanged && (
+						<FormInput
+							ref={nameInputRef}
+							id="edit-agent-name-input"
+							theme={theme}
+							label="Name"
+							value={instanceName}
+							onChange={setInstanceName}
+							placeholder=""
+							error={validation.errorField === 'name' ? validation.error : undefined}
+							heightClass="p-2"
+						/>
+						<div>
 							<div
-								className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
+								className="block text-xs font-medium mb-1"
+								style={{ color: theme.colors.textDim }}
+							>
+								AI Engine
+							</div>
+							<select
+								value={selectedToolType}
+								onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
+								className="w-full p-2 rounded border bg-transparent outline-none text-sm"
 								style={{
-									borderColor: theme.colors.warning + '60',
-									backgroundColor: theme.colors.warning + '10',
-									color: theme.colors.warning,
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									backgroundColor: theme.colors.bgSidebar,
 								}}
 							>
-								<AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-								<span>
-									Changing the provider will clear your session list (tabs). Your history panel data
-									will persist.
-								</span>
+								{SUPPORTED_AGENTS.map((agentId) => (
+									<option key={agentId} value={agentId}>
+										{agentNameMap[agentId] || agentId}
+									</option>
+								))}
+							</select>
+							{providerChanged && (
+								<div
+									className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
+									style={{
+										borderColor: theme.colors.warning + '60',
+										backgroundColor: theme.colors.warning + '10',
+										color: theme.colors.warning,
+									}}
+								>
+									<AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+									<span>
+										Switching engines resets open tabs in this session. Saved history remains.
+									</span>
+								</div>
+							)}
+						</div>
+						<div>
+							<div
+								className="block text-xs font-medium mb-1"
+								style={{ color: theme.colors.textDim }}
+							>
+								Workspace
 							</div>
-						)}
+							<div
+								className="p-2 rounded border font-mono text-sm overflow-hidden text-ellipsis"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textDim,
+									backgroundColor: theme.colors.bgActivity,
+								}}
+								title={session.projectRoot}
+							>
+								{session.projectRoot}
+							</div>
+							<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
+								This workspace is fixed for this agent.
+							</p>
+							{isSshEnabled && (
+								<div className="mt-2 text-xs flex items-center gap-1.5">
+									{remotePathValidation.checking ? (
+										<>
+											<div
+												className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"
+												style={{ borderColor: theme.colors.textDim, borderTopColor: 'transparent' }}
+											/>
+											<span style={{ color: theme.colors.textDim }}>
+												Checking path on {sshRemoteHost || 'remote'}...
+											</span>
+										</>
+									) : remotePathValidation.valid ? (
+										<>
+											<Check className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />
+											<span style={{ color: theme.colors.success }}>
+												Workspace found on {sshRemoteHost || 'remote'}
+											</span>
+										</>
+									) : remotePathValidation.error ? (
+										<>
+											<X className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
+											<span style={{ color: theme.colors.error }}>
+												{remotePathValidation.error}
+												{sshRemoteHost ? ` (${sshRemoteHost})` : ''}
+											</span>
+										</>
+									) : null}
+								</div>
+							)}
+						</div>
 					</div>
 
-					{/* Working Directory (read-only) */}
-					<div>
-						<div
-							className="block text-xs font-bold opacity-70 uppercase mb-2"
-							style={{ color: theme.colors.textMain }}
-						>
-							Working Directory
+					<div
+						className="p-3 rounded border"
+						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					>
+						<div className="text-sm font-semibold mb-2" style={{ color: theme.colors.textMain }}>
+							Behavior
 						</div>
-						<div
-							className="p-2 rounded border font-mono text-sm overflow-hidden text-ellipsis"
-							style={{
-								borderColor: theme.colors.border,
-								color: theme.colors.textDim,
-								backgroundColor: theme.colors.bgActivity,
-							}}
-							title={session.projectRoot}
-						>
-							{session.projectRoot}
-						</div>
-						<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-							Directory cannot be changed. Create a new agent for a different directory.
-						</p>
-						{/* Remote path validation status (only shown when SSH is enabled) */}
-						{isSshEnabled && (
-							<div className="mt-2 text-xs flex items-center gap-1.5">
-								{remotePathValidation.checking ? (
-									<>
-										<div
-											className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"
-											style={{ borderColor: theme.colors.textDim, borderTopColor: 'transparent' }}
-										/>
-										<span style={{ color: theme.colors.textDim }}>
-											Checking path on {sshRemoteHost || 'remote'}...
-										</span>
-									</>
-								) : remotePathValidation.valid ? (
-									<>
-										<Check className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />
-										<span style={{ color: theme.colors.success }}>
-											Directory found on {sshRemoteHost || 'remote'}
-										</span>
-									</>
-								) : remotePathValidation.error ? (
-									<>
-										<X className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
-										<span style={{ color: theme.colors.error }}>
-											{remotePathValidation.error}
-											{sshRemoteHost ? ` (${sshRemoteHost})` : ''}
-										</span>
-									</>
-								) : null}
-							</div>
-						)}
-					</div>
-
-					{/* Nudge Message */}
-					<div>
-						<div
-							className="block text-xs font-bold opacity-70 uppercase mb-2"
-							style={{ color: theme.colors.textMain }}
-						>
-							Nudge Message <span className="font-normal opacity-50">(optional)</span>
+						<div className="block text-xs font-medium mb-2" style={{ color: theme.colors.textDim }}>
+							Always Include (optional)
 						</div>
 						<textarea
 							value={nudgeMessage}
 							onChange={(e) => setNudgeMessage(e.target.value.slice(0, NUDGE_MESSAGE_MAX_LENGTH))}
-							placeholder="Instructions appended to every message you send..."
+							placeholder="Add guidance that should be included every time..."
 							className="w-full p-2 rounded border bg-transparent outline-none resize-none text-sm"
 							style={{
 								borderColor: theme.colors.border,
@@ -1727,21 +1735,22 @@ export function EditAgentModal({
 							maxLength={NUDGE_MESSAGE_MAX_LENGTH}
 						/>
 						<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-							{nudgeMessage.length}/{NUDGE_MESSAGE_MAX_LENGTH} characters. This text is added to
-							every message you send to the agent (not visible in chat).
+							{nudgeMessage.length}/{NUDGE_MESSAGE_MAX_LENGTH} characters. Hidden from the chat
+							thread.
 						</p>
 					</div>
 
-					{/* Agent Configuration (custom path, args, env vars, agent-specific settings) */}
-					{/* Per-session config (path, args, env vars) saved on modal save, not on blur */}
 					{agent && (
-						<div>
-							<div
-								className="block text-xs font-bold opacity-70 uppercase mb-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								{agentName} Settings
+						<div
+							className="p-3 rounded border"
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+						>
+							<div className="text-sm font-semibold mb-1" style={{ color: theme.colors.textMain }}>
+								Defaults
 							</div>
+							<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
+								Set model, context window, and reasoning first. Open Advanced for runtime overrides.
+							</p>
 							<AgentConfigPanel
 								theme={theme}
 								agent={agent}
@@ -1789,8 +1798,6 @@ export function EditAgentModal({
 									setAgentConfig((prev) => ({ ...prev, [key]: value }));
 								}}
 								onConfigBlur={() => {
-									// Both model and contextWindow are now saved per-session on modal save
-									// Other config options (if any) can still be saved at agent level
 									const {
 										model: _model,
 										contextWindow: _contextWindow,
@@ -1811,14 +1818,21 @@ export function EditAgentModal({
 						</div>
 					)}
 
-					{/* SSH Remote Execution - Top Level */}
 					{sshRemotes.length > 0 && (
-						<SshRemoteSelector
-							theme={theme}
-							sshRemotes={sshRemotes}
-							sshRemoteConfig={sshRemoteConfig}
-							onSshRemoteConfigChange={setSshRemoteConfig}
-						/>
+						<div
+							className="p-3 rounded border"
+							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+						>
+							<div className="text-sm font-semibold mb-3" style={{ color: theme.colors.textMain }}>
+								Remote Execution
+							</div>
+							<SshRemoteSelector
+								theme={theme}
+								sshRemotes={sshRemotes}
+								sshRemoteConfig={sshRemoteConfig}
+								onSshRemoteConfigChange={setSshRemoteConfig}
+							/>
+						</div>
 					)}
 				</div>
 			</Modal>

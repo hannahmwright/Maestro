@@ -510,7 +510,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			? [
 					{
 						id: 'toggleShowThinking',
-						label: 'Toggle Show Thinking',
+						label: 'Toggle Reasoning View',
 						shortcut: tabShortcuts?.toggleShowThinking,
 						action: () => {
 							onToggleTabShowThinking();

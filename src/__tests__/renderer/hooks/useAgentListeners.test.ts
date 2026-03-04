@@ -841,6 +841,255 @@ describe('useAgentListeners', () => {
 	// onSshRemote handler
 	// ========================================================================
 
+	describe('onToolExecution', () => {
+		it('appends a tool log for first running event', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({ id: 'tab-1', showThinking: 'on', logs: [] });
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'web:search',
+				state: { status: 'running', input: { query: 'today news' } },
+				timestamp: 1000,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0].logs || [];
+			expect(logs).toHaveLength(1);
+			expect(logs[0].source).toBe('tool');
+			expect(logs[0].text).toBe('web:search');
+			expect(logs[0].metadata?.toolState?.status).toBe('running');
+		});
+
+		it('updates the existing running tool log instead of appending duplicate entries', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'tool-1',
+						timestamp: 1000,
+						source: 'tool',
+						text: 'web:search',
+						metadata: {
+							toolState: {
+								status: 'running',
+								input: { query: 'march 3 weekday' },
+							},
+						},
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'web:search',
+				state: { status: 'completed', output: 'March 3, 2026 is Tuesday' },
+				timestamp: 2000,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0].logs || [];
+			expect(logs).toHaveLength(1);
+			expect(logs[0].id).toBe('tool-1');
+			expect(logs[0].timestamp).toBe(2000);
+			expect(logs[0].metadata?.toolState?.status).toBe('completed');
+			expect(logs[0].metadata?.toolState?.input).toEqual({ query: 'march 3 weekday' });
+			expect(logs[0].metadata?.toolState?.output).toBe('March 3, 2026 is Tuesday');
+		});
+
+		it('aggregates web search updates into one tool log within the current turn', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'tool-old',
+						timestamp: 1000,
+						source: 'tool',
+						text: 'web:search',
+						metadata: {
+							toolState: {
+								status: 'completed',
+							},
+						},
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'web:search',
+				state: { status: 'running', input: { query: 'latest markets' } },
+				timestamp: 3000,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0].logs || [];
+			expect(logs).toHaveLength(1);
+			expect(logs[0].id).toBe('tool-old');
+			expect(logs[0].source).toBe('tool');
+			expect(logs[0].metadata?.toolState?.status).toBe('running');
+			expect(
+				Array.isArray((logs[0].metadata?.toolState as Record<string, unknown>)?.searches)
+			).toBe(true);
+			const searches = ((logs[0].metadata?.toolState as Record<string, unknown>)?.searches ||
+				[]) as Array<Record<string, unknown>>;
+			expect(searches[0]?.query).toBe('latest markets');
+		});
+
+		it('starts a new web search aggregate after a new user turn begins', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'tool-old',
+						timestamp: 1000,
+						source: 'tool',
+						text: 'web:search',
+						metadata: {
+							toolState: {
+								status: 'completed',
+								searches: [{ id: 'q1', query: 'old query', status: 'completed', timestamp: 1000 }],
+							},
+						},
+					},
+					{
+						id: 'user-new-turn',
+						timestamp: 2000,
+						source: 'user',
+						text: 'new prompt',
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'web:search',
+				state: { status: 'running', input: { query: 'fresh query' } },
+				timestamp: 3000,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0].logs || [];
+			expect(logs).toHaveLength(3);
+			expect(logs[2].source).toBe('tool');
+			expect(logs[2].text).toBe('web:search');
+			const searches = ((logs[2].metadata?.toolState as Record<string, unknown>)?.searches ||
+				[]) as Array<Record<string, unknown>>;
+			expect(searches[0]?.query).toBe('fresh query');
+		});
+
+		it('merges updates by tool invocation id even when tool names repeat', () => {
+			const deps = createMockDeps();
+			const tab = createMockTab({
+				id: 'tab-1',
+				showThinking: 'on',
+				logs: [
+					{
+						id: 'tool-older',
+						timestamp: 900,
+						source: 'tool',
+						text: 'bash',
+						metadata: {
+							toolState: {
+								id: 'cmd_old',
+								status: 'completed',
+								input: { command: 'echo old' },
+								output: 'old',
+							},
+						},
+					},
+					{
+						id: 'tool-active',
+						timestamp: 1000,
+						source: 'tool',
+						text: 'bash',
+						metadata: {
+							toolState: {
+								id: 'cmd_live',
+								status: 'running',
+								input: { command: 'npm run test' },
+								output: 'PASS a.test.ts',
+							},
+						},
+					},
+				],
+			});
+			const session = createMockSession({
+				id: 'sess-1',
+				aiTabs: [tab],
+				activeTabId: 'tab-1',
+			});
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onToolExecutionHandler?.('sess-1-ai-tab-1', {
+				toolName: 'bash',
+				state: { id: 'cmd_live', status: 'completed', output: 'PASS a.test.ts\nPASS b.test.ts' },
+				timestamp: 2100,
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const logs = updated?.aiTabs[0].logs || [];
+			expect(logs).toHaveLength(2);
+			expect(logs[0].id).toBe('tool-older');
+			expect(logs[1].id).toBe('tool-active');
+			expect(logs[1].timestamp).toBe(2100);
+			expect(logs[1].metadata?.toolState?.id).toBe('cmd_live');
+			expect(logs[1].metadata?.toolState?.status).toBe('completed');
+			expect(logs[1].metadata?.toolState?.output).toBe('PASS a.test.ts\nPASS b.test.ts');
+		});
+	});
+
 	describe('onSshRemote', () => {
 		it('updates session SSH remote info', () => {
 			const deps = createMockDeps();

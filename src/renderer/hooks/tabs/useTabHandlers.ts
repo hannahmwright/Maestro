@@ -6,8 +6,9 @@ import type {
 	UnifiedTab,
 	UnifiedTabRef,
 	FilePreviewHistoryEntry,
+	AgentExecutionMode,
 } from '../../types';
-import type { ThinkingMode } from '../../../shared/types';
+import type { ThinkingMode, ReasoningEffort } from '../../../shared/types';
 import {
 	setActiveTab,
 	createTab,
@@ -78,8 +79,10 @@ export interface TabHandlersReturn {
 	handleTabStar: (tabId: string, starred: boolean) => void;
 	handleTabMarkUnread: (tabId: string) => void;
 	handleToggleTabReadOnlyMode: () => void;
+	handleSetTabExecutionMode: (mode: AgentExecutionMode) => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
+	handleSetTabReasoningEffort: (effort: ReasoningEffort) => void;
 
 	// File Tab handlers
 	handleOpenFileTab: (file: FileTabOpenParams, options?: { openInNewTab?: boolean }) => void;
@@ -1087,7 +1090,43 @@ export function useTabHandlers(): TabHandlersReturn {
 				return {
 					...s,
 					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === currentActiveTab.id ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+						tab.id === currentActiveTab.id
+							? {
+									...tab,
+									readOnlyMode: !tab.readOnlyMode,
+									executionMode: !tab.readOnlyMode
+										? tab.executionMode === 'plan'
+											? 'plan'
+											: 'ask'
+										: 'agent',
+								}
+							: tab
+					),
+				};
+			})
+		);
+	}, []);
+
+	const handleSetTabExecutionMode = useCallback((mode: AgentExecutionMode) => {
+		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === currentActiveTab.id
+							? {
+									...tab,
+									executionMode: mode,
+									readOnlyMode: mode !== 'agent',
+								}
+							: tab
 					),
 				};
 			})
@@ -1143,6 +1182,31 @@ export function useTabHandlers(): TabHandlersReturn {
 						}
 						return { ...tab, showThinking: newMode };
 					}),
+				};
+			})
+		);
+	}, []);
+
+	const handleSetTabReasoningEffort = useCallback((effort: ReasoningEffort) => {
+		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
+		const session = sessions.find((s) => s.id === activeSessionId);
+		if (!session) return;
+		const currentActiveTab = getActiveTab(session);
+		if (!currentActiveTab) return;
+
+		setSessions((prev: Session[]) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionId) return s;
+				return {
+					...s,
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === currentActiveTab.id
+							? {
+									...tab,
+									reasoningEffort: effort === 'default' ? undefined : effort,
+								}
+							: tab
+					),
 				};
 			})
 		);
@@ -1399,8 +1463,10 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleTabStar,
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
+		handleSetTabExecutionMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
+		handleSetTabReasoningEffort,
 
 		// File Tab handlers
 		handleOpenFileTab,

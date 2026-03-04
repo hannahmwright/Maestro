@@ -50,6 +50,8 @@ import type {
 	FilePreviewTab,
 	ThinkingItem,
 	AgentError,
+	ReasoningEffort,
+	AgentExecutionMode,
 } from '../types';
 
 interface SlashCommand {
@@ -176,8 +178,10 @@ interface MainPanelProps {
 		updates: { name?: string | null; starred?: boolean }
 	) => void;
 	onToggleTabReadOnlyMode?: () => void;
+	onSetTabExecutionMode?: (mode: AgentExecutionMode) => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
+	onSetTabReasoningEffort?: (effort: ReasoningEffort) => void;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
 	// Bulk tab close operations
@@ -448,6 +452,7 @@ export const MainPanel = React.memo(
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
+		const [agentReasoningEffort, setAgentReasoningEffort] = useState<ReasoningEffort>('high');
 
 		// Extract tab handlers from props
 		const {
@@ -490,39 +495,60 @@ export const MainPanel = React.memo(
 		);
 		const activeTabError = activeTab?.agentError;
 
-		// Resolve the configured context window from session override or agent settings.
+		const normalizeReasoningEffort = useCallback((value: unknown): ReasoningEffort => {
+			if (typeof value !== 'string') return 'high';
+			const normalized = value.trim().toLowerCase();
+			if (
+				normalized === 'low' ||
+				normalized === 'medium' ||
+				normalized === 'high' ||
+				normalized === 'xhigh'
+			) {
+				return normalized;
+			}
+			return 'high';
+		}, []);
+
+		// Resolve the configured context window from session override and agent settings.
 		useEffect(() => {
 			let isActive = true;
 
-			const loadContextWindow = async () => {
+			const loadAgentConfig = async () => {
 				if (!activeSession) {
-					if (isActive) setConfiguredContextWindow(0);
-					return;
-				}
-
-				if (
-					typeof activeSession.customContextWindow === 'number' &&
-					activeSession.customContextWindow > 0
-				) {
-					if (isActive) setConfiguredContextWindow(activeSession.customContextWindow);
+					if (isActive) {
+						setConfiguredContextWindow(0);
+						setAgentReasoningEffort('high');
+					}
 					return;
 				}
 
 				try {
 					const config = await window.maestro.agents.getConfig(activeSession.toolType);
-					const value = typeof config?.contextWindow === 'number' ? config.contextWindow : 0;
-					if (isActive) setConfiguredContextWindow(value);
+					const resolvedContextWindow =
+						typeof activeSession.customContextWindow === 'number' &&
+						activeSession.customContextWindow > 0
+							? activeSession.customContextWindow
+							: typeof config?.contextWindow === 'number'
+								? config.contextWindow
+								: 0;
+					if (isActive) setConfiguredContextWindow(resolvedContextWindow);
+					if (isActive) {
+						setAgentReasoningEffort(normalizeReasoningEffort(config?.reasoningEffort));
+					}
 				} catch (error) {
 					console.error('Failed to load agent context window setting', error);
-					if (isActive) setConfiguredContextWindow(0);
+					if (isActive) {
+						setConfiguredContextWindow(0);
+						setAgentReasoningEffort('high');
+					}
 				}
 			};
 
-			loadContextWindow();
+			loadAgentConfig();
 			return () => {
 				isActive = false;
 			};
-		}, [activeSession?.toolType, activeSession?.customContextWindow]);
+		}, [activeSession?.toolType, activeSession?.customContextWindow, normalizeReasoningEffort]);
 
 		// Resolve SSH remote name for header display when session has SSH configured
 		const [sshRemoteName, setSshRemoteName] = useState<string | null>(null);
@@ -1783,11 +1809,16 @@ export const MainPanel = React.memo(
 											onOpenQueueBrowser={onOpenQueueBrowser}
 											tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
 											onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
+											tabExecutionMode={activeTab?.executionMode}
+											onSetTabExecutionMode={props.onSetTabExecutionMode}
 											tabSaveToHistory={activeTab?.saveToHistory ?? false}
 											onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
 											tabShowThinking={activeTab?.showThinking ?? 'off'}
 											onToggleTabShowThinking={props.onToggleTabShowThinking}
+											tabReasoningEffort={activeTab?.reasoningEffort ?? agentReasoningEffort}
+											onSetTabReasoningEffort={props.onSetTabReasoningEffort}
 											supportsThinking={hasCapability('supportsThinkingDisplay')}
+											supportsReasoningEffort={activeSession.toolType === 'codex'}
 											onOpenPromptComposer={props.onOpenPromptComposer}
 											shortcuts={shortcuts}
 											showFlashNotification={showFlashNotification}

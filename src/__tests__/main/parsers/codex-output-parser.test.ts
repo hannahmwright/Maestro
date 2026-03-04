@@ -98,7 +98,8 @@ describe('CodexOutputParser', () => {
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('tool_use');
 				expect(event?.toolName).toBe('shell');
-				expect(event?.toolState).toEqual({
+				expect(event?.toolState).toMatchObject({
+					id: 'item_2',
 					status: 'running',
 					input: { command: ['ls', '-la'] },
 				});
@@ -119,7 +120,8 @@ describe('CodexOutputParser', () => {
 				const event = parser.parseJsonLine(line);
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('tool_use');
-				expect(event?.toolState).toEqual({
+				expect(event?.toolState).toMatchObject({
+					id: 'item_3',
 					status: 'completed',
 					output: 'total 64\ndrwxr-xr-x  12 user...',
 				});
@@ -140,9 +142,98 @@ describe('CodexOutputParser', () => {
 				const event = parser.parseJsonLine(line);
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('tool_use');
-				expect(event?.toolState).toEqual({
+				expect(event?.toolState).toMatchObject({
+					id: 'item_4',
 					status: 'completed',
 					output: 'Hello',
+				});
+			});
+		});
+
+		describe('item.started/item.completed events - web_search (new Codex schema)', () => {
+			it('should parse item.started web_search as running tool_use', () => {
+				const line = JSON.stringify({
+					type: 'item.started',
+					item: {
+						id: 'ws_1',
+						type: 'web_search',
+						query: '',
+						action: { type: 'other' },
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('web:search');
+				expect(event?.toolState).toMatchObject({
+					id: 'ws_1',
+					status: 'running',
+					input: { action: { type: 'other' } },
+				});
+			});
+
+			it('should parse item.completed web_search as completed tool_use', () => {
+				const line = JSON.stringify({
+					type: 'item.completed',
+					item: {
+						id: 'ws_1',
+						type: 'web_search',
+						query: 'March 3 2026 weekday',
+						action: {
+							type: 'search',
+							query: 'March 3 2026 weekday',
+							queries: ['March 3 2026 weekday'],
+						},
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('web:search');
+				expect(event?.toolState).toMatchObject({
+					id: 'ws_1',
+					status: 'completed',
+					input: {
+						query: 'March 3 2026 weekday',
+						action: {
+							type: 'search',
+							query: 'March 3 2026 weekday',
+							queries: ['March 3 2026 weekday'],
+						},
+					},
+					output: {
+						type: 'search',
+						query: 'March 3 2026 weekday',
+						queries: ['March 3 2026 weekday'],
+					},
+				});
+			});
+
+			it('should parse item.updated command_execution as running tool_use with live output', () => {
+				const line = JSON.stringify({
+					type: 'item.updated',
+					item: {
+						id: 'cmd_1',
+						type: 'command_execution',
+						status: 'in_progress',
+						command: ['npm', 'run', 'test'],
+						aggregated_output: 'PASS src/foo.test.ts\n',
+					},
+				});
+
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('bash');
+				expect(event?.toolState).toMatchObject({
+					id: 'cmd_1',
+					status: 'running',
+					input: {
+						command: ['npm', 'run', 'test'],
+					},
+					output: 'PASS src/foo.test.ts\n',
 				});
 			});
 		});

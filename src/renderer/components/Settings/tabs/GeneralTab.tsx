@@ -707,23 +707,28 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 			/>
 
-			{/* Default Thinking Toggle - Three states: Off, On, Sticky */}
+			{/* Reasoning View default - global preference for new tabs */}
 			<div>
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
 					<Brain className="w-3 h-3" />
-					Default Thinking Mode
+					Reasoning View Default
 				</div>
 				<div
 					className="p-3 rounded border"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
 				>
 					<div className="font-medium mb-1" style={{ color: theme.colors.textMain }}>
-						Show AI thinking/reasoning content for new tabs
+						Default reasoning/tool visibility for new tabs
 					</div>
 					<div className="text-sm opacity-60 mb-3" style={{ color: theme.colors.textDim }}>
-						{defaultShowThinking === 'off' && 'Thinking hidden, only final responses shown'}
-						{defaultShowThinking === 'on' && 'Thinking streams live, clears on completion'}
-						{defaultShowThinking === 'sticky' && 'Thinking streams live and stays visible'}
+						{defaultShowThinking === 'off' && 'Reasoning View hidden. Final responses only.'}
+						{defaultShowThinking === 'on' &&
+							'Reasoning View streams live, then auto-collapses on completion.'}
+						{defaultShowThinking === 'sticky' &&
+							'Reasoning View streams live and stays visible after completion.'}
+					</div>
+					<div className="text-xs opacity-50 mb-3" style={{ color: theme.colors.textDim }}>
+						Display only. This does not change model reasoning effort.
 					</div>
 					<ToggleButtonGroup
 						options={[

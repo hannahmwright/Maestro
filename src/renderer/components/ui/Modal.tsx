@@ -37,7 +37,7 @@
 import React, { useRef, useEffect, ReactNode } from 'react';
 import { X } from 'lucide-react';
 import type { Theme } from '../../types';
-import { useModalLayer, type UseModalLayerOptions } from '../../hooks';
+import { useModalLayer, type UseModalLayerOptions } from '../../hooks/ui/useModalLayer';
 
 export interface ModalProps {
 	/** Theme object for styling */

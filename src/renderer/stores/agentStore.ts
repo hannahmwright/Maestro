@@ -33,6 +33,13 @@ import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { gitService } from '../services/git';
 
+const PLAN_MODE_PROMPT_PREFIX = `# Mode: Plan
+
+Produce a documented implementation plan for this request.
+- Return a concise, numbered checklist.
+- Include specific files and commands you would execute.
+- Do not modify files in this mode.`;
+
 // ============================================================================
 // Store Types
 // ============================================================================
@@ -323,6 +330,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 				}
 
+				if (targetTab.executionMode === 'plan') {
+					effectivePrompt = `${PLAN_MODE_PROMPT_PREFIX}\n\n${effectivePrompt}`;
+				}
+
 				console.log('[processQueuedItem] Spawning agent with queued message:', {
 					sessionId: targetSessionId,
 					toolType: session.toolType,
@@ -350,6 +361,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomEnvVars: session.customEnvVars,
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
+					sessionReasoningEffort: targetTab.reasoningEffort ?? 'default',
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 			} else if (item.type === 'command' && item.command) {
@@ -402,6 +414,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						promptForAgent = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${substitutedPrompt}`;
 					}
 
+					if (targetTab.executionMode === 'plan') {
+						promptForAgent = `${PLAN_MODE_PROMPT_PREFIX}\n\n${promptForAgent}`;
+					}
+
 					// Add user log showing the command with its interpolated prompt
 					useSessionStore.getState().addLogToTab(
 						sessionId,
@@ -437,6 +453,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionCustomEnvVars: session.customEnvVars,
 						sessionCustomModel: session.customModel,
 						sessionCustomContextWindow: session.customContextWindow,
+						sessionReasoningEffort: targetTab.reasoningEffort ?? 'default',
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
 				} else {

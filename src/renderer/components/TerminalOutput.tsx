@@ -67,6 +67,252 @@ const summarizeTodos = (v: unknown): string | null => {
 	return `${label} (${completed}/${todos.length})`;
 };
 
+/** Normalize status aliases from different providers into shared UI states. */
+const normalizeToolStatus = (status: unknown): 'running' | 'completed' | 'error' => {
+	if (status === 'completed' || status === 'success') return 'completed';
+	if (status === 'error' || status === 'failed') return 'error';
+	return 'running';
+};
+
+/** Compact preview for tool output values (string/object/array). */
+const summarizeToolOutput = (v: unknown): string | null => {
+	if (v === null || v === undefined) return null;
+	if (typeof v === 'string') {
+		const compact = v.replace(/\s+/g, ' ').trim();
+		return compact.length > 140 ? compact.substring(0, 140) + '\u2026' : compact;
+	}
+	try {
+		const json = JSON.stringify(v);
+		if (!json) return null;
+		return json.length > 140 ? json.substring(0, 140) + '\u2026' : json;
+	} catch {
+		return null;
+	}
+};
+
+/** Convert tool values to a compact one-line representation. */
+const summarizeToolValue = (v: unknown, max = 160): string | null => {
+	if (v === null || v === undefined) return null;
+	if (typeof v === 'string') {
+		const compact = v.replace(/\s+/g, ' ').trim();
+		if (!compact) return null;
+		return compact.length > max ? compact.substring(0, max) + '\u2026' : compact;
+	}
+	if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+	if (Array.isArray(v)) {
+		const asCommand = safeCommand(v);
+		if (asCommand) return summarizeToolValue(asCommand, max);
+		try {
+			const json = JSON.stringify(v);
+			return json.length > max ? json.substring(0, max) + '\u2026' : json;
+		} catch {
+			return null;
+		}
+	}
+	try {
+		const json = JSON.stringify(v);
+		if (!json) return null;
+		return json.length > max ? json.substring(0, max) + '\u2026' : json;
+	} catch {
+		return null;
+	}
+};
+
+/** Convert tool values to multiline detail text for expanded display. */
+const formatToolDetailValue = (v: unknown, max = 2400): string | null => {
+	if (v === null || v === undefined) return null;
+	let text: string;
+	if (typeof v === 'string') {
+		text = v.trim();
+		if (!text) return null;
+	} else if (typeof v === 'number' || typeof v === 'boolean') {
+		text = String(v);
+	} else if (Array.isArray(v)) {
+		const asCommand = safeCommand(v);
+		if (asCommand) {
+			text = asCommand;
+		} else {
+			try {
+				text = JSON.stringify(v, null, 2);
+			} catch {
+				return null;
+			}
+		}
+	} else {
+		try {
+			text = JSON.stringify(v, null, 2);
+		} catch {
+			return null;
+		}
+	}
+
+	return text.length > max
+		? text.substring(0, max) + `\n... [truncated ${text.length - max} chars]`
+		: text;
+};
+
+interface ToolDetailRow {
+	label: string;
+	value: string;
+}
+
+interface ToolDisplayData {
+	summary: string | null;
+	detailRows: ToolDetailRow[];
+	outputDetail: string | null;
+}
+
+/** Build detail rows + summary from tool state so RUN cards can show live context. */
+const buildToolDisplayData = (
+	toolState: NonNullable<LogEntry['metadata']>['toolState'] | undefined
+): ToolDisplayData => {
+	const detailRows: ToolDetailRow[] = [];
+	const input = toolState?.input as Record<string, unknown> | undefined;
+
+	const pushDetail = (label: string, value: string | null) => {
+		if (!value) return;
+		const duplicate = detailRows.some((row) => row.label === label && row.value === value);
+		if (!duplicate) {
+			detailRows.push({ label, value });
+		}
+	};
+
+	if (input) {
+		pushDetail('command', safeCommand(input.command) || safeCommand(input.cmd));
+		pushDetail('query', safeStr(input.query) || safeStr(input.pattern));
+		pushDetail('path', safeStr(input.path) || safeStr(input.file_path) || safeStr(input.filePath));
+		pushDetail(
+			'task',
+			safeStr(input.description) || safeStr(input.prompt) || safeStr(input.task_id)
+		);
+		pushDetail('todos', summarizeTodos(input.todos));
+		pushDetail('code', truncateStr(input.code, 140));
+		pushDetail('content', truncateStr(input.content, 120));
+
+		const consumedKeys = new Set([
+			'command',
+			'cmd',
+			'query',
+			'pattern',
+			'path',
+			'file_path',
+			'filePath',
+			'description',
+			'prompt',
+			'task_id',
+			'todos',
+			'code',
+			'content',
+		]);
+
+		for (const [key, value] of Object.entries(input)) {
+			if (consumedKeys.has(key)) continue;
+			pushDetail(key, summarizeToolValue(value, 120));
+			if (detailRows.length >= 6) break;
+		}
+	}
+
+	const outputDetail = formatToolDetailValue(toolState?.output);
+	const outputSummary = summarizeToolOutput(toolState?.output);
+	const summary = detailRows[0]?.value || outputSummary;
+
+	return {
+		summary,
+		detailRows,
+		outputDetail,
+	};
+};
+
+const normalizeToolName = (toolName: string): string => toolName.toLowerCase().replace(/_/g, ':');
+const isWebSearchTool = (toolName: string): boolean => normalizeToolName(toolName) === 'web:search';
+
+const asRecord = (value: unknown): Record<string, unknown> | null => {
+	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+	return value as Record<string, unknown>;
+};
+
+const asStringArray = (value: unknown): string[] => {
+	if (!Array.isArray(value)) return [];
+	return value.filter(
+		(entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
+	);
+};
+
+interface WebSearchTimelineItem {
+	id: string;
+	query: string;
+	status: 'running' | 'completed' | 'error';
+	timestamp?: number;
+}
+
+const extractWebSearchTimelineItems = (
+	toolState: NonNullable<LogEntry['metadata']>['toolState'] | undefined
+): WebSearchTimelineItem[] => {
+	if (!toolState) return [];
+	const items: WebSearchTimelineItem[] = [];
+	const push = (queryValue: unknown, status: unknown, id: string, timestamp?: number) => {
+		if (typeof queryValue !== 'string') return;
+		const query = queryValue.trim();
+		if (!query) return;
+		if (items.some((item) => item.query === query && item.id === id)) return;
+		items.push({
+			id,
+			query,
+			status: normalizeToolStatus(status),
+			timestamp,
+		});
+	};
+
+	const stateRecord = toolState as Record<string, unknown>;
+	if (Array.isArray(stateRecord.searches)) {
+		for (const raw of stateRecord.searches) {
+			const entry = asRecord(raw);
+			if (!entry) continue;
+			const id =
+				typeof entry.id === 'string' && entry.id.trim()
+					? entry.id
+					: `search-${String(entry.query || '')}`;
+			const timestamp = typeof entry.timestamp === 'number' ? entry.timestamp : undefined;
+			push(entry.query, entry.status, id, timestamp);
+		}
+	}
+
+	// Fallback for non-aggregated web_search tool states.
+	if (items.length === 0) {
+		const input = asRecord(stateRecord.input);
+		const output = asRecord(stateRecord.output);
+		const action = asRecord(input?.action);
+		const outputAction = asRecord(output?.action);
+		const status = stateRecord.status;
+
+		push(input?.query, status, 'input-query');
+		push(stateRecord.query, status, 'state-query');
+		push(action?.query, status, 'action-query');
+		push(output?.query, status, 'output-query');
+		push(outputAction?.query, status, 'output-action-query');
+
+		for (const query of asStringArray(action?.queries)) {
+			push(query, status, `action-list:${query}`);
+		}
+		for (const query of asStringArray(output?.queries)) {
+			push(query, status, `output-list:${query}`);
+		}
+		for (const query of asStringArray(outputAction?.queries)) {
+			push(query, status, `output-action-list:${query}`);
+		}
+	}
+
+	return items.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+};
+
+const extractSiteFilter = (query: string): string | null => {
+	const match = query.match(/\bsite:([^\s]+)/i);
+	return match?.[1] || null;
+};
+
+const buildSearchExternalUrl = (query: string): string =>
+	`https://www.google.com/search?q=${encodeURIComponent(query)}`;
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -368,6 +614,16 @@ const LogItemComponent = memo(
 		const isReversed = isUserMessage
 			? userMessageAlignment === 'left'
 			: userMessageAlignment === 'right';
+		const isToolLog = log.source === 'tool';
+		const isThinkingLog = log.source === 'thinking';
+		const showActionButtons = !isToolLog && !isThinkingLog;
+		const toolStatus = isToolLog ? normalizeToolStatus(log.metadata?.toolState?.status) : undefined;
+		const toolStatusColor =
+			toolStatus === 'completed'
+				? theme.colors.success
+				: toolStatus === 'error'
+					? theme.colors.error
+					: theme.colors.warning;
 
 		return (
 			<div
@@ -402,23 +658,27 @@ const LogItemComponent = memo(
 					})()}
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={`flex-1 min-w-0 p-4 ${showActionButtons ? 'pb-10' : 'pb-4'} rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
 					style={{
 						backgroundColor: isUserMessage
 							? isAIMode
 								? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
 								: `color-mix(in srgb, ${theme.colors.accent} 15%, ${theme.colors.bgActivity})`
-							: log.source === 'stderr' || log.source === 'error'
-								? `color-mix(in srgb, ${theme.colors.error} 8%, ${theme.colors.bgActivity})`
-								: isAIMode
-									? theme.colors.bgActivity
-									: 'transparent',
+							: isToolLog
+								? `color-mix(in srgb, ${toolStatusColor} 8%, ${theme.colors.bgActivity})`
+								: log.source === 'stderr' || log.source === 'error'
+									? `color-mix(in srgb, ${theme.colors.error} 8%, ${theme.colors.bgActivity})`
+									: isAIMode
+										? theme.colors.bgActivity
+										: 'transparent',
 						borderColor:
 							isUserMessage && isAIMode
 								? theme.colors.accent + '40'
-								: log.source === 'stderr' || log.source === 'error'
-									? theme.colors.error
-									: theme.colors.border,
+								: isToolLog
+									? toolStatusColor + '60'
+									: log.source === 'stderr' || log.source === 'error'
+										? theme.colors.error
+										: theme.colors.border,
 					}}
 				>
 					{/* Local filter icon for system output only */}
@@ -541,39 +801,60 @@ const LogItemComponent = memo(
 					{/* Special rendering for tool execution events (shown alongside thinking) */}
 					{log.source === 'tool' &&
 						(() => {
-							// Extract tool input details for display
-							const toolInput = log.metadata?.toolState?.input as
-								| Record<string, unknown>
-								| undefined;
-							const toolDetail = toolInput
-								? safeCommand(toolInput.command) ||
-									safeStr(toolInput.pattern) ||
-									safeStr(toolInput.file_path) ||
-									safeStr(toolInput.filePath) || // OpenCode read tool
-									safeStr(toolInput.query) ||
-									safeStr(toolInput.description) || // Task tool
-									safeStr(toolInput.prompt) || // Task tool fallback
-									safeStr(toolInput.task_id) || // TaskOutput tool
-									summarizeTodos(toolInput.todos) || // TodoWrite tool
-									// Codex-specific tool arg patterns
-									safeStr(toolInput.path) || // Codex file operations
-									safeStr(toolInput.cmd) || // Codex shell commands
-									safeStr(toolInput.code) || // Codex code execution
-									truncateStr(toolInput.content, 100) || // Codex write operations (truncated)
-									null
-								: null;
+							const toolState = log.metadata?.toolState;
+							const toolStatus = normalizeToolStatus(toolState?.status);
+							const webSearchItems = isWebSearchTool(log.text)
+								? extractWebSearchTimelineItems(toolState)
+								: [];
+							const hasWebSearchItems = webSearchItems.length > 0;
+							const runningSearches = webSearchItems.filter(
+								(item) => item.status === 'running'
+							).length;
+							const failedSearches = webSearchItems.filter(
+								(item) => item.status === 'error'
+							).length;
+							const firstQuery = webSearchItems[0]?.query;
+							const toolDisplay = buildToolDisplayData(toolState);
+							const showToolDetails = toolStatus === 'running' || isExpanded;
+							const canToggleToolDetails =
+								toolStatus !== 'running' &&
+								(hasWebSearchItems ||
+									toolDisplay.detailRows.length > 0 ||
+									!!toolDisplay.outputDetail);
+							const toolSummary = hasWebSearchItems
+								? `${webSearchItems.length} search${webSearchItems.length === 1 ? '' : 'es'}${
+										runningSearches > 0
+											? ` (${runningSearches} running)`
+											: failedSearches > 0
+												? ` (${failedSearches} failed)`
+												: ''
+									}${firstQuery ? ` - ${truncateStr(firstQuery, 70)}` : ''}`
+								: toolDisplay.summary;
+							const statusLabel =
+								toolStatus === 'completed'
+									? '[DONE]'
+									: toolStatus === 'error'
+										? '[ERROR]'
+										: '[RUN]';
+							const statusColor =
+								toolStatus === 'completed'
+									? theme.colors.success
+									: toolStatus === 'error'
+										? theme.colors.error
+										: theme.colors.warning;
 
 							return (
 								<div
-									className="px-4 py-1.5 text-xs font-mono border-l-2"
+									className="rounded-lg border px-3 py-2 text-xs font-mono"
 									style={{
 										color: theme.colors.textMain,
-										borderColor: theme.colors.accent,
+										borderColor: `${statusColor}60`,
+										backgroundColor: `${statusColor}10`,
 									}}
 								>
-									<div className="flex items-start gap-2">
+									<div className="flex items-center gap-2">
 										<span
-											className="px-1.5 py-0.5 rounded shrink-0"
+											className="px-1.5 py-0.5 rounded shrink-0 text-[11px] font-semibold"
 											style={{
 												backgroundColor: `${theme.colors.accent}30`,
 												color: theme.colors.accent,
@@ -581,28 +862,174 @@ const LogItemComponent = memo(
 										>
 											{log.text}
 										</span>
-										{log.metadata?.toolState?.status === 'running' && (
+										<span
+											className="px-1.5 py-0.5 rounded shrink-0 text-[10px] tracking-wide font-semibold"
+											style={{
+												backgroundColor: `${statusColor}25`,
+												color: statusColor,
+											}}
+										>
+											{statusLabel}
+										</span>
+										{toolStatus === 'running' && (
 											<span
-												className="animate-pulse shrink-0 pt-0.5"
-												style={{ color: theme.colors.warning }}
+												className="animate-pulse shrink-0 text-[10px]"
+												style={{ color: statusColor }}
+												aria-label="Tool running"
 											>
 												●
 											</span>
 										)}
-										{log.metadata?.toolState?.status === 'completed' && (
-											<span className="shrink-0 pt-0.5" style={{ color: theme.colors.success }}>
-												✓
+										{!showToolDetails && toolSummary && (
+											<span
+												className="min-w-0 flex-1 truncate text-[11px]"
+												style={{ color: theme.colors.textDim }}
+												title={toolSummary}
+											>
+												{toolSummary}
 											</span>
 										)}
-										{toolDetail && (
-											<span
-												className="opacity-70 break-words whitespace-pre-wrap"
-												style={{ color: theme.colors.textMain }}
+										{canToggleToolDetails && (
+											<button
+												type="button"
+												onClick={handleExpandToggle}
+												className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border hover:opacity-80 transition-opacity"
+												style={{
+													color: theme.colors.textDim,
+													borderColor: `${theme.colors.border}80`,
+													backgroundColor: `${theme.colors.bgMain}50`,
+												}}
 											>
-												{toolDetail}
-											</span>
+												{showToolDetails ? (
+													<ChevronUp className="w-3 h-3" />
+												) : (
+													<ChevronDown className="w-3 h-3" />
+												)}
+												{showToolDetails ? 'Hide' : 'Details'}
+											</button>
 										)}
 									</div>
+									{showToolDetails && (
+										<div className="mt-2 space-y-1.5">
+											{hasWebSearchItems && (
+												<div className="space-y-2">
+													<div
+														className="flex items-center justify-between text-[10px] uppercase tracking-wide"
+														style={{ color: theme.colors.textDim, opacity: 0.9 }}
+													>
+														<span>Web Search Timeline</span>
+														<span>
+															{webSearchItems.length} total
+															{runningSearches > 0 ? ` • ${runningSearches} running` : ''}
+															{failedSearches > 0 ? ` • ${failedSearches} failed` : ''}
+														</span>
+													</div>
+													<div className="space-y-1.5 max-h-64 overflow-auto pr-1">
+														{webSearchItems.map((item, idx) => {
+															const searchStatusColor =
+																item.status === 'completed'
+																	? theme.colors.success
+																	: item.status === 'error'
+																		? theme.colors.error
+																		: theme.colors.warning;
+															const siteFilter = extractSiteFilter(item.query);
+															return (
+																<div
+																	key={`${item.id}-${idx}`}
+																	className="rounded border px-2 py-1.5"
+																	style={{
+																		borderColor: `${searchStatusColor}50`,
+																		backgroundColor: `${searchStatusColor}10`,
+																	}}
+																>
+																	<div className="flex items-center gap-2">
+																		<span
+																			className="px-1 py-0.5 rounded text-[10px] font-semibold"
+																			style={{
+																				backgroundColor: `${searchStatusColor}20`,
+																				color: searchStatusColor,
+																			}}
+																		>
+																			{item.status.toUpperCase()}
+																		</span>
+																		{siteFilter && (
+																			<span
+																				className="px-1 py-0.5 rounded text-[10px]"
+																				style={{
+																					backgroundColor: `${theme.colors.accent}20`,
+																					color: theme.colors.accent,
+																				}}
+																			>
+																				{siteFilter}
+																			</span>
+																		)}
+																	</div>
+																	<button
+																		type="button"
+																		onClick={() => {
+																			void window.maestro.shell.openExternal(
+																				buildSearchExternalUrl(item.query)
+																			);
+																		}}
+																		className="mt-1 text-left w-full text-[11px] underline decoration-dotted hover:opacity-80 transition-opacity"
+																		style={{ color: theme.colors.textMain }}
+																		title="Open search query in browser"
+																	>
+																		{item.query}
+																	</button>
+																</div>
+															);
+														})}
+													</div>
+												</div>
+											)}
+											{!hasWebSearchItems &&
+												toolDisplay.detailRows.map((row) => (
+													<div key={`${log.id}-${row.label}-${row.value}`} className="flex gap-2">
+														<span
+															className="shrink-0 uppercase tracking-wide text-[10px]"
+															style={{ color: theme.colors.textDim, opacity: 0.85 }}
+														>
+															{row.label}
+														</span>
+														<span
+															className="break-words whitespace-pre-wrap text-[11px]"
+															style={{ color: theme.colors.textMain, opacity: 0.92 }}
+														>
+															{row.value}
+														</span>
+													</div>
+												))}
+											{!hasWebSearchItems && toolDisplay.outputDetail && (
+												<div className="pt-1">
+													<div
+														className="uppercase tracking-wide text-[10px] mb-1"
+														style={{ color: theme.colors.textDim, opacity: 0.85 }}
+													>
+														output
+													</div>
+													<div
+														className="rounded border px-2 py-1.5 whitespace-pre-wrap break-words text-[11px] max-h-52 overflow-auto"
+														style={{
+															backgroundColor: `${theme.colors.bgMain}55`,
+															borderColor: `${theme.colors.border}80`,
+															color: theme.colors.textMain,
+														}}
+													>
+														{toolDisplay.outputDetail}
+													</div>
+												</div>
+											)}
+											{toolStatus === 'running' && !toolDisplay.outputDetail && (
+												<div
+													className="text-[10px] italic"
+													style={{ color: theme.colors.textDim, opacity: 0.8 }}
+												>
+													Waiting for tool output...
+												</div>
+											)}
+										</div>
+									)}
 								</div>
 							);
 						})()}
@@ -816,118 +1243,124 @@ const LogItemComponent = memo(
 							</>
 						))}
 					{/* Action buttons - bottom right corner */}
-					<div
-						className="absolute bottom-2 right-2 flex items-center gap-1"
-						style={{ transition: 'opacity 0.15s ease-in-out' }}
-					>
-						{/* Markdown toggle button for AI responses */}
-						{log.source !== 'user' && isAIMode && (
-							<button
-								onClick={onToggleMarkdownEditMode}
-								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-								style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
-								title={
-									markdownEditMode
-										? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
-										: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
-								}
-							>
-								{markdownEditMode ? <Eye className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
-							</button>
-						)}
-						{/* Replay button for user messages in AI mode */}
-						{isUserMessage && isAIMode && onReplayMessage && (
-							<button
-								onClick={() => onReplayMessage(log.text, log.images)}
-								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-								style={{ color: theme.colors.textDim }}
-								title="Replay message"
-							>
-								<RotateCcw className="w-3.5 h-3.5" />
-							</button>
-						)}
-						{/* Copy to Clipboard Button */}
-						<button
-							onClick={() => copyToClipboard(log.text)}
-							className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-							style={{ color: theme.colors.textDim }}
-							title="Copy to clipboard"
+					{showActionButtons && (
+						<div
+							className="absolute bottom-2 right-2 flex items-center gap-1"
+							style={{ transition: 'opacity 0.15s ease-in-out' }}
 						>
-							<Copy className="w-3.5 h-3.5" />
-						</button>
-						{/* Save to File Button - only for AI responses */}
-						{log.source !== 'user' && isAIMode && onSaveToFile && (
+							{/* Markdown toggle button for AI responses */}
+							{log.source !== 'user' && isAIMode && (
+								<button
+									onClick={onToggleMarkdownEditMode}
+									className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+									style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
+									title={
+										markdownEditMode
+											? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
+											: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
+									}
+								>
+									{markdownEditMode ? (
+										<Eye className="w-4 h-4" />
+									) : (
+										<FileText className="w-4 h-4" />
+									)}
+								</button>
+							)}
+							{/* Replay button for user messages in AI mode */}
+							{isUserMessage && isAIMode && onReplayMessage && (
+								<button
+									onClick={() => onReplayMessage(log.text, log.images)}
+									className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+									style={{ color: theme.colors.textDim }}
+									title="Replay message"
+								>
+									<RotateCcw className="w-3.5 h-3.5" />
+								</button>
+							)}
+							{/* Copy to Clipboard Button */}
 							<button
-								onClick={() => onSaveToFile(log.text)}
+								onClick={() => copyToClipboard(log.text)}
 								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
 								style={{ color: theme.colors.textDim }}
-								title="Save to file"
+								title="Copy to clipboard"
 							>
-								<Save className="w-3.5 h-3.5" />
+								<Copy className="w-3.5 h-3.5" />
 							</button>
-						)}
-						{/* Delete button for user messages (both AI and terminal modes) */}
-						{log.source === 'user' &&
-							onDeleteLog &&
-							(deleteConfirmLogId === log.id ? (
-								<div
-									className="flex items-center gap-1 p-1 rounded border"
-									style={{
-										backgroundColor: theme.colors.bgSidebar,
-										borderColor: theme.colors.error,
-									}}
-								>
-									<span className="text-xs px-1" style={{ color: theme.colors.error }}>
-										Delete?
-									</span>
-									<button
-										onClick={() => {
-											const nextIndex = onDeleteLog(log.id);
-											onSetDeleteConfirmLogId(null);
-											if (nextIndex !== null && nextIndex >= 0) {
-												setTimeout(() => {
-													const container = scrollContainerRef.current;
-													const items = container?.querySelectorAll('[data-log-index]');
-													const targetItem = items?.[nextIndex] as HTMLElement;
-													if (targetItem && container) {
-														container.scrollTop = targetItem.offsetTop;
-													}
-												}, 50);
-											}
-										}}
-										className="px-2 py-0.5 rounded text-xs font-medium hover:opacity-80"
-										style={{ backgroundColor: theme.colors.error, color: '#fff' }}
-									>
-										Yes
-									</button>
-									<button
-										onClick={() => onSetDeleteConfirmLogId(null)}
-										className="px-2 py-0.5 rounded text-xs hover:opacity-80"
-										style={{ color: theme.colors.textDim }}
-									>
-										No
-									</button>
-								</div>
-							) : (
+							{/* Save to File Button - only for AI responses */}
+							{log.source !== 'user' && isAIMode && onSaveToFile && (
 								<button
-									onClick={() => onSetDeleteConfirmLogId(log.id)}
-									className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity"
+									onClick={() => onSaveToFile(log.text)}
+									className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
 									style={{ color: theme.colors.textDim }}
-									title={isAIMode ? 'Delete message and response' : 'Delete command and output'}
+									title="Save to file"
 								>
-									<Trash2 className="w-3.5 h-3.5" />
+									<Save className="w-3.5 h-3.5" />
 								</button>
-							))}
-						{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
-						{isUserMessage && isAIMode && log.delivered && (
-							<span title="Message delivered" className="flex items-center">
-								<Check
-									className="w-3.5 h-3.5"
-									style={{ color: theme.colors.success, opacity: 0.6 }}
-								/>
-							</span>
-						)}
-					</div>
+							)}
+							{/* Delete button for user messages (both AI and terminal modes) */}
+							{log.source === 'user' &&
+								onDeleteLog &&
+								(deleteConfirmLogId === log.id ? (
+									<div
+										className="flex items-center gap-1 p-1 rounded border"
+										style={{
+											backgroundColor: theme.colors.bgSidebar,
+											borderColor: theme.colors.error,
+										}}
+									>
+										<span className="text-xs px-1" style={{ color: theme.colors.error }}>
+											Delete?
+										</span>
+										<button
+											onClick={() => {
+												const nextIndex = onDeleteLog(log.id);
+												onSetDeleteConfirmLogId(null);
+												if (nextIndex !== null && nextIndex >= 0) {
+													setTimeout(() => {
+														const container = scrollContainerRef.current;
+														const items = container?.querySelectorAll('[data-log-index]');
+														const targetItem = items?.[nextIndex] as HTMLElement;
+														if (targetItem && container) {
+															container.scrollTop = targetItem.offsetTop;
+														}
+													}, 50);
+												}
+											}}
+											className="px-2 py-0.5 rounded text-xs font-medium hover:opacity-80"
+											style={{ backgroundColor: theme.colors.error, color: '#fff' }}
+										>
+											Yes
+										</button>
+										<button
+											onClick={() => onSetDeleteConfirmLogId(null)}
+											className="px-2 py-0.5 rounded text-xs hover:opacity-80"
+											style={{ color: theme.colors.textDim }}
+										>
+											No
+										</button>
+									</div>
+								) : (
+									<button
+										onClick={() => onSetDeleteConfirmLogId(log.id)}
+										className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100 transition-opacity"
+										style={{ color: theme.colors.textDim }}
+										title={isAIMode ? 'Delete message and response' : 'Delete command and output'}
+									>
+										<Trash2 className="w-3.5 h-3.5" />
+									</button>
+								))}
+							{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
+							{isUserMessage && isAIMode && log.delivered && (
+								<span title="Message delivered" className="flex items-center">
+									<Check
+										className="w-3.5 h-3.5"
+										style={{ color: theme.colors.success, opacity: 0.6 }}
+									/>
+								</span>
+							)}
+						</div>
+					)}
 				</div>
 			</div>
 		);
@@ -940,6 +1373,8 @@ const LogItemComponent = memo(
 			prevProps.log.text === nextProps.log.text &&
 			prevProps.log.delivered === nextProps.log.delivered &&
 			prevProps.log.readOnly === nextProps.log.readOnly &&
+			prevProps.log.metadata === nextProps.log.metadata &&
+			prevProps.log.agentError === nextProps.log.agentError &&
 			prevProps.isExpanded === nextProps.isExpanded &&
 			prevProps.localFilterQuery === nextProps.localFilterQuery &&
 			prevProps.filterMode.mode === nextProps.filterMode.mode &&

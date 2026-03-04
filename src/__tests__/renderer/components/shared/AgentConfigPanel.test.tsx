@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { AgentConfigPanel } from '../../../../renderer/components/shared/AgentConfigPanel';
 import type { Theme, AgentConfig } from '../../../../renderer/types';
 
@@ -35,6 +35,26 @@ vi.mock('lucide-react', () => ({
 	ChevronDown: ({ className }: { className?: string }) => (
 		<span data-testid="chevron-down-icon" className={className}>
 			▼
+		</span>
+	),
+	Brain: ({ className }: { className?: string }) => (
+		<span data-testid="brain-icon" className={className}>
+			B
+		</span>
+	),
+	Database: ({ className }: { className?: string }) => (
+		<span data-testid="database-icon" className={className}>
+			D
+		</span>
+	),
+	Sparkles: ({ className }: { className?: string }) => (
+		<span data-testid="sparkles-icon" className={className}>
+			*
+		</span>
+	),
+	Wrench: ({ className }: { className?: string }) => (
+		<span data-testid="wrench-icon" className={className}>
+			W
 		</span>
 	),
 }));
@@ -102,6 +122,10 @@ function createDefaultProps(overrides: Partial<Parameters<typeof AgentConfigPane
 	};
 }
 
+function openAdvancedSection() {
+	fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
+}
+
 // =============================================================================
 // BUILT-IN ENVIRONMENT VARIABLES TESTS
 // =============================================================================
@@ -110,6 +134,7 @@ describe('AgentConfigPanel', () => {
 	describe('Built-in environment variables (MAESTRO_SESSION_RESUMED)', () => {
 		it('should NOT display MAESTRO_SESSION_RESUMED when showBuiltInEnvVars is false (default)', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
+			openAdvancedSection();
 
 			// MAESTRO_SESSION_RESUMED should NOT be visible
 			expect(screen.queryByText('MAESTRO_SESSION_RESUMED')).not.toBeInTheDocument();
@@ -117,6 +142,7 @@ describe('AgentConfigPanel', () => {
 
 		it('should NOT display MAESTRO_SESSION_RESUMED when showBuiltInEnvVars is explicitly false', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ showBuiltInEnvVars: false })} />);
+			openAdvancedSection();
 
 			// MAESTRO_SESSION_RESUMED should NOT be visible
 			expect(screen.queryByText('MAESTRO_SESSION_RESUMED')).not.toBeInTheDocument();
@@ -124,6 +150,7 @@ describe('AgentConfigPanel', () => {
 
 		it('should display MAESTRO_SESSION_RESUMED when showBuiltInEnvVars is true', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ showBuiltInEnvVars: true })} />);
+			openAdvancedSection();
 
 			// MAESTRO_SESSION_RESUMED should be visible
 			expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
@@ -131,6 +158,7 @@ describe('AgentConfigPanel', () => {
 
 		it('should display the value hint for MAESTRO_SESSION_RESUMED', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ showBuiltInEnvVars: true })} />);
+			openAdvancedSection();
 
 			// Value hint should be displayed
 			expect(screen.getByText('1 (when resuming)')).toBeInTheDocument();
@@ -138,6 +166,7 @@ describe('AgentConfigPanel', () => {
 
 		it('should display a help icon for MAESTRO_SESSION_RESUMED tooltip', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ showBuiltInEnvVars: true })} />);
+			openAdvancedSection();
 
 			// Help icon should be present
 			expect(screen.getByTestId('help-circle-icon')).toBeInTheDocument();
@@ -152,6 +181,7 @@ describe('AgentConfigPanel', () => {
 			};
 
 			render(<AgentConfigPanel {...createDefaultProps({ customEnvVars })} />);
+			openAdvancedSection();
 
 			// Input fields for custom env vars should be present
 			// The key inputs should have the var names as values
@@ -166,6 +196,7 @@ describe('AgentConfigPanel', () => {
 
 		it('should show Add Variable button', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
+			openAdvancedSection();
 
 			expect(screen.getByText('Add Variable')).toBeInTheDocument();
 		});
@@ -178,6 +209,7 @@ describe('AgentConfigPanel', () => {
 			render(
 				<AgentConfigPanel {...createDefaultProps({ showBuiltInEnvVars: true, customEnvVars })} />
 			);
+			openAdvancedSection();
 
 			// Built-in should be visible
 			expect(screen.getByText('MAESTRO_SESSION_RESUMED')).toBeInTheDocument();
@@ -194,6 +226,7 @@ describe('AgentConfigPanel', () => {
 	describe('Agent configuration sections', () => {
 		it('should render path input pre-filled with detected path', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
+			openAdvancedSection();
 
 			expect(screen.getByText('Path')).toBeInTheDocument();
 			// The input should be pre-filled with the detected path
@@ -205,6 +238,7 @@ describe('AgentConfigPanel', () => {
 			render(
 				<AgentConfigPanel {...createDefaultProps({ customPath: '/custom/path/to/claude' })} />
 			);
+			openAdvancedSection();
 
 			// The input should show the custom path
 			const pathInput = screen.getByDisplayValue('/custom/path/to/claude');
@@ -215,30 +249,35 @@ describe('AgentConfigPanel', () => {
 			render(
 				<AgentConfigPanel {...createDefaultProps({ customPath: '/custom/path/to/claude' })} />
 			);
+			openAdvancedSection();
 
 			expect(screen.getByText('Reset')).toBeInTheDocument();
 		});
 
 		it('should show Reset button when custom path matches detected path', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ customPath: '/usr/local/bin/claude' })} />);
+			openAdvancedSection();
 
 			expect(screen.getByText('Reset')).toBeInTheDocument();
 		});
 
 		it('should NOT show Reset button when no custom path is set', () => {
 			render(<AgentConfigPanel {...createDefaultProps({ customPath: '' })} />);
+			openAdvancedSection();
 
 			expect(screen.queryByText('Reset')).not.toBeInTheDocument();
 		});
 
 		it('should render custom arguments input section', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
+			openAdvancedSection();
 
 			expect(screen.getByText('Custom Arguments (optional)')).toBeInTheDocument();
 		});
 
 		it('should render environment variables section', () => {
 			render(<AgentConfigPanel {...createDefaultProps()} />);
+			openAdvancedSection();
 
 			expect(screen.getByText('Environment Variables (optional)')).toBeInTheDocument();
 		});

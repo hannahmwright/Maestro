@@ -156,7 +156,7 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	},
 	toggleShowThinking: {
 		id: 'toggleShowThinking',
-		label: 'Toggle Show Thinking',
+		label: 'Toggle Reasoning View',
 		keys: ['Meta', 'Shift', 'k'],
 	},
 	filterUnreadTabs: { id: 'filterUnreadTabs', label: 'Filter Unread Tabs', keys: ['Meta', 'u'] },

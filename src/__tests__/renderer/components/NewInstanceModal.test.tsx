@@ -215,6 +215,7 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 			fireEvent.click(screen.getByText('Claude Code'));
+			fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
 
 			// Path is now pre-filled in the input field, not displayed as separate text
 			await waitFor(() => {
@@ -1304,6 +1305,7 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 			fireEvent.click(screen.getByText('Claude Code'));
+			fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
 
 			// Path section now shows "Path" label (not "Custom Path (optional)")
 			await waitFor(() => {
@@ -1332,6 +1334,7 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 			fireEvent.click(screen.getByText('Claude Code'));
+			fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
 
 			// Fill in required fields
 			const nameInput = screen.getByLabelText('Agent Name');
@@ -1393,6 +1396,7 @@ describe('NewInstanceModal', () => {
 
 			// Click to expand the unavailable agent
 			fireEvent.click(screen.getByText('Claude Code'));
+			fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
 
 			await waitFor(() => {
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
@@ -1442,6 +1446,7 @@ describe('NewInstanceModal', () => {
 			// Click to expand the unavailable agent
 			const option = screen.getByRole('option', { name: /Claude Code/i });
 			fireEvent.click(option);
+			fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
 
 			// Agent should be selected immediately (even though unavailable)
 			// This allows user to configure a custom path
@@ -1478,6 +1483,7 @@ describe('NewInstanceModal', () => {
 
 			// Click to expand and select (clicking selects even unavailable agents now)
 			fireEvent.click(screen.getByText('Claude Code'));
+			fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
 
 			await waitFor(() => {
 				expect(screen.getByPlaceholderText('/path/to/claude')).toBeInTheDocument();
@@ -1541,6 +1547,7 @@ describe('NewInstanceModal', () => {
 				expect(screen.getByText('Claude Code')).toBeInTheDocument();
 			});
 			fireEvent.click(screen.getByText('Claude Code'));
+			fireEvent.click(screen.getByRole('button', { name: /advanced/i }));
 
 			// Path input should be pre-filled with detected path
 			await waitFor(() => {

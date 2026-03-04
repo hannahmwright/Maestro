@@ -410,7 +410,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	enterToSendAI: false,
 	enterToSendTerminal: true,
 	defaultSaveToHistory: true,
-	defaultShowThinking: 'off',
+	defaultShowThinking: 'sticky',
 	leftSidebarWidth: 256,
 	rightPanelWidth: 384,
 	markdownEditMode: false,

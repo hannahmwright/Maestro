@@ -18,6 +18,12 @@ import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
  * Default prompt used when user sends only an image without text.
  */
 export const DEFAULT_IMAGE_ONLY_PROMPT = imageOnlyDefaultPrompt;
+const PLAN_MODE_PROMPT_PREFIX = `# Mode: Plan
+
+Produce a documented implementation plan for this request.
+- Return a concise, numbered checklist.
+- Include specific files and commands you would execute.
+- Do not modify files in this mode.`;
 
 /**
  * Dependencies for the useInputProcessing hook.
@@ -990,6 +996,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
 						});
 
+						if (freshActiveTab?.executionMode === 'plan') {
+							effectivePrompt = `${PLAN_MODE_PROMPT_PREFIX}\n\n${effectivePrompt}`;
+						}
+
 						// Spawn agent with generic config - the main process will use agent-specific
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
@@ -1009,6 +1019,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomEnvVars: freshSession.customEnvVars,
 							sessionCustomModel: freshSession.customModel,
 							sessionCustomContextWindow: freshSession.customContextWindow,
+							sessionReasoningEffort: freshActiveTab?.reasoningEffort ?? 'default',
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
 							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues

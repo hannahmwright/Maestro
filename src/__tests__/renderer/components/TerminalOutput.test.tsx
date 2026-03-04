@@ -1883,6 +1883,70 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('npm run test')).toBeInTheDocument();
 		});
 
+		it('keeps running tools expanded with command and output details', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'bash',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: { command: ['npm', 'run', 'build'] },
+							output: 'Starting build...\nCompiling...',
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('bash')).toBeInTheDocument();
+			expect(screen.getByText('command')).toBeInTheDocument();
+			expect(screen.getByText('npm run build')).toBeInTheDocument();
+			expect(screen.getByText('output')).toBeInTheDocument();
+			expect(screen.getByText(/Starting build/)).toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /Details/i })).not.toBeInTheDocument();
+		});
+
+		it('auto-collapses completed tools and allows manual expansion', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'web:search',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: { query: 'March 3 2026 weekday' },
+							output: 'Tuesday',
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('[DONE]')).toBeInTheDocument();
+			expect(screen.getByText(/March 3 2026 weekday/)).toBeInTheDocument();
+			expect(screen.queryByText('Web Search Timeline')).not.toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /Details/i }));
+
+			await waitFor(() => {
+				expect(screen.getByText('Web Search Timeline')).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: 'March 3 2026 weekday' })).toBeInTheDocument();
+			});
+		});
+
 		it('renders tool with no extractable detail gracefully', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({

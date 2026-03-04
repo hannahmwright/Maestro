@@ -36,6 +36,7 @@ interface ProcessConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	sessionCustomModel?: string;
 	sessionCustomContextWindow?: number;
+	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

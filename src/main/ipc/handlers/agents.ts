@@ -1,7 +1,12 @@
 import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as fs from 'fs';
-import { AgentDetector, AGENT_DEFINITIONS, getAgentCapabilities } from '../../agents';
+import {
+	AgentDetector,
+	AGENT_DEFINITIONS,
+	getAgentCapabilities,
+	type AgentConfigOption,
+} from '../../agents';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import {
@@ -31,6 +36,19 @@ const handlerOpts = (
  */
 interface AgentConfigsData {
 	configs: Record<string, Record<string, any>>;
+}
+
+function normalizeAgentConfigValue(option: AgentConfigOption, value: unknown): unknown {
+	switch (option.type) {
+		case 'checkbox':
+			return typeof value === 'boolean' ? value : option.default;
+		case 'text':
+			return typeof value === 'string' ? value : option.default;
+		case 'number':
+			return typeof value === 'number' && Number.isFinite(value) ? value : option.default;
+		case 'select':
+			return typeof value === 'string' && option.options.includes(value) ? value : option.default;
+	}
 }
 
 /**
@@ -568,8 +586,15 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				}
 			}
 
-			// Merge: stored config takes precedence over defaults
-			return { ...defaults, ...storedConfig };
+			// Merge stored values onto defaults, then normalize to known option types.
+			const mergedConfig: Record<string, unknown> = { ...defaults, ...storedConfig };
+			if (agentDef?.configOptions) {
+				for (const option of agentDef.configOptions) {
+					mergedConfig[option.key] = normalizeAgentConfigValue(option, mergedConfig[option.key]);
+				}
+			}
+
+			return mergedConfig;
 		})
 	);
 
@@ -597,15 +622,13 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			async (agentId: string, key: string) => {
 				const allConfigs = agentConfigsStore.get('configs', {});
 				const agentConfig = allConfigs[agentId] || {};
-
-				// Return stored value if present
-				if (agentConfig[key] !== undefined) {
-					return agentConfig[key];
-				}
-
-				// Fall back to default from agent definition
 				const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
 				const option = agentDef?.configOptions?.find((o) => o.key === key);
+
+				if (agentConfig[key] !== undefined) {
+					return option ? normalizeAgentConfigValue(option, agentConfig[key]) : agentConfig[key];
+				}
+
 				return option?.default;
 			}
 		)

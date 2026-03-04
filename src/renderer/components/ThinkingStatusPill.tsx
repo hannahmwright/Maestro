@@ -95,6 +95,135 @@ function getItemDisplayName(
 	return session.name;
 }
 
+const normalizeToolStatus = (status: unknown): 'running' | 'completed' | 'error' => {
+	if (status === 'completed' || status === 'success') return 'completed';
+	if (status === 'error' || status === 'failed') return 'error';
+	return 'running';
+};
+
+const compactText = (text: string, max = 82): string => {
+	const cleaned = text.replace(/\*\*/g, '').replace(/`/g, '').replace(/\s+/g, ' ').trim();
+	if (!cleaned) return '';
+	return cleaned.length > max ? `${cleaned.substring(0, max)}...` : cleaned;
+};
+
+const safeInputString = (value: unknown): string | null => {
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return trimmed ? trimmed : null;
+	}
+	if (
+		Array.isArray(value) &&
+		value.length > 0 &&
+		value.every((entry) => typeof entry === 'string')
+	) {
+		return value.join(' ');
+	}
+	return null;
+};
+
+const extractToolContext = (input: unknown): string | null => {
+	if (!input || typeof input !== 'object') return null;
+	const raw = input as Record<string, unknown>;
+	return (
+		safeInputString(raw.command) ||
+		safeInputString(raw.cmd) ||
+		safeInputString(raw.query) ||
+		safeInputString(raw.pattern) ||
+		safeInputString(raw.path) ||
+		safeInputString(raw.file_path) ||
+		safeInputString(raw.filePath) ||
+		safeInputString(raw.description) ||
+		safeInputString(raw.prompt) ||
+		null
+	);
+};
+
+const describeToolActivity = (toolName: string, input: unknown): string => {
+	const lower = toolName.toLowerCase();
+	const context = extractToolContext(input);
+
+	const withContext = (base: string) =>
+		context ? `${base}: ${compactText(context, 72)}` : `${base}...`;
+
+	if (lower.includes('web:search') || lower.includes('web_search')) {
+		return withContext('Searching web');
+	}
+	if (lower.includes('bash') || lower.includes('shell') || lower.includes('command')) {
+		return withContext('Running command');
+	}
+	if (lower.includes('grep') || lower.includes('glob') || lower.includes('find')) {
+		return withContext('Scanning workspace');
+	}
+	if (lower.includes('read') || lower.includes('open') || lower.includes('cat')) {
+		return withContext('Reading files');
+	}
+	if (lower.includes('write') || lower.includes('edit') || lower.includes('patch')) {
+		return withContext('Editing files');
+	}
+	if (lower.includes('task') || lower.includes('sub-agent') || lower.includes('sub_agent')) {
+		return withContext('Running sub-agent');
+	}
+
+	return withContext(`Using ${toolName}`);
+};
+
+const extractLatestThinkingLine = (tab: AITab | null): string | null => {
+	if (!tab?.logs?.length) return null;
+
+	for (let i = tab.logs.length - 1; i >= Math.max(0, tab.logs.length - 40); i--) {
+		const log = tab.logs[i];
+		if (log.source !== 'thinking' || !log.text) continue;
+		const lines = log.text.split('\n').map((line) => line.trim());
+		for (let lineIndex = lines.length - 1; lineIndex >= 0; lineIndex--) {
+			const line = lines[lineIndex].replace(/^[-*]\s+/, '');
+			const compacted = compactText(line);
+			if (compacted) return compacted.endsWith('...') ? compacted : `${compacted}...`;
+		}
+	}
+
+	return null;
+};
+
+const deriveActivityLabel = (session: Session, tab: AITab | null): string => {
+	if (tab?.logs?.length) {
+		for (let i = tab.logs.length - 1; i >= Math.max(0, tab.logs.length - 40); i--) {
+			const log = tab.logs[i];
+			if (log.source === 'tool') {
+				const status = normalizeToolStatus(log.metadata?.toolState?.status);
+				if (status === 'running') {
+					return describeToolActivity(log.text || 'tool', log.metadata?.toolState?.input);
+				}
+			}
+		}
+
+		const thinkingLine = extractLatestThinkingLine(tab);
+		if (thinkingLine) return thinkingLine;
+	}
+
+	if (session.statusMessage) return session.statusMessage;
+	return 'Thinking...';
+};
+
+const getActivityFingerprint = (tab: AITab | null): string => {
+	if (!tab?.logs?.length) return '';
+	for (let i = tab.logs.length - 1; i >= Math.max(0, tab.logs.length - 40); i--) {
+		const log = tab.logs[i];
+		if (log.source === 'tool') {
+			const status = normalizeToolStatus(log.metadata?.toolState?.status);
+			if (status === 'running') {
+				const context = extractToolContext(log.metadata?.toolState?.input);
+				return `tool:${log.id}:${status}:${log.text}:${context || ''}`;
+			}
+		}
+		if (log.source === 'thinking') {
+			return `thinking:${log.id}:${compactText(log.text, 120)}`;
+		}
+	}
+	const last = tab.logs[tab.logs.length - 1];
+	return `last:${last.id}:${last.source}:${compactText(last.text || '', 80)}`;
+};
+
 // formatTokensCompact imported from ../utils/formatters
 
 // Single row in the expanded dropdown — represents one (session, tab) thinking item
@@ -316,6 +445,7 @@ function ThinkingStatusPillInner({
 
 	// Get tokens for current thinking cycle only (not cumulative context)
 	const primaryTokens = primarySession.currentCycleTokens || 0;
+	const activityLabel = deriveActivityLabel(primarySession, primaryTab);
 
 	// Get display components
 	const maestroSessionName = primarySession.name;
@@ -368,27 +498,28 @@ function ThinkingStatusPillInner({
 				{/* Divider */}
 				<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
 
+				{/* Dynamic activity label (tool activity/thinking stage) */}
+				<div
+					className="flex items-center gap-1 shrink-0 text-xs"
+					style={{ color: theme.colors.textDim }}
+				>
+					<span>{activityLabel}</span>
+				</div>
+
 				{/* Token info for this thought cycle - only show when available */}
 				{primaryTokens > 0 && (
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>Tokens:</span>
-						<span className="font-medium" style={{ color: theme.colors.textMain }}>
-							{formatTokensCompact(primaryTokens)}
-						</span>
-					</div>
-				)}
-
-				{/* Placeholder when no tokens yet */}
-				{primaryTokens === 0 && (
-					<div
-						className="flex items-center gap-1 shrink-0 text-xs"
-						style={{ color: theme.colors.textDim }}
-					>
-						<span>Thinking...</span>
-					</div>
+					<>
+						<div className="w-px h-4 shrink-0" style={{ backgroundColor: theme.colors.border }} />
+						<div
+							className="flex items-center gap-1 shrink-0 text-xs"
+							style={{ color: theme.colors.textDim }}
+						>
+							<span>Tokens:</span>
+							<span className="font-medium" style={{ color: theme.colors.textMain }}>
+								{formatTokensCompact(primaryTokens)}
+							</span>
+						</div>
+					</>
 				)}
 
 				{/* Elapsed time - prefer tab's time for accurate parallel tracking */}
@@ -547,7 +678,8 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prev.session.agentSessionId !== next.session.agentSessionId ||
 			prev.session.state !== next.session.state ||
 			prev.session.thinkingStartTime !== next.session.thinkingStartTime ||
-			prev.session.currentCycleTokens !== next.session.currentCycleTokens
+			prev.session.currentCycleTokens !== next.session.currentCycleTokens ||
+			prev.session.statusMessage !== next.session.statusMessage
 		) {
 			return false;
 		}
@@ -556,7 +688,8 @@ export const ThinkingStatusPill = memo(ThinkingStatusPillInner, (prevProps, next
 			prev.tab?.id !== next.tab?.id ||
 			prev.tab?.name !== next.tab?.name ||
 			prev.tab?.agentSessionId !== next.tab?.agentSessionId ||
-			prev.tab?.thinkingStartTime !== next.tab?.thinkingStartTime
+			prev.tab?.thinkingStartTime !== next.tab?.thinkingStartTime ||
+			getActivityFingerprint(prev.tab || null) !== getActivityFingerprint(next.tab || null)
 		) {
 			return false;
 		}

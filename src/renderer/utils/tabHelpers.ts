@@ -13,6 +13,7 @@ import {
 	UsageStats,
 	ToolType,
 	ThinkingMode,
+	ReasoningEffort,
 } from '../types';
 import { generateId } from './ids';
 import { getAutoRunFolderPath } from './existingDocsDetector';
@@ -265,8 +266,10 @@ export interface CreateTabOptions {
 	name?: string | null; // User-defined name (null = show UUID octet)
 	starred?: boolean; // Whether session is starred
 	usageStats?: UsageStats; // Token usage stats
+	executionMode?: 'ask' | 'plan' | 'agent'; // Execution mode for this tab
 	saveToHistory?: boolean; // Whether to save synopsis to history after completions
 	showThinking?: ThinkingMode; // Thinking display mode: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	reasoningEffort?: ReasoningEffort; // Model reasoning effort override for this tab
 }
 
 /**
@@ -312,8 +315,10 @@ export function createTab(
 		name = null,
 		starred = false,
 		usageStats,
+		executionMode,
 		saveToHistory = true,
-		showThinking = 'off',
+		showThinking = 'sticky',
+		reasoningEffort,
 	} = options;
 
 	// Create the new tab with default values
@@ -328,8 +333,10 @@ export function createTab(
 		usageStats,
 		createdAt: Date.now(),
 		state: 'idle',
+		...(executionMode ? { executionMode } : {}),
 		saveToHistory,
 		showThinking,
+		...(reasoningEffort ? { reasoningEffort } : {}),
 	};
 
 	// Update the session with the new tab added and set as active

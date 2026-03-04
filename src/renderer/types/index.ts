@@ -19,6 +19,7 @@ export type {
 	PlaybookDocumentEntry,
 	Playbook,
 	ThinkingMode,
+	ReasoningEffort,
 	WorktreeRunTarget,
 } from '../../shared/types';
 
@@ -35,6 +36,7 @@ import type {
 	UsageStats,
 	ToolType,
 	ThinkingMode,
+	ReasoningEffort,
 } from '../../shared/types';
 
 // Re-export group chat types from shared location
@@ -57,6 +59,7 @@ export type SettingsTab = 'general' | 'shortcuts' | 'theme' | 'notifications' | 
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
+export type AgentExecutionMode = 'ask' | 'plan' | 'agent';
 
 // Inline wizard types for per-session/per-tab wizard state
 export type WizardMode = 'new' | 'iterate' | null;
@@ -197,9 +200,13 @@ export interface LogEntry {
 	// For tool execution entries - stores tool state and details
 	metadata?: {
 		toolState?: {
+			/** Optional stable invocation ID (provider-specific) used to merge updates in place */
+			id?: string;
 			status?: 'running' | 'completed' | 'error';
 			input?: unknown;
 			output?: unknown;
+			/** Provider-specific fields preserved for debugging/future UI */
+			[key: string]: unknown;
 		};
 	};
 }
@@ -413,9 +420,11 @@ export interface AITab {
 	createdAt: number; // Timestamp for ordering
 	state: 'idle' | 'busy'; // Tab-level state for write-mode tracking
 	readOnlyMode?: boolean; // When true, agent operates in plan/read-only mode
+	executionMode?: AgentExecutionMode; // Ask: read-only Q&A, Plan: read-only plan generation, Agent: full edit mode
 	saveToHistory?: boolean; // When true, synopsis is requested after each completion and saved to History
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
+	reasoningEffort?: ReasoningEffort; // Model reasoning effort override for this tab
 	awaitingSessionId?: boolean; // True when this tab sent a message and is awaiting its session ID
 	thinkingStartTime?: number; // Timestamp when tab started thinking (for elapsed time display)
 	scrollTop?: number; // Saved scroll position for this tab's output view
@@ -776,6 +785,7 @@ export interface ProcessConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	sessionCustomModel?: string;
 	sessionCustomContextWindow?: number;
+	sessionReasoningEffort?: ReasoningEffort;
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

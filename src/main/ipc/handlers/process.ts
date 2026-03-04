@@ -104,6 +104,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				sessionCustomEnvVars?: Record<string, string>; // Session-specific env vars
 				sessionCustomModel?: string; // Session-specific model selection
 				sessionCustomContextWindow?: number; // Session-specific context window size
+				sessionReasoningEffort?:
+					| 'default'
+					| 'none'
+					| 'minimal'
+					| 'low'
+					| 'medium'
+					| 'high'
+					| 'xhigh'; // Session-specific reasoning effort override
 				// Per-session SSH remote config (takes precedence over agent-level SSH config)
 				sessionSshRemoteConfig?: {
 					enabled: boolean;
@@ -188,6 +196,39 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						`Appending custom args for ${config.toolType} (${configResolution.customArgsSource}-level)`,
 						LOG_CONTEXT
 					);
+				}
+
+				// Session-level reasoning effort override (Codex only).
+				// Uses Codex config key: model_reasoning_effort.
+				if (
+					config.toolType === 'codex' &&
+					config.sessionReasoningEffort &&
+					config.sessionReasoningEffort !== 'default'
+				) {
+					// Remove any existing effort override (agent-level or custom args) so tab override wins.
+					const strippedArgs: string[] = [];
+					for (let i = 0; i < finalArgs.length; i++) {
+						const current = finalArgs[i];
+						const next = finalArgs[i + 1];
+						if (
+							current === '-c' &&
+							typeof next === 'string' &&
+							next.includes('model_reasoning_effort')
+						) {
+							i++;
+							continue;
+						}
+						strippedArgs.push(current);
+					}
+					finalArgs = [
+						...strippedArgs,
+						'-c',
+						`model_reasoning_effort="${config.sessionReasoningEffort}"`,
+					];
+					logger.debug('Applied session-level reasoning effort override', LOG_CONTEXT, {
+						toolType: config.toolType,
+						reasoningEffort: config.sessionReasoningEffort,
+					});
 				}
 
 				// In read-only mode, apply agent-specific env var overrides to strip

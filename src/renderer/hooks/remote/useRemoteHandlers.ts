@@ -410,6 +410,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					sessionCustomEnvVars: session.customEnvVars,
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
+					sessionReasoningEffort: activeTab?.reasoningEffort ?? 'default',
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 

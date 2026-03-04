@@ -481,6 +481,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 					// Spawn agent
 					const spawnSessionId = `${targetSessionId}-ai-${newTabId}`;
+					const targetTab = targetSession.aiTabs.find((tab) => tab.id === newTabId);
 					await window.maestro.process.spawn({
 						sessionId: spawnSessionId,
 						toolType: targetSession.toolType,
@@ -494,6 +495,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						sessionCustomEnvVars: targetSession.customEnvVars,
 						sessionCustomModel: targetSession.customModel,
 						sessionCustomContextWindow: targetSession.customContextWindow,
+						sessionReasoningEffort: targetTab?.reasoningEffort ?? 'default',
 						sessionSshRemoteConfig: targetSession.sessionSshRemoteConfig,
 					});
 				} catch (error) {
