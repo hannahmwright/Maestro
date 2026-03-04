@@ -1,0 +1,84 @@
+{
+	"id": "ambiguous-test-failure",
+	"description": "Ambiguous test failure converges through probe-guided hypothesis selection.",
+	"metadata": {
+		"category": "ambiguous-failure",
+		"difficulty": "hard",
+		"tags": ["triage", "probe", "beam", "test-failure"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-ambiguous-1",
+		"goal": "Fix flaky math test",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "low",
+		"allowed_commands": ["npm test", "npm test -- src/math.test.ts", "npm run build"],
+		"done_gate_profile": "quick",
+		"max_changed_files": 5,
+		"created_at": 1731010101000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm test",
+	"changed_files": ["src/math.ts", "src/math.test.ts"],
+	"command_plan": [
+		{
+			"match": "npm test",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 1,
+					"stderr": "FAIL src/math.test.ts\\nExpected: 3\\nReceived: 2",
+					"durationMs": 34
+				},
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/math.test.ts",
+					"durationMs": 22
+				},
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/math.test.ts",
+					"durationMs": 21
+				},
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/math.test.ts",
+					"durationMs": 23
+				}
+			]
+		},
+		{
+			"match": "npm test -- src/math.test.ts",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/math.test.ts",
+					"durationMs": 24
+				},
+				{
+					"exitCode": 0,
+					"stdout": "PASS src/math.test.ts",
+					"durationMs": 24
+				}
+			]
+		},
+		{
+			"match": "npm run build",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 0,
+					"stdout": "build ok",
+					"durationMs": 41
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "complete",
+		"max_attempts": 3,
+		"require_selected_hypothesis": true
+	}
+}

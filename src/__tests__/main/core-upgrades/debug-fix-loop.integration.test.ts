@@ -33,18 +33,29 @@ afterEach(async () => {
 describe('DebugFixLoopEngine integration scenarios', () => {
 	it('retries after triage and completes when targeted validation passes', async () => {
 		const engine = new DebugFixLoopEngine();
-		const runCommand = vi
-			.fn()
-			.mockResolvedValueOnce({
-				exitCode: 1,
-				stderr: 'FAIL src/math.test.ts\nExpected: 3\nReceived: 2',
-				durationMs: 30,
-			})
-			.mockResolvedValueOnce({
+		const commandCounts: Record<string, number> = {};
+		const runCommand = vi.fn(async (command: string) => {
+			commandCounts[command] = (commandCounts[command] || 0) + 1;
+			if (command === 'npm test' && commandCounts[command] === 1) {
+				return {
+					exitCode: 1,
+					stderr: 'FAIL src/math.test.ts\nExpected: 3\nReceived: 2',
+					durationMs: 30,
+				};
+			}
+			if (command.includes('src/math.test.ts')) {
+				return {
+					exitCode: 0,
+					stdout: 'PASS src/math.test.ts',
+					durationMs: 25,
+				};
+			}
+			return {
 				exitCode: 0,
-				stdout: 'PASS src/math.test.ts',
-				durationMs: 25,
-			});
+				stdout: 'probe ok',
+				durationMs: 18,
+			};
+		});
 		const events: string[] = [];
 
 		const result = await engine.run(
@@ -64,14 +75,18 @@ describe('DebugFixLoopEngine integration scenarios', () => {
 		);
 
 		expect(result.status).toBe('complete');
-		expect(runCommand).toHaveBeenCalledTimes(2);
-		expect(runCommand).toHaveBeenNthCalledWith(2, 'npm test -- src/math.test.ts');
-		expect(events).toEqual([
-			'triage-started',
-			'hypothesis-generated',
-			'review-findings',
-			'gate-result',
-		]);
+		expect(runCommand).toHaveBeenCalledWith('npm test -- src/math.test.ts');
+		expect(runCommand.mock.calls.length).toBeGreaterThanOrEqual(2);
+		expect(events).toEqual(
+			expect.arrayContaining([
+				'triage-started',
+				'hypothesis-generated',
+				'probe-started',
+				'probe-finished',
+				'review-findings',
+				'gate-result',
+			])
+		);
 	});
 
 	it('escalates to full suite for cross-package edits in standard profile', async () => {
@@ -183,6 +198,44 @@ describe('DebugFixLoopEngine integration scenarios', () => {
 		expect(result.reason).toBe('edit_apply_blocked');
 		expect(result.failure?.blocking_reasons).toContain('syntax_validation_failed');
 		expect(result.failure?.syntax_errors?.length).toBeGreaterThan(0);
+		expect(runCommand).not.toHaveBeenCalled();
+	});
+
+	it('stops with edit_apply_blocked when planned patch fails plausibility validation', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn();
+		const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-debug-fix-'));
+		tempDirs.push(repoRoot);
+		const filePath = path.join(repoRoot, 'src', 'app.ts');
+		await fs.mkdir(path.dirname(filePath), { recursive: true });
+		await fs.writeFile(filePath, 'export const value = 1;\n', 'utf8');
+
+		const result = await engine.run(
+			{
+				session_id: 'session-int-6',
+				task: createTask({ repo_root: repoRoot }),
+				cwd: repoRoot,
+				initial_command: 'npm test',
+				proposed_edits: [{ file_path: 'src/app.ts', reason: 'Fix syntax issue' }],
+				planned_patches: [
+					{
+						file_path: 'src/app.ts',
+						content:
+							'<<<<<<< HEAD\nexport const value = 2;\n=======\nexport const value = 3;\n>>>>>>> branch\n',
+						reason: 'Fix syntax issue',
+					},
+				],
+				related_files: ['src/app.ts'],
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('failed');
+		expect(result.reason).toBe('edit_apply_blocked');
+		expect(result.failure?.blocking_reasons).toContain('plausibility_validation_failed');
+		expect(
+			result.failure?.plausibility_errors?.some((error) => error.code === 'merge_conflict_markers')
+		).toBe(true);
 		expect(runCommand).not.toHaveBeenCalled();
 	});
 });

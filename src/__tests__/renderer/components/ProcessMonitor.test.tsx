@@ -413,8 +413,11 @@ describe('ProcessMonitor', () => {
 				expect(screen.queryByText('Loading processes...')).not.toBeInTheDocument();
 			});
 
-			expect(screen.getByText('UNGROUPED AGENTS')).toBeInTheDocument();
-			expect(screen.getByText('Test Session')).toBeInTheDocument();
+			const ungroupedHeader = screen.getByText('UNGROUPED AGENTS');
+			expect(ungroupedHeader).toBeInTheDocument();
+			await waitFor(() => {
+				expect(screen.getByText('Test Session')).toBeInTheDocument();
+			});
 		});
 
 		it('should display grouped sessions with processes', async () => {
@@ -432,8 +435,11 @@ describe('ProcessMonitor', () => {
 				expect(screen.queryByText('Loading processes...')).not.toBeInTheDocument();
 			});
 
-			expect(screen.getByText('Test Group')).toBeInTheDocument();
-			expect(screen.getByText('Test Session')).toBeInTheDocument();
+			const groupHeader = screen.getByText('Test Group');
+			expect(groupHeader).toBeInTheDocument();
+			await waitFor(() => {
+				expect(screen.getByText('Test Session')).toBeInTheDocument();
+			});
 		});
 
 		it('should show session count in group', async () => {

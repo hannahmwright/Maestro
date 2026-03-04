@@ -1,5 +1,13 @@
 import crypto from 'crypto';
-import type { FailureClassification, FailureSignal, FixHypothesis, TriageResult } from './types';
+import type {
+	DiagnosticProbe,
+	FailureClassification,
+	FailureSignal,
+	FixHypothesis,
+	FixHypothesisFamily,
+	HypothesisEvidence,
+	TriageResult,
+} from './types';
 
 interface FailurePattern {
 	classification: FailureClassification;
@@ -50,6 +58,26 @@ const FILE_PATH_REGEX = /(?:^|\s|\()([\w./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs))(?:[:
 const SYMBOL_REGEX = /(Cannot find name|Property)\s+'([A-Za-z_$][\w$]*)'/g;
 const TEST_FILE_REGEX = /(?:^|\/)(__tests__|test|tests)\/|(?:\.test|\.spec)\.[jt]sx?$/i;
 const PACKAGE_SEGMENT_REGEX = /(^|\/)(packages\/[^/]+)/;
+const BEAM_WIDTH = 2;
+const DEFAULT_PROBE_TIMEOUT_MS = 20_000;
+
+const FAMILY_CONFIRMING_PATTERNS: Record<FixHypothesisFamily, RegExp[]> = {
+	dependency: [/Cannot find module|ERR_MODULE_NOT_FOUND|Module not found/i],
+	typing: [/TS\d+|Type\s+'.+'\s+is\s+not\s+assignable|Cannot find name/i],
+	test_logic: [/FAIL|AssertionError|Expected:|Received:/i],
+	runtime: [/ReferenceError|TypeError:|RangeError|Unhandled/i],
+	lint: [/eslint|prettier|lint/i],
+	environment: [/command not found|permission denied|EACCES|not recognized/i],
+};
+
+const FAMILY_DISCONFIRMING_PATTERNS: Record<FixHypothesisFamily, RegExp[]> = {
+	dependency: [/AssertionError|Expected:|Received:/i],
+	typing: [/command not found|permission denied|EACCES/i],
+	test_logic: [/TS\d+|Cannot find module|ERR_MODULE_NOT_FOUND/i],
+	runtime: [/eslint|prettier|lint/i],
+	lint: [/ReferenceError|TypeError:|AssertionError/i],
+	environment: [/src\/|\.test\.[jt]sx?|TS\d+/i],
+};
 
 function classifyFailure(signal: string): {
 	classification: FailureClassification;
@@ -138,9 +166,50 @@ function buildMetadataHash(
 		.digest('hex');
 }
 
+function familyForClassification(classification: FailureClassification): FixHypothesisFamily {
+	switch (classification) {
+		case 'module_not_found':
+			return 'dependency';
+		case 'type_error':
+		case 'syntax_error':
+			return 'typing';
+		case 'test_failure':
+			return 'test_logic';
+		case 'runtime_error':
+			return 'runtime';
+		case 'lint_error':
+			return 'lint';
+		case 'permission_error':
+		case 'command_not_found':
+			return 'environment';
+		case 'unknown':
+			return 'runtime';
+	}
+}
+
+function secondaryFamily(classification: FailureClassification): FixHypothesisFamily {
+	switch (classification) {
+		case 'test_failure':
+			return 'typing';
+		case 'type_error':
+		case 'module_not_found':
+		case 'syntax_error':
+			return 'dependency';
+		case 'lint_error':
+			return 'typing';
+		case 'runtime_error':
+		case 'unknown':
+			return 'test_logic';
+		case 'permission_error':
+		case 'command_not_found':
+			return 'runtime';
+	}
+}
+
 function buildTargetedCommands(
 	classification: FailureClassification,
-	likelyFiles: string[]
+	likelyFiles: string[],
+	family: FixHypothesisFamily
 ): string[] {
 	const commands: string[] = [];
 	const normalizedFiles = likelyFiles.map((filePath) => filePath.replace(/\\/g, '/'));
@@ -150,19 +219,19 @@ function buildTargetedCommands(
 		.map((filePath) => filePath.match(PACKAGE_SEGMENT_REGEX)?.[2])
 		.find((scope): scope is string => Boolean(scope));
 
-	if (classification === 'lint_error') {
-		if (sourceFile) {
-			commands.push(`npm run lint -- ${sourceFile}`);
-		}
-		if (packageScope) {
-			commands.push(`npm run lint -- ${packageScope}`);
-		}
+	if (classification === 'lint_error' || family === 'lint') {
+		if (sourceFile) commands.push(`npm run lint -- ${sourceFile}`);
+		if (packageScope) commands.push(`npm run lint -- ${packageScope}`);
+		commands.push('npm run lint');
 		return commands;
 	}
 
-	if (testFile) {
-		commands.push(`npm test -- ${testFile}`);
+	if (family === 'environment') {
+		commands.push('npm test', 'npm run build');
+		return commands;
 	}
+
+	if (testFile) commands.push(`npm test -- ${testFile}`);
 	if (
 		sourceFile &&
 		classification !== 'command_not_found' &&
@@ -170,9 +239,12 @@ function buildTargetedCommands(
 	) {
 		commands.push(`npm test -- ${sourceFile}`);
 	}
-	if (packageScope) {
-		commands.push(`npm test -- ${packageScope}`);
+	if (packageScope) commands.push(`npm test -- ${packageScope}`);
+	commands.push('npm test -- --runInBand');
+	if (family === 'dependency' || family === 'typing' || family === 'runtime') {
+		commands.push('npm run build');
 	}
+	commands.push('npm test');
 
 	return commands;
 }
@@ -181,45 +253,293 @@ function uniqueCommands(commands: string[]): string[] {
 	return [...new Set(commands.map((command) => command.trim()).filter(Boolean))];
 }
 
+function clamp(value: number, min: number, max: number): number {
+	return Math.max(min, Math.min(max, value));
+}
+
+function buildEvidence(
+	signal: string,
+	classification: FailureClassification,
+	family: FixHypothesisFamily,
+	likelyFiles: string[],
+	likelySymbols: string[]
+): HypothesisEvidence {
+	const confirmingSignals: string[] = [];
+	const disconfirmingSignals: string[] = [];
+
+	for (const pattern of FAMILY_CONFIRMING_PATTERNS[family]) {
+		if (pattern.test(signal)) {
+			confirmingSignals.push(`Matched ${family} indicator: ${pattern.source}`);
+		}
+	}
+	for (const pattern of FAMILY_DISCONFIRMING_PATTERNS[family]) {
+		if (pattern.test(signal)) {
+			disconfirmingSignals.push(`Matched conflicting indicator: ${pattern.source}`);
+		}
+	}
+	if (likelyFiles.length > 0) {
+		confirmingSignals.push(`Likely files: ${likelyFiles.slice(0, 2).join(', ')}`);
+	}
+	if (likelySymbols.length > 0) {
+		confirmingSignals.push(`Likely symbols: ${likelySymbols.slice(0, 2).join(', ')}`);
+	}
+	if (classification === 'unknown' && family !== 'runtime') {
+		disconfirmingSignals.push('Failure classification is unknown for this family.');
+	}
+
+	const rawScore = 0.45 + confirmingSignals.length * 0.11 - disconfirmingSignals.length * 0.16;
+	const evidenceScore = clamp(rawScore, 0.05, 0.98);
+	let uncertaintyNote = 'Evidence and signal are aligned.';
+	if (disconfirmingSignals.length > confirmingSignals.length) {
+		uncertaintyNote = 'Conflicting indicators exceed confirming signals; treat with caution.';
+	} else if (disconfirmingSignals.length > 0) {
+		uncertaintyNote = 'Some conflicting indicators exist; verify with probes.';
+	} else if (confirmingSignals.length <= 1) {
+		uncertaintyNote = 'Sparse evidence; confidence depends on probe outcomes.';
+	}
+
+	return {
+		confirming_signals: confirmingSignals.slice(0, 5),
+		disconfirming_signals: disconfirmingSignals.slice(0, 5),
+		uncertainty_note: uncertaintyNote,
+		evidence_score: Number(evidenceScore.toFixed(3)),
+	};
+}
+
+function buildProbe(
+	hypothesisId: string,
+	kind: 'confirm' | 'disconfirm',
+	purpose: string,
+	command: string,
+	targetFiles: string[]
+): DiagnosticProbe {
+	const idSeed = `${hypothesisId}:${purpose}:${command}`;
+	return {
+		id: `probe-${crypto.createHash('sha1').update(idSeed).digest('hex').slice(0, 10)}`,
+		purpose,
+		kind,
+		command,
+		target_files: targetFiles.slice(0, 3),
+		timeout_ms: DEFAULT_PROBE_TIMEOUT_MS,
+	};
+}
+
+function buildProbeCandidates(
+	hypothesisId: string,
+	family: FixHypothesisFamily,
+	commands: string[],
+	likelyFiles: string[]
+): DiagnosticProbe[] {
+	const probes: DiagnosticProbe[] = [];
+	const usedCommands = new Set<string>();
+	const targetFiles = likelyFiles.slice(0, 3);
+
+	const addProbeIfCommand = (
+		kind: 'confirm' | 'disconfirm',
+		purpose: string,
+		command: string | undefined
+	) => {
+		if (!command) return;
+		const normalized = command.trim();
+		if (!normalized || usedCommands.has(normalized)) return;
+		usedCommands.add(normalized);
+		probes.push(buildProbe(hypothesisId, kind, purpose, normalized, targetFiles));
+	};
+
+	const firstUnusedCommand = () => commands.find((command) => !usedCommands.has(command.trim()));
+	const firstUnusedMatching = (tokens: string[]) =>
+		commands.find(
+			(command) =>
+				tokens.some((token) => command.toLowerCase().includes(token)) &&
+				!usedCommands.has(command.trim())
+		);
+
+	switch (family) {
+		case 'lint':
+			addProbeIfCommand('confirm', 'lint_scope_check', firstUnusedMatching(['lint']));
+			addProbeIfCommand(
+				'disconfirm',
+				'lint_disconfirm_build',
+				firstUnusedMatching(['build', 'test --'])
+			);
+			break;
+		case 'typing':
+			addProbeIfCommand('confirm', 'build_type_check', firstUnusedMatching(['build', 'tsc']));
+			addProbeIfCommand(
+				'disconfirm',
+				'typing_disconfirm_targeted_test',
+				firstUnusedMatching(['test --', 'lint'])
+			);
+			break;
+		case 'dependency':
+			addProbeIfCommand('confirm', 'dependency_resolution_probe', firstUnusedMatching(['build']));
+			addProbeIfCommand(
+				'disconfirm',
+				'dependency_disconfirm_lint',
+				firstUnusedMatching(['lint', 'test --'])
+			);
+			break;
+		case 'test_logic':
+			addProbeIfCommand('confirm', 'targeted_test_probe', firstUnusedMatching(['test --']));
+			addProbeIfCommand(
+				'disconfirm',
+				'test_logic_disconfirm_build',
+				firstUnusedMatching(['build', 'lint'])
+			);
+			break;
+		case 'runtime':
+			addProbeIfCommand('confirm', 'runtime_repro_probe', firstUnusedMatching(['test']));
+			addProbeIfCommand(
+				'disconfirm',
+				'runtime_disconfirm_lint',
+				firstUnusedMatching(['lint', 'build'])
+			);
+			break;
+		case 'environment':
+			addProbeIfCommand(
+				'confirm',
+				'environment_baseline_probe',
+				firstUnusedMatching(['test', 'build'])
+			);
+			addProbeIfCommand(
+				'disconfirm',
+				'environment_disconfirm_targeted',
+				firstUnusedMatching(['test --', 'lint'])
+			);
+			break;
+	}
+
+	// Always include both confirm and disconfirm probes when possible.
+	if (!probes.some((probe) => probe.kind === 'confirm')) {
+		const fallbackConfirm = firstUnusedCommand() || commands[0];
+		if (fallbackConfirm) {
+			probes.push(
+				buildProbe(hypothesisId, 'confirm', 'fallback_confirm_probe', fallbackConfirm, targetFiles)
+			);
+		}
+	}
+	if (!probes.some((probe) => probe.kind === 'disconfirm')) {
+		const fallbackDisconfirm = firstUnusedCommand() || commands[0];
+		if (fallbackDisconfirm) {
+			probes.push(
+				buildProbe(
+					hypothesisId,
+					'disconfirm',
+					'fallback_disconfirm_probe',
+					fallbackDisconfirm,
+					targetFiles
+				)
+			);
+		}
+	}
+
+	return probes.slice(0, 3);
+}
+
+function scoreHypothesis(
+	hypothesis: FixHypothesis,
+	classification: FailureClassification,
+	baseConfidence: number
+): number {
+	const familyBias: Record<FixHypothesisFamily, number> = {
+		dependency: classification === 'module_not_found' ? 0.14 : 0.05,
+		typing: classification === 'type_error' || classification === 'syntax_error' ? 0.14 : 0.05,
+		test_logic: classification === 'test_failure' ? 0.14 : 0.05,
+		runtime: classification === 'runtime_error' || classification === 'unknown' ? 0.1 : 0.04,
+		lint: classification === 'lint_error' ? 0.14 : 0.03,
+		environment:
+			classification === 'command_not_found' || classification === 'permission_error' ? 0.14 : 0.03,
+	};
+
+	return (
+		baseConfidence +
+		familyBias[hypothesis.family] +
+		Math.min(0.08, hypothesis.likely_files.length * 0.01) +
+		Math.min(0.05, hypothesis.likely_symbols.length * 0.01) +
+		hypothesis.evidence.evidence_score * 0.2 -
+		(hypothesis.evidence.evidence_score < 0.45 ? 0.16 : 0)
+	);
+}
+
+function buildHypothesis(
+	id: string,
+	classification: FailureClassification,
+	family: FixHypothesisFamily,
+	confidence: number,
+	likelyFiles: string[],
+	likelySymbols: string[],
+	command: string,
+	signal: string,
+	rationale: string
+): FixHypothesis {
+	const suggestedCommands = uniqueCommands(
+		buildTargetedCommands(classification, likelyFiles, family)
+	);
+	const evidence = buildEvidence(signal, classification, family, likelyFiles, likelySymbols);
+	return {
+		id,
+		classification,
+		family,
+		title: `Address ${family.replace(/_/g, ' ')}`,
+		rationale,
+		confidence,
+		likely_files: likelyFiles,
+		likely_symbols: likelySymbols,
+		evidence,
+		suggested_commands: suggestedCommands,
+		probe_candidates: buildProbeCandidates(id, family, suggestedCommands, likelyFiles),
+		metadata_hash: buildMetadataHash(classification, command, likelyFiles, likelySymbols),
+	};
+}
+
 function buildHypotheses(
 	classification: FailureClassification,
 	command: string,
+	signal: string,
 	confidence: number,
 	likelyFiles: string[],
 	likelySymbols: string[]
 ): FixHypothesis[] {
-	const baseCommand = classification === 'lint_error' ? 'npm run lint' : 'npm test -- --runInBand';
-	const targetedCommands = buildTargetedCommands(classification, likelyFiles);
-	const primary: FixHypothesis = {
-		id: `hyp-${classification}-1`,
+	const primaryFamily = familyForClassification(classification);
+	const alternateFamily = secondaryFamily(classification);
+
+	const primary = buildHypothesis(
+		`hyp-${classification}-1`,
 		classification,
-		title: `Address ${classification.replace(/_/g, ' ')}`,
-		rationale: `Primary hypothesis inferred from failure signature (${classification}).`,
+		primaryFamily,
 		confidence,
-		likely_files: likelyFiles,
-		likely_symbols: likelySymbols,
-		suggested_commands: uniqueCommands([...targetedCommands, baseCommand]),
-		metadata_hash: buildMetadataHash(classification, command, likelyFiles, likelySymbols),
-	};
+		likelyFiles,
+		likelySymbols,
+		command,
+		signal,
+		`Primary hypothesis inferred from failure signature (${classification}).`
+	);
 
-	const fallback: FixHypothesis = {
-		id: `hyp-${classification}-2`,
+	const alternate = buildHypothesis(
+		`hyp-${classification}-2`,
 		classification,
-		title: 'Validate failing scope and dependencies',
-		rationale: 'Fallback hypothesis when file-local fix is insufficient.',
-		confidence: Math.max(0.25, confidence - 0.2),
-		likely_files: likelyFiles.slice(0, 3),
-		likely_symbols: likelySymbols.slice(0, 3),
-		suggested_commands: uniqueCommands([targetedCommands[0] || '', 'npm test', 'npm run build']),
-		metadata_hash: buildMetadataHash(
-			classification,
-			command,
-			likelyFiles.slice(0, 3),
-			likelySymbols.slice(0, 3)
-		),
-	};
+		alternateFamily,
+		Math.max(0.2, confidence - 0.12),
+		likelyFiles.slice(0, 5),
+		likelySymbols.slice(0, 5),
+		command,
+		signal,
+		'Secondary hypothesis explores a distinct failure family to disambiguate root cause.'
+	);
 
-	return [primary, fallback];
+	const environmentFallback = buildHypothesis(
+		`hyp-${classification}-3`,
+		classification,
+		'environment',
+		Math.max(0.15, confidence - 0.2),
+		likelyFiles.slice(0, 3),
+		likelySymbols.slice(0, 3),
+		command,
+		signal,
+		'Fallback hypothesis validates environment/tooling causes when code-local probes are inconclusive.'
+	);
+
+	return [primary, alternate, environmentFallback];
 }
 
 export class FailureTriageEngine {
@@ -236,17 +556,32 @@ export class FailureTriageEngine {
 		const hypotheses = buildHypotheses(
 			classification,
 			signal.command,
+			combinedSignal,
 			confidence,
 			probableFiles,
 			probableSymbols
 		);
+
+		const ranked = hypotheses
+			.map((hypothesis) => ({
+				hypothesis_id: hypothesis.id,
+				score: scoreHypothesis(hypothesis, classification, confidence),
+			}))
+			.sort((a, b) => b.score - a.score);
+		const sortedHypotheses = ranked
+			.map((rank) => hypotheses.find((hypothesis) => hypothesis.id === rank.hypothesis_id)!)
+			.filter(Boolean);
+		const beamWidth = Math.min(BEAM_WIDTH, sortedHypotheses.length);
 
 		return {
 			classification,
 			confidence,
 			probable_files: probableFiles,
 			probable_symbols: probableSymbols,
-			hypotheses,
+			hypotheses: sortedHypotheses,
+			beam_width: beamWidth,
+			selected_hypothesis_id: ranked[0]?.hypothesis_id,
+			ranking: ranked,
 			raw_signal_excerpt: excerpt,
 		};
 	}

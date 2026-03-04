@@ -43,16 +43,14 @@ describe('DebugFixLoopEngine', () => {
 		const engine = new DebugFixLoopEngine();
 		const runCommand = vi
 			.fn()
-			.mockResolvedValueOnce({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 })
-			.mockResolvedValueOnce({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 })
-			.mockResolvedValueOnce({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 });
+			.mockResolvedValue({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 });
 
 		const result = await engine.run(
 			{
 				session_id: 'session-2',
-				task,
+				task: { ...task, allowed_commands: ['npm run verify'] },
 				cwd: '/tmp/project',
-				initial_command: 'npm test',
+				initial_command: 'npm run verify',
 			},
 			{ runCommand }
 		);
@@ -62,7 +60,7 @@ describe('DebugFixLoopEngine', () => {
 		expect(result.failure).toEqual(
 			expect.objectContaining({
 				code: 'non_progressing_hypothesis_loop',
-				attempt: 3,
+				attempt: 2,
 				hypothesis: expect.objectContaining({
 					previous_signature: expect.any(String),
 					current_signature: expect.any(String),
@@ -157,5 +155,124 @@ describe('DebugFixLoopEngine', () => {
 		expect(result.status).toBe('failed');
 		expect(result.failure?.code).toBe('command_not_allowed');
 		expect(runCommand).not.toHaveBeenCalled();
+	});
+
+	it('uses prior memory to avoid repeating the same hypothesis family', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn().mockResolvedValue({
+			exitCode: 1,
+			stderr: 'FAIL src/math.test.ts\nExpected: 3\nReceived: 2',
+			durationMs: 16,
+		});
+
+		const result = await engine.run(
+			{
+				session_id: 'session-7',
+				task: { ...task, done_gate_profile: 'standard' },
+				cwd: '/tmp/project',
+				initial_command: 'npm test',
+				max_attempts: 1,
+				prior_memory: {
+					family_attempts: { test_logic: 4 },
+					selected_hypothesis_history: ['hyp-test_failure-1'],
+					stagnation_count: 2,
+				},
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('failed');
+		expect(result.attempts[0].selected_hypothesis_id).toBe('hyp-test_failure-2');
+		expect(result.memory_state?.strategy_switch_count).toBeGreaterThanOrEqual(1);
+	});
+
+	it('tracks fix-path candidates and avoids exact command repeats without new evidence', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn(async (command: string) => {
+			if (command === 'npm run build') {
+				return { exitCode: 1, stderr: 'TS2304 Cannot find name BuildOnly', durationMs: 18 };
+			}
+			return {
+				exitCode: 1,
+				stderr: 'FAIL src/math.test.ts\nExpected: 3\nReceived: 2',
+				durationMs: 16,
+			};
+		});
+
+		const result = await engine.run(
+			{
+				session_id: 'session-8',
+				task: {
+					...task,
+					allowed_commands: ['npm test', 'npm run build'],
+				},
+				cwd: '/tmp/project',
+				initial_command: 'npm test',
+				max_attempts: 2,
+			},
+			{ runCommand }
+		);
+
+		expect(result.attempts.length).toBe(2);
+		expect(result.attempts[0].fix_path_candidates?.length || 0).toBeGreaterThan(0);
+		expect(result.attempts[0].fix_path_candidates?.length || 0).toBeLessThanOrEqual(2);
+		expect(result.attempts[0].selected_command).toBeDefined();
+		expect(result.attempts[1].command).not.toBe(result.attempts[0].command);
+		expect(Object.keys(result.memory_state?.failure_fingerprints || {})).toHaveLength(1);
+		expect(Object.keys(result.memory_state?.module_area_memory || {}).length).toBeGreaterThan(0);
+	});
+
+	it('records context narratives and long-horizon checkpoints in attempt traces', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn().mockResolvedValue({
+			exitCode: 1,
+			stderr: 'ReferenceError: boom in src/runtime/handler.ts',
+			durationMs: 18,
+		});
+
+		const result = await engine.run(
+			{
+				session_id: 'session-9',
+				task,
+				cwd: '/tmp/project',
+				initial_command: 'npm test',
+				max_attempts: 2,
+			},
+			{
+				runCommand,
+				getContextPack: vi.fn().mockResolvedValue({
+					selectedFiles: ['src/runtime/handler.ts', 'src/runtime/handler.test.ts'],
+					impactedSymbols: ['handler'],
+					selection_narratives: [
+						{
+							file_path: 'src/runtime/handler.ts',
+							reason: 'seed_file',
+							path: ['src/runtime/handler.ts'],
+						},
+						{
+							file_path: 'src/runtime/handler.test.ts',
+							reason: 'test_source_link',
+							path: ['src/runtime/handler.ts', 'src/runtime/handler.test.ts'],
+						},
+					],
+				}),
+				getGraphScores: vi.fn().mockResolvedValue({
+					scores: [
+						{
+							file_path: 'src/runtime/handler.ts',
+							score: 0.91,
+							impact_score: 1.2,
+							fanout: 1,
+						},
+					],
+					coverage: 1,
+					explored_nodes: 2,
+				}),
+			}
+		);
+
+		expect(result.status).toBe('failed');
+		expect(result.attempts[0].context_selection_narratives?.[0]?.reason).toBe('seed_file');
+		expect(result.attempts[0].long_horizon_checkpoints?.length || 0).toBeGreaterThan(0);
 	});
 });

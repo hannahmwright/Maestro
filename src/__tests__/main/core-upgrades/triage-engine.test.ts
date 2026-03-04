@@ -42,6 +42,9 @@ describe('FailureTriageEngine', () => {
 		});
 
 		expect(result.hypotheses[0]?.suggested_commands).toContain('npm test -- src/math.test.ts');
+		const probeKinds = new Set(result.hypotheses[0]?.probe_candidates.map((probe) => probe.kind));
+		expect(probeKinds.has('confirm')).toBe(true);
+		expect(probeKinds.has('disconfirm')).toBe(true);
 	});
 
 	it('uses context fallback files when stderr does not include file paths', () => {

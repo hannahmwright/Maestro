@@ -987,8 +987,18 @@ describe('AgentSessionsModal', () => {
 			fireEvent.keyDown(input, { key: 'ArrowDown' });
 
 			await waitFor(() => {
+				const firstButton = screen.getByText('First').closest('button');
 				const secondButton = screen.getByText('Second').closest('button');
-				expect(secondButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+				expect(firstButton).toBeTruthy();
+				expect(secondButton).toBeTruthy();
+
+				const firstBeforeSecond = Boolean(
+					firstButton &&
+					secondButton &&
+					firstButton.compareDocumentPosition(secondButton) & Node.DOCUMENT_POSITION_FOLLOWING
+				);
+				const expectedLastButton = firstBeforeSecond ? secondButton : firstButton;
+				expect(expectedLastButton).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 			});
 		});
 

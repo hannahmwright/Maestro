@@ -1,0 +1,10 @@
+{
+	"fixture_count": 2,
+	"failed": 0,
+	"metrics": {
+		"first_attempt_solve_rate": 0,
+		"average_attempt_count": 2,
+		"non_progressing_failure_rate": 0.5
+	},
+	"generated_at": "2026-03-04T18:53:54.588Z"
+}

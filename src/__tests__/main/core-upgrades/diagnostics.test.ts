@@ -31,6 +31,8 @@ describe('buildTaskDiagnostics', () => {
 					probable_files: ['src/app.ts'],
 					probable_symbols: [],
 					hypotheses: [],
+					beam_width: 2,
+					ranking: [],
 					raw_signal_excerpt: 'FAIL',
 				},
 			},
@@ -104,7 +106,17 @@ describe('buildTaskDiagnostics', () => {
 			edit_plan_applied: 0,
 			review_findings: 1,
 			gate_result: 1,
+			probe_started: 0,
+			probe_finished: 0,
+			context_expanded: 0,
+			strategy_switched: 0,
 		});
+		expect(diagnostics.graph_query_count).toBe(0);
+		expect(diagnostics.long_horizon_plan_count).toBe(0);
+		expect(diagnostics.strict_runtime_path).toBe(true);
+		expect(diagnostics.evidence_ledger_count).toBe(0);
+		expect(diagnostics.average_hypothesis_branches).toBe(0);
+		expect(diagnostics.explanation_path_count).toBe(0);
 	});
 
 	it('handles empty lifecycle streams for quick success paths', () => {
@@ -136,5 +148,6 @@ describe('buildTaskDiagnostics', () => {
 		expect(diagnostics.blocking_reasons).toEqual([]);
 		expect(diagnostics.full_suite_required).toBe(false);
 		expect(diagnostics.lifecycle_counts.gate_result).toBe(0);
+		expect(diagnostics.strict_runtime_path).toBe(true);
 	});
 });

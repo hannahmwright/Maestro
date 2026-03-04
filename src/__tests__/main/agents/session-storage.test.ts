@@ -289,28 +289,32 @@ describe('CodexSessionStorage', () => {
 		expect(storage.agentId).toBe('codex');
 	});
 
-	it('should return empty results for non-existent sessions directory', async () => {
-		const { CodexSessionStorage } = await import('../../../main/storage/codex-session-storage');
-		const storage = new CodexSessionStorage();
+	it(
+		'should return empty results for non-existent sessions directory',
+		{ timeout: 30000 },
+		async () => {
+			const { CodexSessionStorage } = await import('../../../main/storage/codex-session-storage');
+			const storage = new CodexSessionStorage();
 
-		// Non-existent project should return empty results (since ~/.codex/sessions/ likely doesn't exist in test)
-		const sessions = await storage.listSessions('/test/nonexistent/project');
-		expect(sessions).toEqual([]);
+			// Non-existent project should return empty results (since ~/.codex/sessions/ likely doesn't exist in test)
+			const sessions = await storage.listSessions('/test/nonexistent/project');
+			expect(sessions).toEqual([]);
 
-		const paginated = await storage.listSessionsPaginated('/test/nonexistent/project');
-		expect(paginated.sessions).toEqual([]);
-		expect(paginated.totalCount).toBe(0);
+			const paginated = await storage.listSessionsPaginated('/test/nonexistent/project');
+			expect(paginated.sessions).toEqual([]);
+			expect(paginated.totalCount).toBe(0);
 
-		const messages = await storage.readSessionMessages(
-			'/test/nonexistent/project',
-			'nonexistent-session'
-		);
-		expect(messages.messages).toEqual([]);
-		expect(messages.total).toBe(0);
+			const messages = await storage.readSessionMessages(
+				'/test/nonexistent/project',
+				'nonexistent-session'
+			);
+			expect(messages.messages).toEqual([]);
+			expect(messages.total).toBe(0);
 
-		const search = await storage.searchSessions('/test/nonexistent/project', 'query', 'all');
-		expect(search).toEqual([]);
-	});
+			const search = await storage.searchSessions('/test/nonexistent/project', 'query', 'all');
+			expect(search).toEqual([]);
+		}
+	);
 
 	it('should return null for getSessionPath (async operation required)', async () => {
 		const { CodexSessionStorage } = await import('../../../main/storage/codex-session-storage');

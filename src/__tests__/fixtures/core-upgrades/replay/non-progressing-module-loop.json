@@ -1,0 +1,58 @@
+{
+	"id": "non-progressing-module-loop",
+	"description": "Repeated module resolution failures terminate with structured non-progress reason.",
+	"metadata": {
+		"category": "non-progressing-loop",
+		"difficulty": "extreme",
+		"tags": ["module-resolution", "strategy-switch", "non-progress"],
+		"source": "curated"
+	},
+	"task": {
+		"task_id": "replay-nonprogress-1",
+		"goal": "Resolve missing module failure",
+		"repo_root": "/tmp/project",
+		"language_profile": "ts_js",
+		"risk_level": "medium",
+		"allowed_commands": ["npm run verify"],
+		"done_gate_profile": "standard",
+		"max_changed_files": 3,
+		"created_at": 1731010102000
+	},
+	"cwd": "/tmp/project",
+	"initial_command": "npm run verify",
+	"command_plan": [
+		{
+			"match": "npm run verify",
+			"match_type": "exact",
+			"responses": [
+				{
+					"exitCode": 1,
+					"stderr": "Error: Cannot find module '@app/shared/config'",
+					"durationMs": 19
+				},
+				{
+					"exitCode": 1,
+					"stderr": "Error: Cannot find module '@app/shared/config'",
+					"durationMs": 18
+				},
+				{
+					"exitCode": 1,
+					"stderr": "Error: Cannot find module '@app/shared/config'",
+					"durationMs": 20
+				},
+				{
+					"exitCode": 1,
+					"stderr": "Error: Cannot find module '@app/shared/config'",
+					"durationMs": 19
+				}
+			]
+		}
+	],
+	"expectation": {
+		"status": "failed",
+		"reason": "non_progressing_hypothesis_loop",
+		"max_attempts": 2,
+		"min_strategy_switch_count": 1,
+		"require_selected_hypothesis": true
+	}
+}

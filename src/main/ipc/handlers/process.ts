@@ -31,6 +31,7 @@ import {
 	buildTaskDiagnostics,
 } from '../../core-upgrades';
 import type {
+	LoopExecutionMemory,
 	PlannedFilePatch,
 	ProposedFileEdit,
 	TaskContractInput,
@@ -819,20 +820,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					hasTaskContractInput: !!config.taskContractInput,
 				});
 
-				if (isCoreUpgradesEnabled() && config.taskContractInput) {
+				if (isCoreUpgradesEnabled()) {
+					const taskContractInput = config.taskContractInput || {};
 					const task = coreUpgradeOrchestrator.createTaskContract({
-						goal: config.taskContractInput.goal || `Resolve command task: ${config.command}`,
-						repo_root: config.taskContractInput.repo_root || config.cwd,
-						language_profile: config.taskContractInput.language_profile || 'ts_js',
-						risk_level: config.taskContractInput.risk_level || 'medium',
-						allowed_commands: config.taskContractInput.allowed_commands || [
+						goal: taskContractInput.goal || `Resolve command task: ${config.command}`,
+						repo_root: taskContractInput.repo_root || config.cwd,
+						language_profile: taskContractInput.language_profile || 'ts_js',
+						risk_level: taskContractInput.risk_level || 'medium',
+						allowed_commands: taskContractInput.allowed_commands || [
 							config.command,
 							'npm test',
 							'npm run build',
+							'npm run lint',
 						],
-						done_gate_profile: config.taskContractInput.done_gate_profile,
-						max_changed_files: config.taskContractInput.max_changed_files,
-						metadata: config.taskContractInput.metadata,
+						done_gate_profile: taskContractInput.done_gate_profile,
+						max_changed_files: taskContractInput.max_changed_files,
+						metadata: taskContractInput.metadata,
 					});
 
 					const retrievalMode =
@@ -841,16 +844,52 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							: (config.proposedEdits || []).length > 0
 								? 'edit_focused'
 								: 'failure_focused';
+					const sessionMemoryKey = `session:${config.sessionId}:strict-loop`;
+					const projectStrategyMemoryKey = 'project:strict-loop-strategy';
 					const lifecycleEvents: TaskLifecycleEvent[] = [];
 					let contextPack: Awaited<ReturnType<typeof repoContextService.getContextPack>> | null =
 						null;
+					let priorLoopMemory: Partial<LoopExecutionMemory> | undefined;
 					try {
 						contextPack = await repoContextService.getContextPack({
 							repoRoot: task.repo_root,
 							mode: retrievalMode,
 							seedFiles: config.relatedFiles || config.changedFiles || [],
+							depth: 1,
+							reason: 'initial',
 							maxFiles: 6,
 						});
+						const memoryEntry = await repoContextService.getTaskMemory(
+							task.repo_root,
+							sessionMemoryKey
+						);
+						if (memoryEntry && typeof memoryEntry === 'object' && 'loop_memory' in memoryEntry) {
+							priorLoopMemory = memoryEntry.loop_memory as Partial<LoopExecutionMemory>;
+						}
+						const projectMemoryEntry = await repoContextService.getTaskMemory(
+							task.repo_root,
+							projectStrategyMemoryKey
+						);
+						if (
+							projectMemoryEntry &&
+							typeof projectMemoryEntry === 'object' &&
+							'loop_memory' in projectMemoryEntry
+						) {
+							priorLoopMemory = {
+								...(projectMemoryEntry.loop_memory as Partial<LoopExecutionMemory>),
+								...(priorLoopMemory || {}),
+								failure_fingerprints: {
+									...((projectMemoryEntry.loop_memory as Partial<LoopExecutionMemory>)
+										.failure_fingerprints || {}),
+									...(priorLoopMemory?.failure_fingerprints || {}),
+								},
+								module_area_memory: {
+									...((projectMemoryEntry.loop_memory as Partial<LoopExecutionMemory>)
+										.module_area_memory || {}),
+									...(priorLoopMemory?.module_area_memory || {}),
+								},
+							};
+						}
 					} catch (error) {
 						logger.warn('Failed to build context pack for task loop', LOG_CONTEXT, {
 							sessionId: config.sessionId,
@@ -870,9 +909,40 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							related_files: config.relatedFiles,
 							changed_files: config.changedFiles,
 							diff_text: config.diffText,
+							prior_memory: priorLoopMemory,
 						},
 						{
 							runCommand: runSingleCommand,
+							getContextPack: async (request) => {
+								const pack = await repoContextService.getContextPack({
+									repoRoot: task.repo_root,
+									mode: request.mode,
+									seedFiles: request.seedFiles,
+									seedSymbols: request.seedSymbols,
+									depth: request.depth,
+									reason: request.reason,
+									maxFiles: request.maxFiles,
+								});
+								return {
+									selectedFiles: pack.selectedFiles,
+									impactedSymbols: pack.impactedSymbols,
+									bridgeFiles: pack.bridgeFiles,
+									bridgeSymbols: pack.bridgeSymbols,
+									selection_narratives: pack.selectionNarratives.map((entry) => ({
+										file_path: entry.filePath,
+										reason: entry.reason,
+										path: entry.path,
+									})),
+								};
+							},
+							getGraphScores: (request) =>
+								repoContextService.scoreCandidates({
+									repoRoot: task.repo_root,
+									seedFiles: request.seedFiles,
+									candidateFiles: request.candidateFiles,
+									seedSymbols: request.seedSymbols,
+									maxDepth: request.maxDepth,
+								}),
 							emitLifecycle: (event) => {
 								lifecycleEvents.push(event);
 								processManager.emit('task-lifecycle', config.sessionId, event);
@@ -895,6 +965,16 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							last_reason: loopResult.reason || null,
 							attempt_count: loopResult.attempts.length,
 							diagnostics: taskDiagnostics,
+							updated_at: Date.now(),
+						});
+						await repoContextService.updateTaskMemory(task.repo_root, sessionMemoryKey, {
+							loop_memory: loopResult.memory_state || null,
+							last_selected_hypothesis_id:
+								loopResult.attempts[loopResult.attempts.length - 1]?.selected_hypothesis_id || null,
+							updated_at: Date.now(),
+						});
+						await repoContextService.updateTaskMemory(task.repo_root, projectStrategyMemoryKey, {
+							loop_memory: loopResult.memory_state || null,
 							updated_at: Date.now(),
 						});
 					} catch (error) {

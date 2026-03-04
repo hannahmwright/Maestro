@@ -308,6 +308,14 @@ interface MaestroAPI {
 				attempts: Array<{
 					attempt: number;
 					command: string;
+					selected_hypothesis_id?: string;
+					selected_command?: string;
+					fix_path_candidates?: Array<{
+						hypothesis_id: string;
+						command: string;
+						score: number;
+						feasible: boolean;
+					}>;
 					result: {
 						command: string;
 						exit_code: number;
@@ -332,6 +340,13 @@ interface MaestroAPI {
 						| 'gate_blocked'
 						| 'max_attempts_reached';
 					message: string;
+					blocking_reasons?: string[];
+					syntax_errors?: Array<{ file_path: string; message: string }>;
+					plausibility_errors?: Array<{
+						file_path: string;
+						code: 'merge_conflict_markers' | 'new_placeholder_markers' | 'empty_file_rewrite';
+						message: string;
+					}>;
 				};
 			};
 			taskDiagnostics?: {
@@ -355,11 +370,28 @@ interface MaestroAPI {
 					edit_plan_applied: number;
 					review_findings: number;
 					gate_result: number;
+					probe_started: number;
+					probe_finished: number;
+					context_expanded: number;
+					strategy_switched: number;
 				};
 				last_command?: string;
 				last_exit_code?: number;
 				retrieval_mode?: 'failure_focused' | 'edit_focused' | 'review_focused';
 				context_selected_files?: number;
+				probe_count: number;
+				strategy_switch_count: number;
+				context_expansion_count: number;
+				average_probe_gain?: number;
+				graph_query_count: number;
+				average_graph_coverage?: number;
+				long_horizon_plan_count: number;
+				memory_stagnation_final?: number;
+				failure_fingerprint_count?: number;
+				strict_runtime_path: boolean;
+				evidence_ledger_count: number;
+				average_hypothesis_branches: number;
+				explanation_path_count: number;
 				generated_at: number;
 			};
 			contextPack?: unknown;
@@ -492,11 +524,28 @@ interface MaestroAPI {
 						edit_plan_applied: number;
 						review_findings: number;
 						gate_result: number;
+						probe_started: number;
+						probe_finished: number;
+						context_expanded: number;
+						strategy_switched: number;
 					};
 					last_command?: string;
 					last_exit_code?: number;
 					retrieval_mode?: 'failure_focused' | 'edit_focused' | 'review_focused';
 					context_selected_files?: number;
+					probe_count: number;
+					strategy_switch_count: number;
+					context_expansion_count: number;
+					average_probe_gain?: number;
+					graph_query_count: number;
+					average_graph_coverage?: number;
+					long_horizon_plan_count: number;
+					memory_stagnation_final?: number;
+					failure_fingerprint_count?: number;
+					strict_runtime_path: boolean;
+					evidence_ledger_count: number;
+					average_hypothesis_branches: number;
+					explanation_path_count: number;
 					generated_at: number;
 				}
 			) => void
