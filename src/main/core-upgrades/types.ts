@@ -134,6 +134,7 @@ export interface GateEvaluationInput {
 	full_suite_checks?: CommandCheckResult[];
 	review_findings?: ReviewFinding[];
 	cross_package_change?: boolean;
+	high_risk_edit?: boolean;
 }
 
 export interface CompletionDecision {

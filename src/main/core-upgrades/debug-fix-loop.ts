@@ -165,6 +165,15 @@ export class DebugFixLoopEngine {
 			});
 
 			const targetedChecks = [check];
+			const highRiskEdit =
+				input.task.risk_level === 'high' ||
+				reviewFindings.some(
+					(finding) =>
+						finding.regression_risk === 'high' ||
+						finding.severity === 'critical' ||
+						finding.severity === 'high' ||
+						finding.missing_tests
+				);
 			let decision: CompletionDecision = this.gateEngine.evaluate({
 				task: input.task,
 				targeted_checks: targetedChecks,
@@ -172,6 +181,7 @@ export class DebugFixLoopEngine {
 				cross_package_change: (input.changed_files || []).some((filePath) =>
 					filePath.includes('/packages/')
 				),
+				high_risk_edit: highRiskEdit,
 			});
 
 			// Escalate to full-suite checks only when required by the gate policy.
@@ -190,6 +200,7 @@ export class DebugFixLoopEngine {
 					cross_package_change: (input.changed_files || []).some((filePath) =>
 						filePath.includes('/packages/')
 					),
+					high_risk_edit: highRiskEdit,
 				});
 			}
 			deps.emitLifecycle?.({ type: 'gate-result', attempt, decision });

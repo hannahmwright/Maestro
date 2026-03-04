@@ -4,10 +4,11 @@ function isBlockingFinding(finding: ReviewFinding): boolean {
 	return finding.blocking || finding.severity === 'critical' || finding.severity === 'high';
 }
 
-function shouldRequireFullSuite(input: GateEvaluationInput): boolean {
+function shouldRequireFullSuite(input: GateEvaluationInput, highRiskEdit: boolean): boolean {
 	if (input.task.done_gate_profile === 'high_risk') return true;
-	if (input.task.done_gate_profile === 'standard' && input.cross_package_change) return true;
 	if (input.task.risk_level === 'high') return true;
+	if (input.cross_package_change) return true;
+	if (highRiskEdit) return true;
 	return false;
 }
 
@@ -17,6 +18,18 @@ export class DoneGateEngine {
 		const nextActions: string[] = [];
 		const reviewFindings = input.review_findings || [];
 		const blockingFindings = reviewFindings.filter(isBlockingFinding);
+		const highRiskEdit =
+			!!input.high_risk_edit ||
+			reviewFindings.some(
+				(finding) =>
+					finding.regression_risk === 'high' ||
+					finding.severity === 'critical' ||
+					finding.severity === 'high'
+			);
+		if (input.targeted_checks.length === 0) {
+			blockingReasons.push('targeted_checks_missing');
+			nextActions.push('Run targeted validation before marking task complete.');
+		}
 		const targetedFailures = input.targeted_checks.filter((check) => !check.pass);
 
 		if (targetedFailures.length > 0) {
@@ -24,7 +37,7 @@ export class DoneGateEngine {
 			nextActions.push('Fix targeted check failures and rerun targeted validation.');
 		}
 
-		const requiresFullSuite = shouldRequireFullSuite(input);
+		const requiresFullSuite = shouldRequireFullSuite(input, highRiskEdit);
 		if (requiresFullSuite) {
 			if (!input.full_suite_checks || input.full_suite_checks.length === 0) {
 				blockingReasons.push('full_suite_required');

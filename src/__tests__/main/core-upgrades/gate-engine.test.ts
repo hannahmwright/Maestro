@@ -15,6 +15,16 @@ const baseTask: TaskContract = {
 };
 
 describe('DoneGateEngine', () => {
+	it('blocks completion when targeted checks are missing', () => {
+		const engine = new DoneGateEngine();
+		const decision = engine.evaluate({
+			task: baseTask,
+			targeted_checks: [],
+		});
+		expect(decision.decision).toBe('continue');
+		expect(decision.blocking_reasons).toContain('targeted_checks_missing');
+	});
+
 	it('blocks completion when targeted checks fail', () => {
 		const engine = new DoneGateEngine();
 		const decision = engine.evaluate({
@@ -33,5 +43,27 @@ describe('DoneGateEngine', () => {
 			review_findings: [],
 		});
 		expect(decision.decision).toBe('complete');
+	});
+
+	it('requires full suite for cross-package changes in standard profile', () => {
+		const engine = new DoneGateEngine();
+		const decision = engine.evaluate({
+			task: baseTask,
+			targeted_checks: [{ command: 'npm test', exit_code: 0, pass: true, duration_ms: 100 }],
+			cross_package_change: true,
+		});
+		expect(decision.requires_full_suite).toBe(true);
+		expect(decision.blocking_reasons).toContain('full_suite_required');
+	});
+
+	it('requires full suite for high-risk edit signals', () => {
+		const engine = new DoneGateEngine();
+		const decision = engine.evaluate({
+			task: { ...baseTask, done_gate_profile: 'quick' },
+			targeted_checks: [{ command: 'npm test', exit_code: 0, pass: true, duration_ms: 90 }],
+			high_risk_edit: true,
+		});
+		expect(decision.requires_full_suite).toBe(true);
+		expect(decision.blocking_reasons).toContain('full_suite_required');
 	});
 });
