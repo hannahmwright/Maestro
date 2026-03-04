@@ -991,6 +991,15 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
+		{
+			id: 'goToProcesses',
+			label: 'Go to Processes Tab',
+			action: () => {
+				setRightPanelOpen(true);
+				setActiveRightTab('processes');
+				setQuickActionOpen(false);
+			},
+		},
 		// Playbook Exchange - browse and import community playbooks
 		...(onOpenPlaybookExchange
 			? [

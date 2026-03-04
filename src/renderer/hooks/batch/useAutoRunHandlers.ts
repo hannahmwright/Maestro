@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import type { Session, BatchRunConfig } from '../../types';
+import type { Session, BatchRunConfig, RightPanelTab, FocusArea } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
@@ -32,9 +32,9 @@ export interface UseAutoRunHandlersDeps {
 	setAutoRunIsLoadingDocuments: React.Dispatch<React.SetStateAction<boolean>>;
 	setAutoRunSetupModalOpen: (open: boolean) => void;
 	setBatchRunnerModalOpen: (open: boolean) => void;
-	setActiveRightTab: React.Dispatch<React.SetStateAction<'files' | 'history' | 'autorun'>>;
+	setActiveRightTab: React.Dispatch<React.SetStateAction<RightPanelTab>>;
 	setRightPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
-	setActiveFocus: React.Dispatch<React.SetStateAction<'sidebar' | 'main' | 'right'>>;
+	setActiveFocus: React.Dispatch<React.SetStateAction<FocusArea>>;
 	setSuccessFlashNotification: React.Dispatch<React.SetStateAction<string | null>>;
 
 	// Current state values
@@ -87,6 +87,25 @@ function getSshRemoteId(session: Session | null): string | undefined {
 	return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 }
 
+function normalizePath(p: string): string {
+	return p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
+}
+
+function findOwnedWorktreeSession(
+	parentSessionId: string,
+	branchName: string,
+	worktreePath: string
+): Session | undefined {
+	const normalizedPath = normalizePath(worktreePath);
+	return useSessionStore
+		.getState()
+		.sessions.find(
+			(s) =>
+				s.parentSessionId === parentSessionId &&
+				(s.worktreeBranch === branchName || normalizePath(s.cwd) === normalizedPath)
+		);
+}
+
 /**
  * Spawn a worktree agent session and prepare config for dispatch.
  * Handles both 'create-new' (creates worktree on disk first) and
@@ -110,6 +129,15 @@ async function spawnWorktreeAgentAndDispatch(
 			parentSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
 		worktreePath = basePath + '/' + target.newBranchName;
 		branchName = target.newBranchName!;
+		const existingSession = findOwnedWorktreeSession(parentSession.id, branchName, worktreePath);
+		if (existingSession) {
+			notifyToast({
+				type: 'warning',
+				title: 'Branch Already In Use',
+				message: `Branch "${branchName}" is already owned by "${existingSession.name}". Dispatching to that worktree agent.`,
+			});
+			return existingSession.id;
+		}
 
 		// Mark path BEFORE creating on disk so the file watcher in useWorktreeHandlers
 		// skips this path and doesn't create a duplicate session.
@@ -141,6 +169,15 @@ async function spawnWorktreeAgentAndDispatch(
 		// existing-closed: worktree already on disk
 		worktreePath = target.worktreePath!;
 		branchName = worktreePath.split('/').pop() || 'worktree';
+		const existingSession = findOwnedWorktreeSession(parentSession.id, branchName, worktreePath);
+		if (existingSession) {
+			notifyToast({
+				type: 'warning',
+				title: 'Worktree Already Open',
+				message: `Using existing worktree agent "${existingSession.name}" for branch "${branchName}".`,
+			});
+			return existingSession.id;
+		}
 	}
 
 	// Step 3: Fetch git info for the worktree

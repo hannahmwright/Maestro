@@ -550,6 +550,52 @@ describe('MainPanel', () => {
 			});
 		});
 
+		it('should display workflow badge for the active session', () => {
+			render(<MainPanel {...defaultProps} />);
+			expect(screen.getByTestId('workflow-state-badge')).toHaveTextContent('Local Exec');
+		});
+
+		it('should show workflow explainer popover on hover', () => {
+			const session = createSession({
+				aiTabs: [
+					{
+						...createSession().aiTabs[0],
+						executionMode: 'plan',
+						readOnlyMode: true,
+					},
+				],
+			});
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const badge = screen.getByTestId('workflow-state-badge');
+			fireEvent.mouseEnter(badge);
+
+			expect(screen.getByTestId('workflow-state-popover')).toBeInTheDocument();
+			expect(screen.getByText('Planning only')).toBeInTheDocument();
+			expect(screen.getByText('This status is session-specific.')).toBeInTheDocument();
+		});
+
+		it('should show Integration workflow state on integration branches', async () => {
+			setMockGitStatus('session-1', {
+				fileCount: 1,
+				branch: 'codex/integrate-20260304-workflow',
+				remote: 'https://github.com/user/repo.git',
+				ahead: 0,
+				behind: 0,
+				totalAdditions: 0,
+				totalDeletions: 0,
+				modifiedCount: 1,
+				fileChanges: [],
+				lastUpdated: Date.now(),
+			});
+			const session = createSession({ isGitRepo: true });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('workflow-state-badge')).toHaveTextContent('Integration');
+			});
+		});
+
 		it('should hide header in mobile landscape mode', () => {
 			render(<MainPanel {...defaultProps} isMobileLandscape={true} />);
 

@@ -423,12 +423,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		const readOnly = tabReadOnlyMode && session.inputMode === 'ai';
 		// Check if Auto Run is active - used for yellow border indication (queuing will happen for write messages)
 		const autoRunActive = isAutoModeActive && session.inputMode === 'ai';
-		// Show yellow border when: read-only mode is on OR Auto Run is active (both indicate special input handling)
+		const isAskMode = supportsInteractionModes && tabExecutionMode === 'ask';
+		// Ask mode is intentionally calm (no warning border), even though it is read-only.
+		// Keep warning border for explicit read-only toggle and Auto Run queueing.
 		return {
 			isReadOnlyMode: readOnly,
-			showQueueingBorder: readOnly || autoRunActive,
+			showQueueingBorder: autoRunActive || (readOnly && !isAskMode),
 		};
-	}, [tabReadOnlyMode, isAutoModeActive, session.inputMode]);
+	}, [
+		tabReadOnlyMode,
+		isAutoModeActive,
+		session.inputMode,
+		supportsInteractionModes,
+		tabExecutionMode,
+	]);
 
 	// Filter slash commands based on input and current mode
 	const isTerminalMode = session.inputMode === 'terminal';

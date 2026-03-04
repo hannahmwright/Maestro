@@ -4,6 +4,7 @@ import type { Theme, Session, WorktreeRunTarget } from '../types';
 import { gitService } from '../services/git';
 import { getStatusColor } from '../utils/theme';
 import { captureException } from '../utils/sentry';
+import { buildDefaultWorktreeBranch, isCodexTaskBranchName } from '../utils/handoffWorkflow';
 
 interface WorktreeRunSectionProps {
 	theme: Theme;
@@ -73,8 +74,7 @@ export function WorktreeRunSection({
 				if (sorted.length > 0 && !baseBranch) {
 					const defaultBranch = sorted[0]; // current branch (or main/master fallback)
 					setBaseBranch(defaultBranch);
-					const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
-					setNewBranchName(`auto-run-${defaultBranch}-${mmdd}`);
+					setNewBranchName(buildDefaultWorktreeBranch(defaultBranch));
 				}
 			})
 			.catch((err) => {
@@ -142,8 +142,7 @@ export function WorktreeRunSection({
 	// Update branch name when base branch changes
 	const handleBaseBranchChange = useCallback((branch: string) => {
 		setBaseBranch(branch);
-		const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
-		setNewBranchName(`auto-run-${branch}-${mmdd}`);
+		setNewBranchName(buildDefaultWorktreeBranch(branch));
 	}, []);
 
 	// Propagate state changes to parent
@@ -432,6 +431,11 @@ export function WorktreeRunSection({
 									{!newBranchName.trim() && (
 										<span className="text-xs" style={{ color: theme.colors.warning }}>
 											Branch name is required
+										</span>
+									)}
+									{newBranchName.trim() && !isCodexTaskBranchName(newBranchName) && (
+										<span className="text-xs" style={{ color: theme.colors.textDim }}>
+											Recommended: `codex/&lt;task-id&gt;-&lt;slug&gt;-s&lt;n&gt;`
 										</span>
 									)}
 									{worktreePathPreview && (

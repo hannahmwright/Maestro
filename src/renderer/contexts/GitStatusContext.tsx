@@ -80,6 +80,16 @@ const GitDetailContext = createContext<GitDetailContextValue | null>(null);
 // Legacy combined context for backwards compatibility
 const GitStatusContext = createContext<GitStatusContextValue | null>(null);
 
+let didWarnMissingProvider = false;
+
+function warnMissingProvider(hookName: string): void {
+	if (didWarnMissingProvider) return;
+	didWarnMissingProvider = true;
+	console.warn(
+		`[GitStatusContext] ${hookName} was used outside GitStatusProvider. Falling back to empty git status data.`
+	);
+}
+
 // ============================================================================
 // PROVIDER
 // ============================================================================
@@ -204,7 +214,10 @@ export function GitStatusProvider({
 export function useGitBranch(): GitBranchContextValue {
 	const context = useContext(GitBranchContext);
 	if (!context) {
-		throw new Error('useGitBranch must be used within a GitStatusProvider');
+		warnMissingProvider('useGitBranch');
+		return {
+			getBranchInfo: () => undefined,
+		};
 	}
 	return context;
 }
@@ -217,7 +230,11 @@ export function useGitBranch(): GitBranchContextValue {
 export function useGitFileStatus(): GitFileStatusContextValue {
 	const context = useContext(GitFileStatusContext);
 	if (!context) {
-		throw new Error('useGitFileStatus must be used within a GitStatusProvider');
+		warnMissingProvider('useGitFileStatus');
+		return {
+			getFileCount: () => 0,
+			hasChanges: () => false,
+		};
 	}
 	return context;
 }
@@ -230,7 +247,11 @@ export function useGitFileStatus(): GitFileStatusContextValue {
 export function useGitDetail(): GitDetailContextValue {
 	const context = useContext(GitDetailContext);
 	if (!context) {
-		throw new Error('useGitDetail must be used within a GitStatusProvider');
+		warnMissingProvider('useGitDetail');
+		return {
+			getFileDetails: () => undefined,
+			refreshGitStatus: async () => {},
+		};
 	}
 	return context;
 }
@@ -244,7 +265,14 @@ export function useGitDetail(): GitDetailContextValue {
 export function useGitStatus(): GitStatusContextValue {
 	const context = useContext(GitStatusContext);
 	if (!context) {
-		throw new Error('useGitStatus must be used within a GitStatusProvider');
+		warnMissingProvider('useGitStatus');
+		return {
+			gitStatusMap: new Map(),
+			refreshGitStatus: async () => {},
+			isLoading: false,
+			getFileCount: () => 0,
+			getStatus: () => undefined,
+		};
 	}
 	return context;
 }

@@ -86,6 +86,22 @@ function normalizePath(p: string): string {
 	return p.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
 }
 
+/**
+ * Find an already-open worktree session that owns the same branch under the same parent.
+ * Enforces one active execution session per branch in a parent worktree group.
+ */
+function findBranchOwnerSession(
+	sessions: Session[],
+	parentSessionId: string,
+	branchName: string
+): Session | undefined {
+	const targetBranch = branchName.trim();
+	if (!targetBranch) return undefined;
+	return sessions.find(
+		(s) => s.parentSessionId === parentSessionId && s.worktreeBranch === targetBranch
+	);
+}
+
 // buildWorktreeSession and BuildWorktreeSessionParams are imported from ../../utils/worktreeSession
 
 // ============================================================================
@@ -301,6 +317,12 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				useSettingsStore.getState();
 
 			const worktreePath = `${basePath}/${branchName}`;
+			const existingOwner = findBranchOwnerSession(currentSessions, activeSession.id, branchName);
+			if (existingOwner) {
+				throw new Error(
+					`Branch "${branchName}" is already owned by "${existingOwner.name}". Choose another branch or dispatch to that worktree agent.`
+				);
+			}
 
 			// Get SSH remote ID for remote worktree operations
 			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
@@ -382,6 +404,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		if (!createWtSession) return;
 		const { defaultSaveToHistory: savToHist, defaultShowThinking: showThink } =
 			useSettingsStore.getState();
+		const currentSessions = useSessionStore.getState().sessions;
 
 		// Determine base path: use configured path or default to parent directory
 		const basePath =
@@ -389,6 +412,12 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			createWtSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
 
 		const worktreePath = `${basePath}/${branchName}`;
+		const existingOwner = findBranchOwnerSession(currentSessions, createWtSession.id, branchName);
+		if (existingOwner) {
+			throw new Error(
+				`Branch "${branchName}" is already owned by "${existingOwner.name}". Choose another branch or dispatch to that worktree agent.`
+			);
+		}
 
 		// Get SSH remote ID for remote worktree operations
 		// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,

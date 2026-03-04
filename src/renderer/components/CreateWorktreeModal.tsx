@@ -3,6 +3,7 @@ import { X, GitBranch, Loader2, AlertTriangle } from 'lucide-react';
 import type { Theme, Session, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { buildDefaultWorktreeBranch, isCodexTaskBranchName } from '../utils/handoffWorkflow';
 
 interface CreateWorktreeModalProps {
 	isOpen: boolean;
@@ -59,12 +60,12 @@ export function CreateWorktreeModal({
 	useEffect(() => {
 		if (isOpen) {
 			checkGhCli();
-			setBranchName('');
+			setBranchName(buildDefaultWorktreeBranch(session.name));
 			setError(null);
 			// Auto-focus the input
 			setTimeout(() => inputRef.current?.focus(), 50);
 		}
-	}, [isOpen]);
+	}, [isOpen, session.name]);
 
 	const checkGhCli = async () => {
 		try {
@@ -224,6 +225,11 @@ export function CreateWorktreeModal({
 						{hasWorktreeConfig && (
 							<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
 								Will be created at: {session.worktreeConfig?.basePath}/{branchName || '...'}
+							</p>
+						)}
+						{branchName.trim() && !isCodexTaskBranchName(branchName) && (
+							<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+								Recommended format: `codex/&lt;task-id&gt;-&lt;slug&gt;-s&lt;n&gt;`
 							</p>
 						)}
 					</div>

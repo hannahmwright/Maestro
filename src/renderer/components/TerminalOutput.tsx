@@ -313,6 +313,111 @@ const extractSiteFilter = (query: string): string | null => {
 const buildSearchExternalUrl = (query: string): string =>
 	`https://www.google.com/search?q=${encodeURIComponent(query)}`;
 
+interface SourceLink {
+	url: string;
+	label: string;
+}
+
+const SOURCE_HEADER_RE = /^(?:[-*]\s*)?sources?\s*:?\s*$/i;
+const SOURCE_PREFIX_RE = /^(?:[-*]\s*)?sources?\s*:/i;
+const MARKDOWN_LINK_RE = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/gi;
+const PLAIN_URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
+
+const cleanSourceUrl = (value: string): string => value.trim().replace(/[),.;:!?]+$/, '');
+
+const sourceLabelFromUrl = (url: string): string => {
+	try {
+		return new URL(url).hostname.replace(/^www\./, '');
+	} catch {
+		return 'source';
+	}
+};
+
+const extractSourceLinksFromLine = (line: string): SourceLink[] => {
+	const found: SourceLink[] = [];
+	let withoutMarkdownLinks = line;
+	let markdownMatch: RegExpExecArray | null = null;
+	MARKDOWN_LINK_RE.lastIndex = 0;
+
+	while ((markdownMatch = MARKDOWN_LINK_RE.exec(line)) !== null) {
+		const label = markdownMatch[1]?.trim() || sourceLabelFromUrl(markdownMatch[2] || '');
+		const url = cleanSourceUrl(markdownMatch[2] || '');
+		if (!url) continue;
+		found.push({ url, label });
+	}
+
+	withoutMarkdownLinks = withoutMarkdownLinks.replace(MARKDOWN_LINK_RE, ' ');
+	PLAIN_URL_RE.lastIndex = 0;
+
+	let plainMatch: RegExpExecArray | null = null;
+	while ((plainMatch = PLAIN_URL_RE.exec(withoutMarkdownLinks)) !== null) {
+		const url = cleanSourceUrl(plainMatch[0] || '');
+		if (!url) continue;
+		found.push({ url, label: sourceLabelFromUrl(url) });
+	}
+
+	return found;
+};
+
+const splitSourcesFromResponse = (text: string): { content: string; sources: SourceLink[] } => {
+	if (!text.trim()) return { content: text, sources: [] };
+
+	const lines = text.split('\n');
+	const contentLines: string[] = [];
+	const sources: SourceLink[] = [];
+	const seenUrls = new Set<string>();
+	let inSourcesBlock = false;
+
+	const pushSources = (items: SourceLink[]) => {
+		for (const item of items) {
+			if (seenUrls.has(item.url)) continue;
+			seenUrls.add(item.url);
+			sources.push(item);
+		}
+	};
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) {
+			if (!inSourcesBlock) contentLines.push(line);
+			continue;
+		}
+
+		if (SOURCE_HEADER_RE.test(trimmed)) {
+			inSourcesBlock = true;
+			continue;
+		}
+
+		const hasSourcePrefix = SOURCE_PREFIX_RE.test(trimmed);
+		const isBullet = /^\s*[-*]\s+/.test(line);
+		const lineSources = extractSourceLinksFromLine(line);
+
+		if (hasSourcePrefix && lineSources.length > 0) {
+			pushSources(lineSources);
+			continue;
+		}
+
+		if (inSourcesBlock) {
+			if (lineSources.length > 0) {
+				pushSources(lineSources);
+				continue;
+			}
+			if (isBullet) {
+				continue;
+			}
+			inSourcesBlock = false;
+		}
+
+		contentLines.push(line);
+	}
+
+	const content = contentLines
+		.join('\n')
+		.replace(/\n{3,}/g, '\n\n')
+		.trimEnd();
+	return { content, sources };
+};
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -585,16 +690,28 @@ const LogItemComponent = memo(
 				: contentToDisplay;
 
 		const filteredText = contentToDisplay;
+		const canExtractSources =
+			isAIMode &&
+			!isTerminal &&
+			log.source !== 'user' &&
+			log.source !== 'tool' &&
+			log.source !== 'thinking' &&
+			log.source !== 'error' &&
+			!markdownEditMode;
+		const { content: filteredTextWithoutSources, sources: extractedSources } = canExtractSources
+			? splitSourcesFromResponse(filteredText)
+			: { content: filteredText, sources: [] as SourceLink[] };
+		const effectiveFilteredText = canExtractSources ? filteredTextWithoutSources : filteredText;
 
 		// Count lines in the filtered text
-		const lineCount = filteredText.split('\n').length;
+		const lineCount = effectiveFilteredText.split('\n').length;
 		const shouldCollapse = lineCount > maxOutputLines && maxOutputLines !== Infinity;
 
 		// Truncate text if collapsed
 		const displayText =
 			shouldCollapse && !isExpanded
-				? filteredText.split('\n').slice(0, maxOutputLines).join('\n')
-				: filteredText;
+				? effectiveFilteredText.split('\n').slice(0, maxOutputLines).join('\n')
+				: effectiveFilteredText;
 
 		// Apply highlighting to truncated text as well
 		const displayTextWithHighlights =
@@ -1148,7 +1265,7 @@ const LogItemComponent = memo(
 									) : isAIMode && !markdownEditMode ? (
 										// Expanded markdown rendering
 										<MarkdownRenderer
-											content={filteredText}
+											content={effectiveFilteredText}
 											theme={theme}
 											onCopy={copyToClipboard}
 											fileTree={fileTree}
@@ -1223,7 +1340,7 @@ const LogItemComponent = memo(
 								) : isAIMode && !markdownEditMode ? (
 									// Rendered markdown for AI responses
 									<MarkdownRenderer
-										content={filteredText}
+										content={effectiveFilteredText}
 										theme={theme}
 										onCopy={copyToClipboard}
 										fileTree={fileTree}
@@ -1242,6 +1359,38 @@ const LogItemComponent = memo(
 								)}
 							</>
 						))}
+					{extractedSources.length > 0 && (
+						<details
+							className="mt-3 rounded-lg border px-3 py-2"
+							style={{
+								borderColor: `${theme.colors.border}90`,
+								backgroundColor: `${theme.colors.bgMain}55`,
+							}}
+						>
+							<summary
+								className="cursor-pointer select-none text-xs font-semibold"
+								style={{ color: theme.colors.textDim }}
+							>
+								Sources ({extractedSources.length})
+							</summary>
+							<div className="mt-2 space-y-1.5">
+								{extractedSources.map((source, idx) => (
+									<button
+										key={`${source.url}-${idx}`}
+										type="button"
+										className="w-full text-left text-xs underline decoration-dotted hover:opacity-80 transition-opacity truncate"
+										style={{ color: theme.colors.accent }}
+										onClick={() => {
+											void window.maestro.shell.openExternal(source.url);
+										}}
+										title={source.url}
+									>
+										{source.label}
+									</button>
+								))}
+							</div>
+						</details>
+					)}
 					{/* Action buttons - bottom right corner */}
 					{showActionButtons && (
 						<div

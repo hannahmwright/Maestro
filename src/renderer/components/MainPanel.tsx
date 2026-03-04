@@ -31,6 +31,7 @@ import { FilePreview, FilePreviewHandle } from './FilePreview';
 import { ErrorBoundary } from './ErrorBoundary';
 import { GitStatusWidget } from './GitStatusWidget';
 import { AgentSessionsBrowser } from './AgentSessionsBrowser';
+import { SessionWorkflowBadge } from './SessionWorkflowBadge';
 import { TabBar } from './TabBar';
 import { WizardConversationView, DocumentGenerationView } from './InlineWizard';
 import { gitService } from '../services/git';
@@ -38,6 +39,7 @@ import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
 import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitStatusContext';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { calculateContextDisplay } from '../utils/contextUsage';
+import { resolveSessionWorkflowState } from '../utils/handoffWorkflow';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { useUIStore } from '../stores/uiStore';
@@ -637,6 +639,23 @@ export const MainPanel = React.memo(
 				fileCount,
 			]
 		);
+		const workflowState = useMemo(() => {
+			if (!activeSession) return 'LOCAL_PLAN';
+			return resolveSessionWorkflowState({
+				isWorktreeChild: Boolean(activeSession.parentSessionId),
+				branchName: gitInfo?.branch,
+				inputMode: activeSession.inputMode,
+				executionMode: activeTab?.executionMode,
+				readOnlyMode: activeTab?.readOnlyMode,
+			});
+		}, [
+			activeSession,
+			activeSession?.parentSessionId,
+			activeSession?.inputMode,
+			activeTab?.executionMode,
+			activeTab?.readOnlyMode,
+			gitInfo?.branch,
+		]);
 
 		// Copy notification state (centered flash notice)
 		const [copyNotification, setCopyNotification] = useState<string | null>(null);
@@ -1136,6 +1155,12 @@ export const MainPanel = React.memo(
 											)}
 										</div>
 									</div>
+
+									<SessionWorkflowBadge
+										state={workflowState}
+										theme={theme}
+										branchName={gitInfo?.branch}
+									/>
 
 									{/* Git Status Widget - compact mode handled via CSS container queries */}
 									<GitStatusWidget

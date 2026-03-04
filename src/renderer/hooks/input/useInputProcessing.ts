@@ -440,6 +440,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								: 'New'),
 						readOnlyMode: isReadOnlyMode,
 					};
+					const queuedLogEntry: LogEntry = {
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'user',
+						text: effectiveInputValue,
+						images: [...stagedImages],
+						delivered: false,
+						...(isReadOnlyMode && { readOnly: true }),
+					};
 
 					// Add to queue - will be processed when:
 					// - Auto Run completes (via onProcessQueueAfterCompletion callback)
@@ -450,9 +459,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					setSessions((prev) =>
 						prev.map((s) => {
 							if (s.id !== activeSessionId) return s;
+							const targetTabId = activeTab?.id || s.activeTabId;
 							return {
 								...s,
 								executionQueue: [...s.executionQueue, queuedItem],
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.id === targetTabId ? { ...tab, logs: [...tab.logs, queuedLogEntry] } : tab
+								),
 							};
 						})
 					);
@@ -617,7 +630,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					}
 
 					// For AI mode, add to ACTIVE TAB's logs
-					const activeTab = getActiveTab(s);
+					const updatedSessionForTabSelection = s;
+					const activeTab = getActiveTab(updatedSessionForTabSelection);
 					if (!activeTab) {
 						// No tabs exist - this is a bug, sessions must have aiTabs
 						console.error(
@@ -630,7 +644,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					// Also mark as awaitingSessionId if this is a new session (no agentSessionId yet)
 					// Set thinkingStartTime on the tab for accurate elapsed time tracking (especially for parallel tabs)
 					const isNewSession = !activeTab.agentSessionId;
-					const updatedAiTabs = s.aiTabs.map((tab) =>
+					const updatedAiTabs = updatedSessionForTabSelection.aiTabs.map((tab) =>
 						tab.id === activeTab.id
 							? {
 									...tab,
@@ -645,7 +659,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					);
 
 					return {
-						...s,
+						...updatedSessionForTabSelection,
 						state: 'busy',
 						busySource: currentMode,
 						thinkingStartTime: Date.now(),
@@ -847,10 +861,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const targetPid = currentMode === 'ai' ? activeSession.aiPid : activeSession.terminalPid;
 			// For batch mode (Claude), include tab ID in session ID to prevent process collision
 			// This ensures each tab's process has a unique identifier
-			const activeTabForSpawn = getActiveTab(activeSession);
+			const targetAiTabIdForSpawn =
+				currentMode === 'ai' ? getActiveTab(activeSession)?.id || 'default' : 'terminal';
 			const targetSessionId =
 				currentMode === 'ai'
-					? `${activeSession.id}-ai-${activeTabForSpawn?.id || 'default'}`
+					? `${activeSession.id}-ai-${targetAiTabIdForSpawn}`
 					: `${activeSession.id}-terminal`;
 
 			// Check if this is an AI agent in batch mode (e.g., Claude Code, OpenCode, Codex, Factory Droid)
@@ -915,7 +930,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Check for pending merged context that needs to be injected
 						// This happens when a user merged context from another tab/session
 						const pendingMergedContext = freshActiveTab?.pendingMergedContext;
-						if (pendingMergedContext) {
+						const freshActiveTabId = freshActiveTab?.id;
+						if (pendingMergedContext && freshActiveTabId) {
 							// Prepend the merged context to the user's message
 							effectivePrompt = `${pendingMergedContext}\n\n---\n\n${effectivePrompt}`;
 
@@ -926,7 +942,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									return {
 										...s,
 										aiTabs: s.aiTabs.map((tab) =>
-											tab.id === freshActiveTab.id
+											tab.id === freshActiveTabId
 												? { ...tab, pendingMergedContext: undefined }
 												: tab
 										),

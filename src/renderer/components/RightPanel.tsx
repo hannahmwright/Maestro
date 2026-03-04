@@ -21,6 +21,7 @@ import { FileExplorerPanel } from './FileExplorerPanel';
 import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
 import { AutoRunExpandedModal } from './AutoRunExpandedModal';
+import { ProcessesPanel } from './ProcessesPanel';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
@@ -113,9 +114,10 @@ interface RightPanelProps {
 export const RightPanel = memo(
 	forwardRef<RightPanelHandle, RightPanelProps>(function RightPanel(props, ref) {
 		// === State from stores (direct subscriptions — no prop drilling) ===
-		const session = useSessionStore(
-			(s) => s.sessions.find((x) => x.id === s.activeSessionId) ?? null
-		);
+		const sessions = useSessionStore((s) => s.sessions);
+		const activeSessionId = useSessionStore((s) => s.activeSessionId);
+		const session = sessions.find((x) => x.id === activeSessionId) ?? null;
+		const setActiveSessionId = useSessionStore((s) => s.setActiveSessionId);
 		const setSessions = useSessionStore((s) => s.setSessions);
 
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
@@ -334,6 +336,23 @@ export const RightPanel = memo(
 			}
 		}, [activeRightTab, rightPanelOpen, activeFocus]);
 
+		const handleNavigateToSessionFromProcess = useCallback(
+			(targetSessionId: string, tabId?: string) => {
+				setActiveSessionId(targetSessionId);
+				if (tabId) {
+					setSessions((prev) =>
+						prev.map((existingSession) =>
+							existingSession.id === targetSessionId
+								? { ...existingSession, activeTabId: tabId, activeFileTabId: null }
+								: existingSession
+						)
+					);
+				}
+				setActiveFocus('main');
+			},
+			[setActiveSessionId, setSessions, setActiveFocus]
+		);
+
 		if (!session) return null;
 
 		// Shared props for AutoRun and AutoRunExpandedModal to avoid duplication
@@ -403,18 +422,25 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{['files', 'history', 'autorun'].map((tab) => (
+					{(
+						[
+							{ id: 'files', label: 'Files' },
+							{ id: 'history', label: 'History' },
+							{ id: 'processes', label: 'Processes' },
+							{ id: 'autorun', label: 'Auto Run' },
+						] as const
+					).map((tab) => (
 						<button
-							key={tab}
-							onClick={() => setActiveRightTab(tab as RightPanelTab)}
+							key={tab.id}
+							onClick={() => setActiveRightTab(tab.id)}
 							className="flex-1 text-xs font-bold border-b-2 transition-colors"
 							style={{
-								borderColor: activeRightTab === tab ? theme.colors.accent : 'transparent',
-								color: activeRightTab === tab ? theme.colors.textMain : theme.colors.textDim,
+								borderColor: activeRightTab === tab.id ? theme.colors.accent : 'transparent',
+								color: activeRightTab === tab.id ? theme.colors.textMain : theme.colors.textDim,
 							}}
-							data-tour={`${tab}-tab`}
+							data-tour={`${tab.id}-tab`}
 						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab.label}
 						</button>
 					))}
 
@@ -509,6 +535,17 @@ export const RightPanel = memo(
 					{activeRightTab === 'autorun' && (
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
+						</div>
+					)}
+
+					{activeRightTab === 'processes' && (
+						<div data-tour="processes-panel" className="h-full">
+							<ProcessesPanel
+								theme={theme}
+								activeSession={session}
+								sessions={sessions}
+								onNavigateToSession={handleNavigateToSessionFromProcess}
+							/>
 						</div>
 					)}
 				</div>

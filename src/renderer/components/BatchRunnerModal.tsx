@@ -33,6 +33,8 @@ import {
 } from '../hooks';
 import { generateId } from '../utils/ids';
 import { formatMetaKey } from '../utils/shortcutFormatter';
+import { notifyToast } from '../stores/notificationStore';
+import { requiresWorktreeExecution, resolveExecutionWorkflowState } from '../utils/handoffWorkflow';
 
 // Re-export for external consumers
 export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../hooks';
@@ -374,10 +376,31 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			maxLoops: loopEnabled ? maxLoops : null,
 			...(worktreeTarget && { worktreeTarget }),
 		};
+		const workflowState = resolveExecutionWorkflowState(
+			validDocuments.length,
+			Boolean(worktreeTarget)
+		);
+
+		// Handoff-first policy: multi-task execution requires worktree isolation.
+		if (
+			activeSession?.isGitRepo &&
+			requiresWorktreeExecution(validDocuments.length) &&
+			!worktreeTarget
+		) {
+			notifyToast({
+				type: 'warning',
+				title: 'Worktree Required',
+				message:
+					'Multiple execution tasks require worktree mode. Enable "Run in Worktree" or reduce to one document.',
+			});
+			return;
+		}
 
 		console.log('[BatchRunnerModal] handleGo - calling onGo with config:', config);
 		window.maestro.logger.log('info', 'Go button clicked', 'BatchRunnerModal', {
 			documentsCount: validDocuments.length,
+			workflowState,
+			hasWorktreeTarget: Boolean(worktreeTarget),
 		});
 
 		// Worktree creation/opening requires async work — show loading state

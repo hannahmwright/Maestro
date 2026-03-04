@@ -860,6 +860,84 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	describe('queued same-tab behavior', () => {
+		it('queues on busy read-only tab without creating a new tab', async () => {
+			const busyReadOnlyTab = createMockTab({
+				id: 'tab-readonly-busy',
+				state: 'busy',
+				readOnlyMode: true,
+				executionMode: 'ask',
+				showThinking: 'sticky',
+				saveToHistory: true,
+			});
+			const session = createMockSession({
+				state: 'busy',
+				aiTabs: [busyReadOnlyTab],
+				activeTabId: busyReadOnlyTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'new parallel question',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockSetSessions).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const updatedSessions = setSessionsCall([session]);
+			const updatedSession = updatedSessions[0];
+
+			expect(updatedSession.executionQueue).toHaveLength(1);
+			expect(updatedSession.aiTabs).toHaveLength(1);
+			expect(updatedSession.activeTabId).toBe(busyReadOnlyTab.id);
+			expect(updatedSession.executionQueue[0].text).toBe('new parallel question');
+
+			const activeTab = updatedSession.aiTabs.find((t) => t.id === updatedSession.activeTabId);
+			expect(activeTab).toBeDefined();
+			expect(activeTab?.logs.at(-1)?.source).toBe('user');
+			expect(activeTab?.logs.at(-1)?.text).toBe('new parallel question');
+			expect(activeTab?.logs.at(-1)?.delivered).toBe(false);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+
+		it('keeps queuing for busy write-mode tabs', async () => {
+			const busyWriteTab = createMockTab({
+				id: 'tab-write-busy',
+				state: 'busy',
+				readOnlyMode: false,
+				executionMode: 'agent',
+			});
+			const session = createMockSession({
+				state: 'busy',
+				aiTabs: [busyWriteTab],
+				activeTabId: busyWriteTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				inputValue: 'queued write message',
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockSetSessions).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const updatedSessions = setSessionsCall([session]);
+			const updatedSession = updatedSessions[0];
+
+			expect(updatedSession.executionQueue).toHaveLength(1);
+			expect(updatedSession.executionQueue[0].text).toBe('queued write message');
+			expect(updatedSession.aiTabs).toHaveLength(1);
+			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('flushBatchedUpdates', () => {
 		it('calls flushBatchedUpdates before processing', async () => {
 			const deps = createDeps({ inputValue: 'test message' });

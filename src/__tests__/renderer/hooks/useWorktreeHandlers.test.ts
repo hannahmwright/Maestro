@@ -646,6 +646,29 @@ describe('handleCreateWorktreeFromConfig', () => {
 			})
 		);
 	});
+
+	it('blocks creating a branch already owned by another child worktree', async () => {
+		const existingChild = createChildSession({
+			id: 'child-owner',
+			name: 'Existing Owner',
+			parentSessionId: 'parent-1',
+			worktreeBranch: 'feature-new',
+		});
+		useSessionStore.setState({
+			sessions: [mockParentSession, existingChild],
+			activeSessionId: 'parent-1',
+		} as any);
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await expect(
+			act(async () => {
+				await result.current.handleCreateWorktreeFromConfig('feature-new', '/projects/worktrees');
+			})
+		).rejects.toThrow('already owned');
+
+		expect(mockGit.worktreeSetup).not.toHaveBeenCalled();
+	});
 });
 
 // ============================================================================
@@ -733,6 +756,30 @@ describe('handleCreateWorktree', () => {
 		await act(async () => {
 			await result.current.handleCreateWorktree('new-branch');
 		});
+
+		expect(mockGit.worktreeSetup).not.toHaveBeenCalled();
+	});
+
+	it('blocks creating a branch already owned by another child worktree', async () => {
+		const existingChild = createChildSession({
+			id: 'child-owner',
+			name: 'Existing Owner',
+			parentSessionId: 'parent-1',
+			worktreeBranch: 'new-branch',
+		});
+		useSessionStore.setState({
+			sessions: [mockParentSession, existingChild],
+			activeSessionId: 'parent-1',
+		} as any);
+		getModalActions().setCreateWorktreeSession(mockParentSession);
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await expect(
+			act(async () => {
+				await result.current.handleCreateWorktree('new-branch');
+			})
+		).rejects.toThrow('already owned');
 
 		expect(mockGit.worktreeSetup).not.toHaveBeenCalled();
 	});

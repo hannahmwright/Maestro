@@ -3,6 +3,7 @@ import { X, GitBranch, FolderOpen, Plus, Loader2, AlertTriangle, Server } from '
 import type { Theme, Session, GhCliStatus } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { buildDefaultWorktreeBranch, isCodexTaskBranchName } from '../utils/handoffWorkflow';
 
 interface WorktreeConfigModalProps {
 	isOpen: boolean;
@@ -52,7 +53,7 @@ export function WorktreeConfigModal({
 	// Form state
 	const [basePath, setBasePath] = useState(session.worktreeConfig?.basePath || '');
 	const [watchEnabled, setWatchEnabled] = useState(session.worktreeConfig?.watchEnabled ?? true);
-	const [newBranchName, setNewBranchName] = useState('');
+	const [newBranchName, setNewBranchName] = useState(buildDefaultWorktreeBranch(session.name));
 	const [isCreating, setIsCreating] = useState(false);
 	const [isValidating, setIsValidating] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -88,10 +89,10 @@ export function WorktreeConfigModal({
 			checkGhCli();
 			setBasePath(session.worktreeConfig?.basePath || '');
 			setWatchEnabled(session.worktreeConfig?.watchEnabled ?? true);
-			setNewBranchName('');
+			setNewBranchName(buildDefaultWorktreeBranch(session.name));
 			setError(null);
 		}
-	}, [isOpen, session.worktreeConfig]);
+	}, [isOpen, session.worktreeConfig, session.name]);
 
 	const checkGhCli = async () => {
 		try {
@@ -372,6 +373,11 @@ export function WorktreeConfigModal({
 								Create
 							</button>
 						</div>
+						{newBranchName.trim() && !isCodexTaskBranchName(newBranchName) && (
+							<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+								Recommended format: `codex/&lt;task-id&gt;-&lt;slug&gt;-s&lt;n&gt;`
+							</p>
+						)}
 					</div>
 
 					{/* Error message */}

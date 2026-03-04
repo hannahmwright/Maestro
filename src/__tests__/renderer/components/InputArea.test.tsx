@@ -537,6 +537,20 @@ describe('InputArea', () => {
 			expect(inputContainer).not.toHaveStyle({ borderColor: mockTheme.colors.warning });
 		});
 
+		it('does NOT apply warning styling in Ask mode when interaction modes are enabled', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				tabReadOnlyMode: true,
+				supportsInteractionModes: true,
+				tabExecutionMode: 'ask',
+				onSetTabExecutionMode: vi.fn(),
+			});
+			const { container } = render(<InputArea {...props} />);
+
+			const inputContainer = container.querySelector('.flex-1.relative.border');
+			expect(inputContainer).not.toHaveStyle({ borderColor: mockTheme.colors.warning });
+		});
+
 		it('keeps read-only toggle enabled when AutoRun is active', () => {
 			const onToggleTabReadOnlyMode = vi.fn();
 			const props = createDefaultProps({

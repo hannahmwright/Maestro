@@ -24,6 +24,10 @@ vi.mock('../../../renderer/components/AutoRun', () => ({
 	AutoRun: vi.fn((props) => <div data-testid="auto-run">AutoRun</div>),
 }));
 
+vi.mock('../../../renderer/components/ProcessesPanel', () => ({
+	ProcessesPanel: vi.fn(() => <div data-testid="processes-panel">ProcessesPanel</div>),
+}));
+
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys) => keys.join('+')),
 	isMacOS: vi.fn(() => false),
@@ -273,12 +277,13 @@ describe('RightPanel', () => {
 	});
 
 	describe('Tab navigation', () => {
-		it('should render all three tabs', () => {
+		it('should render all right panel tabs', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Processes' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Auto Run' })).toBeInTheDocument();
 		});
 
@@ -346,6 +351,17 @@ describe('RightPanel', () => {
 			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument();
 			expect(screen.getByTestId('auto-run')).toBeInTheDocument();
+		});
+
+		it('should show ProcessesPanel when processes tab is active', () => {
+			useUIStore.setState({ activeRightTab: 'processes' });
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('auto-run')).not.toBeInTheDocument();
+			expect(screen.getByTestId('processes-panel')).toBeInTheDocument();
 		});
 	});
 
@@ -1333,7 +1349,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			expect(screen.getAllByRole('button')).toHaveLength(4); // toggle + 3 tabs
+			expect(screen.getAllByRole('button')).toHaveLength(5); // toggle + 4 tabs
 		});
 	});
 

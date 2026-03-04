@@ -578,7 +578,7 @@ describe('WorktreeRunSection', () => {
 		});
 
 		// Branch name input should appear
-		expect(screen.getByDisplayValue(/auto-run-/)).toBeTruthy();
+		expect(screen.getByDisplayValue(/codex\/autorun-/)).toBeTruthy();
 		expect(screen.getByText('Base Branch')).toBeTruthy();
 		expect(screen.getByText('Worktree Branch Name')).toBeTruthy();
 	});
@@ -615,7 +615,7 @@ describe('WorktreeRunSection', () => {
 
 		// Should default to current branch 'develop', not 'main'
 		const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
-		expect(screen.getByDisplayValue(`auto-run-develop-${mmdd}`)).toBeTruthy();
+		expect(screen.getByDisplayValue(`codex/autorun-develop-${mmdd}-s1`)).toBeTruthy();
 	});
 
 	it('auto-generates branch name from selected base branch', async () => {
@@ -648,7 +648,7 @@ describe('WorktreeRunSection', () => {
 
 		// Should auto-populate with a name derived from the first (default) branch
 		const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
-		expect(screen.getByDisplayValue(`auto-run-main-${mmdd}`)).toBeTruthy();
+		expect(screen.getByDisplayValue(`codex/autorun-main-${mmdd}-s1`)).toBeTruthy();
 
 		// Change base branch to 'develop' and verify name updates
 		const baseBranchSelect = screen.getAllByRole('combobox')[1] as HTMLSelectElement;
@@ -656,7 +656,7 @@ describe('WorktreeRunSection', () => {
 			fireEvent.change(baseBranchSelect, { target: { value: 'develop' } });
 		});
 
-		expect(screen.getByDisplayValue(`auto-run-develop-${mmdd}`)).toBeTruthy();
+		expect(screen.getByDisplayValue(`codex/autorun-develop-${mmdd}-s1`)).toBeTruthy();
 	});
 
 	it('updates createPROnCompletion when PR checkbox is toggled', async () => {
@@ -963,7 +963,7 @@ describe('WorktreeRunSection', () => {
 		});
 
 		// Clear the branch name input
-		const branchInput = screen.getByDisplayValue(/auto-run-/) as HTMLInputElement;
+		const branchInput = screen.getByDisplayValue(/codex\/autorun-/) as HTMLInputElement;
 		await act(async () => {
 			fireEvent.change(branchInput, { target: { value: '' } });
 		});
@@ -1093,7 +1093,7 @@ describe('WorktreeRunSection', () => {
 		// Path preview should show basePath/branchName
 		const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
 		await waitFor(() => {
-			expect(screen.getByText(`/project/worktrees/auto-run-main-${mmdd}`)).toBeTruthy();
+			expect(screen.getByText(`/project/worktrees/codex/autorun-main-${mmdd}-s1`)).toBeTruthy();
 		});
 	});
 
@@ -1125,7 +1125,7 @@ describe('WorktreeRunSection', () => {
 		});
 
 		// Clear branch name
-		const branchInput = screen.getByDisplayValue(/auto-run-/) as HTMLInputElement;
+		const branchInput = screen.getByDisplayValue(/codex\/autorun-/) as HTMLInputElement;
 		await act(async () => {
 			fireEvent.change(branchInput, { target: { value: '' } });
 		});

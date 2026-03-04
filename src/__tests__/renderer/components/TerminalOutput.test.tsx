@@ -295,6 +295,34 @@ describe('TerminalOutput', () => {
 			const logItems = container.querySelectorAll('[data-log-index]');
 			expect(logItems.length).toBe(2);
 		});
+
+		it('moves source links into a collapsed Sources section for AI responses', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Find updates', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					source: 'stdout',
+					text: [
+						'Top updates:',
+						'- Item A',
+						'Source: https://apnews.com/world',
+						'Sources:',
+						'- [Reuters](https://reuters.com/world)',
+					].join('\n'),
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Sources (2)')).toBeInTheDocument();
+			expect(screen.getByText(/Top updates:/)).toBeInTheDocument();
+			expect(screen.queryByText(/Source: https:\/\/apnews\.com\/world/)).not.toBeInTheDocument();
+		});
 	});
 
 	describe('search functionality', () => {
