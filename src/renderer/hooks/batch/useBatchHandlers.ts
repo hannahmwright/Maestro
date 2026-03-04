@@ -42,7 +42,15 @@ export interface UseBatchHandlersDeps {
 	spawnAgentForSession: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			autoRunTask?: {
+				documentName: string;
+				folderPath: string;
+				loopIteration: number;
+				effectiveCwd: string;
+			};
+		}
 	) => Promise<AgentSpawnResult>;
 	/** Ref to RightPanel for refreshing history after batch tasks */
 	rightPanelRef: React.RefObject<RightPanelHandle | null>;

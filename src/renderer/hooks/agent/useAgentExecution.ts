@@ -10,6 +10,7 @@ import type {
 import { getActiveTab } from '../../utils/tabHelpers';
 import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
+import { gitService } from '../../services/git';
 
 /**
  * Result from agent spawn operations.
@@ -19,6 +20,17 @@ export interface AgentSpawnResult {
 	response?: string;
 	agentSessionId?: string;
 	usageStats?: UsageStats;
+}
+
+export interface AutoRunTaskContext {
+	documentName: string;
+	folderPath: string;
+	loopIteration: number;
+	effectiveCwd: string;
+}
+
+export interface SpawnAgentOptions {
+	autoRunTask?: AutoRunTaskContext;
 }
 
 /**
@@ -49,7 +61,8 @@ export interface UseAgentExecutionReturn {
 	spawnAgentForSession: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: SpawnAgentOptions
 	) => Promise<AgentSpawnResult>;
 	/** Spawn an agent with a prompt for the active session */
 	spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
@@ -158,6 +171,158 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 		[]
 	);
 
+	const detectPackageManager = useCallback(
+		async (cwd: string, sshRemoteId?: string): Promise<'npm' | 'pnpm' | 'yarn' | 'bun'> => {
+			const lockfiles: Array<{ fileName: string; manager: 'npm' | 'pnpm' | 'yarn' | 'bun' }> = [
+				{ fileName: 'pnpm-lock.yaml', manager: 'pnpm' },
+				{ fileName: 'yarn.lock', manager: 'yarn' },
+				{ fileName: 'bun.lockb', manager: 'bun' },
+				{ fileName: 'package-lock.json', manager: 'npm' },
+			];
+
+			for (const lockfile of lockfiles) {
+				try {
+					const stat = await window.maestro.fs.stat(`${cwd}/${lockfile.fileName}`, sshRemoteId);
+					if (stat?.isFile) return lockfile.manager;
+				} catch {
+					// Ignore missing lockfiles.
+				}
+			}
+
+			return 'npm';
+		},
+		[]
+	);
+
+	const buildScriptCommand = useCallback(
+		(manager: 'npm' | 'pnpm' | 'yarn' | 'bun', script: string): string => {
+			if (manager === 'yarn') return `yarn ${script}`;
+			if (manager === 'bun') return `bun run ${script}`;
+			if (manager === 'npm' && script === 'test') return 'npm test';
+			if (manager === 'pnpm' && script === 'test') return 'pnpm test';
+			return `${manager} run ${script}`;
+		},
+		[]
+	);
+
+	const resolveValidationCommands = useCallback(
+		async (
+			cwd: string,
+			sshRemoteId?: string
+		): Promise<{
+			targetedCommand: string;
+			fullSuiteCommand?: string;
+			allowedCommands: string[];
+		}> => {
+			const fallback = {
+				targetedCommand: 'git diff --name-only',
+				fullSuiteCommand: undefined,
+				allowedCommands: ['git diff --name-only'],
+			};
+
+			let scripts: Record<string, string> = {};
+			try {
+				const packageJson = await window.maestro.fs.readFile(`${cwd}/package.json`, sshRemoteId);
+				if (packageJson) {
+					const parsed = JSON.parse(packageJson) as { scripts?: Record<string, string> };
+					scripts = parsed.scripts || {};
+				}
+			} catch {
+				return fallback;
+			}
+
+			const manager = await detectPackageManager(cwd, sshRemoteId);
+			let targetedCommand = fallback.targetedCommand;
+			if (scripts.lint) targetedCommand = buildScriptCommand(manager, 'lint');
+			else if (scripts.test) targetedCommand = buildScriptCommand(manager, 'test');
+			else if (scripts.build) targetedCommand = buildScriptCommand(manager, 'build');
+
+			let fullSuiteCommand: string | undefined;
+			if (scripts.build) fullSuiteCommand = buildScriptCommand(manager, 'build');
+			else if (scripts.test) fullSuiteCommand = buildScriptCommand(manager, 'test');
+
+			const allowedCommands = [targetedCommand, fullSuiteCommand, 'git diff --name-only'].filter(
+				(value): value is string => Boolean(value)
+			);
+
+			return { targetedCommand, fullSuiteCommand, allowedCommands };
+		},
+		[buildScriptCommand, detectPackageManager]
+	);
+
+	const runAutoRunTaskLoopValidation = useCallback(
+		async (
+			session: Session,
+			targetSessionId: string,
+			prompt: string,
+			effectiveCwd: string,
+			autoRunTask: AutoRunTaskContext
+		): Promise<{ success: boolean; reason?: string }> => {
+			const sshRemoteId =
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+			const { targetedCommand, fullSuiteCommand, allowedCommands } =
+				await resolveValidationCommands(effectiveCwd, sshRemoteId);
+
+			let changedFiles: string[] = [];
+			let diffText = '';
+			try {
+				if (session.isGitRepo) {
+					const status = await gitService.getStatus(effectiveCwd, sshRemoteId);
+					changedFiles = status.files.map((file) => file.path).slice(0, 50);
+					if (changedFiles.length > 0) {
+						const diff = await gitService.getDiff(
+							effectiveCwd,
+							changedFiles.slice(0, 10),
+							sshRemoteId
+						);
+						diffText = diff.diff;
+					}
+				}
+			} catch (error) {
+				console.warn('[AutoRunTaskLoop] Failed to collect git context', error);
+			}
+
+			const riskLevel =
+				changedFiles.length > 5 ? 'high' : changedFiles.length > 2 ? 'medium' : 'low';
+
+			const gateResult = await window.maestro.process.runCommand({
+				sessionId: targetSessionId,
+				command: targetedCommand,
+				cwd: effectiveCwd,
+				sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+				taskContractInput: {
+					goal: `Auto Run strict validation for ${autoRunTask.documentName}`,
+					repo_root: effectiveCwd,
+					language_profile: 'ts_js',
+					risk_level: riskLevel,
+					done_gate_profile: riskLevel === 'high' ? 'high_risk' : 'standard',
+					allowed_commands: allowedCommands,
+					metadata: {
+						source: 'auto_run',
+						documentName: autoRunTask.documentName,
+						folderPath: autoRunTask.folderPath,
+						loopIteration: autoRunTask.loopIteration,
+						promptPreview: prompt.slice(0, 120),
+					},
+				},
+				relatedFiles: [`${autoRunTask.folderPath}/${autoRunTask.documentName}.md`],
+				changedFiles,
+				diffText,
+				fullSuiteCommand,
+			});
+
+			if (gateResult.exitCode !== 0) {
+				return {
+					success: false,
+					reason: gateResult.stderr || 'strict_completion_gate_failed',
+				};
+			}
+
+			return { success: true };
+		},
+		[resolveValidationCommands]
+	);
+
 	/**
 	 * Spawn a Claude agent for a specific session and wait for completion.
 	 * Used for batch processing where we need to track the agent's output.
@@ -165,9 +330,15 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 	 * @param sessionId - The session ID to spawn the agent for
 	 * @param prompt - The prompt to send to the agent
 	 * @param cwdOverride - Optional override for working directory (e.g., for worktree mode)
+	 * @param options - Optional spawn options for Auto Run task-loop validation
 	 */
 	const spawnAgentForSession = useCallback(
-		async (sessionId: string, prompt: string, cwdOverride?: string): Promise<AgentSpawnResult> => {
+		async (
+			sessionId: string,
+			prompt: string,
+			cwdOverride?: string,
+			options?: SpawnAgentOptions
+		): Promise<AgentSpawnResult> => {
 			// Use sessionsRef to get latest sessions (fixes stale closure when called right after session creation)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) return { success: false };
@@ -238,6 +409,49 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							if (sid === targetSessionId) {
 								// Clean up listeners
 								cleanup();
+
+								const resolveSuccess = () =>
+									resolve({
+										success: true,
+										response: responseText,
+										agentSessionId,
+										usageStats: taskUsageStats,
+									});
+
+								const resolveFailure = (reason?: string) =>
+									resolve({
+										success: false,
+										response: reason || responseText,
+										agentSessionId,
+										usageStats: taskUsageStats,
+									});
+
+								const finalizeResolve = async () => {
+									if (!options?.autoRunTask) {
+										resolveSuccess();
+										return;
+									}
+
+									try {
+										const validationResult = await runAutoRunTaskLoopValidation(
+											session,
+											targetSessionId,
+											prompt,
+											effectiveCwd,
+											options.autoRunTask
+										);
+
+										if (!validationResult.success) {
+											resolveFailure(validationResult.reason);
+											return;
+										}
+
+										resolveSuccess();
+									} catch (error) {
+										console.error('[AutoRunTaskLoop] Validation failed unexpectedly:', error);
+										resolveFailure('strict_completion_gate_failed');
+									}
+								};
 
 								// Record query stats for Auto Run queries
 								const queryDuration = Date.now() - queryStartTime;
@@ -371,12 +585,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 											checkSession.executionQueue.length === 0
 										) {
 											// Queue drained or session idle - safe to continue batch
-											resolve({
-												success: true,
-												response: responseText,
-												agentSessionId,
-												usageStats: taskUsageStats,
-											});
+											void finalizeResolve();
 										} else {
 											// Queue still processing - check again
 											setTimeout(waitForQueueDrain, 100);
@@ -386,12 +595,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 									setTimeout(waitForQueueDrain, 50);
 								} else {
 									// No queued items or worktree mode - resolve immediately
-									resolve({
-										success: true,
-										response: responseText,
-										agentSessionId,
-										usageStats: taskUsageStats,
-									});
+									void finalizeResolve();
 								}
 							}
 						})
@@ -435,7 +639,13 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				return { success: false };
 			}
 		},
-		[accumulateUsageStats, processQueuedItemRef, sessionsRef, setSessions]
+		[
+			accumulateUsageStats,
+			processQueuedItemRef,
+			runAutoRunTaskLoopValidation,
+			sessionsRef,
+			setSessions,
+		]
 	); // Uses sessionsRef for latest sessions
 
 	/**

@@ -164,7 +164,15 @@ export interface DocumentProcessorCallbacks {
 	onSpawnAgent: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			autoRunTask?: {
+				documentName: string;
+				folderPath: string;
+				loopIteration: number;
+				effectiveCwd: string;
+			};
+		}
 	) => Promise<{
 		success: boolean;
 		response?: string;
@@ -331,7 +339,15 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			const result = await callbacks.onSpawnAgent(
 				session.id,
 				finalPrompt,
-				effectiveCwd !== session.cwd ? effectiveCwd : undefined
+				effectiveCwd !== session.cwd ? effectiveCwd : undefined,
+				{
+					autoRunTask: {
+						documentName: filename,
+						folderPath,
+						loopIteration,
+						effectiveCwd,
+					},
+				}
 			);
 
 			// Capture elapsed time

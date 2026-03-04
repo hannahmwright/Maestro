@@ -66,7 +66,15 @@ interface UseBatchProcessorProps {
 	onSpawnAgent: (
 		sessionId: string,
 		prompt: string,
-		cwdOverride?: string
+		cwdOverride?: string,
+		options?: {
+			autoRunTask?: {
+				documentName: string;
+				folderPath: string;
+				loopIteration: number;
+				effectiveCwd: string;
+			};
+		}
 	) => Promise<{
 		success: boolean;
 		response?: string;
