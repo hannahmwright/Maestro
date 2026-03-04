@@ -385,6 +385,7 @@ export class ChildProcessSpawner {
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
+				taskContract: config.taskContract,
 			};
 
 			this.processes.set(sessionId, managedProcess);

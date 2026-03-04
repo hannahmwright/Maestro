@@ -1,5 +1,6 @@
 export { isCoreUpgradesEnabled } from './feature-flags';
 export { createTaskContract, validateTaskContract } from './task-contract';
+export { CoreUpgradeOrchestrator, coreUpgradeOrchestrator } from './orchestrator';
 export { FailureTriageEngine } from './triage-engine';
 export { EditPlanner } from './edit-planner';
 export { RepoContextService } from './context-service';

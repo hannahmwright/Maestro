@@ -774,6 +774,17 @@ export interface ProcessConfig {
 	prompt?: string; // For batch mode agents like Claude (passed as CLI argument)
 	shell?: string; // Shell to use for terminal sessions (e.g., 'zsh', 'bash', 'fish')
 	images?: string[]; // Base64 data URLs for images
+	taskContractInput?: {
+		task_id?: string;
+		goal?: string;
+		repo_root?: string;
+		language_profile?: 'ts_js' | 'generic';
+		risk_level?: 'low' | 'medium' | 'high';
+		allowed_commands?: string[];
+		done_gate_profile?: 'quick' | 'standard' | 'high_risk';
+		max_changed_files?: number;
+		metadata?: Record<string, unknown>;
+	};
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string; // For session resume (uses agent's resumeArgs builder)
 	readOnlyMode?: boolean; // For read-only/plan mode (uses agent's readOnlyArgs)

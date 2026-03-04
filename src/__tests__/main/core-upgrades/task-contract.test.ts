@@ -29,4 +29,30 @@ describe('task-contract', () => {
 			})
 		).toThrow();
 	});
+
+	it('rejects invalid input gate profile', () => {
+		expect(() =>
+			createTaskContract({
+				goal: 'Fix failing tests',
+				repo_root: '/tmp/project',
+				done_gate_profile: 'invalid' as any,
+			})
+		).toThrow(/done_gate_profile/);
+	});
+
+	it('rejects invalid enum values during validation', () => {
+		expect(() =>
+			validateTaskContract({
+				task_id: 'task-1',
+				goal: 'Fix',
+				repo_root: '/tmp/project',
+				language_profile: 'python' as any,
+				risk_level: 'critical' as any,
+				allowed_commands: ['npm test'],
+				done_gate_profile: 'standard',
+				max_changed_files: 2,
+				created_at: Date.now(),
+			})
+		).toThrow();
+	});
 });

@@ -12,6 +12,7 @@
 import { ipcRenderer } from 'electron';
 import type {
 	ProposedFileEdit,
+	TaskContract,
 	TaskContractInput,
 	CompletionDecision,
 	ReviewFinding,
@@ -39,6 +40,7 @@ export interface ProcessConfig {
 	prompt?: string;
 	shell?: string;
 	images?: string[]; // Base64 data URLs for images
+	taskContractInput?: Partial<TaskContractInput>;
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string; // For session resume (uses agent's resumeArgs builder)
 	readOnlyMode?: boolean; // For read-only/plan mode (uses agent's readOnlyArgs)
@@ -201,6 +203,12 @@ export function createProcessApi() {
 		 */
 		createTaskContract: (input: TaskContractInput) =>
 			ipcRenderer.invoke('process:createTaskContract', input),
+
+		/**
+		 * Get the task contract attached to a spawned process/session.
+		 */
+		getTaskContract: (sessionId: string): Promise<TaskContract | null> =>
+			ipcRenderer.invoke('process:getTaskContract', sessionId),
 
 		/**
 		 * Get all active processes from ProcessManager

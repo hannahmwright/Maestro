@@ -50,6 +50,7 @@ import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
 import { createWakatimeApi } from './wakatime';
+import { createOrchestratorApi } from './orchestrator';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -65,6 +66,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Process/Session API
 	process: createProcessApi(),
+
+	// Core orchestrator API (task contract creation)
+	orchestrator: createOrchestratorApi(),
 
 	// Agent Error Handling API
 	agentError: createAgentErrorApi(),
@@ -264,6 +268,7 @@ export {
 	createDirectorNotesApi,
 	// WakaTime
 	createWakatimeApi,
+	createOrchestratorApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -472,3 +477,7 @@ export type {
 	// From wakatime
 	WakatimeApi,
 } from './wakatime';
+export type {
+	// From orchestrator
+	OrchestratorApi,
+} from './orchestrator';

@@ -2,7 +2,7 @@ import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
-import type { TaskLifecycleEvent } from '../core-upgrades/types';
+import type { TaskContract, TaskContractInput, TaskLifecycleEvent } from '../core-upgrades/types';
 
 /**
  * Configuration for spawning a new process
@@ -37,6 +37,10 @@ export interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
+	/** Optional Task Contract seed passed at session start (renderer/main orchestration). */
+	taskContractInput?: Partial<TaskContractInput>;
+	/** Fully-resolved Task Contract attached to this session/process. */
+	taskContract?: TaskContract;
 }
 
 /**
@@ -75,6 +79,7 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	taskContract?: TaskContract;
 }
 
 export interface UsageTotals {

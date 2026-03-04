@@ -25,7 +25,7 @@ import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import {
 	isCoreUpgradesEnabled,
-	createTaskContract,
+	coreUpgradeOrchestrator,
 	DebugFixLoopEngine,
 	RepoContextService,
 } from '../../core-upgrades';
@@ -99,6 +99,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				prompt?: string;
 				shell?: string;
 				images?: string[]; // Base64 data URLs for images
+				taskContractInput?: Partial<TaskContractInput>;
 				// Stdin prompt delivery modes
 				sendPromptViaStdin?: boolean; // If true, send prompt via stdin as JSON (for stream-json compatible agents)
 				sendPromptViaStdinRaw?: boolean; // If true, send prompt via stdin as raw text (for OpenCode, Codex, etc.)
@@ -346,6 +347,29 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					agentConfigValues,
 					config.sessionCustomContextWindow
 				);
+				const spawnTaskContract =
+					isCoreUpgradesEnabled() && config.toolType !== 'terminal'
+						? coreUpgradeOrchestrator.createTaskContract({
+								goal:
+									config.taskContractInput?.goal || `Execute task for session ${config.sessionId}`,
+								repo_root: config.taskContractInput?.repo_root || config.cwd,
+								language_profile: config.taskContractInput?.language_profile || 'ts_js',
+								risk_level: config.taskContractInput?.risk_level || 'medium',
+								allowed_commands: config.taskContractInput?.allowed_commands || [
+									config.command,
+									'npm test',
+									'npm run lint',
+									'npm run build',
+								],
+								done_gate_profile: config.taskContractInput?.done_gate_profile,
+								max_changed_files: config.taskContractInput?.max_changed_files,
+								metadata: {
+									session_id: config.sessionId,
+									tool_type: config.toolType,
+									...(config.taskContractInput?.metadata || {}),
+								},
+							})
+						: undefined;
 
 				// ========================================================================
 				// Command Resolution: Apply session-level custom path override if set
@@ -569,6 +593,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 					// Stats tracking: use cwd as projectPath if not explicitly provided
 					projectPath: config.cwd,
+					taskContractInput: config.taskContractInput,
+					taskContract: spawnTaskContract,
 					// SSH remote context (for SSH-specific error messages)
 					sshRemoteId: sshRemoteUsed?.id,
 					sshRemoteHost: sshRemoteUsed?.host,
@@ -691,7 +717,23 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	ipcMain.handle(
 		'process:createTaskContract',
 		withIpcErrorLogging(handlerOpts('createTaskContract'), async (input: TaskContractInput) => {
-			return createTaskContract(input);
+			return coreUpgradeOrchestrator.createTaskContract(input);
+		})
+	);
+
+	ipcMain.handle(
+		'orchestrator:createTaskContract',
+		withIpcErrorLogging(
+			handlerOpts('orchestratorCreateTaskContract'),
+			async (input: TaskContractInput) => coreUpgradeOrchestrator.createTaskContract(input)
+		)
+	);
+
+	ipcMain.handle(
+		'process:getTaskContract',
+		withIpcErrorLogging(handlerOpts('getTaskContract'), async (sessionId: string) => {
+			const processManager = requireProcessManager(getProcessManager);
+			return processManager.getTaskContract(sessionId) || null;
 		})
 	);
 
@@ -771,7 +813,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				});
 
 				if (isCoreUpgradesEnabled() && config.taskContractInput) {
-					const task = createTaskContract({
+					const task = coreUpgradeOrchestrator.createTaskContract({
 						goal: config.taskContractInput.goal || `Resolve command task: ${config.command}`,
 						repo_root: config.taskContractInput.repo_root || config.cwd,
 						language_profile: config.taskContractInput.language_profile || 'ts_js',

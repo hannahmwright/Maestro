@@ -119,6 +119,7 @@ export class PtySpawner {
 				startTime: Date.now(),
 				command: ptyCommand,
 				args: ptyArgs,
+				taskContract: config.taskContract,
 			};
 
 			this.processes.set(sessionId, managedProcess);

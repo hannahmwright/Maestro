@@ -215,6 +215,13 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
+	 * Get the task contract attached to a running process/session.
+	 */
+	getTaskContract(sessionId: string) {
+		return this.processes.get(sessionId)?.taskContract;
+	}
+
+	/**
 	 * Get the output parser for a session's agent type
 	 */
 	getParser(sessionId: string): AgentOutputParser | null {

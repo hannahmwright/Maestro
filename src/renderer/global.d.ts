@@ -25,6 +25,17 @@ interface ProcessConfig {
 	prompt?: string;
 	shell?: string;
 	images?: string[];
+	taskContractInput?: {
+		task_id?: string;
+		goal?: string;
+		repo_root?: string;
+		language_profile?: 'ts_js' | 'generic';
+		risk_level?: 'low' | 'medium' | 'high';
+		allowed_commands?: string[];
+		done_gate_profile?: 'quick' | 'standard' | 'high_risk';
+		max_changed_files?: number;
+		metadata?: Record<string, unknown>;
+	};
 	// Agent-specific spawn options (used to build args via agent config)
 	agentSessionId?: string;
 	readOnlyMode?: boolean;
@@ -300,6 +311,18 @@ interface MaestroAPI {
 			max_changed_files?: number;
 			metadata?: Record<string, unknown>;
 		}) => Promise<unknown>;
+		getTaskContract: (sessionId: string) => Promise<{
+			task_id: string;
+			goal: string;
+			repo_root: string;
+			language_profile: 'ts_js' | 'generic';
+			risk_level: 'low' | 'medium' | 'high';
+			allowed_commands: string[];
+			done_gate_profile: 'quick' | 'standard' | 'high_risk';
+			max_changed_files: number;
+			created_at: number;
+			metadata?: Record<string, unknown>;
+		} | null>;
 		getActiveProcesses: () => Promise<
 			Array<{
 				sessionId: string;
@@ -402,6 +425,30 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+	};
+	orchestrator: {
+		createTaskContract: (input: {
+			task_id?: string;
+			goal: string;
+			repo_root: string;
+			language_profile?: 'ts_js' | 'generic';
+			risk_level?: 'low' | 'medium' | 'high';
+			allowed_commands?: string[];
+			done_gate_profile?: 'quick' | 'standard' | 'high_risk';
+			max_changed_files?: number;
+			metadata?: Record<string, unknown>;
+		}) => Promise<{
+			task_id: string;
+			goal: string;
+			repo_root: string;
+			language_profile: 'ts_js' | 'generic';
+			risk_level: 'low' | 'medium' | 'high';
+			allowed_commands: string[];
+			done_gate_profile: 'quick' | 'standard' | 'high_risk';
+			max_changed_files: number;
+			created_at: number;
+			metadata?: Record<string, unknown>;
+		}>;
 	};
 	agentError: {
 		clearError: (sessionId: string) => Promise<{ success: boolean }>;
