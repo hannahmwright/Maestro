@@ -93,14 +93,26 @@ describe('DoneGateEngine', () => {
 		expect(decision.blocking_reasons).toContain('full_suite_required');
 	});
 
-	it('requires full suite for high-risk edit signals', () => {
+	it('requires full suite for high-risk edit signals in standard profile', () => {
+		const engine = new DoneGateEngine();
+		const decision = engine.evaluate({
+			task: { ...baseTask, done_gate_profile: 'standard' },
+			targeted_checks: [{ command: 'npm test', exit_code: 0, pass: true, duration_ms: 90 }],
+			high_risk_edit: true,
+		});
+		expect(decision.requires_full_suite).toBe(true);
+		expect(decision.blocking_reasons).toContain('full_suite_required');
+	});
+
+	it('keeps quick profile targeted-only even when risk signals are high', () => {
 		const engine = new DoneGateEngine();
 		const decision = engine.evaluate({
 			task: { ...baseTask, done_gate_profile: 'quick' },
 			targeted_checks: [{ command: 'npm test', exit_code: 0, pass: true, duration_ms: 90 }],
 			high_risk_edit: true,
 		});
-		expect(decision.requires_full_suite).toBe(true);
-		expect(decision.blocking_reasons).toContain('full_suite_required');
+		expect(decision.requires_full_suite).toBe(false);
+		expect(decision.blocking_reasons).not.toContain('full_suite_required');
+		expect(decision.decision).toBe('complete');
 	});
 });

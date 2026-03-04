@@ -234,9 +234,9 @@ describe('tabHelpers', () => {
 		it('creates a tab with showThinking option', () => {
 			const session = createMockSession({ aiTabs: [] });
 
-			// Default should be 'off'
+			// Default should be 'sticky'
 			const defaultResult = createTab(session);
-			expect(defaultResult.tab.showThinking).toBe('off');
+			expect(defaultResult.tab.showThinking).toBe('sticky');
 
 			// Explicit 'on'
 			const trueResult = createTab(session, { showThinking: 'on' });

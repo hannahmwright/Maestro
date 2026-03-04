@@ -1,6 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import * as fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DebugFixLoopEngine } from '../../../main/core-upgrades';
 import type { TaskContract } from '../../../main/core-upgrades/types';
+
+const tempDirs: string[] = [];
 
 function createTask(overrides?: Partial<TaskContract>): TaskContract {
 	return {
@@ -9,13 +14,21 @@ function createTask(overrides?: Partial<TaskContract>): TaskContract {
 		repo_root: '/tmp/project',
 		language_profile: 'ts_js',
 		risk_level: 'medium',
-		allowed_commands: ['npm test', 'npm run build'],
+		allowed_commands: ['npm test', 'npm test -- --runInBand', 'npm run build'],
 		done_gate_profile: 'standard',
 		max_changed_files: 5,
 		created_at: Date.now(),
 		...overrides,
 	};
 }
+
+afterEach(async () => {
+	await Promise.all(
+		tempDirs.splice(0).map(async (dir) => {
+			await fs.rm(dir, { recursive: true, force: true });
+		})
+	);
+});
 
 describe('DebugFixLoopEngine integration scenarios', () => {
 	it('retries after triage and completes when targeted validation passes', async () => {
@@ -135,6 +148,41 @@ describe('DebugFixLoopEngine integration scenarios', () => {
 		expect(result.status).toBe('failed');
 		expect(result.reason).toBe('edit_plan_blocked');
 		expect(result.failure?.blocking_reasons).toContain('contains_blocked_file_changes');
+		expect(runCommand).not.toHaveBeenCalled();
+	});
+
+	it('stops with edit_apply_blocked when planned patch fails syntax validation', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn();
+		const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-debug-fix-'));
+		tempDirs.push(repoRoot);
+		const filePath = path.join(repoRoot, 'src', 'app.ts');
+		await fs.mkdir(path.dirname(filePath), { recursive: true });
+		await fs.writeFile(filePath, 'export const value = 1;\n', 'utf8');
+
+		const result = await engine.run(
+			{
+				session_id: 'session-int-5',
+				task: createTask({ repo_root: repoRoot }),
+				cwd: repoRoot,
+				initial_command: 'npm test',
+				proposed_edits: [{ file_path: 'src/app.ts', reason: 'Fix syntax issue' }],
+				planned_patches: [
+					{
+						file_path: 'src/app.ts',
+						content: 'export const value = ;\n',
+						reason: 'Fix syntax issue',
+					},
+				],
+				related_files: ['src/app.ts'],
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('failed');
+		expect(result.reason).toBe('edit_apply_blocked');
+		expect(result.failure?.blocking_reasons).toContain('syntax_validation_failed');
+		expect(result.failure?.syntax_errors?.length).toBeGreaterThan(0);
 		expect(runCommand).not.toHaveBeenCalled();
 	});
 });

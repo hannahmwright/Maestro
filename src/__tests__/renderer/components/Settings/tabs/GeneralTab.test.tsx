@@ -192,7 +192,7 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('GitHub CLI (gh) Path')).toBeInTheDocument();
 			expect(screen.getByText('Input Send Behavior')).toBeInTheDocument();
 			expect(screen.getByText('Default History Toggle')).toBeInTheDocument();
-			expect(screen.getByText('Default Thinking Mode')).toBeInTheDocument();
+			expect(screen.getByText('Reasoning View Default')).toBeInTheDocument();
 			expect(screen.getByText('Automatic Tab Naming')).toBeInTheDocument();
 			expect(screen.getByText('Auto-scroll AI Output')).toBeInTheDocument();
 			expect(screen.getByText('Power')).toBeInTheDocument();
@@ -905,9 +905,7 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(
-				screen.getByText('Show AI thinking/reasoning content for new tabs')
-			).toBeInTheDocument();
+			expect(screen.getByText('Reasoning View Default')).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Off' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'On' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Sticky' })).toBeInTheDocument();
@@ -955,7 +953,7 @@ describe('GeneralTab', () => {
 			});
 
 			// defaultShowThinking is 'off'
-			expect(screen.getByText('Thinking hidden, only final responses shown')).toBeInTheDocument();
+			expect(screen.getByText('Reasoning View hidden. Final responses only.')).toBeInTheDocument();
 		});
 
 		it('should show on description when thinking mode is on', async () => {
@@ -966,7 +964,9 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('Thinking streams live, clears on completion')).toBeInTheDocument();
+			expect(
+				screen.getByText('Reasoning View streams live, then auto-collapses on completion.')
+			).toBeInTheDocument();
 		});
 
 		it('should show sticky description when thinking mode is sticky', async () => {
@@ -977,7 +977,9 @@ describe('GeneralTab', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('Thinking streams live and stays visible')).toBeInTheDocument();
+			expect(
+				screen.getByText('Reasoning View streams live and stays visible after completion.')
+			).toBeInTheDocument();
 		});
 	});
 

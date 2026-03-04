@@ -93,6 +93,7 @@ let onAgentErrorHandler: ListenerCallback | undefined;
 let onThinkingChunkHandler: ListenerCallback | undefined;
 let onSshRemoteHandler: ListenerCallback | undefined;
 let onToolExecutionHandler: ListenerCallback | undefined;
+let onTaskStatusHandler: ListenerCallback | undefined;
 
 const mockUnsubscribeData = vi.fn();
 const mockUnsubscribeExit = vi.fn();
@@ -105,6 +106,7 @@ const mockUnsubscribeAgentError = vi.fn();
 const mockUnsubscribeThinkingChunk = vi.fn();
 const mockUnsubscribeSshRemote = vi.fn();
 const mockUnsubscribeToolExecution = vi.fn();
+const mockUnsubscribeTaskStatus = vi.fn();
 
 const mockProcess = {
 	onData: vi.fn((handler: ListenerCallback) => {
@@ -150,6 +152,10 @@ const mockProcess = {
 	onToolExecution: vi.fn((handler: ListenerCallback) => {
 		onToolExecutionHandler = handler;
 		return mockUnsubscribeToolExecution;
+	}),
+	onTaskStatus: vi.fn((handler: ListenerCallback) => {
+		onTaskStatusHandler = handler;
+		return mockUnsubscribeTaskStatus;
 	}),
 	getActiveProcesses: vi.fn().mockResolvedValue([]),
 	spawn: vi.fn(),
@@ -207,6 +213,7 @@ beforeEach(() => {
 	onThinkingChunkHandler = undefined;
 	onSshRemoteHandler = undefined;
 	onToolExecutionHandler = undefined;
+	onTaskStatusHandler = undefined;
 
 	// Reset stores
 	useSessionStore.setState({
@@ -273,7 +280,7 @@ describe('getErrorTitleForType', () => {
 
 describe('useAgentListeners', () => {
 	describe('listener registration', () => {
-		it('registers all 11 IPC listeners on mount', () => {
+		it('registers all 12 IPC listeners on mount', () => {
 			const deps = createMockDeps();
 			renderHook(() => useAgentListeners(deps));
 
@@ -288,9 +295,10 @@ describe('useAgentListeners', () => {
 			expect(mockProcess.onThinkingChunk).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onSshRemote).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onToolExecution).toHaveBeenCalledTimes(1);
+			expect(mockProcess.onTaskStatus).toHaveBeenCalledTimes(1);
 		});
 
-		it('unsubscribes all 11 listeners on unmount', () => {
+		it('unsubscribes all 12 listeners on unmount', () => {
 			const deps = createMockDeps();
 			const { unmount } = renderHook(() => useAgentListeners(deps));
 
@@ -307,6 +315,7 @@ describe('useAgentListeners', () => {
 			expect(mockUnsubscribeThinkingChunk).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeSshRemote).toHaveBeenCalledTimes(1);
 			expect(mockUnsubscribeToolExecution).toHaveBeenCalledTimes(1);
+			expect(mockUnsubscribeTaskStatus).toHaveBeenCalledTimes(1);
 		});
 
 		it('does not register listeners twice on re-render', () => {
@@ -319,6 +328,41 @@ describe('useAgentListeners', () => {
 			// Still only 1 call each (effect has [] deps)
 			expect(mockProcess.onData).toHaveBeenCalledTimes(1);
 			expect(mockProcess.onExit).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe('onTaskStatus', () => {
+		it('appends a concise task status system log entry to ai logs', () => {
+			const deps = createMockDeps();
+			const session = createMockSession({ id: 'sess-1' });
+			useSessionStore.setState({
+				sessions: [session],
+				activeSessionId: 'sess-1',
+			});
+
+			renderHook(() => useAgentListeners(deps));
+
+			onTaskStatusHandler?.('sess-1', {
+				task_id: 'task-1',
+				status: 'failed',
+				attempt_count: 2,
+				blocking_reasons: ['full_suite_failed'],
+				full_suite_required: true,
+				lifecycle_counts: {
+					triage_started: 1,
+					hypothesis_generated: 1,
+					edit_plan_applied: 0,
+					review_findings: 1,
+					gate_result: 1,
+				},
+				generated_at: Date.now(),
+			});
+
+			const updated = useSessionStore.getState().sessions.find((s) => s.id === 'sess-1');
+			const statusLog = updated?.aiLogs?.find(
+				(log: any) => log.source === 'system' && log.text?.includes('Task status: failed')
+			);
+			expect(statusLog).toBeDefined();
 		});
 	});
 

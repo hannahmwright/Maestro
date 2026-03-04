@@ -288,6 +288,11 @@ interface MaestroAPI {
 				hunk_count?: number;
 				changed_lines?: number;
 			}>;
+			plannedPatches?: Array<{
+				file_path: string;
+				content: string;
+				reason: string;
+			}>;
 			relatedFiles?: string[];
 			changedFiles?: string[];
 			diffText?: string;
@@ -320,6 +325,8 @@ interface MaestroAPI {
 				failure?: {
 					code:
 						| 'edit_plan_blocked'
+						| 'edit_apply_blocked'
+						| 'command_not_allowed'
 						| 'no_hypothesis_generated'
 						| 'non_progressing_hypothesis_loop'
 						| 'gate_blocked'
@@ -334,6 +341,8 @@ interface MaestroAPI {
 				final_decision?: 'complete' | 'continue' | 'blocked';
 				failure_code?:
 					| 'edit_plan_blocked'
+					| 'edit_apply_blocked'
+					| 'command_not_allowed'
 					| 'no_hypothesis_generated'
 					| 'non_progressing_hypothesis_loop'
 					| 'gate_blocked'
@@ -469,6 +478,8 @@ interface MaestroAPI {
 					final_decision?: 'complete' | 'continue' | 'blocked';
 					failure_code?:
 						| 'edit_plan_blocked'
+						| 'edit_apply_blocked'
+						| 'command_not_allowed'
 						| 'no_hypothesis_generated'
 						| 'non_progressing_hypothesis_loop'
 						| 'gate_blocked'

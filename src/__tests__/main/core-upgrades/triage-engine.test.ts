@@ -30,4 +30,17 @@ describe('FailureTriageEngine', () => {
 		expect(result.classification).toBe('unknown');
 		expect(result.confidence).toBeLessThan(0.5);
 	});
+
+	it('generates targeted test commands when failure references a test file', () => {
+		const engine = new FailureTriageEngine();
+		const result = engine.analyzeFailure({
+			session_id: 'session-3',
+			command: 'npm test',
+			cwd: '/tmp/project',
+			exit_code: 1,
+			stderr: 'FAIL src/math.test.ts\nExpected: 2\nReceived: 1',
+		});
+
+		expect(result.hypotheses[0]?.suggested_commands).toContain('npm test -- src/math.test.ts');
+	});
 });

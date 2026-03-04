@@ -981,6 +981,42 @@ describe('process IPC handlers', () => {
 				})
 			);
 		});
+
+		it('should block strict loop when planned patch fails safe-apply syntax checks', async () => {
+			mockProcessManager.runCommand.mockResolvedValue({
+				exitCode: 0,
+				stdout: 'ok',
+				stderr: '',
+				durationMs: 15,
+			});
+
+			const handler = handlers.get('process:runCommand');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				command: 'npm test',
+				cwd: '/tmp/project',
+				taskContractInput: {
+					goal: 'Strict validation',
+					repo_root: '/tmp/project',
+					risk_level: 'low',
+					done_gate_profile: 'quick',
+				},
+				proposedEdits: [{ file_path: 'src/app.ts', reason: 'Fix syntax issue' }],
+				plannedPatches: [
+					{
+						file_path: 'src/app.ts',
+						content: 'export const value = ;\n',
+						reason: 'Fix syntax issue',
+					},
+				],
+				relatedFiles: ['src/app.ts'],
+			});
+
+			expect(result.exitCode).toBe(1);
+			expect(result.taskResult.failure?.code).toBe('edit_apply_blocked');
+			expect(result.taskDiagnostics.failure_code).toBe('edit_apply_blocked');
+			expect(mockProcessManager.runCommand).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('error handling', () => {

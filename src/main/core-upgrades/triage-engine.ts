@@ -48,6 +48,8 @@ const FAILURE_PATTERNS: FailurePattern[] = [
 
 const FILE_PATH_REGEX = /(?:^|\s|\()([\w./\\-]+\.(?:ts|tsx|js|jsx|mjs|cjs))(?:[:(]\d+)?/g;
 const SYMBOL_REGEX = /(Cannot find name|Property)\s+'([A-Za-z_$][\w$]*)'/g;
+const TEST_FILE_REGEX = /(?:^|\/)(__tests__|test|tests)\/|(?:\.test|\.spec)\.[jt]sx?$/i;
+const PACKAGE_SEGMENT_REGEX = /(^|\/)(packages\/[^/]+)/;
 
 function classifyFailure(signal: string): {
 	classification: FailureClassification;
@@ -95,6 +97,49 @@ function buildMetadataHash(
 		.digest('hex');
 }
 
+function buildTargetedCommands(
+	classification: FailureClassification,
+	likelyFiles: string[]
+): string[] {
+	const commands: string[] = [];
+	const normalizedFiles = likelyFiles.map((filePath) => filePath.replace(/\\/g, '/'));
+	const testFile = normalizedFiles.find((filePath) => TEST_FILE_REGEX.test(filePath));
+	const sourceFile = normalizedFiles.find((filePath) => !TEST_FILE_REGEX.test(filePath));
+	const packageScope = normalizedFiles
+		.map((filePath) => filePath.match(PACKAGE_SEGMENT_REGEX)?.[2])
+		.find((scope): scope is string => Boolean(scope));
+
+	if (classification === 'lint_error') {
+		if (sourceFile) {
+			commands.push(`npm run lint -- ${sourceFile}`);
+		}
+		if (packageScope) {
+			commands.push(`npm run lint -- ${packageScope}`);
+		}
+		return commands;
+	}
+
+	if (testFile) {
+		commands.push(`npm test -- ${testFile}`);
+	}
+	if (
+		sourceFile &&
+		classification !== 'command_not_found' &&
+		classification !== 'permission_error'
+	) {
+		commands.push(`npm test -- ${sourceFile}`);
+	}
+	if (packageScope) {
+		commands.push(`npm test -- ${packageScope}`);
+	}
+
+	return commands;
+}
+
+function uniqueCommands(commands: string[]): string[] {
+	return [...new Set(commands.map((command) => command.trim()).filter(Boolean))];
+}
+
 function buildHypotheses(
 	classification: FailureClassification,
 	confidence: number,
@@ -102,6 +147,7 @@ function buildHypotheses(
 	likelySymbols: string[]
 ): FixHypothesis[] {
 	const baseCommand = classification === 'lint_error' ? 'npm run lint' : 'npm test -- --runInBand';
+	const targetedCommands = buildTargetedCommands(classification, likelyFiles);
 	const primary: FixHypothesis = {
 		id: `hyp-${classification}-1`,
 		classification,
@@ -110,7 +156,7 @@ function buildHypotheses(
 		confidence,
 		likely_files: likelyFiles,
 		likely_symbols: likelySymbols,
-		suggested_commands: [baseCommand],
+		suggested_commands: uniqueCommands([...targetedCommands, baseCommand]),
 		metadata_hash: buildMetadataHash(classification, likelyFiles, likelySymbols),
 	};
 
@@ -122,7 +168,7 @@ function buildHypotheses(
 		confidence: Math.max(0.25, confidence - 0.2),
 		likely_files: likelyFiles.slice(0, 3),
 		likely_symbols: likelySymbols.slice(0, 3),
-		suggested_commands: ['npm test', 'npm run build'],
+		suggested_commands: uniqueCommands([targetedCommands[0] || '', 'npm test', 'npm run build']),
 		metadata_hash: buildMetadataHash(
 			classification,
 			likelyFiles.slice(0, 3),

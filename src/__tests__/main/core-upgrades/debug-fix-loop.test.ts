@@ -8,7 +8,7 @@ const task: TaskContract = {
 	repo_root: '/tmp/project',
 	language_profile: 'ts_js',
 	risk_level: 'medium',
-	allowed_commands: ['npm test', 'npm run build'],
+	allowed_commands: ['npm test', 'npm test -- --runInBand', 'npm run build'],
 	done_gate_profile: 'standard',
 	max_changed_files: 5,
 	created_at: Date.now(),
@@ -95,5 +95,24 @@ describe('DebugFixLoopEngine', () => {
 		expect(result.status).toBe('failed');
 		expect(result.reason).toBe('max_attempts_reached');
 		expect(result.failure?.code).toBe('max_attempts_reached');
+	});
+
+	it('fails early when no allowed commands are available', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi.fn();
+
+		const result = await engine.run(
+			{
+				session_id: 'session-4',
+				task: { ...task, allowed_commands: [] },
+				cwd: '/tmp/project',
+				initial_command: 'npm test',
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('failed');
+		expect(result.failure?.code).toBe('command_not_allowed');
+		expect(runCommand).not.toHaveBeenCalled();
 	});
 });

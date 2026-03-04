@@ -11,6 +11,7 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	PlannedFilePatch,
 	ProposedFileEdit,
 	TaskContract,
 	TaskContractInput,
@@ -80,6 +81,7 @@ export interface RunCommandConfig {
 	// main process runs triage/review/gate lifecycle around this command.
 	taskContractInput?: Partial<TaskContractInput>;
 	proposedEdits?: ProposedFileEdit[];
+	plannedPatches?: PlannedFilePatch[];
 	relatedFiles?: string[];
 	changedFiles?: string[];
 	diffText?: string;

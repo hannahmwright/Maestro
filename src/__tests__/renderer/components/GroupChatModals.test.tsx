@@ -64,6 +64,11 @@ vi.mock('lucide-react', () => ({
 			←
 		</span>
 	),
+	Wrench: ({ className }: { className?: string }) => (
+		<span data-testid="wrench-icon" className={className}>
+			🔧
+		</span>
+	),
 }));
 
 // Mock layer stack context

@@ -1,4 +1,5 @@
 import { EditPlanner } from './edit-planner';
+import { EditApplier } from './edit-applier';
 import { DoneGateEngine } from './gate-engine';
 import { ReviewRigorEngine } from './review-engine';
 import { FailureTriageEngine } from './triage-engine';
@@ -42,6 +43,66 @@ export class DebugFixLoopEngine {
 	private readonly gateEngine = new DoneGateEngine();
 	private readonly reviewEngine = new ReviewRigorEngine();
 	private readonly editPlanner = new EditPlanner();
+	private readonly editApplier = new EditApplier();
+
+	private normalizeCommand(command: string): string {
+		return command.trim();
+	}
+
+	private isCommandAllowed(input: DebugFixLoopInput, command: string): boolean {
+		const normalized = this.normalizeCommand(command);
+		return input.task.allowed_commands.some(
+			(allowedCommand) => this.normalizeCommand(allowedCommand) === normalized
+		);
+	}
+
+	private selectBestAllowedFallback(input: DebugFixLoopInput): string | null {
+		const preferred = ['test', 'lint', 'build'];
+		for (const token of preferred) {
+			const command = input.task.allowed_commands.find((candidate) =>
+				candidate.toLowerCase().includes(token)
+			);
+			if (command) return this.normalizeCommand(command);
+		}
+		const firstAllowed = input.task.allowed_commands[0];
+		return firstAllowed ? this.normalizeCommand(firstAllowed) : null;
+	}
+
+	private resolveNextCommand(
+		input: DebugFixLoopInput,
+		currentCommand: string,
+		candidates: string[]
+	): string | null {
+		const normalizedCurrent = this.normalizeCommand(currentCommand);
+		for (const candidate of candidates) {
+			const normalizedCandidate = this.normalizeCommand(candidate);
+			if (!normalizedCandidate || normalizedCandidate === normalizedCurrent) continue;
+			if (!this.isCommandAllowed(input, normalizedCandidate)) continue;
+			return normalizedCandidate;
+		}
+		if (this.isCommandAllowed(input, normalizedCurrent)) {
+			return normalizedCurrent;
+		}
+		return this.selectBestAllowedFallback(input);
+	}
+
+	private resolveFullSuiteCommand(input: DebugFixLoopInput): string | null {
+		const candidates: string[] = [];
+		if (input.full_suite_command?.trim()) {
+			candidates.push(input.full_suite_command);
+		}
+		candidates.push(
+			'npm test',
+			'pnpm test',
+			'yarn test',
+			'bun test',
+			'npm run build',
+			'pnpm run build',
+			'yarn build',
+			'bun run build'
+		);
+		return this.resolveNextCommand(input, '', candidates);
+	}
 
 	private buildFailureResult(
 		attempts: DebugFixLoopAttempt[],
@@ -67,8 +128,23 @@ export class DebugFixLoopEngine {
 		let currentCommand = input.initial_command;
 		let previousHypothesisSignature: string | null = null;
 		let previousTopMetadataHash: string | null = null;
+		let effectiveChangedFiles = [...(input.changed_files || [])];
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+			const executableCommand = this.resolveNextCommand(input, currentCommand, [currentCommand]);
+			if (!executableCommand) {
+				return this.buildFailureResult(
+					attempts,
+					'command_not_allowed',
+					'No runnable command is allowed by task contract.',
+					{
+						attempt,
+						blocking_reasons: ['allowed_commands_empty_or_mismatched'],
+					}
+				);
+			}
+			currentCommand = executableCommand;
+
 			if (input.proposed_edits && input.proposed_edits.length > 0) {
 				const editPlan = this.editPlanner.planEdits({
 					task: input.task,
@@ -86,6 +162,31 @@ export class DebugFixLoopEngine {
 							blocking_reasons: editPlan.blocked_reasons,
 						}
 					);
+				}
+
+				if (input.planned_patches && input.planned_patches.length > 0) {
+					const applyResult = await this.editApplier.applyPlan({
+						task: input.task,
+						edit_plan: editPlan,
+						patches: input.planned_patches,
+					});
+					if (!applyResult.applied) {
+						return this.buildFailureResult(
+							attempts,
+							'edit_apply_blocked',
+							`Edit apply blocked: ${applyResult.blocked_reasons.join(',') || 'unknown'}`,
+							{
+								attempt,
+								blocking_reasons: applyResult.blocked_reasons,
+								syntax_errors: applyResult.syntax_errors,
+							}
+						);
+					}
+					if (applyResult.applied_files.length > 0) {
+						effectiveChangedFiles = [
+							...new Set([...effectiveChangedFiles, ...applyResult.applied_files]),
+						];
+					}
 				}
 			}
 
@@ -146,16 +247,29 @@ export class DebugFixLoopEngine {
 				previousHypothesisSignature = hypothesisSignature;
 				previousTopMetadataHash = topHypothesis.metadata_hash;
 
-				const suggestedNext = topHypothesis.suggested_commands.find(
-					(candidate) => candidate !== currentCommand
+				const suggestedNext = this.resolveNextCommand(
+					input,
+					currentCommand,
+					topHypothesis.suggested_commands
 				);
-				currentCommand = suggestedNext || currentCommand;
+				if (!suggestedNext) {
+					return this.buildFailureResult(
+						attempts,
+						'command_not_allowed',
+						'Triage produced commands outside task allowlist.',
+						{
+							attempt,
+							blocking_reasons: ['triage_command_not_allowed'],
+						}
+					);
+				}
+				currentCommand = suggestedNext;
 				continue;
 			}
 
 			const reviewFindings = this.reviewEngine.analyzePatch({
 				task: input.task,
-				changed_files: input.changed_files || [],
+				changed_files: effectiveChangedFiles,
 				diff_text: input.diff_text,
 			});
 			deps.emitLifecycle?.({
@@ -178,7 +292,7 @@ export class DebugFixLoopEngine {
 				task: input.task,
 				targeted_checks: targetedChecks,
 				review_findings: reviewFindings,
-				cross_package_change: (input.changed_files || []).some((filePath) =>
+				cross_package_change: effectiveChangedFiles.some((filePath) =>
 					filePath.includes('/packages/')
 				),
 				high_risk_edit: highRiskEdit,
@@ -186,22 +300,24 @@ export class DebugFixLoopEngine {
 
 			// Escalate to full-suite checks only when required by the gate policy.
 			if (
-				input.full_suite_command &&
 				decision.requires_full_suite &&
 				decision.blocking_reasons.includes('full_suite_required')
 			) {
-				const fullSuiteResult = await deps.runCommand(input.full_suite_command);
-				const fullSuiteChecks = [toCheckResult(input.full_suite_command, fullSuiteResult)];
-				decision = this.gateEngine.evaluate({
-					task: input.task,
-					targeted_checks: targetedChecks,
-					full_suite_checks: fullSuiteChecks,
-					review_findings: reviewFindings,
-					cross_package_change: (input.changed_files || []).some((filePath) =>
-						filePath.includes('/packages/')
-					),
-					high_risk_edit: highRiskEdit,
-				});
+				const fullSuiteCommand = this.resolveFullSuiteCommand(input);
+				if (fullSuiteCommand) {
+					const fullSuiteResult = await deps.runCommand(fullSuiteCommand);
+					const fullSuiteChecks = [toCheckResult(fullSuiteCommand, fullSuiteResult)];
+					decision = this.gateEngine.evaluate({
+						task: input.task,
+						targeted_checks: targetedChecks,
+						full_suite_checks: fullSuiteChecks,
+						review_findings: reviewFindings,
+						cross_package_change: effectiveChangedFiles.some((filePath) =>
+							filePath.includes('/packages/')
+						),
+						high_risk_edit: highRiskEdit,
+					});
+				}
 			}
 			deps.emitLifecycle?.({ type: 'gate-result', attempt, decision });
 

@@ -205,6 +205,7 @@ export interface DebugFixLoopInput {
 	initial_command: string;
 	full_suite_command?: string;
 	proposed_edits?: ProposedFileEdit[];
+	planned_patches?: PlannedFilePatch[];
 	related_files?: string[];
 	changed_files?: string[];
 	diff_text?: string;
@@ -220,6 +221,8 @@ export interface DebugFixLoopAttempt {
 
 export type DebugFixFailureCode =
 	| 'edit_plan_blocked'
+	| 'edit_apply_blocked'
+	| 'command_not_allowed'
 	| 'no_hypothesis_generated'
 	| 'non_progressing_hypothesis_loop'
 	| 'gate_blocked'
@@ -236,6 +239,7 @@ export interface DebugFixLoopFailure {
 		previous_top_metadata_hash?: string;
 		current_top_metadata_hash?: string;
 	};
+	syntax_errors?: SyntaxValidationError[];
 }
 
 export interface DebugFixLoopResult {

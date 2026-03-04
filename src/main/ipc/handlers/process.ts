@@ -31,6 +31,7 @@ import {
 	buildTaskDiagnostics,
 } from '../../core-upgrades';
 import type {
+	PlannedFilePatch,
 	ProposedFileEdit,
 	TaskContractInput,
 	TaskLifecycleEvent,
@@ -762,6 +763,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				};
 				taskContractInput?: Partial<TaskContractInput>;
 				proposedEdits?: ProposedFileEdit[];
+				plannedPatches?: PlannedFilePatch[];
 				relatedFiles?: string[];
 				changedFiles?: string[];
 				diffText?: string;
@@ -864,6 +866,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							initial_command: config.command,
 							full_suite_command: config.fullSuiteCommand,
 							proposed_edits: config.proposedEdits,
+							planned_patches: config.plannedPatches,
 							related_files: config.relatedFiles,
 							changed_files: config.changedFiles,
 							diff_text: config.diffText,

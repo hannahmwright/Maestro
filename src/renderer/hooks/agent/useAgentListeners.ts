@@ -1317,6 +1317,13 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			}
 		);
 
+		const unsubscribeTaskStatus = window.maestro.process.onTaskStatus?.((sessionId, status) => {
+			appendTaskLifecycleLog(
+				sessionId,
+				`Task status: ${status.status} (attempts=${status.attempt_count}, fullSuite=${status.full_suite_required}, blocked=${status.blocking_reasons.length})`
+			);
+		});
+
 		// ================================================================
 		// onUsage — Handle usage statistics (BATCHED)
 		// ================================================================
@@ -1953,6 +1960,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeTaskEditPlanApplied?.();
 			unsubscribeTaskReviewFindings?.();
 			unsubscribeTaskGateResult?.();
+			unsubscribeTaskStatus?.();
 			unsubscribeUsage();
 			unsubscribeAgentError();
 			unsubscribeThinkingChunk?.();

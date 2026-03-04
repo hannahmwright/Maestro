@@ -12,6 +12,7 @@ function getWaivedFindingIds(input: GateEvaluationInput): Set<string> {
 
 function shouldRequireFullSuite(input: GateEvaluationInput, highRiskEdit: boolean): boolean {
 	if (input.task.done_gate_profile === 'high_risk') return true;
+	if (input.task.done_gate_profile === 'quick') return false;
 	if (input.task.risk_level === 'high') return true;
 	if (input.cross_package_change) return true;
 	if (highRiskEdit) return true;
