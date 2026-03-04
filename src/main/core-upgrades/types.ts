@@ -100,6 +100,32 @@ export interface EditPlan {
 	requested_file_count: number;
 }
 
+export interface PlannedFilePatch {
+	file_path: string;
+	content: string;
+	reason: string;
+}
+
+export interface ApplyPlanInput {
+	task: TaskContract;
+	edit_plan: EditPlan;
+	patches: PlannedFilePatch[];
+	allow_unrelated_files?: boolean;
+}
+
+export interface SyntaxValidationError {
+	file_path: string;
+	message: string;
+}
+
+export interface ApplyResult {
+	applied: boolean;
+	applied_files: string[];
+	skipped_files: string[];
+	blocked_reasons: string[];
+	syntax_errors: SyntaxValidationError[];
+}
+
 export type ReviewSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 export interface ReviewFinding {
