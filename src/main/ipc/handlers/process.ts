@@ -28,8 +28,13 @@ import {
 	coreUpgradeOrchestrator,
 	DebugFixLoopEngine,
 	RepoContextService,
+	buildTaskDiagnostics,
 } from '../../core-upgrades';
-import type { ProposedFileEdit, TaskContractInput } from '../../core-upgrades/types';
+import type {
+	ProposedFileEdit,
+	TaskContractInput,
+	TaskLifecycleEvent,
+} from '../../core-upgrades/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
 
@@ -834,6 +839,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							: (config.proposedEdits || []).length > 0
 								? 'edit_focused'
 								: 'failure_focused';
+					const lifecycleEvents: TaskLifecycleEvent[] = [];
 					let contextPack: Awaited<ReturnType<typeof repoContextService.getContextPack>> | null =
 						null;
 					try {
@@ -864,10 +870,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						},
 						{
 							runCommand: runSingleCommand,
-							emitLifecycle: (event) =>
-								processManager.emit('task-lifecycle', config.sessionId, event),
+							emitLifecycle: (event) => {
+								lifecycleEvents.push(event);
+								processManager.emit('task-lifecycle', config.sessionId, event);
+							},
 						}
 					);
+					const taskDiagnostics = buildTaskDiagnostics({
+						task,
+						result: loopResult,
+						lifecycleEvents,
+						retrievalMode,
+						contextSelectedFiles: contextPack?.selectedFiles.length,
+					});
 
 					const finalAttempt = loopResult.attempts[loopResult.attempts.length - 1];
 					try {
@@ -875,6 +890,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							last_status: loopResult.status,
 							last_reason: loopResult.reason || null,
 							attempt_count: loopResult.attempts.length,
+							diagnostics: taskDiagnostics,
 							updated_at: Date.now(),
 						});
 					} catch (error) {
@@ -891,6 +907,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						durationMs: finalAttempt?.result.duration_ms,
 						taskResult: loopResult,
 						contextPack,
+						taskDiagnostics,
 					};
 				}
 

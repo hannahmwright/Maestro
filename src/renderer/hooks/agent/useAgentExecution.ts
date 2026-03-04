@@ -328,6 +328,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						result?: { stderr?: string };
 					}>;
 				};
+				const taskDiagnostics = gateResult.taskDiagnostics;
 				const blockingReasons = Array.isArray(taskResult.decision?.blocking_reasons)
 					? taskResult.decision?.blocking_reasons
 							.filter(
@@ -343,6 +344,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				const diagnostics = [
 					`strict_completion_gate_failed: command "${failedCommand}" exited with code ${gateResult.exitCode}`,
 					taskResult.reason ? `loop: ${normalizeDiagnostic(taskResult.reason, 160)}` : undefined,
+					taskDiagnostics
+						? `diag: attempts=${taskDiagnostics.attempt_count}, status=${taskDiagnostics.status}, fullSuite=${taskDiagnostics.full_suite_required}`
+						: undefined,
 					blockingReasons.length > 0
 						? `blocked: ${blockingReasons.map((reason) => normalizeDiagnostic(reason, 120)).join('; ')}`
 						: undefined,

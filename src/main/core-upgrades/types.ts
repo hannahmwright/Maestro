@@ -246,3 +246,27 @@ export interface DebugFixLoopResult {
 	review_findings?: ReviewFinding[];
 	failure?: DebugFixLoopFailure;
 }
+
+export interface TaskDiagnosticsLifecycleCounts {
+	triage_started: number;
+	hypothesis_generated: number;
+	edit_plan_applied: number;
+	review_findings: number;
+	gate_result: number;
+}
+
+export interface TaskDiagnosticsSummary {
+	task_id: string;
+	status: 'complete' | 'failed';
+	attempt_count: number;
+	final_decision?: CompletionDecision['decision'];
+	failure_code?: DebugFixFailureCode;
+	blocking_reasons: string[];
+	full_suite_required: boolean;
+	lifecycle_counts: TaskDiagnosticsLifecycleCounts;
+	last_command?: string;
+	last_exit_code?: number;
+	retrieval_mode?: 'failure_focused' | 'edit_focused' | 'review_focused';
+	context_selected_files?: number;
+	generated_at: number;
+}

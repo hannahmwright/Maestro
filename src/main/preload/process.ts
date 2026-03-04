@@ -18,6 +18,8 @@ import type {
 	ReviewFinding,
 	TriageResult,
 	EditPlan,
+	TaskDiagnosticsSummary,
+	DebugFixLoopResult,
 } from '../core-upgrades/types';
 
 /**
@@ -89,7 +91,8 @@ export interface RunCommandResult {
 	stdout?: string;
 	stderr?: string;
 	durationMs?: number;
-	taskResult?: unknown;
+	taskResult?: DebugFixLoopResult;
+	taskDiagnostics?: TaskDiagnosticsSummary;
 	contextPack?: unknown;
 }
 

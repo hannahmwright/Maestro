@@ -200,6 +200,7 @@ describe('process IPC handlers', () => {
 		resize: ReturnType<typeof vi.fn>;
 		getAll: ReturnType<typeof vi.fn>;
 		runCommand: ReturnType<typeof vi.fn>;
+		emit: ReturnType<typeof vi.fn>;
 	};
 	let mockAgentDetector: {
 		getAgent: ReturnType<typeof vi.fn>;
@@ -227,6 +228,7 @@ describe('process IPC handlers', () => {
 			resize: vi.fn(),
 			getAll: vi.fn(),
 			runCommand: vi.fn(),
+			emit: vi.fn(),
 		};
 
 		// Create mock agent detector
@@ -287,6 +289,9 @@ describe('process IPC handlers', () => {
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
+				'process:createTaskContract',
+				'orchestrator:createTaskContract',
+				'process:getTaskContract',
 				'process:runCommand',
 			];
 
@@ -927,6 +932,46 @@ describe('process IPC handlers', () => {
 			});
 
 			expect(result.exitCode).toBe(1);
+		});
+
+		it('should return aggregated task diagnostics in strict loop mode', async () => {
+			mockProcessManager.runCommand.mockResolvedValue({
+				exitCode: 0,
+				stdout: 'ok',
+				stderr: '',
+				durationMs: 15,
+			});
+
+			const handler = handlers.get('process:runCommand');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1',
+				command: 'npm test',
+				cwd: '/tmp/project',
+				taskContractInput: {
+					goal: 'Strict validation',
+					repo_root: '/tmp/project',
+					risk_level: 'low',
+					done_gate_profile: 'quick',
+				},
+			});
+
+			expect(result.exitCode).toBe(0);
+			expect(result.taskDiagnostics).toEqual(
+				expect.objectContaining({
+					status: 'complete',
+					attempt_count: 1,
+					retrieval_mode: 'failure_focused',
+					lifecycle_counts: expect.objectContaining({
+						review_findings: 1,
+						gate_result: 1,
+					}),
+				})
+			);
+			expect(mockProcessManager.emit).toHaveBeenCalledWith(
+				'task-lifecycle',
+				'session-1',
+				expect.objectContaining({ type: 'review-findings' })
+			);
 		});
 	});
 

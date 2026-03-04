@@ -8,6 +8,7 @@ export { RepoContextService } from './context-service';
 export { ReviewRigorEngine } from './review-engine';
 export { DoneGateEngine } from './gate-engine';
 export { DebugFixLoopEngine } from './debug-fix-loop';
+export { buildTaskDiagnostics } from './diagnostics';
 export type {
 	TaskContract,
 	TaskContractInput,
@@ -25,4 +26,6 @@ export type {
 	DebugFixLoopResult,
 	DebugFixLoopFailure,
 	DebugFixFailureCode,
+	TaskDiagnosticsLifecycleCounts,
+	TaskDiagnosticsSummary,
 } from './types';
