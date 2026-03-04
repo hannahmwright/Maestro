@@ -17,4 +17,7 @@ export type {
 	ReviewFinding,
 	CompletionDecision,
 	TaskLifecycleEvent,
+	DebugFixLoopResult,
+	DebugFixLoopFailure,
+	DebugFixFailureCode,
 } from './types';

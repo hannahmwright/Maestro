@@ -191,10 +191,31 @@ export interface DebugFixLoopAttempt {
 	triage?: TriageResult;
 }
 
+export type DebugFixFailureCode =
+	| 'edit_plan_blocked'
+	| 'no_hypothesis_generated'
+	| 'non_progressing_hypothesis_loop'
+	| 'gate_blocked'
+	| 'max_attempts_reached';
+
+export interface DebugFixLoopFailure {
+	code: DebugFixFailureCode;
+	message: string;
+	attempt?: number;
+	blocking_reasons?: string[];
+	hypothesis?: {
+		previous_signature?: string;
+		current_signature?: string;
+		previous_top_metadata_hash?: string;
+		current_top_metadata_hash?: string;
+	};
+}
+
 export interface DebugFixLoopResult {
 	status: 'complete' | 'failed';
 	reason?: string;
 	attempts: DebugFixLoopAttempt[];
 	decision?: CompletionDecision;
 	review_findings?: ReviewFinding[];
+	failure?: DebugFixLoopFailure;
 }

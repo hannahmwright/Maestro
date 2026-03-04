@@ -58,5 +58,42 @@ describe('DebugFixLoopEngine', () => {
 
 		expect(result.status).toBe('failed');
 		expect(result.reason).toBe('non_progressing_hypothesis_loop');
+		expect(result.failure).toEqual(
+			expect.objectContaining({
+				code: 'non_progressing_hypothesis_loop',
+				attempt: 2,
+				hypothesis: expect.objectContaining({
+					previous_signature: expect.any(String),
+					current_signature: expect.any(String),
+				}),
+			})
+		);
+	});
+
+	it('allows retries when hypothesis metadata changes', async () => {
+		const engine = new DebugFixLoopEngine();
+		const runCommand = vi
+			.fn()
+			.mockResolvedValueOnce({ exitCode: 1, stderr: 'Cannot find module foo', durationMs: 20 })
+			.mockResolvedValueOnce({
+				exitCode: 1,
+				stderr: "TS2304 Cannot find name 'UserType'",
+				durationMs: 20,
+			})
+			.mockResolvedValueOnce({ exitCode: 1, stderr: 'ReferenceError: boom', durationMs: 20 });
+
+		const result = await engine.run(
+			{
+				session_id: 'session-3',
+				task,
+				cwd: '/tmp/project',
+				initial_command: 'npm test',
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('failed');
+		expect(result.reason).toBe('max_attempts_reached');
+		expect(result.failure?.code).toBe('max_attempts_reached');
 	});
 });

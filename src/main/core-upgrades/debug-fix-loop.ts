@@ -6,6 +6,8 @@ import type {
 	CommandCheckResult,
 	CompletionDecision,
 	DebugFixLoopAttempt,
+	DebugFixLoopFailure,
+	DebugFixFailureCode,
 	DebugFixLoopInput,
 	DebugFixLoopResult,
 	TaskLifecycleEvent,
@@ -41,11 +43,30 @@ export class DebugFixLoopEngine {
 	private readonly reviewEngine = new ReviewRigorEngine();
 	private readonly editPlanner = new EditPlanner();
 
+	private buildFailureResult(
+		attempts: DebugFixLoopAttempt[],
+		code: DebugFixFailureCode,
+		message: string,
+		extras?: Omit<DebugFixLoopFailure, 'code' | 'message'>
+	): DebugFixLoopResult {
+		return {
+			status: 'failed',
+			reason: code,
+			attempts,
+			failure: {
+				code,
+				message,
+				...extras,
+			},
+		};
+	}
+
 	async run(input: DebugFixLoopInput, deps: DebugFixLoopDependencies): Promise<DebugFixLoopResult> {
 		const maxAttempts = Math.max(1, Math.min(input.max_attempts || 3, 3));
 		const attempts: DebugFixLoopAttempt[] = [];
 		let currentCommand = input.initial_command;
-		let previousMetadataHash: string | null = null;
+		let previousHypothesisSignature: string | null = null;
+		let previousTopMetadataHash: string | null = null;
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			if (input.proposed_edits && input.proposed_edits.length > 0) {
@@ -56,11 +77,15 @@ export class DebugFixLoopEngine {
 				});
 				deps.emitLifecycle?.({ type: 'edit-plan-applied', attempt, edit_plan: editPlan });
 				if (!editPlan.valid) {
-					return {
-						status: 'failed',
-						reason: `edit_plan_blocked:${editPlan.blocked_reasons.join(',')}`,
+					return this.buildFailureResult(
 						attempts,
-					};
+						'edit_plan_blocked',
+						`Edit plan blocked: ${editPlan.blocked_reasons.join(',') || 'unknown'}`,
+						{
+							attempt,
+							blocking_reasons: editPlan.blocked_reasons,
+						}
+					);
 				}
 			}
 
@@ -88,21 +113,38 @@ export class DebugFixLoopEngine {
 
 				const topHypothesis = triage.hypotheses[0];
 				if (!topHypothesis) {
-					return {
-						status: 'failed',
-						reason: 'no_hypothesis_generated',
+					return this.buildFailureResult(
 						attempts,
-					};
+						'no_hypothesis_generated',
+						'Triage did not produce any fix hypothesis.',
+						{ attempt }
+					);
 				}
 
-				if (previousMetadataHash === topHypothesis.metadata_hash) {
-					return {
-						status: 'failed',
-						reason: 'non_progressing_hypothesis_loop',
+				const hypothesisSignature = triage.hypotheses
+					.map((hypothesis) => hypothesis.metadata_hash)
+					.join('|');
+				if (
+					previousHypothesisSignature !== null &&
+					hypothesisSignature === previousHypothesisSignature
+				) {
+					return this.buildFailureResult(
 						attempts,
-					};
+						'non_progressing_hypothesis_loop',
+						'Hypothesis metadata did not change across retries.',
+						{
+							attempt,
+							hypothesis: {
+								previous_signature: previousHypothesisSignature,
+								current_signature: hypothesisSignature,
+								previous_top_metadata_hash: previousTopMetadataHash || undefined,
+								current_top_metadata_hash: topHypothesis.metadata_hash,
+							},
+						}
+					);
 				}
-				previousMetadataHash = topHypothesis.metadata_hash;
+				previousHypothesisSignature = hypothesisSignature;
+				previousTopMetadataHash = topHypothesis.metadata_hash;
 
 				const suggestedNext = topHypothesis.suggested_commands.find(
 					(candidate) => candidate !== currentCommand
@@ -167,13 +209,26 @@ export class DebugFixLoopEngine {
 				attempts,
 				decision,
 				review_findings: reviewFindings,
+				failure: {
+					code: 'gate_blocked',
+					message: 'Gate engine blocked completion.',
+					attempt,
+					blocking_reasons: decision.blocking_reasons,
+				},
 			};
 		}
 
-		return {
-			status: 'failed',
-			reason: 'max_attempts_reached',
+		return this.buildFailureResult(
 			attempts,
-		};
+			'max_attempts_reached',
+			`Reached maximum retry loops (${maxAttempts}) without a passing gate.`,
+			{
+				attempt: maxAttempts,
+				hypothesis: {
+					previous_signature: previousHypothesisSignature || undefined,
+					previous_top_metadata_hash: previousTopMetadataHash || undefined,
+				},
+			}
+		);
 	}
 }
