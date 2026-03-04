@@ -132,6 +132,16 @@ export interface TaskResult {
 	 * This correctly accounts for both completed tasks and newly added tasks.
 	 */
 	totalTasksChange: number;
+
+	/**
+	 * Optional failure classification from the spawn result.
+	 */
+	failureKind?: 'strict_gate';
+
+	/**
+	 * Raw failure reason, if any.
+	 */
+	failureReason?: string;
 }
 
 /**
@@ -178,6 +188,7 @@ export interface DocumentProcessorCallbacks {
 		response?: string;
 		agentSessionId?: string;
 		usageStats?: UsageStats;
+		failureKind?: 'strict_gate';
 	}>;
 }
 
@@ -443,6 +454,8 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 				newCheckedCount,
 				addedUncheckedTasks,
 				totalTasksChange,
+				failureKind: result.failureKind,
+				failureReason: result.success ? undefined : result.response,
 			};
 		},
 		[readDocAndCountTasks]

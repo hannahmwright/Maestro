@@ -80,6 +80,7 @@ interface UseBatchProcessorProps {
 		response?: string;
 		agentSessionId?: string;
 		usageStats?: UsageStats;
+		failureKind?: 'strict_gate';
 	}>;
 	onAddHistoryEntry: (entry: Omit<HistoryEntry, 'id'>) => void | Promise<void>;
 	onComplete?: (info: BatchCompleteInfo) => void;
@@ -204,6 +205,18 @@ function createLoopSummaryEntry(params: LoopSummaryParams): Omit<HistoryEntry, '
 					}
 				: undefined,
 	};
+}
+
+function formatStrictGateErrorMessage(rawReason?: string): string {
+	const fallback = 'Strict completion gate failed during Auto Run validation.';
+	if (!rawReason) return fallback;
+	const normalized = rawReason
+		.replace(/\x1B\[[0-9;]*m/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+	if (!normalized) return fallback;
+	const stripped = normalized.replace(/^strict_completion_gate_failed[:\s-]*/i, '').trim();
+	return stripped ? `Strict completion gate failed: ${stripped}` : fallback;
 }
 
 // Re-export utility functions for backwards compatibility
@@ -1038,6 +1051,13 @@ export function useBatchProcessor({
 
 					let docTasksCompleted = 0;
 					let skipCurrentDocumentAfterError = false;
+					const resolvePendingErrorAction = async (): Promise<ErrorResolutionAction | null> => {
+						const pending = errorResolutionRefs.current[sessionId];
+						if (!pending) return null;
+						const action = await pending.promise;
+						delete errorResolutionRefs.current[sessionId];
+						return action;
+					};
 
 					// Process tasks in this document until none remain
 					while (remainingTasks > 0) {
@@ -1047,20 +1067,15 @@ export function useBatchProcessor({
 						}
 
 						// Pause processing until the user resolves the error state
-						const errorResolution = errorResolutionRefs.current[sessionId];
-						if (errorResolution) {
-							const action = await errorResolution.promise;
-							delete errorResolutionRefs.current[sessionId];
+						const action = await resolvePendingErrorAction();
+						if (action === 'abort') {
+							stopRequestedRefs.current[sessionId] = true;
+							break;
+						}
 
-							if (action === 'abort') {
-								stopRequestedRefs.current[sessionId] = true;
-								break;
-							}
-
-							if (action === 'skip-document') {
-								skipCurrentDocumentAfterError = true;
-								break;
-							}
+						if (action === 'skip-document') {
+							skipCurrentDocumentAfterError = true;
+							break;
 						}
 
 						// Use extracted document processor hook for task processing
@@ -1107,6 +1122,8 @@ export function useBatchProcessor({
 								elapsedTimeMs,
 								agentSessionId,
 								success,
+								failureKind,
+								failureReason,
 							} = taskResult;
 
 							// Detect stalling: if document content is unchanged and no tasks were checked off
@@ -1251,6 +1268,47 @@ export function useBatchProcessor({
 									});
 							}
 
+							if (!success && failureKind === 'strict_gate') {
+								const strictReason = failureReason || fullSynopsis;
+								pauseBatchOnError(
+									sessionId,
+									{
+										type: 'unknown',
+										message: formatStrictGateErrorMessage(strictReason),
+										recoverable: true,
+										agentId: session.toolType,
+										sessionId,
+										timestamp: Date.now(),
+										raw: {
+											stderr: strictReason,
+										},
+									},
+									docIndex,
+									shortSummary
+								);
+
+								const resolutionAction = await resolvePendingErrorAction();
+								if (resolutionAction === 'abort') {
+									stopRequestedRefs.current[sessionId] = true;
+									break;
+								}
+
+								if (resolutionAction === 'skip-document') {
+									skipCurrentDocumentAfterError = true;
+									break;
+								}
+
+								const {
+									taskCount,
+									checkedCount,
+									content: freshContent,
+								} = await readDocAndCountTasks(folderPath, effectiveFilename, sshRemoteId);
+								remainingTasks = taskCount;
+								docCheckedCount = checkedCount;
+								docContent = freshContent;
+								continue;
+							}
+
 							// Check if we've hit the stalling threshold for this document
 							if (consecutiveNoChangeCount >= MAX_CONSECUTIVE_NO_CHANGES) {
 								const stallReason = `${consecutiveNoChangeCount} consecutive runs with no progress`;
@@ -1318,17 +1376,14 @@ export function useBatchProcessor({
 							// Check if an error resolution promise was created (e.g., by onAgentError → pauseBatchOnError)
 							// This handles the case where the agent error (e.g., context limit) triggered a pause,
 							// but processTask threw before the next loop iteration could check for it.
-							const postTaskErrorResolution = errorResolutionRefs.current[sessionId];
-							if (postTaskErrorResolution) {
-								const action = await postTaskErrorResolution.promise;
-								delete errorResolutionRefs.current[sessionId];
-
-								if (action === 'abort') {
+							const postTaskAction = await resolvePendingErrorAction();
+							if (postTaskAction) {
+								if (postTaskAction === 'abort') {
 									stopRequestedRefs.current[sessionId] = true;
 									break;
 								}
 
-								if (action === 'skip-document') {
+								if (postTaskAction === 'skip-document') {
 									skipCurrentDocumentAfterError = true;
 									break;
 								}

@@ -2630,6 +2630,73 @@ describe('useBatchProcessor hook', () => {
 			await startPromise;
 			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
 		});
+
+		it('pauses Auto Run when strict completion gate validation fails', async () => {
+			const sessions = [createMockSession()];
+			const groups = [createMockGroup()];
+
+			let spawnCount = 0;
+			mockReadDoc.mockImplementation(async () => ({
+				success: true,
+				content: spawnCount >= 2 ? '- [x] Task 1' : '- [ ] Task 1',
+			}));
+
+			mockOnSpawnAgent.mockImplementation(async () => {
+				spawnCount++;
+				if (spawnCount === 1) {
+					return {
+						success: false,
+						failureKind: 'strict_gate',
+						response: 'strict_completion_gate_failed: npm run lint failed',
+					};
+				}
+				return { success: true, agentSessionId: 'session-2' };
+			});
+
+			const { result } = renderHook(() =>
+				useBatchProcessor({
+					sessions,
+					groups,
+					onUpdateSession: mockOnUpdateSession,
+					onSpawnAgent: mockOnSpawnAgent,
+					onAddHistoryEntry: mockOnAddHistoryEntry,
+					onComplete: mockOnComplete,
+				})
+			);
+
+			let startPromise: Promise<void>;
+			act(() => {
+				startPromise = result.current.startBatchRun(
+					'test-session-id',
+					{
+						documents: [{ filename: 'tasks', resetOnCompletion: false }],
+						prompt: 'Test',
+						loopEnabled: false,
+					},
+					'/test/folder'
+				);
+			});
+
+			await waitFor(() =>
+				expect(result.current.getBatchState('test-session-id').errorPaused).toBe(true)
+			);
+			expect(result.current.getBatchState('test-session-id').error?.message).toContain(
+				'Strict completion gate failed'
+			);
+			expect(result.current.getBatchState('test-session-id').error?.message).toContain(
+				'npm run lint failed'
+			);
+
+			act(() => {
+				result.current.resumeAfterError('test-session-id');
+			});
+
+			await startPromise;
+
+			expect(mockOnSpawnAgent).toHaveBeenCalledTimes(2);
+			expect(result.current.getBatchState('test-session-id').isRunning).toBe(false);
+			expect(result.current.getBatchState('test-session-id').errorPaused).toBe(false);
+		});
 	});
 
 	describe('error pause handling when processTask throws', () => {
@@ -3453,8 +3520,19 @@ describe('useBatchProcessor hook', () => {
 				);
 			});
 
-			// Should have called spawn with cwd override
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/custom/worktree');
+			// Should have called spawn with cwd override and Auto Run task metadata
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/custom/worktree',
+				expect.objectContaining({
+					autoRunTask: expect.objectContaining({
+						documentName: 'task',
+						folderPath: '/test/folder',
+						effectiveCwd: '/custom/worktree',
+					}),
+				})
+			);
 		});
 	});
 
@@ -3739,8 +3817,19 @@ describe('useBatchProcessor hook', () => {
 				undefined // sshRemoteId (undefined for local sessions)
 			);
 
-			// Should have spawned agent with worktree path
-			expect(mockOnSpawnAgent).toHaveBeenCalledWith('test-session-id', 'Test', '/test/worktree');
+			// Should have spawned agent with worktree path and Auto Run task metadata
+			expect(mockOnSpawnAgent).toHaveBeenCalledWith(
+				'test-session-id',
+				'Test',
+				'/test/worktree',
+				expect.objectContaining({
+					autoRunTask: expect.objectContaining({
+						documentName: 'tasks',
+						folderPath: '/test/folder',
+						effectiveCwd: '/test/worktree',
+					}),
+				})
+			);
 		});
 
 		it('should handle worktree checkout failure with uncommitted changes', async () => {

@@ -20,6 +20,7 @@ export interface AgentSpawnResult {
 	response?: string;
 	agentSessionId?: string;
 	usageStats?: UsageStats;
+	failureKind?: 'strict_gate';
 }
 
 export interface AutoRunTaskContext {
@@ -418,12 +419,16 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										usageStats: taskUsageStats,
 									});
 
-								const resolveFailure = (reason?: string) =>
+								const resolveFailure = (
+									reason?: string,
+									failureKind?: AgentSpawnResult['failureKind']
+								) =>
 									resolve({
 										success: false,
 										response: reason || responseText,
 										agentSessionId,
 										usageStats: taskUsageStats,
+										failureKind,
 									});
 
 								const finalizeResolve = async () => {
@@ -442,14 +447,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 										);
 
 										if (!validationResult.success) {
-											resolveFailure(validationResult.reason);
+											resolveFailure(validationResult.reason, 'strict_gate');
 											return;
 										}
 
 										resolveSuccess();
 									} catch (error) {
 										console.error('[AutoRunTaskLoop] Validation failed unexpectedly:', error);
-										resolveFailure('strict_completion_gate_failed');
+										resolveFailure('strict_completion_gate_failed', 'strict_gate');
 									}
 								};
 

@@ -65,6 +65,7 @@ describe('useAgentExecution', () => {
 	const mockProcess = {
 		...window.maestro.process,
 		spawn: vi.fn(),
+		runCommand: vi.fn(),
 		onData: vi.fn(),
 		onSessionId: vi.fn(),
 		onUsage: vi.fn(),
@@ -85,6 +86,11 @@ describe('useAgentExecution', () => {
 		onExitHandler = undefined;
 
 		mockProcess.spawn.mockResolvedValue(undefined);
+		mockProcess.runCommand.mockResolvedValue({
+			exitCode: 0,
+			stdout: '',
+			stderr: '',
+		});
 		mockProcess.onData.mockImplementation((handler: (sid: string, data: string) => void) => {
 			onDataHandler = handler;
 			return () => {};
@@ -186,6 +192,74 @@ describe('useAgentExecution', () => {
 
 		expect(updatedSession.state).toBe('idle');
 		expect(updatedSession.aiTabs[0].state).toBe('idle');
+	});
+
+	it('returns strict-gate failure details when Auto Run validation command fails', async () => {
+		const session = createMockSession({
+			isGitRepo: false,
+		});
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn();
+		const processQueuedItemRef = { current: null };
+
+		window.maestro.fs = {
+			...window.maestro.fs,
+			stat: vi.fn().mockRejectedValue(new Error('not found')),
+			readFile: vi
+				.fn()
+				.mockResolvedValue(JSON.stringify({ scripts: { lint: 'eslint .', test: 'vitest' } })),
+		};
+
+		mockProcess.runCommand.mockResolvedValueOnce({
+			exitCode: 1,
+			stdout: '',
+			stderr: 'lint failed',
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions,
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt', undefined, {
+			autoRunTask: {
+				documentName: 'phase-1',
+				folderPath: '/test/folder',
+				loopIteration: 1,
+				effectiveCwd: session.cwd,
+			},
+		});
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		const targetSessionId = spawnConfig.sessionId as string;
+
+		act(() => {
+			onExitHandler?.(targetSessionId);
+		});
+
+		const resultData = await spawnPromise;
+
+		expect(mockProcess.runCommand).toHaveBeenCalledWith(
+			expect.objectContaining({
+				sessionId: targetSessionId,
+				taskContractInput: expect.objectContaining({
+					goal: expect.stringContaining('phase-1'),
+				}),
+			})
+		);
+		expect(resultData.success).toBe(false);
+		expect(resultData.failureKind).toBe('strict_gate');
+		expect(resultData.response).toContain('lint failed');
 	});
 
 	it('uses raw stdin prompt delivery for local Windows batch runs when stream-json input is unsupported', async () => {
