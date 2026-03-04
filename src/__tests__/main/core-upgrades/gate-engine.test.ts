@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { DoneGateEngine } from '../../../main/core-upgrades';
-import type { TaskContract } from '../../../main/core-upgrades/types';
+import type { ReviewFinding, TaskContract } from '../../../main/core-upgrades/types';
 
 const baseTask: TaskContract = {
 	task_id: 'task-1',
@@ -15,6 +15,17 @@ const baseTask: TaskContract = {
 };
 
 describe('DoneGateEngine', () => {
+	const criticalFinding: ReviewFinding = {
+		id: 'finding-critical',
+		severity: 'critical',
+		confidence: 0.9,
+		regression_risk: 'high',
+		message: 'Critical regression risk',
+		missing_tests: true,
+		affected_surfaces: ['main-process'],
+		blocking: true,
+	};
+
 	it('blocks completion when targeted checks are missing', () => {
 		const engine = new DoneGateEngine();
 		const decision = engine.evaluate({
@@ -43,6 +54,32 @@ describe('DoneGateEngine', () => {
 			review_findings: [],
 		});
 		expect(decision.decision).toBe('complete');
+	});
+
+	it('blocks completion when non-waived high-severity review findings exist', () => {
+		const engine = new DoneGateEngine();
+		const decision = engine.evaluate({
+			task: { ...baseTask, done_gate_profile: 'quick' },
+			targeted_checks: [{ command: 'npm test', exit_code: 0, pass: true, duration_ms: 120 }],
+			review_findings: [criticalFinding],
+		});
+		expect(decision.decision).toBe('blocked');
+		expect(decision.blocking_reasons).toContain('blocking_review_findings');
+	});
+
+	it('allows completion when blocking findings are explicitly waived in task metadata', () => {
+		const engine = new DoneGateEngine();
+		const decision = engine.evaluate({
+			task: {
+				...baseTask,
+				done_gate_profile: 'quick',
+				metadata: { waived_review_finding_ids: ['finding-critical'] },
+			},
+			targeted_checks: [{ command: 'npm test', exit_code: 0, pass: true, duration_ms: 120 }],
+			review_findings: [criticalFinding],
+		});
+		expect(decision.decision).toBe('complete');
+		expect(decision.blocking_reasons).toEqual([]);
 	});
 
 	it('requires full suite for cross-package changes in standard profile', () => {

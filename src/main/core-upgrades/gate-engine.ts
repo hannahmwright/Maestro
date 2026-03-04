@@ -4,6 +4,12 @@ function isBlockingFinding(finding: ReviewFinding): boolean {
 	return finding.blocking || finding.severity === 'critical' || finding.severity === 'high';
 }
 
+function getWaivedFindingIds(input: GateEvaluationInput): Set<string> {
+	const raw = input.task.metadata?.waived_review_finding_ids;
+	if (!Array.isArray(raw)) return new Set();
+	return new Set(raw.filter((id): id is string => typeof id === 'string' && id.trim().length > 0));
+}
+
 function shouldRequireFullSuite(input: GateEvaluationInput, highRiskEdit: boolean): boolean {
 	if (input.task.done_gate_profile === 'high_risk') return true;
 	if (input.task.risk_level === 'high') return true;
@@ -17,10 +23,13 @@ export class DoneGateEngine {
 		const blockingReasons: string[] = [];
 		const nextActions: string[] = [];
 		const reviewFindings = input.review_findings || [];
-		const blockingFindings = reviewFindings.filter(isBlockingFinding);
+		const waivedFindingIds = getWaivedFindingIds(input);
+		const blockingFindings = reviewFindings.filter(
+			(finding) => isBlockingFinding(finding) && !waivedFindingIds.has(finding.id)
+		);
 		const highRiskEdit =
 			!!input.high_risk_edit ||
-			reviewFindings.some(
+			blockingFindings.some(
 				(finding) =>
 					finding.regression_risk === 'high' ||
 					finding.severity === 'critical' ||
