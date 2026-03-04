@@ -828,12 +828,18 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						metadata: config.taskContractInput.metadata,
 					});
 
+					const retrievalMode =
+						config.diffText && (config.changedFiles || []).length > 0
+							? 'review_focused'
+							: (config.proposedEdits || []).length > 0
+								? 'edit_focused'
+								: 'failure_focused';
 					let contextPack: Awaited<ReturnType<typeof repoContextService.getContextPack>> | null =
 						null;
 					try {
 						contextPack = await repoContextService.getContextPack({
 							repoRoot: task.repo_root,
-							mode: 'failure_focused',
+							mode: retrievalMode,
 							seedFiles: config.relatedFiles || config.changedFiles || [],
 							maxFiles: 6,
 						});
@@ -864,6 +870,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					);
 
 					const finalAttempt = loopResult.attempts[loopResult.attempts.length - 1];
+					try {
+						await repoContextService.updateTaskMemory(task.repo_root, task.task_id, {
+							last_status: loopResult.status,
+							last_reason: loopResult.reason || null,
+							attempt_count: loopResult.attempts.length,
+							updated_at: Date.now(),
+						});
+					} catch (error) {
+						logger.warn('Failed to persist task memory for strict loop', LOG_CONTEXT, {
+							sessionId: config.sessionId,
+							taskId: task.task_id,
+							error: String(error),
+						});
+					}
 					return {
 						exitCode: loopResult.status === 'complete' ? 0 : (finalAttempt?.result.exit_code ?? 1),
 						stdout: finalAttempt?.result.stdout,
