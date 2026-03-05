@@ -33,7 +33,7 @@ function resetStore() {
 		shellArgs: '',
 		shellEnvVars: {},
 		ghPath: '',
-		fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+		fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace',
 		fontSize: 14,
 		activeThemeId: 'dracula',
 		customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -131,7 +131,9 @@ describe('settingsStore', () => {
 			expect(state.shellArgs).toBe('');
 			expect(state.shellEnvVars).toEqual({});
 			expect(state.ghPath).toBe('');
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(
+				'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace'
+			);
 			expect(state.fontSize).toBe(14);
 			expect(state.activeThemeId).toBe('dracula');
 			expect(state.customThemeColors).toEqual(DEFAULT_CUSTOM_THEME_COLORS);
@@ -1346,7 +1348,9 @@ describe('settingsStore', () => {
 
 			const state = useSettingsStore.getState();
 			expect(state.settingsLoaded).toBe(true);
-			expect(state.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(state.fontFamily).toBe(
+				'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace'
+			);
 			expect(state.fontSize).toBe(14);
 		});
 

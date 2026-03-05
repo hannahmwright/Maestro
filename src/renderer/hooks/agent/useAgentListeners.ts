@@ -224,13 +224,89 @@ function extractWebSearchQueries(state: Record<string, unknown>): string[] {
 		}
 	}
 
-	const output = asRecord(state.output);
-	push(output?.query);
-	for (const query of extractStringArray(output?.queries)) {
-		push(query);
-	}
-
 	return [...querySet];
+}
+
+const URL_DOMAIN_RE = /https?:\/\/[^\s<>"'`)\]]+/gi;
+const SITE_FILTER_RE = /\bsite:([^\s]+)/gi;
+
+function normalizeDomain(value: string): string | null {
+	const cleaned = value.trim().replace(/[),.;:!?]+$/, '');
+	if (!cleaned) return null;
+	try {
+		const withProtocol = cleaned.includes('://') ? cleaned : `https://${cleaned}`;
+		const hostname = new URL(withProtocol).hostname.replace(/^www\./, '');
+		return hostname || null;
+	} catch {
+		return null;
+	}
+}
+
+function mergeUniqueDomains(existing: string[] | undefined, incoming: string[]): string[] {
+	const merged = new Set<string>(existing || []);
+	for (const domain of incoming) {
+		if (typeof domain !== 'string') continue;
+		const normalized = normalizeDomain(domain);
+		if (normalized) merged.add(normalized);
+	}
+	return [...merged];
+}
+
+function extractWebSearchResponseDomains(state: Record<string, unknown>): string[] {
+	const domains: string[] = [];
+	const seen = new Set<string>();
+	const maxDomains = 12;
+
+	const push = (raw: string) => {
+		const normalized = normalizeDomain(raw);
+		if (!normalized || seen.has(normalized)) return;
+		seen.add(normalized);
+		domains.push(normalized);
+	};
+
+	const visit = (value: unknown, depth = 0) => {
+		if (!value || depth > 4 || domains.length >= maxDomains) return;
+		if (typeof value === 'string') {
+			SITE_FILTER_RE.lastIndex = 0;
+			let siteMatch: RegExpExecArray | null = null;
+			while ((siteMatch = SITE_FILTER_RE.exec(value)) !== null) {
+				push(siteMatch[1]);
+				if (domains.length >= maxDomains) return;
+			}
+
+			URL_DOMAIN_RE.lastIndex = 0;
+			let urlMatch: RegExpExecArray | null = null;
+			while ((urlMatch = URL_DOMAIN_RE.exec(value)) !== null) {
+				push(urlMatch[0]);
+				if (domains.length >= maxDomains) return;
+			}
+			return;
+		}
+
+		if (Array.isArray(value)) {
+			for (const entry of value) {
+				visit(entry, depth + 1);
+				if (domains.length >= maxDomains) break;
+			}
+			return;
+		}
+
+		if (typeof value === 'object') {
+			for (const entry of Object.values(value as Record<string, unknown>)) {
+				visit(entry, depth + 1);
+				if (domains.length >= maxDomains) break;
+			}
+		}
+	};
+
+	visit(state.output);
+	visit(state.result);
+	visit(state.action);
+	const input = asRecord(state.input);
+	if (input) {
+		visit(input.action);
+	}
+	return domains;
 }
 
 interface WebSearchAggregateEntry {
@@ -239,6 +315,8 @@ interface WebSearchAggregateEntry {
 	query: string;
 	status: 'running' | 'completed' | 'error';
 	timestamp: number;
+	domains?: string[];
+	latestResponseDomain?: string;
 }
 
 function getWebSearchAggregateEntries(
@@ -253,6 +331,15 @@ function getWebSearchAggregateEntries(
 		if (typeof record.query !== 'string' || !record.query.trim()) continue;
 		const status = normalizeToolStatus(record.status);
 		const timestamp = typeof record.timestamp === 'number' ? record.timestamp : Date.now();
+		const domains = Array.isArray(record.domains)
+			? record.domains.filter(
+					(value): value is string => typeof value === 'string' && value.trim().length > 0
+				)
+			: [];
+		const latestResponseDomain =
+			typeof record.latestResponseDomain === 'string' && record.latestResponseDomain.trim()
+				? record.latestResponseDomain.trim()
+				: undefined;
 		entries.push({
 			id:
 				typeof record.id === 'string' && record.id.trim()
@@ -265,9 +352,16 @@ function getWebSearchAggregateEntries(
 			query: record.query.trim(),
 			status,
 			timestamp,
+			domains,
+			latestResponseDomain,
 		});
 	}
 	return entries;
+}
+
+function extractWebSearchLatestResponseDomain(state: Record<string, unknown>): string | undefined {
+	const domains = extractWebSearchResponseDomains(state);
+	return domains.length > 0 ? domains[domains.length - 1] : undefined;
 }
 
 function mergeWebSearchAggregateEntries(
@@ -275,12 +369,48 @@ function mergeWebSearchAggregateEntries(
 	invocationId: string | undefined,
 	status: 'running' | 'completed' | 'error',
 	queries: string[],
-	timestamp: number
+	timestamp: number,
+	domains: string[],
+	latestResponseDomain?: string
 ): WebSearchAggregateEntry[] {
 	const merged = [...existingEntries];
+	const findFallbackTargetIndex = (): number => {
+		for (let i = merged.length - 1; i >= 0; i--) {
+			if (merged[i].status === 'running') return i;
+		}
+		return merged.length > 0 ? merged.length - 1 : -1;
+	};
 
 	if (queries.length > 0) {
 		for (const query of queries) {
+			// If we already have a row for this invocation, treat this as an update
+			// even when query text drifts in completion payloads.
+			if (invocationId) {
+				const sameInvocationIndexes: number[] = [];
+				for (let i = 0; i < merged.length; i++) {
+					if (merged[i].invocationId === invocationId) sameInvocationIndexes.push(i);
+				}
+
+				if (sameInvocationIndexes.length > 0) {
+					const exactMatchIndex = sameInvocationIndexes.find(
+						(index) => merged[index].query === query
+					);
+					const targetIndex =
+						exactMatchIndex !== undefined
+							? exactMatchIndex
+							: sameInvocationIndexes[sameInvocationIndexes.length - 1];
+
+					merged[targetIndex] = {
+						...merged[targetIndex],
+						status,
+						timestamp,
+						domains: mergeUniqueDomains(merged[targetIndex].domains, domains),
+						latestResponseDomain: latestResponseDomain || merged[targetIndex].latestResponseDomain,
+					};
+					continue;
+				}
+			}
+
 			const idx = merged.findIndex((entry) =>
 				invocationId
 					? entry.invocationId === invocationId && entry.query === query
@@ -292,14 +422,36 @@ function mergeWebSearchAggregateEntries(
 					...merged[idx],
 					status,
 					timestamp,
+					domains: mergeUniqueDomains(merged[idx].domains, domains),
+					latestResponseDomain: latestResponseDomain || merged[idx].latestResponseDomain,
 				};
 			} else {
+				// Completion/error payloads can contain query-like text that doesn't exactly
+				// match the original request. In those cases, attach result metadata to the
+				// most likely open row instead of creating a new phantom search row.
+				if (status !== 'running') {
+					const fallbackIndex = findFallbackTargetIndex();
+					if (fallbackIndex >= 0) {
+						merged[fallbackIndex] = {
+							...merged[fallbackIndex],
+							status,
+							timestamp,
+							domains: mergeUniqueDomains(merged[fallbackIndex].domains, domains),
+							latestResponseDomain:
+								latestResponseDomain || merged[fallbackIndex].latestResponseDomain,
+						};
+						continue;
+					}
+				}
+
 				merged.push({
 					id: `${invocationId || 'query'}:${query}`,
 					invocationId,
 					query,
 					status,
 					timestamp,
+					domains: mergeUniqueDomains(undefined, domains),
+					latestResponseDomain,
 				});
 			}
 		}
@@ -315,11 +467,29 @@ function mergeWebSearchAggregateEntries(
 					...merged[i],
 					status,
 					timestamp,
+					domains: mergeUniqueDomains(merged[i].domains, domains),
+					latestResponseDomain: latestResponseDomain || merged[i].latestResponseDomain,
 				};
 				touched = true;
 			}
 		}
 		if (touched) return merged;
+	}
+
+	// If result metadata arrives without a query and without invocation ID, attach it
+	// to the most recent open query row so UI still shows per-query progression.
+	if (domains.length > 0 || latestResponseDomain) {
+		const fallbackIndex = findFallbackTargetIndex();
+		if (fallbackIndex >= 0) {
+			merged[fallbackIndex] = {
+				...merged[fallbackIndex],
+				status,
+				timestamp,
+				domains: mergeUniqueDomains(merged[fallbackIndex].domains, domains),
+				latestResponseDomain: latestResponseDomain || merged[fallbackIndex].latestResponseDomain,
+			};
+			return merged;
+		}
 	}
 
 	return merged;
@@ -1781,6 +1951,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				const normalizedStatus = hasIncomingStatus
 					? normalizeToolStatus(incomingState.status)
 					: undefined;
+				const responseDomains = isWebSearch ? extractWebSearchResponseDomains(incomingState) : [];
+				const latestResponseDomain = isWebSearch
+					? extractWebSearchLatestResponseDomain(incomingState)
+					: undefined;
 
 				setSessions((prev) =>
 					prev.map((s) => {
@@ -1839,15 +2013,18 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							let mergedState: ToolState;
 
 							if (isWebSearch) {
-								const queries = extractWebSearchQueries(incomingState);
 								const fallbackStatus = normalizedStatus || existingState.status || 'running';
+								const queries =
+									fallbackStatus === 'running' ? extractWebSearchQueries(incomingState) : [];
 								const existingEntries = getWebSearchAggregateEntries(existingStateRecord);
 								const mergedEntries = mergeWebSearchAggregateEntries(
 									existingEntries,
 									incomingToolId,
 									fallbackStatus,
 									queries,
-									toolEvent.timestamp
+									toolEvent.timestamp,
+									responseDomains,
+									latestResponseDomain
 								);
 								mergedState = {
 									...existingState,
@@ -1901,7 +2078,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 										incomingToolId,
 										fallbackStatus,
 										extractWebSearchQueries(incomingState),
-										toolEvent.timestamp
+										toolEvent.timestamp,
+										responseDomains,
+										latestResponseDomain
 									)
 								: [];
 

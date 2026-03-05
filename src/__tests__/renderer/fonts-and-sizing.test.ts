@@ -29,9 +29,11 @@ import {
 } from '../../renderer/stores/settingsStore';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../renderer/constants/shortcuts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../renderer/constants/themes';
+import { CODEX_DEFAULT_FONT_STACK } from '../../shared/fonts';
 
 // Mock the FontConfigurationPanel's common monospace fonts list
 const COMMON_MONOSPACE_FONTS = [
+	CODEX_DEFAULT_FONT_STACK,
 	'Roboto Mono',
 	'JetBrains Mono',
 	'Fira Code',
@@ -75,7 +77,7 @@ describe('Cross-platform Fonts and Sizing', () => {
 			shellArgs: '',
 			shellEnvVars: {},
 			ghPath: '',
-			fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+			fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace',
 			fontSize: 14,
 			activeThemeId: 'dracula',
 			customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -158,9 +160,10 @@ describe('Cross-platform Fonts and Sizing', () => {
 
 			// Default font family should include multiple fallbacks
 			const fontFamily = result.current.fontFamily;
-			expect(fontFamily).toContain('Roboto Mono');
+			expect(fontFamily).toContain('ui-monospace');
+			expect(fontFamily).toContain('"SFMono-Regular"');
 			expect(fontFamily).toContain('Menlo'); // macOS fallback
-			expect(fontFamily).toContain('Courier New'); // Universal fallback
+			expect(fontFamily).toContain('Consolas'); // Windows fallback
 			expect(fontFamily).toContain('monospace'); // Generic fallback
 		});
 
@@ -417,25 +420,18 @@ describe('Cross-platform Fonts and Sizing', () => {
 			});
 		});
 
-		it('should have Courier New as the universal fallback across all platforms', () => {
-			// Courier New is installed by default on:
-			// - macOS (part of system fonts)
-			// - Windows (part of core fonts)
-			// - Most Linux distros (via msttcorefonts or similar packages)
-
-			expect(COMMON_MONOSPACE_FONTS).toContain('Courier New');
-
-			// It should be in the default font family as a fallback
-			const defaultFontFamily = 'Roboto Mono, Menlo, "Courier New", monospace';
-			expect(defaultFontFamily).toContain('Courier New');
+		it('should have a Codex-style system monospace fallback stack across platforms', () => {
+			expect(COMMON_MONOSPACE_FONTS).toContain(CODEX_DEFAULT_FONT_STACK);
+			expect(CODEX_DEFAULT_FONT_STACK).toContain('ui-monospace');
+			expect(CODEX_DEFAULT_FONT_STACK).toContain('Menlo');
+			expect(CODEX_DEFAULT_FONT_STACK).toContain('Consolas');
 		});
 
 		it('should have generic monospace as the ultimate fallback', () => {
 			// The generic 'monospace' should always be available on any platform
 			// The browser will substitute an appropriate system font
 
-			const defaultFontFamily = 'Roboto Mono, Menlo, "Courier New", monospace';
-			expect(defaultFontFamily.endsWith('monospace')).toBe(true);
+			expect(CODEX_DEFAULT_FONT_STACK.endsWith('monospace')).toBe(true);
 		});
 	});
 

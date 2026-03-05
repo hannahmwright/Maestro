@@ -7,6 +7,7 @@ import {
 	Copy,
 	Edit2,
 	Mail,
+	MailOpen,
 	Pencil,
 	Search,
 	GitMerge,
@@ -20,6 +21,8 @@ import {
 	Loader2,
 	ExternalLink,
 	FolderOpen,
+	ChevronDown,
+	Check,
 } from 'lucide-react';
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
@@ -968,6 +971,9 @@ interface FileTabProps {
 	shortcutHint?: number | null;
 }
 
+type MailFilterMode = 'all' | 'unread' | 'read';
+type MailFilterMenuPosition = { top: number; left: number };
+
 /**
  * Individual file tab component for file preview tabs.
  * Similar to AI Tab but with file-specific rendering:
@@ -1545,6 +1551,18 @@ function TabBarInner({
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
 	const toggleUnreadFilter =
 		onToggleUnreadFilter ?? (() => setShowUnreadOnlyLocal((prev) => !prev));
+	const [mailFilterModeLocal, setMailFilterModeLocal] = useState<MailFilterMode>('all');
+	const [isMailFilterMenuOpen, setIsMailFilterMenuOpen] = useState(false);
+	const [mailFilterMenuPosition, setMailFilterMenuPosition] =
+		useState<MailFilterMenuPosition | null>(null);
+	const mailFilterMenuRef = useRef<HTMLDivElement>(null);
+	const mailFilterButtonRef = useRef<HTMLButtonElement>(null);
+	const activeMailFilterMode: MailFilterMode = showUnreadOnly
+		? 'unread'
+		: mailFilterModeLocal === 'read'
+			? 'read'
+			: 'all';
+	const isTabFilterActive = activeMailFilterMode !== 'all';
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -1592,32 +1610,137 @@ function TabBarInner({
 				}
 			});
 		});
-	}, [activeTabId, activeFileTabId, activeTabName, showUnreadOnly]);
+	}, [activeTabId, activeFileTabId, activeTabName, isTabFilterActive]);
 
 	// Can always close tabs - closing the last one creates a fresh new tab
 	const canClose = true;
 
-	// Filter tabs based on unread filter state
-	// When filter is on, show: unread tabs + active tab + tabs with drafts
-	// The active tab disappears from the filtered list when user navigates away from it
-	const displayedTabs = showUnreadOnly
-		? tabs.filter((t) => t.hasUnread || t.id === activeTabId || hasDraft(t))
-		: tabs;
+	// Filter tabs based on selected mail filter mode.
+	// In filtered modes, keep active tabs and tabs with drafts visible to avoid disorienting jumps.
+	const displayedTabs =
+		activeMailFilterMode === 'all'
+			? tabs
+			: tabs.filter((t) => {
+					if (activeMailFilterMode === 'unread') {
+						return t.hasUnread || t.id === activeTabId || hasDraft(t);
+					}
+					return !t.hasUnread || t.id === activeTabId || hasDraft(t);
+				});
 
 	// When unifiedTabs is provided, filter it similarly for display
 	// File tabs don't have "unread" state, so they only show in filtered mode if active
 	const displayedUnifiedTabs = useMemo(() => {
 		if (!unifiedTabs) return null;
-		if (!showUnreadOnly) return unifiedTabs;
-		// In filter mode: show AI tabs that are unread/active/have drafts, plus file tabs that are active
+		if (activeMailFilterMode === 'all') return unifiedTabs;
+		// In filtered modes: show AI tabs by selected mode plus active/draft, and active file tab.
 		return unifiedTabs.filter((ut) => {
 			if (ut.type === 'ai') {
-				return ut.data.hasUnread || ut.id === activeTabId || hasDraft(ut.data);
+				if (activeMailFilterMode === 'unread') {
+					return ut.data.hasUnread || ut.id === activeTabId || hasDraft(ut.data);
+				}
+				return !ut.data.hasUnread || ut.id === activeTabId || hasDraft(ut.data);
 			}
 			// File tabs: only show if active
 			return ut.id === activeFileTabId;
 		});
-	}, [unifiedTabs, showUnreadOnly, activeTabId, activeFileTabId]);
+	}, [unifiedTabs, activeMailFilterMode, activeTabId, activeFileTabId]);
+
+	useEffect(() => {
+		if (!showUnreadOnly) return;
+		// When unread mode is toggled externally (e.g. Meta+U), reset local mode fallback.
+		setMailFilterModeLocal('all');
+	}, [showUnreadOnly]);
+
+	useEffect(() => {
+		if (!isMailFilterMenuOpen) return;
+
+		const handleClickOutside = (event: MouseEvent) => {
+			const target = event.target as Node;
+			if (
+				!mailFilterMenuRef.current?.contains(target) &&
+				!mailFilterButtonRef.current?.contains(target)
+			) {
+				setIsMailFilterMenuOpen(false);
+			}
+		};
+
+		const handleEscape = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				setIsMailFilterMenuOpen(false);
+			}
+		};
+
+		document.addEventListener('mousedown', handleClickOutside);
+		document.addEventListener('keydown', handleEscape);
+		return () => {
+			document.removeEventListener('mousedown', handleClickOutside);
+			document.removeEventListener('keydown', handleEscape);
+		};
+	}, [isMailFilterMenuOpen]);
+
+	const updateMailFilterMenuPosition = useCallback(() => {
+		const trigger = mailFilterButtonRef.current;
+		if (!trigger) return;
+		const rect = trigger.getBoundingClientRect();
+		setMailFilterMenuPosition({
+			top: rect.bottom + 6,
+			left: Math.max(8, rect.left),
+		});
+	}, []);
+
+	useEffect(() => {
+		if (!isMailFilterMenuOpen) return;
+
+		updateMailFilterMenuPosition();
+
+		const handleWindowUpdate = () => {
+			updateMailFilterMenuPosition();
+		};
+
+		window.addEventListener('resize', handleWindowUpdate);
+		window.addEventListener('scroll', handleWindowUpdate, true);
+		return () => {
+			window.removeEventListener('resize', handleWindowUpdate);
+			window.removeEventListener('scroll', handleWindowUpdate, true);
+		};
+	}, [isMailFilterMenuOpen, updateMailFilterMenuPosition]);
+
+	const setMailFilterMode = useCallback(
+		(mode: MailFilterMode) => {
+			setIsMailFilterMenuOpen(false);
+			if (mode === 'unread') {
+				setMailFilterModeLocal('all');
+				if (!showUnreadOnly) {
+					toggleUnreadFilter();
+				}
+				return;
+			}
+
+			if (showUnreadOnly) {
+				toggleUnreadFilter();
+			}
+			setMailFilterModeLocal(mode === 'read' ? 'read' : 'all');
+		},
+		[showUnreadOnly, toggleUnreadFilter]
+	);
+
+	const unreadShortcut = formatShortcutKeys(['Meta', 'u']);
+	const mailFilterLabel =
+		activeMailFilterMode === 'all'
+			? 'Show all tabs'
+			: activeMailFilterMode === 'unread'
+				? 'Unread only'
+				: 'Read only';
+	const MailFilterIcon = activeMailFilterMode === 'read' ? MailOpen : Mail;
+
+	const handleMailFilterTriggerClick = useCallback(() => {
+		if (isMailFilterMenuOpen) {
+			setIsMailFilterMenuOpen(false);
+			return;
+		}
+		updateMailFilterMenuPosition();
+		setIsMailFilterMenuOpen(true);
+	}, [isMailFilterMenuOpen, updateMailFilterMenuPosition]);
 
 	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
 		e.dataTransfer.effectAllowed = 'move';
@@ -1857,37 +1980,82 @@ function TabBarInner({
 						<Search className="w-4 h-4" />
 					</button>
 				)}
-				{/* Unread filter toggle */}
-				<button
-					onClick={toggleUnreadFilter}
-					className="relative flex items-center justify-center w-6 h-6 rounded transition-colors"
-					style={{
-						color: showUnreadOnly ? theme.colors.accent : theme.colors.textDim,
-						opacity: showUnreadOnly ? 1 : 0.5,
-					}}
-					title={
-						showUnreadOnly
-							? `Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`
-							: `Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`
-					}
-				>
-					<Mail className="w-4 h-4" />
-					{/* Notification dot */}
-					<div
-						className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full"
-						style={{ backgroundColor: theme.colors.accent }}
-					/>
-				</button>
+				<div className="relative">
+					<button
+						ref={mailFilterButtonRef}
+						onClick={handleMailFilterTriggerClick}
+						className="flex items-center justify-center gap-0.5 h-6 px-1.5 rounded transition-colors"
+						style={{
+							color: isTabFilterActive ? theme.colors.accent : theme.colors.textDim,
+							opacity: isTabFilterActive ? 1 : 0.7,
+						}}
+						title={`${mailFilterLabel} (${unreadShortcut} toggles unread only)`}
+					>
+						<MailFilterIcon className="w-4 h-4" />
+						<ChevronDown className="w-3 h-3 opacity-70" />
+					</button>
+					{isMailFilterMenuOpen &&
+						mailFilterMenuPosition &&
+						createPortal(
+							<div
+								ref={mailFilterMenuRef}
+								className="fixed rounded-lg border shadow-xl p-1 z-[100] min-w-[160px]"
+								style={{
+									top: mailFilterMenuPosition.top,
+									left: mailFilterMenuPosition.left,
+									backgroundColor: theme.colors.bgSidebar,
+									borderColor: theme.colors.border,
+								}}
+							>
+								{(
+									[
+										{ id: 'all' as const, label: 'Show all', Icon: Mail },
+										{ id: 'unread' as const, label: 'Unread only', Icon: Mail },
+										{ id: 'read' as const, label: 'Read only', Icon: MailOpen },
+									] satisfies Array<{
+										id: MailFilterMode;
+										label: string;
+										Icon: typeof Mail;
+									}>
+								).map((option) => {
+									const isSelected = option.id === activeMailFilterMode;
+									return (
+										<button
+											key={option.id}
+											onClick={() => setMailFilterMode(option.id)}
+											className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left transition-all"
+											style={{
+												backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
+												color: isSelected ? theme.colors.accent : theme.colors.textMain,
+											}}
+											title={
+												option.id === 'unread'
+													? `${option.label} (${unreadShortcut})`
+													: option.label
+											}
+										>
+											<span className="flex items-center gap-2">
+												<option.Icon className="w-3.5 h-3.5" />
+												<span className="text-xs">{option.label}</span>
+											</span>
+											{isSelected && <Check className="w-3.5 h-3.5" />}
+										</button>
+									);
+								})}
+							</div>,
+							document.body
+						)}
+				</div>
 			</div>
 
-			{/* Empty state when filter is on but no unread tabs */}
-			{showUnreadOnly &&
+			{/* Empty state when a filter is on but there are no matching tabs */}
+			{isTabFilterActive &&
 				(displayedUnifiedTabs ? displayedUnifiedTabs.length === 0 : displayedTabs.length === 0) && (
 					<div
 						className="flex items-center px-3 py-1.5 text-xs italic shrink-0 self-center mb-1"
 						style={{ color: theme.colors.textDim }}
 					>
-						No unread tabs
+						{activeMailFilterMode === 'read' ? 'No read tabs' : 'No unread tabs'}
 					</div>
 				)}
 
@@ -1923,7 +2091,7 @@ function TabBarInner({
 						const isLastTab = originalIndex === allTabs.length - 1;
 
 						// Shortcut hint: 1-9 for first 9 tabs, 0 for last tab (Cmd+0)
-						const shortcutHint = !showUnreadOnly
+						const shortcutHint = !isTabFilterActive
 							? isLastTab
 								? 0
 								: originalIndex < 9
@@ -2098,7 +2266,7 @@ function TabBarInner({
 									isFirstTab={isFirstTab}
 									isLastTab={isLastTab}
 									shortcutHint={
-										!showUnreadOnly
+										!isTabFilterActive
 											? isLastTab
 												? 0
 												: originalIndex < 9

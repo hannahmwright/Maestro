@@ -107,6 +107,58 @@ export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
 		}
 	}, [isLiveMode, liveOverlayOpen, cloudflaredChecked]);
 
+	// Sync tunnel status from main process so "online" state stays accurate even
+	// when tunnel state changes outside the current renderer lifecycle.
+	const syncTunnelStatus = useCallback(async () => {
+		try {
+			const getStatus = window.maestro?.tunnel?.getStatus;
+			if (typeof getStatus !== 'function') {
+				return;
+			}
+			const status = await getStatus();
+
+			if (status.isRunning && status.url) {
+				setTunnelStatus('connected');
+				setTunnelUrl(status.url);
+				setTunnelError(null);
+				return;
+			}
+
+			if (status.error) {
+				setTunnelStatus('error');
+				setTunnelUrl(null);
+				setTunnelError(status.error);
+				setActiveUrlTab((tab) => (tab === 'remote' ? 'local' : tab));
+				return;
+			}
+
+			// Preserve "starting" while cloudflared is still booting and has not
+			// emitted a URL yet.
+			if (tunnelStatus === 'starting') {
+				return;
+			}
+
+			setTunnelStatus('off');
+			setTunnelUrl(null);
+			setTunnelError(null);
+			setActiveUrlTab((tab) => (tab === 'remote' ? 'local' : tab));
+		} catch (error) {
+			console.error('[useLiveOverlay] Failed to sync tunnel status:', error);
+		}
+	}, [tunnelStatus]);
+
+	// Poll tunnel status while live mode is enabled.
+	useEffect(() => {
+		if (!isLiveMode) return;
+
+		void syncTunnelStatus();
+		const interval = window.setInterval(() => {
+			void syncTunnelStatus();
+		}, 5000);
+
+		return () => window.clearInterval(interval);
+	}, [isLiveMode, syncTunnelStatus]);
+
 	// Reset tunnel state when live mode is disabled
 	useEffect(() => {
 		if (!isLiveMode) {

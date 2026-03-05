@@ -1782,64 +1782,53 @@ describe('MainPanel', () => {
 		});
 	});
 
-	describe('Context window tooltip', () => {
-		it('should show context tooltip on hover', async () => {
+	describe('Context window popover', () => {
+		it('should show context popover on click', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			fireEvent.mouseEnter(contextWidget.parentElement!);
+			const contextWidget = screen.getByTitle('Open context details');
+			fireEvent.click(contextWidget);
 
 			await waitFor(() => {
 				expect(screen.getByText('Context Details')).toBeInTheDocument();
 			});
 		});
 
-		it('should hide context tooltip on mouse leave after delay', async () => {
+		it('should hide context popover when clicked again', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			fireEvent.mouseEnter(contextWidget.parentElement!);
+			const contextWidget = screen.getByTitle('Open context details');
+			fireEvent.click(contextWidget);
 
 			await waitFor(() => {
 				expect(screen.getByText('Context Details')).toBeInTheDocument();
 			});
 
-			fireEvent.mouseLeave(contextWidget.parentElement!);
+			fireEvent.click(contextWidget);
 
-			// Wait for the tooltip to disappear after the 150ms delay
-			await waitFor(
-				() => {
-					expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
-				},
-				{ timeout: 500 }
-			);
+			await waitFor(() => {
+				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+			});
 		});
 
-		it('should keep tooltip open when re-entering context widget quickly', async () => {
+		it('should close context popover when clicking outside', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			const contextContainer = contextWidget.parentElement!;
-
-			// Hover to open
-			fireEvent.mouseEnter(contextContainer);
+			const contextWidget = screen.getByTitle('Open context details');
+			fireEvent.click(contextWidget);
 
 			await waitFor(() => {
 				expect(screen.getByText('Context Details')).toBeInTheDocument();
 			});
 
-			// Leave and immediately re-enter (simulating quick mouse movement)
-			fireEvent.mouseLeave(contextContainer);
-			fireEvent.mouseEnter(contextContainer);
+			fireEvent.mouseDown(document.body);
 
-			// Tooltip should still be visible
-			expect(screen.getByText('Context Details')).toBeInTheDocument();
+			await waitFor(() => {
+				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+			});
 		});
 
-		it('should display token stats in context tooltip', async () => {
+		it('should display token stats in context popover', async () => {
 			const session = createSession({
 				aiTabs: [
 					{
@@ -1863,19 +1852,16 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			const contextWidget = screen.getAllByText(/^Context( Window)?$/)[0];
-			fireEvent.mouseEnter(contextWidget.parentElement!);
+			const contextWidget = screen.getByTitle('Open context details');
+			fireEvent.click(contextWidget);
 
 			await waitFor(() => {
+				expect(screen.getByText('Tokens')).toBeInTheDocument();
+				expect(screen.getByText(/1,800\s*\/\s*200,000/)).toBeInTheDocument();
 				expect(screen.getByText('Input Tokens')).toBeInTheDocument();
 				expect(screen.getByText('1,500')).toBeInTheDocument();
 				expect(screen.getByText('Output Tokens')).toBeInTheDocument();
 				expect(screen.getByText('750')).toBeInTheDocument();
-				expect(screen.getByText('Cache Read')).toBeInTheDocument();
-				expect(screen.getByText('200')).toBeInTheDocument();
-				expect(screen.getByText('Cache Write')).toBeInTheDocument();
-				expect(screen.getByText('100')).toBeInTheDocument();
 			});
 		});
 	});

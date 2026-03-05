@@ -35,6 +35,7 @@ import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { getLevelIndex } from '../constants/keyboardMastery';
 import { commitCommandPrompt } from '../../prompts';
+import { CODEX_DEFAULT_FONT_STACK } from '../../shared/fonts';
 
 // ============================================================================
 // Shared Type Aliases
@@ -49,6 +50,9 @@ const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = ['mindmap', 'radi
 
 /** Default local ignore patterns for new installations (includes .git, node_modules, __pycache__) */
 export const DEFAULT_LOCAL_IGNORE_PATTERNS = ['.git', 'node_modules', '__pycache__'];
+const LEGACY_DEFAULT_FONT_STACK = 'Roboto Mono, Menlo, "Courier New", monospace';
+const PREVIOUS_CODEX_DEFAULT_FONT_STACK =
+	'ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
 
 export const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
 	autoGroomContexts: true,
@@ -402,7 +406,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	shellArgs: '',
 	shellEnvVars: {},
 	ghPath: '',
-	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+	fontFamily: CODEX_DEFAULT_FONT_STACK,
 	fontSize: 14,
 	activeThemeId: 'dracula',
 	customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -1350,8 +1354,18 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['ghPath'] !== undefined) patch.ghPath = allSettings['ghPath'] as string;
 
-		if (allSettings['fontFamily'] !== undefined)
-			patch.fontFamily = allSettings['fontFamily'] as string;
+		if (allSettings['fontFamily'] !== undefined) {
+			const savedFontFamily = allSettings['fontFamily'] as string;
+			if (
+				savedFontFamily === LEGACY_DEFAULT_FONT_STACK ||
+				savedFontFamily === PREVIOUS_CODEX_DEFAULT_FONT_STACK
+			) {
+				patch.fontFamily = CODEX_DEFAULT_FONT_STACK;
+				void window.maestro.settings.set('fontFamily', CODEX_DEFAULT_FONT_STACK);
+			} else {
+				patch.fontFamily = savedFontFamily;
+			}
+		}
 
 		if (allSettings['fontSize'] !== undefined) patch.fontSize = allSettings['fontSize'] as number;
 

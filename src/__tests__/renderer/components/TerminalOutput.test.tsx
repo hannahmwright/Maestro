@@ -258,7 +258,7 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByTitle('Message delivered')).toBeInTheDocument();
+			expect(screen.getByTestId('check-icon')).toBeInTheDocument();
 		});
 
 		it('shows STDERR label for stderr entries', () => {

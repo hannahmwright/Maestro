@@ -37,6 +37,11 @@ vi.mock('lucide-react', () => ({
 			✉
 		</span>
 	),
+	MailOpen: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="mail-open-icon" className={className} style={style}>
+			📭
+		</span>
+	),
 	Pencil: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="pencil-icon" className={className} style={style}>
 			✏
@@ -95,6 +100,16 @@ vi.mock('lucide-react', () => ({
 	FolderOpen: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="folder-open-icon" className={className} style={style}>
 			📂
+		</span>
+	),
+	ChevronDown: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="chevron-down-icon" className={className} style={style}>
+			⌄
+		</span>
+	),
+	Check: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="check-icon" className={className} style={style}>
+			✓
 		</span>
 	),
 	FileText: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -215,7 +230,7 @@ describe('TabBar', () => {
 			).toBeInTheDocument();
 		});
 
-		it('renders unread filter button', () => {
+		it('renders mail filter dropdown trigger', () => {
 			render(
 				<TabBar
 					tabs={[createTab()]}
@@ -227,7 +242,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.getByTitle(/Filter unread tabs/)).toBeInTheDocument();
+			expect(screen.getByTitle(/Show all tabs/)).toBeInTheDocument();
 		});
 
 		it('renders tab search button when onOpenTabSearch provided', () => {
@@ -720,8 +735,9 @@ describe('TabBar', () => {
 			expect(screen.getByText('Tab 1')).toBeInTheDocument();
 			expect(screen.getByText('Tab 2')).toBeInTheDocument();
 
-			// Toggle filter
-			fireEvent.click(screen.getByTitle(/Filter unread tabs/));
+			// Open menu and select unread mode
+			fireEvent.click(screen.getByTitle(/Show all tabs/));
+			fireEvent.click(screen.getByText('Unread only'));
 
 			// Now only unread and active tab visible
 			expect(screen.getByText('Tab 1')).toBeInTheDocument(); // Active
@@ -743,8 +759,33 @@ describe('TabBar', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByTitle(/Filter unread tabs/));
+			fireEvent.click(screen.getByTitle(/Show all tabs/));
+			fireEvent.click(screen.getByText('Unread only'));
 			expect(mockOnToggleUnreadFilter).toHaveBeenCalled();
+		});
+
+		it('filters to read-only tabs when selected', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Read Tab', hasUnread: false }),
+				createTab({ id: 'tab-2', name: 'Unread Tab', hasUnread: true }),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-3"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle(/Show all tabs/));
+			fireEvent.click(screen.getByText('Read only'));
+
+			expect(screen.getByText('Read Tab')).toBeInTheDocument();
+			expect(screen.queryByText('Unread Tab')).not.toBeInTheDocument();
 		});
 
 		it('shows empty state when filter is on but no unread tabs', () => {
@@ -803,9 +844,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(
-				screen.getByTitle(`Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`)
-			).toBeInTheDocument();
+			expect(screen.getByTitle(/Show all tabs/)).toBeInTheDocument();
 
 			rerender(
 				<TabBar
@@ -819,9 +858,7 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(
-				screen.getByTitle(`Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`)
-			).toBeInTheDocument();
+			expect(screen.getByTitle(/Unread only/)).toBeInTheDocument();
 		});
 	});
 

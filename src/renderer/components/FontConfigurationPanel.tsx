@@ -1,10 +1,20 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import type { Theme } from '../types';
+import {
+	CODEX_DEFAULT_FONT_STACK,
+	CODEX_CODE_FONT_STACK,
+	CODEX_SANS_FONT_STACK,
+} from '../../shared/fonts';
 
 /**
  * Common monospace fonts that are typically available across different systems.
  * These are shown in the font dropdown for quick selection.
  */
+const CODEX_PRESET_FONTS = [
+	{ value: CODEX_SANS_FONT_STACK, label: 'Codex Sans UI' },
+	{ value: CODEX_CODE_FONT_STACK, label: 'Codex Code Mono' },
+];
+
 const COMMON_MONOSPACE_FONTS = [
 	'Roboto Mono',
 	'JetBrains Mono',
@@ -83,6 +93,13 @@ export function FontConfigurationPanel({
 			const normalizedSearch = normalize(fontName);
 
 			// Fast O(1) lookup
+			if (
+				fontName === CODEX_DEFAULT_FONT_STACK ||
+				fontName === CODEX_CODE_FONT_STACK ||
+				fontName === CODEX_SANS_FONT_STACK
+			) {
+				return true;
+			}
 			if (normalizedFontsSet.has(normalizedSearch)) return true;
 			if (normalizedFontsSet.has(fontName.toLowerCase())) return true;
 
@@ -126,6 +143,13 @@ export function FontConfigurationPanel({
 						className="w-full p-2 rounded border bg-transparent outline-none mb-3"
 						style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 					>
+						<optgroup label="Codex Presets">
+							{CODEX_PRESET_FONTS.map((preset) => (
+								<option key={preset.value} value={preset.value}>
+									{preset.label}
+								</option>
+							))}
+						</optgroup>
 						<optgroup label="Common Monospace Fonts">
 							{COMMON_MONOSPACE_FONTS.map((font) => {
 								const available = fontsLoaded ? isFontAvailable(font) : true;

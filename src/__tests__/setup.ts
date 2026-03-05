@@ -441,6 +441,14 @@ const mockMaestro = {
 		trashItem: vi.fn().mockResolvedValue(undefined),
 		showItemInFolder: vi.fn().mockResolvedValue(undefined),
 	},
+	tunnel: {
+		isCloudflaredInstalled: vi.fn().mockResolvedValue(true),
+		start: vi
+			.fn()
+			.mockResolvedValue({ success: true, url: 'https://test-tunnel.trycloudflare.com/token' }),
+		stop: vi.fn().mockResolvedValue({ success: true }),
+		getStatus: vi.fn().mockResolvedValue({ isRunning: false, url: null, error: null }),
+	},
 	sync: {
 		getDefaultPath: vi.fn().mockResolvedValue('/default/path'),
 		getSettings: vi.fn().mockResolvedValue({ customSyncPath: undefined }),

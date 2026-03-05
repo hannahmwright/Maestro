@@ -1497,6 +1497,8 @@ describe('DisplayTab', () => {
 			const optionTexts = Array.from(options).map((o) => o.textContent?.trim());
 
 			// Verify common monospace fonts are present
+			expect(optionTexts).toContain('Codex Sans UI');
+			expect(optionTexts).toContain('Codex Code Mono');
 			expect(optionTexts).toContain('Roboto Mono');
 			expect(optionTexts).toContain('JetBrains Mono');
 			expect(optionTexts).toContain('Fira Code');

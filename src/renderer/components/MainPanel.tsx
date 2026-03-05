@@ -449,12 +449,14 @@ export const MainPanel = React.memo(
 
 		// Hover tooltip state using reusable hook
 		const gitTooltip = useHoverTooltip(150);
-		const contextTooltip = useHoverTooltip(150);
 		const headerRef = useRef<HTMLDivElement>(null);
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
+		const contextWidgetRef = useRef<HTMLButtonElement>(null);
+		const contextPopoverRef = useRef<HTMLDivElement>(null);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
 		const [agentReasoningEffort, setAgentReasoningEffort] = useState<ReasoningEffort>('high');
+		const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
 
 		// Extract tab handlers from props
 		const {
@@ -700,6 +702,38 @@ export const MainPanel = React.memo(
 			},
 			[setActiveSessionId, onTabSelect]
 		);
+
+		useEffect(() => {
+			if (!isContextPopoverOpen) return;
+
+			const handleClickOutside = (event: MouseEvent) => {
+				const target = event.target as Node;
+				if (
+					contextWidgetRef.current?.contains(target) ||
+					contextPopoverRef.current?.contains(target)
+				) {
+					return;
+				}
+				setIsContextPopoverOpen(false);
+			};
+
+			const handleEscape = (event: KeyboardEvent) => {
+				if (event.key === 'Escape') {
+					setIsContextPopoverOpen(false);
+				}
+			};
+
+			document.addEventListener('mousedown', handleClickOutside);
+			document.addEventListener('keydown', handleEscape);
+			return () => {
+				document.removeEventListener('mousedown', handleClickOutside);
+				document.removeEventListener('keydown', handleEscape);
+			};
+		}, [isContextPopoverOpen]);
+
+		useEffect(() => {
+			setIsContextPopoverOpen(false);
+		}, [activeSession?.id, activeSession?.activeTabId, activeFileTabId]);
 
 		// Memoized props for FilePreview to prevent re-renders that cause image flickering
 		// The file object must be stable - recreating it on each render causes the <img> to remount
@@ -1262,216 +1296,192 @@ export const MainPanel = React.memo(
 											</span>
 										)}
 
-									{/* Context Window Widget with Tooltip - only show when context window is configured and agent supports usage stats */}
+									{/* Context Window Widget with click popover - only show when context window is configured and agent supports usage stats */}
 									{/* Hide when file preview tab is focused - context usage is only relevant for AI tabs */}
 									{activeSession.inputMode === 'ai' &&
 										!activeFileTabId &&
 										(activeTab?.agentSessionId || activeTab?.usageStats) &&
 										hasCapability('supportsUsageStats') &&
 										activeTabContextWindow > 0 && (
-											<div
-												className="header-context-widget flex flex-col items-end mr-2 relative cursor-pointer"
-												{...contextTooltip.triggerHandlers}
-											>
-												{/* Full label shown at wide widths, compact label shown at narrow widths via CSS */}
-												<span
-													className="header-context-label-full text-[10px] font-bold uppercase"
-													style={{ color: theme.colors.textDim }}
+											<div className="relative mr-2">
+												<button
+													ref={contextWidgetRef}
+													onClick={(e) => {
+														e.stopPropagation();
+														setIsContextPopoverOpen((prev) => !prev);
+													}}
+													className="header-context-widget flex flex-col items-end rounded px-1 py-0.5 hover:bg-white/5 transition-colors"
+													title="Open context details"
 												>
-													Context Window
-												</span>
-												<span
-													className="header-context-label-compact text-[10px] font-bold uppercase hidden"
-													style={{ color: theme.colors.textDim }}
-													aria-hidden="true"
-												>
-													Context
-												</span>
-												{/* Gauge width controlled via CSS container query */}
-												<div
-													className="header-context-gauge w-24 h-1.5 rounded-full mt-1 overflow-hidden"
-													style={{ backgroundColor: theme.colors.border }}
-												>
-													<div
-														className="h-full transition-all duration-500 ease-out"
-														style={{
-															width: `${activeTabContextUsage}%`,
-															backgroundColor: getContextColor(activeTabContextUsage, theme),
-														}}
-													/>
-												</div>
-
-												{/* Context Window Tooltip */}
-												{contextTooltip.isOpen && activeSession.inputMode === 'ai' && (
-													<>
-														{/* Invisible bridge to prevent hover gap */}
+													<span
+														className="header-context-label-full text-[10px] font-bold uppercase"
+														style={{ color: theme.colors.textDim }}
+													>
+														Context Window
+													</span>
+													<span
+														className="header-context-label-compact text-[10px] font-bold uppercase hidden"
+														style={{ color: theme.colors.textDim }}
+														aria-hidden="true"
+													>
+														Context
+													</span>
+													<div className="flex items-center gap-1 mt-1">
 														<div
-															className="absolute left-0 right-0 h-3 pointer-events-auto"
-															style={{ top: '100%' }}
-															{...contextTooltip.contentHandlers}
-														/>
-														<div
-															className="absolute top-full right-0 pt-2 w-64 z-50 pointer-events-auto"
-															{...contextTooltip.contentHandlers}
+															className="header-context-gauge w-24 h-1.5 rounded-full overflow-hidden"
+															style={{ backgroundColor: theme.colors.border }}
 														>
 															<div
-																className="border rounded-lg p-3 shadow-xl"
+																className="h-full transition-all duration-500 ease-out"
 																style={{
-																	backgroundColor: theme.colors.bgSidebar,
-																	borderColor: theme.colors.border,
+																	width: `${activeTabContextUsage}%`,
+																	backgroundColor: getContextColor(activeTabContextUsage, theme),
 																}}
+															/>
+														</div>
+														<span
+															className="text-[10px] font-mono font-bold"
+															style={{
+																color: getContextColor(activeTabContextUsage, theme),
+															}}
+														>
+															{activeTabContextUsage}%
+														</span>
+													</div>
+												</button>
+
+												{isContextPopoverOpen && activeSession.inputMode === 'ai' && (
+													<div
+														ref={contextPopoverRef}
+														className="absolute top-full right-0 mt-2 w-72 z-50"
+													>
+														<div
+															className="border rounded-lg p-3 shadow-xl"
+															style={{
+																backgroundColor: theme.colors.bgSidebar,
+																borderColor: theme.colors.border,
+															}}
+														>
+															<div
+																className="text-[10px] uppercase font-bold mb-3"
+																style={{ color: theme.colors.textDim }}
 															>
-																<div
-																	className="text-[10px] uppercase font-bold mb-3"
-																	style={{ color: theme.colors.textDim }}
+																Context Details
+															</div>
+
+															<div className="space-y-2">
+																<div className="flex justify-between items-center">
+																	<span
+																		className="text-xs font-bold"
+																		style={{ color: theme.colors.textDim }}
+																	>
+																		Usage
+																	</span>
+																	<span
+																		className="text-xs font-mono font-bold"
+																		style={{
+																			color: getContextColor(activeTabContextUsage, theme),
+																		}}
+																	>
+																		{activeTabContextUsage}%
+																	</span>
+																</div>
+																<div className="flex justify-between items-center">
+																	<span
+																		className="text-xs font-bold"
+																		style={{ color: theme.colors.textDim }}
+																	>
+																		Tokens
+																	</span>
+																	<span
+																		className="text-xs font-mono font-bold"
+																		style={{ color: theme.colors.accent }}
+																	>
+																		{activeTabContextTokens.toLocaleString('en-US')} /{' '}
+																		{activeTabContextWindow.toLocaleString('en-US')}
+																	</span>
+																</div>
+																<div className="flex justify-between items-center">
+																	<span className="text-xs" style={{ color: theme.colors.textDim }}>
+																		Input Tokens
+																	</span>
+																	<span
+																		className="text-xs font-mono"
+																		style={{ color: theme.colors.textMain }}
+																	>
+																		{(activeTab?.usageStats?.inputTokens ?? 0).toLocaleString(
+																			'en-US'
+																		)}
+																	</span>
+																</div>
+																<div className="flex justify-between items-center">
+																	<span className="text-xs" style={{ color: theme.colors.textDim }}>
+																		Output Tokens
+																	</span>
+																	<span
+																		className="text-xs font-mono"
+																		style={{ color: theme.colors.textMain }}
+																	>
+																		{(activeTab?.usageStats?.outputTokens ?? 0).toLocaleString(
+																			'en-US'
+																		)}
+																	</span>
+																</div>
+																{(activeTab?.usageStats?.reasoningTokens ?? 0) > 0 && (
+																	<div className="flex justify-between items-center">
+																		<span
+																			className="text-xs"
+																			style={{ color: theme.colors.textDim }}
+																		>
+																			Reasoning Tokens
+																		</span>
+																		<span
+																			className="text-xs font-mono"
+																			style={{ color: theme.colors.textMain }}
+																		>
+																			{(activeTab?.usageStats?.reasoningTokens ?? 0).toLocaleString(
+																				'en-US'
+																			)}
+																		</span>
+																	</div>
+																)}
+															</div>
+
+															<div
+																className="border-t mt-3 pt-3"
+																style={{ borderColor: theme.colors.border }}
+															>
+																<button
+																	onClick={() => {
+																		if (activeSession?.activeTabId && onSummarizeAndContinue) {
+																			onSummarizeAndContinue(activeSession.activeTabId);
+																			setIsContextPopoverOpen(false);
+																		}
+																	}}
+																	disabled={
+																		!activeSession?.activeTabId ||
+																		!onSummarizeAndContinue ||
+																		isSummarizing
+																	}
+																	className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+																	style={{
+																		backgroundColor: `${theme.colors.accent}25`,
+																		color: theme.colors.accent,
+																		border: `1px solid ${theme.colors.accent}40`,
+																	}}
 																>
-																	Context Details
-																</div>
-
-																<div className="space-y-2">
-																	<div className="flex justify-between items-center">
-																		<span
-																			className="text-xs"
-																			style={{ color: theme.colors.textDim }}
-																		>
-																			Input Tokens
-																		</span>
-																		<span
-																			className="text-xs font-mono"
-																			style={{ color: theme.colors.textMain }}
-																		>
-																			{(activeTab?.usageStats?.inputTokens ?? 0).toLocaleString(
-																				'en-US'
-																			)}
-																		</span>
-																	</div>
-																	<div className="flex justify-between items-center">
-																		<span
-																			className="text-xs"
-																			style={{ color: theme.colors.textDim }}
-																		>
-																			Output Tokens
-																		</span>
-																		<span
-																			className="text-xs font-mono"
-																			style={{ color: theme.colors.textMain }}
-																		>
-																			{(activeTab?.usageStats?.outputTokens ?? 0).toLocaleString(
-																				'en-US'
-																			)}
-																		</span>
-																	</div>
-																	{/* Reasoning tokens - only shown for agents that report them (e.g., Codex o3/o4-mini) */}
-																	{(activeTab?.usageStats?.reasoningTokens ?? 0) > 0 && (
-																		<div className="flex justify-between items-center">
-																			<span
-																				className="text-xs"
-																				style={{ color: theme.colors.textDim }}
-																			>
-																				Reasoning Tokens
-																				<span className="ml-1 text-[10px] opacity-60">
-																					(in output)
-																				</span>
-																			</span>
-																			<span
-																				className="text-xs font-mono"
-																				style={{ color: theme.colors.textMain }}
-																			>
-																				{(
-																					activeTab?.usageStats?.reasoningTokens ?? 0
-																				).toLocaleString('en-US')}
-																			</span>
-																		</div>
+																	{isSummarizing ? (
+																		<Loader2 className="w-3.5 h-3.5 animate-spin" />
+																	) : (
+																		<Wand2 className="w-3.5 h-3.5" />
 																	)}
-																	<div className="flex justify-between items-center">
-																		<span
-																			className="text-xs"
-																			style={{ color: theme.colors.textDim }}
-																		>
-																			Cache Read
-																		</span>
-																		<span
-																			className="text-xs font-mono"
-																			style={{ color: theme.colors.textMain }}
-																		>
-																			{(
-																				activeTab?.usageStats?.cacheReadInputTokens ?? 0
-																			).toLocaleString('en-US')}
-																		</span>
-																	</div>
-																	<div className="flex justify-between items-center">
-																		<span
-																			className="text-xs"
-																			style={{ color: theme.colors.textDim }}
-																		>
-																			Cache Write
-																		</span>
-																		<span
-																			className="text-xs font-mono"
-																			style={{ color: theme.colors.textMain }}
-																		>
-																			{(
-																				activeTab?.usageStats?.cacheCreationInputTokens ?? 0
-																			).toLocaleString('en-US')}
-																		</span>
-																	</div>
-
-																	{/* Context usage section - only shown when contextWindow is configured */}
-																	{activeTabContextWindow > 0 && (
-																		<div
-																			className="border-t pt-2 mt-2"
-																			style={{ borderColor: theme.colors.border }}
-																		>
-																			<div className="flex justify-between items-center">
-																				<span
-																					className="text-xs font-bold"
-																					style={{ color: theme.colors.textDim }}
-																				>
-																					Context Tokens
-																				</span>
-																				<span
-																					className="text-xs font-mono font-bold"
-																					style={{ color: theme.colors.accent }}
-																				>
-																					{activeTabContextTokens.toLocaleString('en-US')}
-																				</span>
-																			</div>
-																			<div className="flex justify-between items-center mt-1">
-																				<span
-																					className="text-xs font-bold"
-																					style={{ color: theme.colors.textDim }}
-																				>
-																					Context Size
-																				</span>
-																				<span
-																					className="text-xs font-mono font-bold"
-																					style={{ color: theme.colors.textMain }}
-																				>
-																					{activeTabContextWindow.toLocaleString('en-US')}
-																				</span>
-																			</div>
-																			<div className="flex justify-between items-center mt-1">
-																				<span
-																					className="text-xs font-bold"
-																					style={{ color: theme.colors.textDim }}
-																				>
-																					Usage
-																				</span>
-																				<span
-																					className="text-xs font-mono font-bold"
-																					style={{
-																						color: getContextColor(activeTabContextUsage, theme),
-																					}}
-																				>
-																					{activeTabContextUsage}%
-																				</span>
-																			</div>
-																		</div>
-																	)}
-																</div>
+																	<span>
+																		{isSummarizing ? 'Summarizing...' : 'Summarize & Continue'}
+																	</span>
+																</button>
 															</div>
 														</div>
-													</>
+													</div>
 												)}
 											</div>
 										)}

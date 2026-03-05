@@ -111,7 +111,9 @@ describe('stores/defaults', () => {
 		});
 
 		it('should have correct default fontFamily', () => {
-			expect(SETTINGS_DEFAULTS.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(SETTINGS_DEFAULTS.fontFamily).toBe(
+				'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace'
+			);
 		});
 
 		it('should have empty customFonts by default', () => {

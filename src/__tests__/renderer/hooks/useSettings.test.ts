@@ -39,7 +39,7 @@ describe('useSettings', () => {
 			shellArgs: '',
 			shellEnvVars: {},
 			ghPath: '',
-			fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+			fontFamily: 'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace',
 			fontSize: 14,
 			activeThemeId: 'dracula',
 			customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
@@ -144,7 +144,9 @@ describe('useSettings', () => {
 			const { result } = renderHook(() => useSettings());
 			await waitForSettingsLoaded(result);
 
-			expect(result.current.fontFamily).toBe('Roboto Mono, Menlo, "Courier New", monospace');
+			expect(result.current.fontFamily).toBe(
+				'ui-monospace, "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace'
+			);
 			expect(result.current.fontSize).toBe(14);
 		});
 

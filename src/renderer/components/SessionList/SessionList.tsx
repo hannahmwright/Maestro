@@ -242,6 +242,12 @@ function SessionListInner(props: SessionListProps) {
 		handleTunnelToggle,
 	} = useLiveOverlay(isLiveMode);
 
+	const liveStatusLabel = !isLiveMode
+		? 'OFFLINE'
+		: tunnelStatus === 'connected'
+			? 'ONLINE'
+			: 'LIVE';
+
 	// Context menu state
 	const [contextMenu, setContextMenu] = useState<{
 		x: number;
@@ -677,14 +683,16 @@ function SessionListInner(props: SessionListProps) {
 									}`}
 									title={
 										isLiveMode
-											? 'Web interface active - Click to show URL'
+											? tunnelStatus === 'connected'
+												? 'Remote tunnel online - Click to show URLs'
+												: 'Web interface active - Click to show URL'
 											: 'Click to enable web interface'
 									}
 								>
 									<Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
 									{leftSidebarWidthState >=
 										(autoRunStats && autoRunStats.currentBadgeLevel > 0 ? 295 : 256) &&
-										(isLiveMode ? 'LIVE' : 'OFFLINE')}
+										liveStatusLabel}
 								</button>
 
 								{/* LIVE Overlay with URL and QR Code */}

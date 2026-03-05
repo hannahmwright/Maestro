@@ -11,6 +11,7 @@ import {
 	RotateCcw,
 	AlertCircle,
 	Save,
+	Search,
 } from 'lucide-react';
 import type { Session, Theme, LogEntry, FocusArea, AgentError } from '../types';
 import type { FileNode } from '../types/fileTree';
@@ -214,7 +215,8 @@ const buildToolDisplayData = (
 
 	const outputDetail = formatToolDetailValue(toolState?.output);
 	const outputSummary = summarizeToolOutput(toolState?.output);
-	const summary = detailRows[0]?.value || outputSummary;
+	const pathSummary = detailRows.find((row) => row.label === 'path')?.value;
+	const summary = (pathSummary ? `file: ${pathSummary}` : detailRows[0]?.value) || outputSummary;
 
 	return {
 		summary,
@@ -243,6 +245,8 @@ interface WebSearchTimelineItem {
 	query: string;
 	status: 'running' | 'completed' | 'error';
 	timestamp?: number;
+	responseDomains: string[];
+	latestResponseDomain?: string;
 }
 
 const extractWebSearchTimelineItems = (
@@ -250,7 +254,19 @@ const extractWebSearchTimelineItems = (
 ): WebSearchTimelineItem[] => {
 	if (!toolState) return [];
 	const items: WebSearchTimelineItem[] = [];
-	const push = (queryValue: unknown, status: unknown, id: string, timestamp?: number) => {
+	const stateRecord = toolState as Record<string, unknown>;
+	const fallbackResponseDomains = extractDomainsFromUnknown(stateRecord.output, 8);
+	for (const domain of extractDomainsFromUnknown(stateRecord.result, 8)) {
+		if (!fallbackResponseDomains.includes(domain)) fallbackResponseDomains.push(domain);
+	}
+	const push = (
+		queryValue: unknown,
+		status: unknown,
+		id: string,
+		timestamp?: number,
+		responseDomains: string[] = fallbackResponseDomains,
+		latestResponseDomain?: string
+	) => {
 		if (typeof queryValue !== 'string') return;
 		const query = queryValue.trim();
 		if (!query) return;
@@ -260,10 +276,11 @@ const extractWebSearchTimelineItems = (
 			query,
 			status: normalizeToolStatus(status),
 			timestamp,
+			responseDomains,
+			latestResponseDomain,
 		});
 	};
 
-	const stateRecord = toolState as Record<string, unknown>;
 	if (Array.isArray(stateRecord.searches)) {
 		for (const raw of stateRecord.searches) {
 			const entry = asRecord(raw);
@@ -273,7 +290,16 @@ const extractWebSearchTimelineItems = (
 					? entry.id
 					: `search-${String(entry.query || '')}`;
 			const timestamp = typeof entry.timestamp === 'number' ? entry.timestamp : undefined;
-			push(entry.query, entry.status, id, timestamp);
+			const responseDomains = Array.isArray(entry.domains)
+				? entry.domains.filter(
+						(value): value is string => typeof value === 'string' && value.trim().length > 0
+					)
+				: [];
+			const latestResponseDomain =
+				typeof entry.latestResponseDomain === 'string' && entry.latestResponseDomain.trim()
+					? entry.latestResponseDomain.trim()
+					: responseDomains[responseDomains.length - 1];
+			push(entry.query, entry.status, id, timestamp, responseDomains, latestResponseDomain);
 		}
 	}
 
@@ -310,8 +336,229 @@ const extractSiteFilter = (query: string): string | null => {
 	return match?.[1] || null;
 };
 
+const URL_DOMAIN_RE = /https?:\/\/[^\s<>"'`)\]]+/gi;
+const SITE_FILTER_GLOBAL_RE = /\bsite:([^\s]+)/gi;
+
+const normalizeDomain = (value: string): string | null => {
+	const cleaned = value.trim().replace(/[),.;:!?]+$/, '');
+	if (!cleaned) return null;
+	try {
+		const withProtocol = cleaned.includes('://') ? cleaned : `https://${cleaned}`;
+		const hostname = new URL(withProtocol).hostname.replace(/^www\./, '');
+		return hostname || null;
+	} catch {
+		return null;
+	}
+};
+
+const sourceEmblemLabel = (domain: string): string => {
+	const host = domain.replace(/^www\./, '');
+	const base = host.split('.')[0] || host;
+	return base.slice(0, 2).toUpperCase();
+};
+
+const faviconUrlForDomain = (domain: string): string =>
+	`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
+
+const SourceFaviconBadge = memo(
+	({ domain, overlap, theme }: { domain: string; overlap: boolean; theme: Theme }) => {
+		const [imageFailed, setImageFailed] = useState(false);
+		return (
+			<span
+				className={`inline-flex shrink-0 items-center justify-center w-5 h-5 aspect-square rounded-full border overflow-hidden ${overlap ? '-ml-2' : ''}`}
+				style={{
+					borderColor: theme.colors.border,
+					backgroundColor: theme.colors.bgMain,
+				}}
+				title={domain}
+			>
+				{imageFailed ? (
+					<span className="text-[9px] font-semibold" style={{ color: theme.colors.textDim }}>
+						{sourceEmblemLabel(domain)}
+					</span>
+				) : (
+					<img
+						src={faviconUrlForDomain(domain)}
+						alt={domain}
+						className="w-full h-full rounded-full object-cover"
+						loading="lazy"
+						onError={() => setImageFailed(true)}
+					/>
+				)}
+			</span>
+		);
+	}
+);
+
+const extractDomainsFromUnknown = (value: unknown, maxDomains = 8): string[] => {
+	const domains: string[] = [];
+	const seen = new Set<string>();
+	const pushDomain = (raw: string) => {
+		const normalized = normalizeDomain(raw);
+		if (!normalized || seen.has(normalized)) return;
+		seen.add(normalized);
+		domains.push(normalized);
+	};
+
+	const visit = (input: unknown, depth = 0) => {
+		if (!input || depth > 3 || domains.length >= maxDomains) return;
+		if (typeof input === 'string') {
+			SITE_FILTER_GLOBAL_RE.lastIndex = 0;
+			let siteMatch: RegExpExecArray | null = null;
+			while ((siteMatch = SITE_FILTER_GLOBAL_RE.exec(input)) !== null) {
+				pushDomain(siteMatch[1]);
+				if (domains.length >= maxDomains) return;
+			}
+
+			URL_DOMAIN_RE.lastIndex = 0;
+			let urlMatch: RegExpExecArray | null = null;
+			while ((urlMatch = URL_DOMAIN_RE.exec(input)) !== null) {
+				pushDomain(urlMatch[0]);
+				if (domains.length >= maxDomains) return;
+			}
+			return;
+		}
+
+		if (Array.isArray(input)) {
+			for (const entry of input) {
+				visit(entry, depth + 1);
+				if (domains.length >= maxDomains) break;
+			}
+			return;
+		}
+
+		if (typeof input === 'object') {
+			for (const entry of Object.values(input as Record<string, unknown>)) {
+				visit(entry, depth + 1);
+				if (domains.length >= maxDomains) break;
+			}
+		}
+	};
+
+	visit(value);
+	return domains;
+};
+
+const collectSearchSourceDomains = (
+	toolState: NonNullable<LogEntry['metadata']>['toolState'] | undefined,
+	webSearchItems: WebSearchTimelineItem[]
+): string[] => {
+	const domains: string[] = [];
+	const seen = new Set<string>();
+	const maxDomains = 8;
+	const pushDomain = (raw: string) => {
+		const normalized = normalizeDomain(raw);
+		if (!normalized || seen.has(normalized)) return;
+		seen.add(normalized);
+		domains.push(normalized);
+	};
+
+	for (const item of webSearchItems) {
+		for (const domain of item.responseDomains) {
+			pushDomain(domain);
+			if (domains.length >= maxDomains) return domains;
+		}
+		const site = extractSiteFilter(item.query);
+		if (site) pushDomain(site);
+		if (domains.length >= maxDomains) return domains;
+	}
+
+	for (const domain of extractDomainsFromUnknown(toolState?.output, maxDomains)) {
+		pushDomain(domain);
+		if (domains.length >= maxDomains) return domains;
+	}
+	for (const domain of extractDomainsFromUnknown(
+		(toolState as Record<string, unknown> | undefined)?.result,
+		maxDomains
+	)) {
+		pushDomain(domain);
+		if (domains.length >= maxDomains) return domains;
+	}
+	return domains;
+};
+
 const buildSearchExternalUrl = (query: string): string =>
 	`https://www.google.com/search?q=${encodeURIComponent(query)}`;
+
+const extractFirstUrlFromText = (text: string): string | null => {
+	URL_DOMAIN_RE.lastIndex = 0;
+	const match = URL_DOMAIN_RE.exec(text);
+	return match ? match[0].trim().replace(/[),.;:!?]+$/, '') : null;
+};
+
+const buildDomainResultTitle = (query: string, domain: string): string => {
+	const cleanedQuery = query
+		.replace(/\bsite:[^\s]+/gi, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	if (cleanedQuery && cleanedQuery.toLowerCase() !== domain.toLowerCase()) {
+		return cleanedQuery;
+	}
+	return domain;
+};
+
+const asFiniteNumber = (value: unknown): number | null => {
+	if (typeof value === 'number' && Number.isFinite(value)) return value;
+	if (typeof value === 'string' && value.trim()) {
+		const parsed = Number(value);
+		if (Number.isFinite(parsed)) return parsed;
+	}
+	return null;
+};
+
+const formatDurationMs = (durationMs: number): string => {
+	if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
+	const totalSeconds = Math.round(durationMs / 1000);
+	if (totalSeconds < 60) {
+		const seconds = durationMs / 1000;
+		return `${seconds >= 10 ? Math.round(seconds) : seconds.toFixed(1)}s`;
+	}
+	const totalMinutes = Math.floor(totalSeconds / 60);
+	const secondsRemainder = totalSeconds % 60;
+	if (totalMinutes < 60) {
+		return `${totalMinutes}m ${secondsRemainder.toString().padStart(2, '0')}s`;
+	}
+	const hours = Math.floor(totalMinutes / 60);
+	const minutesRemainder = totalMinutes % 60;
+	return `${hours}h ${minutesRemainder.toString().padStart(2, '0')}m`;
+};
+
+const getToolDurationMs = (log: LogEntry): number | null => {
+	if (log.source !== 'tool') return null;
+	const toolState = asRecord(log.metadata?.toolState);
+	if (!toolState) return null;
+
+	const explicitDurationCandidates = [
+		toolState.durationMs,
+		toolState.duration_ms,
+		toolState.elapsedMs,
+		toolState.elapsed_ms,
+		toolState.executionTimeMs,
+	];
+
+	for (const candidate of explicitDurationCandidates) {
+		const duration = asFiniteNumber(candidate);
+		if (duration !== null && duration >= 0) return duration;
+	}
+
+	const timing = asRecord(toolState.timing);
+	const startTimestamp =
+		asFiniteNumber(toolState.startTimestamp) ??
+		asFiniteNumber(toolState.startedAt) ??
+		asFiniteNumber(timing?.startTimestamp) ??
+		asFiniteNumber(timing?.startedAt);
+	const endTimestamp =
+		asFiniteNumber(toolState.endTimestamp) ??
+		asFiniteNumber(toolState.completedAt) ??
+		asFiniteNumber(timing?.endTimestamp) ??
+		asFiniteNumber(timing?.completedAt);
+	const status = normalizeToolStatus(toolState.status);
+
+	if (startTimestamp === null) return null;
+	const resolvedEnd = endTimestamp ?? (status === 'running' ? Date.now() : log.timestamp);
+	if (!Number.isFinite(resolvedEnd) || resolvedEnd < startTimestamp) return null;
+	return resolvedEnd - startTimestamp;
+};
 
 interface SourceLink {
 	url: string;
@@ -330,6 +577,16 @@ const sourceLabelFromUrl = (url: string): string => {
 		return new URL(url).hostname.replace(/^www\./, '');
 	} catch {
 		return 'source';
+	}
+};
+
+const sourceDomainFromUrl = (url: string): string | null => {
+	const cleaned = cleanSourceUrl(url);
+	if (!cleaned) return null;
+	try {
+		return new URL(cleaned).hostname.replace(/^www\./, '');
+	} catch {
+		return normalizeDomain(cleaned);
 	}
 };
 
@@ -521,6 +778,7 @@ const LogItemComponent = memo(
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
+		const previousToolStatusRef = useRef<'running' | 'completed' | 'error' | null>(null);
 
 		// Handle expand toggle with scroll adjustment
 		const handleExpandToggle = useCallback(() => {
@@ -550,6 +808,28 @@ const LogItemComponent = memo(
 				}, 50); // Small delay to allow React to re-render
 			}
 		}, [isExpanded, log.id, onToggleExpanded, scrollContainerRef]);
+
+		useEffect(() => {
+			if (log.source !== 'tool') return;
+			const isSearchTool = normalizeToolName(log.text).includes('search');
+			if (!isSearchTool) return;
+			const currentStatus = normalizeToolStatus(log.metadata?.toolState?.status);
+			const previousStatus = previousToolStatusRef.current;
+
+			// Auto-collapse expanded running search cards once they complete/fail.
+			if (isExpanded && previousStatus === 'running' && currentStatus !== 'running') {
+				onToggleExpanded(log.id);
+			}
+
+			previousToolStatusRef.current = currentStatus;
+		}, [
+			isExpanded,
+			log.id,
+			log.metadata?.toolState?.status,
+			log.source,
+			log.text,
+			onToggleExpanded,
+		]);
 
 		// Helper function to highlight search matches in text
 		const highlightMatches = (text: string, query: string): React.ReactNode => {
@@ -728,12 +1008,64 @@ const LogItemComponent = memo(
 				: htmlContent;
 
 		const isUserMessage = log.source === 'user';
-		const isReversed = isUserMessage
-			? userMessageAlignment === 'left'
-			: userMessageAlignment === 'right';
+		const isUserAiMessage = isUserMessage && isAIMode;
+		const isReversed = isAIMode
+			? isUserMessage && userMessageAlignment === 'right'
+			: isUserMessage
+				? userMessageAlignment === 'left'
+				: userMessageAlignment === 'right';
 		const isToolLog = log.source === 'tool';
 		const isThinkingLog = log.source === 'thinking';
+		const isModelResponseMessage =
+			isAIMode &&
+			!isUserMessage &&
+			!isToolLog &&
+			!isThinkingLog &&
+			log.source !== 'error' &&
+			log.source !== 'stderr';
+		const hideBubbleBorder = isToolLog || isModelResponseMessage || isUserAiMessage;
+		const useStackedTimestampLayout = isAIMode && !isThinkingLog;
 		const showActionButtons = !isToolLog && !isThinkingLog;
+		const toolDurationMs = isToolLog ? getToolDurationMs(log) : null;
+		const toolDurationLabel =
+			toolDurationMs !== null && toolDurationMs >= 0 ? formatDurationMs(toolDurationMs) : null;
+		const showDeliveredAtTimestamp = isUserAiMessage && !!log.delivered;
+		const rowContainerClass = useStackedTimestampLayout
+			? `group px-6 py-2 flex flex-col gap-1 ${isReversed ? 'items-end' : 'items-start'}`
+			: `flex gap-4 group ${isReversed ? 'flex-row-reverse' : ''} px-6 py-2`;
+		const timestampData = (() => {
+			const logDate = new Date(log.timestamp);
+			const today = new Date();
+			const isToday = logDate.toDateString() === today.toDateString();
+			const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+			const timeWithDuration =
+				isToolLog && toolDurationLabel ? `${time} • ${toolDurationLabel}` : time;
+			if (isToday) {
+				return { dateLine: null as string | null, timeLine: timeWithDuration };
+			}
+			// Format: YYYY-MM-DD on first line, time on second
+			const year = logDate.getFullYear();
+			const month = String(logDate.getMonth() + 1).padStart(2, '0');
+			const day = String(logDate.getDate()).padStart(2, '0');
+			return {
+				dateLine: `${year}-${month}-${day}`,
+				timeLine: timeWithDuration,
+			};
+		})();
+		const timestampClass = useStackedTimestampLayout
+			? `text-[10px] px-1 ${isReversed ? 'text-right' : 'text-left'}`
+			: `w-20 shrink-0 text-[10px] pt-2 ${isReversed ? 'text-right' : 'text-left'}`;
+		const bubbleCornerClass = useStackedTimestampLayout
+			? 'rounded-xl'
+			: `rounded-xl ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'}`;
+		const bubbleBottomPaddingClass = showActionButtons
+			? isUserAiMessage
+				? 'pb-4'
+				: 'pb-10'
+			: 'pb-4';
+		const messageContainerClass = isToolLog
+			? 'flex-1 min-w-0 p-1 pb-1 rounded-lg relative overflow-hidden'
+			: `${useStackedTimestampLayout ? 'w-fit max-w-[78%]' : 'flex-1 min-w-0'} p-4 ${bubbleBottomPaddingClass} ${bubbleCornerClass} ${hideBubbleBorder ? '' : 'border'} relative overflow-hidden`;
 		const toolStatus = isToolLog ? normalizeToolStatus(log.metadata?.toolState?.status) : undefined;
 		const toolStatusColor =
 			toolStatus === 'completed'
@@ -743,59 +1075,49 @@ const LogItemComponent = memo(
 					: theme.colors.warning;
 
 		return (
-			<div
-				ref={logItemRef}
-				className={`flex gap-4 group ${isReversed ? 'flex-row-reverse' : ''} px-6 py-2`}
-				data-log-index={index}
-			>
+			<div ref={logItemRef} className={rowContainerClass} data-log-index={index}>
 				<div
-					className={`w-20 shrink-0 text-[10px] pt-2 ${isReversed ? 'text-right' : 'text-left'}`}
+					className={timestampClass}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
-					{(() => {
-						const logDate = new Date(log.timestamp);
-						const today = new Date();
-						const isToday = logDate.toDateString() === today.toDateString();
-						const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-						if (isToday) {
-							return time;
-						}
-						// Format: YYYY-MM-DD on first line, time on second
-						const year = logDate.getFullYear();
-						const month = String(logDate.getMonth() + 1).padStart(2, '0');
-						const day = String(logDate.getDate()).padStart(2, '0');
-						return (
-							<>
-								<div>
-									{year}-{month}-{day}
-								</div>
-								<div>{time}</div>
-							</>
-						);
-					})()}
+					{timestampData.dateLine && <div>{timestampData.dateLine}</div>}
+					<div
+						className={`inline-flex items-center gap-1 ${isReversed ? 'justify-end' : 'justify-start'}`}
+					>
+						<span>{timestampData.timeLine}</span>
+						{showDeliveredAtTimestamp && (
+							<Check
+								className="w-3.5 h-3.5"
+								style={{ color: theme.colors.success, opacity: 0.8 }}
+								aria-label="Message delivered"
+							/>
+						)}
+					</div>
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 ${showActionButtons ? 'pb-10' : 'pb-4'} rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={messageContainerClass}
 					style={{
 						backgroundColor: isUserMessage
 							? isAIMode
 								? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
 								: `color-mix(in srgb, ${theme.colors.accent} 15%, ${theme.colors.bgActivity})`
 							: isToolLog
-								? `color-mix(in srgb, ${toolStatusColor} 8%, ${theme.colors.bgActivity})`
+								? theme.colors.bgMain
 								: log.source === 'stderr' || log.source === 'error'
 									? `color-mix(in srgb, ${theme.colors.error} 8%, ${theme.colors.bgActivity})`
 									: isAIMode
-										? theme.colors.bgActivity
+										? theme.colors.bgMain
 										: 'transparent',
-						borderColor:
-							isUserMessage && isAIMode
+						borderColor: hideBubbleBorder
+							? 'transparent'
+							: isUserMessage && isAIMode
 								? theme.colors.accent + '40'
 								: isToolLog
-									? toolStatusColor + '60'
+									? theme.colors.border
 									: log.source === 'stderr' || log.source === 'error'
 										? theme.colors.error
 										: theme.colors.border,
+						textAlign: isUserAiMessage ? 'right' : undefined,
 					}}
 				>
 					{/* Local filter icon for system output only */}
@@ -920,9 +1242,12 @@ const LogItemComponent = memo(
 						(() => {
 							const toolState = log.metadata?.toolState;
 							const toolStatus = normalizeToolStatus(toolState?.status);
-							const webSearchItems = isWebSearchTool(log.text)
-								? extractWebSearchTimelineItems(toolState)
-								: [];
+							const normalizedToolName = normalizeToolName(log.text);
+							const isSearchTool = normalizedToolName.includes('search');
+							const webSearchItems =
+								isWebSearchTool(log.text) || isSearchTool
+									? extractWebSearchTimelineItems(toolState)
+									: [];
 							const hasWebSearchItems = webSearchItems.length > 0;
 							const runningSearches = webSearchItems.filter(
 								(item) => item.status === 'running'
@@ -930,9 +1255,21 @@ const LogItemComponent = memo(
 							const failedSearches = webSearchItems.filter(
 								(item) => item.status === 'error'
 							).length;
-							const firstQuery = webSearchItems[0]?.query;
+							const latestQuery = webSearchItems[webSearchItems.length - 1]?.query;
 							const toolDisplay = buildToolDisplayData(toolState);
+							const suppressRawSearchDetails =
+								isSearchTool && toolStatus === 'running' && !hasWebSearchItems;
 							const showToolDetails = toolStatus === 'running' || isExpanded;
+							const collapsedSourceDomains = hasWebSearchItems
+								? collectSearchSourceDomains(toolState, webSearchItems)
+								: [];
+							const collapsedSourceBadgeDomains = collapsedSourceDomains.slice(0, 4);
+							const collapsedSourceOverflow = Math.max(
+								0,
+								collapsedSourceDomains.length - collapsedSourceBadgeDomains.length
+							);
+							const showCollapsedSourceBadges =
+								!showToolDetails && collapsedSourceBadgeDomains.length > 0;
 							const canToggleToolDetails =
 								toolStatus !== 'running' &&
 								(hasWebSearchItems ||
@@ -945,8 +1282,10 @@ const LogItemComponent = memo(
 											: failedSearches > 0
 												? ` (${failedSearches} failed)`
 												: ''
-									}${firstQuery ? ` - ${truncateStr(firstQuery, 70)}` : ''}`
-								: toolDisplay.summary;
+									}${latestQuery ? ` - ${truncateStr(latestQuery, 70)}` : ''}`
+								: suppressRawSearchDetails
+									? 'Searching web…'
+									: toolDisplay.summary;
 							const statusLabel =
 								toolStatus === 'completed'
 									? '[DONE]'
@@ -962,29 +1301,25 @@ const LogItemComponent = memo(
 
 							return (
 								<div
-									className="rounded-lg border px-3 py-2 text-xs font-mono"
+									className="rounded-md px-2 py-1.5 text-[11px] font-mono"
 									style={{
 										color: theme.colors.textMain,
-										borderColor: `${statusColor}60`,
-										backgroundColor: `${statusColor}10`,
+										backgroundColor: `${theme.colors.bgMain}66`,
 									}}
 								>
-									<div className="flex items-center gap-2">
+									<div className="flex items-center gap-1.5">
+										<span className="shrink-0" style={{ color: statusColor }} aria-hidden="true">
+											{toolStatus === 'running' ? '◐' : '●'}
+										</span>
 										<span
-											className="px-1.5 py-0.5 rounded shrink-0 text-[11px] font-semibold"
-											style={{
-												backgroundColor: `${theme.colors.accent}30`,
-												color: theme.colors.accent,
-											}}
+											className="shrink-0 text-[11px] font-semibold"
+											style={{ color: theme.colors.textMain }}
 										>
 											{log.text}
 										</span>
 										<span
-											className="px-1.5 py-0.5 rounded shrink-0 text-[10px] tracking-wide font-semibold"
-											style={{
-												backgroundColor: `${statusColor}25`,
-												color: statusColor,
-											}}
+											className="shrink-0 text-[10px] tracking-wide font-semibold uppercase"
+											style={{ color: statusColor }}
 										>
 											{statusLabel}
 										</span>
@@ -996,6 +1331,31 @@ const LogItemComponent = memo(
 											>
 												●
 											</span>
+										)}
+										{showCollapsedSourceBadges && (
+											<div className="shrink-0 flex items-center ml-1">
+												{collapsedSourceBadgeDomains.map((domain, idx) => (
+													<SourceFaviconBadge
+														key={`${log.id}-source-badge-${domain}`}
+														domain={domain}
+														overlap={idx > 0}
+														theme={theme}
+													/>
+												))}
+												{collapsedSourceOverflow > 0 && (
+													<span
+														className="-ml-1 px-1 py-0.5 rounded-full border text-[8px] font-semibold"
+														style={{
+															borderColor: theme.colors.border,
+															backgroundColor: `${theme.colors.bgMain}cc`,
+															color: theme.colors.textDim,
+														}}
+														title={`${collapsedSourceOverflow} more sources`}
+													>
+														+{collapsedSourceOverflow}
+													</span>
+												)}
+											</div>
 										)}
 										{!showToolDetails && toolSummary && (
 											<span
@@ -1010,24 +1370,38 @@ const LogItemComponent = memo(
 											<button
 												type="button"
 												onClick={handleExpandToggle}
-												className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border hover:opacity-80 transition-opacity"
+												className="ml-auto flex items-center justify-center w-5 h-5 rounded border hover:opacity-80 transition-opacity"
 												style={{
 													color: theme.colors.textDim,
 													borderColor: `${theme.colors.border}80`,
 													backgroundColor: `${theme.colors.bgMain}50`,
 												}}
+												aria-label={
+													showToolDetails ? 'Collapse tool details' : 'Expand tool details'
+												}
+												title={showToolDetails ? 'Collapse' : 'Expand'}
 											>
 												{showToolDetails ? (
 													<ChevronUp className="w-3 h-3" />
 												) : (
 													<ChevronDown className="w-3 h-3" />
 												)}
-												{showToolDetails ? 'Hide' : 'Details'}
+												<span className="sr-only">
+													{showToolDetails ? 'Collapse tool details' : 'Expand tool details'}
+												</span>
 											</button>
 										)}
 									</div>
 									{showToolDetails && (
 										<div className="mt-2 space-y-1.5">
+											{suppressRawSearchDetails && (
+												<div
+													className="text-[10px] italic"
+													style={{ color: theme.colors.textDim, opacity: 0.85 }}
+												>
+													Searching web...
+												</div>
+											)}
 											{hasWebSearchItems && (
 												<div className="space-y-2">
 													<div
@@ -1049,51 +1423,82 @@ const LogItemComponent = memo(
 																	: item.status === 'error'
 																		? theme.colors.error
 																		: theme.colors.warning;
-															const siteFilter = extractSiteFilter(item.query);
+															const rawSiteDomain = extractSiteFilter(item.query);
+															const siteDomain = rawSiteDomain
+																? normalizeDomain(rawSiteDomain) || rawSiteDomain
+																: null;
+															const firstQueryUrl = extractFirstUrlFromText(item.query);
+															const firstQueryUrlDomain = firstQueryUrl
+																? normalizeDomain(firstQueryUrl)
+																: null;
+															const latestResponseDomain =
+																item.latestResponseDomain ||
+																item.responseDomains[item.responseDomains.length - 1];
+															const displayDomain =
+																latestResponseDomain || siteDomain || firstQueryUrlDomain;
+															const isDomainListed = !!displayDomain;
+															const displayTitle = displayDomain
+																? buildDomainResultTitle(item.query, displayDomain)
+																: item.query;
+															const externalUrl = displayDomain
+																? firstQueryUrl || `https://${displayDomain}`
+																: buildSearchExternalUrl(item.query);
 															return (
 																<div
 																	key={`${item.id}-${idx}`}
 																	className="rounded border px-2 py-1.5"
 																	style={{
-																		borderColor: `${searchStatusColor}50`,
-																		backgroundColor: `${searchStatusColor}10`,
+																		borderColor: `${theme.colors.border}90`,
+																		backgroundColor: `${theme.colors.bgMain}55`,
 																	}}
 																>
-																	<div className="flex items-center gap-2">
-																		<span
-																			className="px-1 py-0.5 rounded text-[10px] font-semibold"
-																			style={{
-																				backgroundColor: `${searchStatusColor}20`,
-																				color: searchStatusColor,
-																			}}
-																		>
-																			{item.status.toUpperCase()}
-																		</span>
-																		{siteFilter && (
+																	{item.status !== 'completed' && (
+																		<div className="flex items-center gap-2">
 																			<span
-																				className="px-1 py-0.5 rounded text-[10px]"
+																				className="text-[10px] font-semibold"
 																				style={{
-																					backgroundColor: `${theme.colors.accent}20`,
-																					color: theme.colors.accent,
+																					color: searchStatusColor,
 																				}}
 																			>
-																				{siteFilter}
+																				{item.status.toUpperCase()}
 																			</span>
-																		)}
-																	</div>
+																		</div>
+																	)}
 																	<button
 																		type="button"
 																		onClick={() => {
-																			void window.maestro.shell.openExternal(
-																				buildSearchExternalUrl(item.query)
-																			);
+																			void window.maestro.shell.openExternal(externalUrl);
 																		}}
-																		className="mt-1 text-left w-full text-[11px] underline decoration-dotted hover:opacity-80 transition-opacity"
+																		className={`${item.status !== 'completed' ? 'mt-1 ' : ''}text-left w-full text-[11px] underline decoration-dotted hover:opacity-80 transition-opacity inline-flex items-start gap-1.5`}
 																		style={{ color: theme.colors.textMain }}
-																		title="Open search query in browser"
+																		title={
+																			displayDomain
+																				? `Open ${displayDomain}`
+																				: 'Open search query in browser'
+																		}
 																	>
-																		{item.query}
+																		{isDomainListed && displayDomain ? (
+																			<SourceFaviconBadge
+																				domain={displayDomain}
+																				overlap={false}
+																				theme={theme}
+																			/>
+																		) : (
+																			<Search
+																				className="w-3 h-3 mt-0.5 shrink-0"
+																				style={{ color: theme.colors.textDim }}
+																			/>
+																		)}
+																		<span className="break-words">{displayTitle}</span>
 																	</button>
+																	{!isDomainListed && item.status === 'running' && (
+																		<div
+																			className="mt-1 text-[10px] italic"
+																			style={{ color: theme.colors.textDim, opacity: 0.8 }}
+																		>
+																			waiting for source links...
+																		</div>
+																	)}
 																</div>
 															);
 														})}
@@ -1101,6 +1506,7 @@ const LogItemComponent = memo(
 												</div>
 											)}
 											{!hasWebSearchItems &&
+												!suppressRawSearchDetails &&
 												toolDisplay.detailRows.map((row) => (
 													<div key={`${log.id}-${row.label}-${row.value}`} className="flex gap-2">
 														<span
@@ -1117,34 +1523,38 @@ const LogItemComponent = memo(
 														</span>
 													</div>
 												))}
-											{!hasWebSearchItems && toolDisplay.outputDetail && (
-												<div className="pt-1">
-													<div
-														className="uppercase tracking-wide text-[10px] mb-1"
-														style={{ color: theme.colors.textDim, opacity: 0.85 }}
-													>
-														output
+											{!hasWebSearchItems &&
+												!suppressRawSearchDetails &&
+												toolDisplay.outputDetail && (
+													<div className="pt-1">
+														<div
+															className="uppercase tracking-wide text-[10px] mb-1"
+															style={{ color: theme.colors.textDim, opacity: 0.85 }}
+														>
+															output
+														</div>
+														<div
+															className="rounded border px-2 py-1.5 whitespace-pre-wrap break-words text-[11px] max-h-52 overflow-auto"
+															style={{
+																backgroundColor: `${theme.colors.bgMain}55`,
+																borderColor: `${theme.colors.border}80`,
+																color: theme.colors.textMain,
+															}}
+														>
+															{toolDisplay.outputDetail}
+														</div>
 													</div>
+												)}
+											{toolStatus === 'running' &&
+												!toolDisplay.outputDetail &&
+												!suppressRawSearchDetails && (
 													<div
-														className="rounded border px-2 py-1.5 whitespace-pre-wrap break-words text-[11px] max-h-52 overflow-auto"
-														style={{
-															backgroundColor: `${theme.colors.bgMain}55`,
-															borderColor: `${theme.colors.border}80`,
-															color: theme.colors.textMain,
-														}}
+														className="text-[10px] italic"
+														style={{ color: theme.colors.textDim, opacity: 0.8 }}
 													>
-														{toolDisplay.outputDetail}
+														Waiting for tool output...
 													</div>
-												</div>
-											)}
-											{toolStatus === 'running' && !toolDisplay.outputDetail && (
-												<div
-													className="text-[10px] italic"
-													style={{ color: theme.colors.textDim, opacity: 0.8 }}
-												>
-													Waiting for tool output...
-												</div>
-											)}
+												)}
 										</div>
 									)}
 								</div>
@@ -1367,27 +1777,84 @@ const LogItemComponent = memo(
 								backgroundColor: `${theme.colors.bgMain}55`,
 							}}
 						>
-							<summary
-								className="cursor-pointer select-none text-xs font-semibold"
-								style={{ color: theme.colors.textDim }}
-							>
-								Sources ({extractedSources.length})
-							</summary>
-							<div className="mt-2 space-y-1.5">
-								{extractedSources.map((source, idx) => (
-									<button
-										key={`${source.url}-${idx}`}
-										type="button"
-										className="w-full text-left text-xs underline decoration-dotted hover:opacity-80 transition-opacity truncate"
-										style={{ color: theme.colors.accent }}
-										onClick={() => {
-											void window.maestro.shell.openExternal(source.url);
-										}}
-										title={source.url}
+							{(() => {
+								const summaryDomains = Array.from(
+									new Set(
+										extractedSources
+											.map((source) => sourceDomainFromUrl(source.url))
+											.filter((value): value is string => !!value)
+									)
+								);
+								const visibleSummaryDomains = summaryDomains.slice(0, 4);
+								const summaryOverflow = Math.max(
+									0,
+									summaryDomains.length - visibleSummaryDomains.length
+								);
+								return (
+									<summary
+										className="cursor-pointer select-none text-xs font-semibold flex items-center gap-2"
+										style={{ color: theme.colors.textDim }}
 									>
-										{source.label}
-									</button>
-								))}
+										<span>Sources ({extractedSources.length})</span>
+										{visibleSummaryDomains.length > 0 && (
+											<span className="flex items-center">
+												{visibleSummaryDomains.map((domain, idx) => (
+													<SourceFaviconBadge
+														key={`${log.id}-response-source-${domain}`}
+														domain={domain}
+														overlap={idx > 0}
+														theme={theme}
+													/>
+												))}
+												{summaryOverflow > 0 && (
+													<span
+														className="-ml-1 px-1 py-0.5 rounded-full border text-[8px] font-semibold"
+														style={{
+															borderColor: theme.colors.border,
+															backgroundColor: `${theme.colors.bgMain}cc`,
+															color: theme.colors.textDim,
+														}}
+														title={`${summaryOverflow} more sources`}
+													>
+														+{summaryOverflow}
+													</span>
+												)}
+											</span>
+										)}
+									</summary>
+								);
+							})()}
+							<div className="mt-2 space-y-1.5">
+								{extractedSources.map((source, idx) => {
+									const sourceDomain = sourceDomainFromUrl(source.url);
+									return (
+										<button
+											key={`${source.url}-${idx}`}
+											type="button"
+											className="w-full text-left text-xs hover:opacity-80 transition-opacity"
+											style={{ color: theme.colors.accent }}
+											onClick={() => {
+												void window.maestro.shell.openExternal(source.url);
+											}}
+											title={source.url}
+										>
+											<span className="flex items-center gap-2 min-w-0">
+												{sourceDomain && (
+													<SourceFaviconBadge domain={sourceDomain} overlap={false} theme={theme} />
+												)}
+												<span className="truncate underline decoration-dotted">{source.label}</span>
+												{sourceDomain && (
+													<span
+														className="shrink-0 text-[10px]"
+														style={{ color: theme.colors.textDim }}
+													>
+														{sourceDomain}
+													</span>
+												)}
+											</span>
+										</button>
+									);
+								})}
 							</div>
 						</details>
 					)}
@@ -1499,15 +1966,6 @@ const LogItemComponent = memo(
 										<Trash2 className="w-3.5 h-3.5" />
 									</button>
 								))}
-							{/* Delivery checkmark for user messages in AI mode - positioned at the end */}
-							{isUserMessage && isAIMode && log.delivered && (
-								<span title="Message delivered" className="flex items-center">
-									<Check
-										className="w-3.5 h-3.5"
-										style={{ color: theme.colors.success, opacity: 0.6 }}
-									/>
-								</span>
-							)}
 						</div>
 					)}
 				</div>

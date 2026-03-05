@@ -6,6 +6,7 @@
  */
 
 import path from 'path';
+import { CODEX_DEFAULT_FONT_STACK } from '../../shared/fonts';
 
 import type {
 	MaestroSettings,
@@ -53,7 +54,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	apiKey: '',
 	shortcuts: {},
 	fontSize: 14,
-	fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+	fontFamily: CODEX_DEFAULT_FONT_STACK,
 	customFonts: [],
 	logLevel: 'info',
 	defaultShell: getDefaultShell(),
