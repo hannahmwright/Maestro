@@ -416,6 +416,7 @@ export interface DebugFixLoopAttempt {
 	triage?: TriageResult;
 	selected_hypothesis_id?: string;
 	selected_command?: string;
+	selected_command_result?: CommandCheckResult;
 	fix_path_candidates?: Array<{
 		hypothesis_id: string;
 		command: string;

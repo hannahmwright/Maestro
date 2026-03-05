@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = process.cwd();
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.resolve(root, 'src/__tests__/fixtures/core-upgrades/replay');
 const minFixtures = Number(process.env.MAESTRO_REPLAY_MIN_FIXTURES || '8');
 

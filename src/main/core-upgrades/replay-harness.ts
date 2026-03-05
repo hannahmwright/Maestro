@@ -1,4 +1,5 @@
 import { DebugFixLoopEngine } from './debug-fix-loop';
+import { RepoContextService } from './context-service';
 import type { DebugFixLoopResult, TaskContract } from './types';
 
 export interface ReplayCommandResponse {
@@ -93,6 +94,52 @@ interface ReplayCommandPlanState extends ReplayCommandPlan {
 	fallback_response: ReplayCommandResponse;
 }
 
+const replayContextService = new RepoContextService();
+
+function buildFallbackContextPack(input: {
+	seedFiles: string[];
+	seedSymbols?: string[];
+	maxFiles?: number;
+}) {
+	const maxFiles = Math.max(1, Math.min(input.maxFiles || 6, 20));
+	const selectedFiles = [...new Set(input.seedFiles)].slice(0, maxFiles);
+	return {
+		selectedFiles,
+		impactedSymbols: [...new Set(input.seedSymbols || [])].slice(0, 50),
+		bridgeFiles: [],
+		bridgeSymbols: [],
+		selection_narratives: selectedFiles.map((filePath) => ({
+			file_path: filePath,
+			reason: 'seed_file',
+			path: [filePath],
+		})),
+	};
+}
+
+function buildFallbackGraphScores(input: { seedFiles: string[]; candidateFiles: string[] }) {
+	const seedSet = new Set(input.seedFiles);
+	const candidates = [...new Set(input.candidateFiles)];
+	const scores = candidates.map((candidate) => {
+		const reachable = seedSet.has(candidate);
+		return {
+			file_path: candidate,
+			score: reachable ? 1 : 0.3,
+			distance: reachable ? 0 : undefined,
+			impact_score: 0,
+			fanout: 0,
+			explanation: reachable
+				? 'Fallback replay graph: candidate is in seed set.'
+				: 'Fallback replay graph: no local graph path available in fixture workspace.',
+		};
+	});
+	const reachableCount = scores.filter((score) => typeof score.distance === 'number').length;
+	return {
+		scores,
+		coverage: scores.length > 0 ? reachableCount / scores.length : 0,
+		explored_nodes: new Set([...input.seedFiles, ...input.candidateFiles]).size,
+	};
+}
+
 function assertExpectation(
 	fixture: ReplayFixture,
 	result: DebugFixLoopResult,
@@ -175,6 +222,52 @@ export async function runReplayCase(fixture: ReplayFixture): Promise<ReplayCaseR
 
 				const response = matchedPlan.responses.shift() || matchedPlan.fallback_response;
 				return response;
+			},
+			getContextPack: async (request) => {
+				try {
+					const pack = await replayContextService.getContextPack({
+						repoRoot: fixture.cwd,
+						mode: request.mode,
+						seedFiles: request.seedFiles,
+						seedSymbols: request.seedSymbols,
+						depth: request.depth,
+						reason: request.reason,
+						maxFiles: request.maxFiles,
+					});
+					return {
+						selectedFiles: pack.selectedFiles,
+						impactedSymbols: pack.impactedSymbols,
+						bridgeFiles: pack.bridgeFiles,
+						bridgeSymbols: pack.bridgeSymbols,
+						selection_narratives: pack.selectionNarratives.map((entry) => ({
+							file_path: entry.filePath,
+							reason: entry.reason,
+							path: entry.path,
+						})),
+					};
+				} catch {
+					return buildFallbackContextPack({
+						seedFiles: request.seedFiles,
+						seedSymbols: request.seedSymbols,
+						maxFiles: request.maxFiles,
+					});
+				}
+			},
+			getGraphScores: async (request) => {
+				try {
+					return await replayContextService.scoreCandidates({
+						repoRoot: fixture.cwd,
+						seedFiles: request.seedFiles,
+						candidateFiles: request.candidateFiles,
+						seedSymbols: request.seedSymbols,
+						maxDepth: request.maxDepth,
+					});
+				} catch {
+					return buildFallbackGraphScores({
+						seedFiles: request.seedFiles,
+						candidateFiles: request.candidateFiles,
+					});
+				}
 			},
 		}
 	);

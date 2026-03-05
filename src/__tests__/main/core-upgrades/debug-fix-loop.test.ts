@@ -39,7 +39,7 @@ describe('DebugFixLoopEngine', () => {
 		expect(emitLifecycle).toHaveBeenCalledWith(expect.objectContaining({ type: 'gate-result' }));
 	});
 
-	it('fails after non-progressing hypothesis loop', async () => {
+	it('fails fast when no feasible follow-up command is allowed', async () => {
 		const engine = new DebugFixLoopEngine();
 		const runCommand = vi
 			.fn()
@@ -56,15 +56,15 @@ describe('DebugFixLoopEngine', () => {
 		);
 
 		expect(result.status).toBe('failed');
-		expect(result.reason).toBe('non_progressing_hypothesis_loop');
+		expect(result.reason).toBe('command_not_allowed');
 		expect(result.failure).toEqual(
 			expect.objectContaining({
-				code: 'non_progressing_hypothesis_loop',
-				attempt: 2,
-				hypothesis: expect.objectContaining({
-					previous_signature: expect.any(String),
-					current_signature: expect.any(String),
-				}),
+				code: 'command_not_allowed',
+				attempt: 1,
+				blocking_reasons: expect.arrayContaining([
+					'triage_command_not_allowed',
+					'no_feasible_followup_command',
+				]),
 			})
 		);
 	});
@@ -220,6 +220,58 @@ describe('DebugFixLoopEngine', () => {
 		expect(result.attempts[1].command).not.toBe(result.attempts[0].command);
 		expect(Object.keys(result.memory_state?.failure_fingerprints || {})).toHaveLength(1);
 		expect(Object.keys(result.memory_state?.module_area_memory || {}).length).toBeGreaterThan(0);
+	});
+
+	it('completes in the same attempt when selected precheck command already passes', async () => {
+		const engine = new DebugFixLoopEngine();
+		let npmTestCalls = 0;
+		const runCommand = vi.fn(async (command: string) => {
+			if (command === 'npm test') {
+				npmTestCalls += 1;
+				if (npmTestCalls === 1) {
+					return {
+						exitCode: 1,
+						stderr: 'FAIL src/math.test.ts\nExpected: 3\nReceived: 2',
+						durationMs: 18,
+					};
+				}
+				return {
+					exitCode: 0,
+					stdout: 'PASS src/math.test.ts',
+					durationMs: 17,
+				};
+			}
+			if (command === 'npm run build') {
+				return {
+					exitCode: 0,
+					stdout: 'build ok',
+					durationMs: 20,
+				};
+			}
+			return {
+				exitCode: 1,
+				stderr: `unexpected command ${command}`,
+				durationMs: 1,
+			};
+		});
+
+		const result = await engine.run(
+			{
+				session_id: 'session-8b',
+				task: {
+					...task,
+					allowed_commands: ['npm test', 'npm run build'],
+				},
+				cwd: '/tmp/project',
+				initial_command: 'npm test',
+				max_attempts: 3,
+			},
+			{ runCommand }
+		);
+
+		expect(result.status).toBe('complete');
+		expect(result.attempts).toHaveLength(1);
+		expect(result.attempts[0].selected_command_result?.pass).toBe(true);
 	});
 
 	it('records context narratives and long-horizon checkpoints in attempt traces', async () => {

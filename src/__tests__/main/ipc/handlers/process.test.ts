@@ -866,18 +866,9 @@ describe('process IPC handlers', () => {
 				{}, // shell env vars
 				null // sshRemoteConfig (not set in this test)
 			);
-			expect(result).toEqual(
-				expect.objectContaining({
-					exitCode: 0,
-					taskResult: expect.objectContaining({
-						status: 'complete',
-					}),
-					taskDiagnostics: expect.objectContaining({
-						status: 'complete',
-						strict_runtime_path: true,
-					}),
-				})
-			);
+			expect(result).toEqual(expect.objectContaining({ exitCode: 0 }));
+			expect(result.taskResult).toBeUndefined();
+			expect(result.taskDiagnostics).toBeUndefined();
 		});
 
 		it('should use custom shell from settings', async () => {

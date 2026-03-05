@@ -102,10 +102,14 @@ export function buildTaskDiagnostics(input: BuildTaskDiagnosticsInput): TaskDiag
 	return {
 		task_id: input.task.task_id,
 		status: input.result.status,
-		attempt_count: input.result.attempts.length,
+		attempt_count: Math.max(
+			input.result.attempts.length,
+			typeof input.result.failure?.attempt === 'number' ? input.result.failure.attempt : 0
+		),
 		final_decision: input.result.decision?.decision,
 		failure_code: input.result.failure?.code,
-		blocking_reasons: input.result.decision?.blocking_reasons || [],
+		blocking_reasons:
+			input.result.decision?.blocking_reasons || input.result.failure?.blocking_reasons || [],
 		full_suite_required: input.result.decision?.requires_full_suite || false,
 		lifecycle_counts: lifecycleCounts,
 		last_command: finalAttempt?.command,

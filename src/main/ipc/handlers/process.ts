@@ -820,7 +820,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					hasTaskContractInput: !!config.taskContractInput,
 				});
 
-				if (isCoreUpgradesEnabled()) {
+				if (isCoreUpgradesEnabled() && config.taskContractInput) {
 					const taskContractInput = config.taskContractInput || {};
 					const task = coreUpgradeOrchestrator.createTaskContract({
 						goal: taskContractInput.goal || `Resolve command task: ${config.command}`,

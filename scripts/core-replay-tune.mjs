@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const root = process.cwd();
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fixturesDir = path.resolve(root, 'src/__tests__/fixtures/core-upgrades/replay');
 const modulePath = path.resolve(root, 'dist/main/core-upgrades/index.js');
 const weightProfilePath = path.resolve(root, '.maestro/core-upgrades/loop-weights.json');

@@ -50,9 +50,8 @@
 	],
 	"expectation": {
 		"status": "failed",
-		"reason": "non_progressing_hypothesis_loop",
-		"max_attempts": 2,
-		"min_strategy_switch_count": 1,
+		"reason": "command_not_allowed",
+		"max_attempts": 1,
 		"require_selected_hypothesis": true
 	}
 }

@@ -1280,6 +1280,136 @@ export class DebugFixLoopEngine {
 		};
 	}
 
+	private async evaluateCompletionForPassingCheck(input: {
+		loopInput: DebugFixLoopInput;
+		deps: DebugFixLoopDependencies;
+		attempt: number;
+		check: CommandCheckResult;
+		attempts: DebugFixLoopAttempt[];
+		effectiveChangedFiles: string[];
+		memoryState: LoopExecutionMemory;
+		solvedContext?: {
+			failureFingerprintKey?: string;
+			selectedFamily?: FixHypothesisFamily;
+			selectedCommand?: string;
+			selectedHypothesis?: FixHypothesis;
+			selectedProbeGain?: number;
+		};
+	}): Promise<DebugFixLoopResult> {
+		const reviewFindings = this.reviewEngine.analyzePatch({
+			task: input.loopInput.task,
+			changed_files: input.effectiveChangedFiles,
+			diff_text: input.loopInput.diff_text,
+		});
+		input.deps.emitLifecycle?.({
+			type: 'review-findings',
+			attempt: input.attempt,
+			findings: reviewFindings,
+		});
+
+		const targetedChecks = [input.check];
+		const highRiskEdit =
+			input.loopInput.task.risk_level === 'high' ||
+			reviewFindings.some(
+				(finding) =>
+					finding.regression_risk === 'high' ||
+					finding.severity === 'critical' ||
+					finding.severity === 'high' ||
+					finding.missing_tests
+			);
+		let decision: CompletionDecision = this.gateEngine.evaluate({
+			task: input.loopInput.task,
+			targeted_checks: targetedChecks,
+			review_findings: reviewFindings,
+			cross_package_change: input.effectiveChangedFiles.some((filePath) =>
+				filePath.includes('/packages/')
+			),
+			high_risk_edit: highRiskEdit,
+		});
+
+		if (decision.requires_full_suite && decision.blocking_reasons.includes('full_suite_required')) {
+			const fullSuiteCommand = this.resolveFullSuiteCommand(input.loopInput);
+			if (fullSuiteCommand) {
+				const fullSuiteResult = await input.deps.runCommand(fullSuiteCommand);
+				const fullSuiteChecks = [toCheckResult(fullSuiteCommand, fullSuiteResult)];
+				decision = this.gateEngine.evaluate({
+					task: input.loopInput.task,
+					targeted_checks: targetedChecks,
+					full_suite_checks: fullSuiteChecks,
+					review_findings: reviewFindings,
+					cross_package_change: input.effectiveChangedFiles.some((filePath) =>
+						filePath.includes('/packages/')
+					),
+					high_risk_edit: highRiskEdit,
+				});
+			}
+		}
+		input.deps.emitLifecycle?.({ type: 'gate-result', attempt: input.attempt, decision });
+
+		if (decision.decision === 'complete') {
+			if (
+				input.solvedContext?.failureFingerprintKey &&
+				input.solvedContext?.selectedFamily &&
+				input.solvedContext?.selectedCommand &&
+				input.solvedContext?.selectedHypothesis
+			) {
+				this.recordSolvedFingerprint(
+					input.memoryState,
+					input.solvedContext.failureFingerprintKey,
+					input.solvedContext.selectedFamily,
+					input.solvedContext.selectedCommand
+				);
+				this.updateModuleAreaMemory({
+					memory: input.memoryState,
+					hypothesis: input.solvedContext.selectedHypothesis,
+					probeGain: input.solvedContext.selectedProbeGain || 0,
+					outcome: 'solved',
+				});
+			}
+			return {
+				status: 'complete',
+				decision,
+				review_findings: reviewFindings,
+				attempts: input.attempts,
+				memory_state: input.memoryState,
+			};
+		}
+
+		if (
+			input.solvedContext?.failureFingerprintKey &&
+			input.solvedContext?.selectedFamily &&
+			input.solvedContext?.selectedCommand &&
+			input.solvedContext?.selectedHypothesis
+		) {
+			this.recordDeadEndFingerprint(
+				input.memoryState,
+				input.solvedContext.failureFingerprintKey,
+				input.solvedContext.selectedFamily,
+				input.solvedContext.selectedCommand
+			);
+			this.updateModuleAreaMemory({
+				memory: input.memoryState,
+				hypothesis: input.solvedContext.selectedHypothesis,
+				probeGain: input.solvedContext.selectedProbeGain || 0,
+				outcome: 'failed',
+			});
+		}
+		return {
+			status: 'failed',
+			reason: decision.blocking_reasons.join(',') || 'gate_blocked',
+			decision,
+			review_findings: reviewFindings,
+			attempts: input.attempts,
+			memory_state: input.memoryState,
+			failure: {
+				code: 'gate_blocked',
+				message: 'Gate engine blocked completion.',
+				attempt: input.attempt,
+				blocking_reasons: decision.blocking_reasons,
+			},
+		};
+	}
+
 	async run(input: DebugFixLoopInput, deps: DebugFixLoopDependencies): Promise<DebugFixLoopResult> {
 		const memoryState = normalizeMemory(input.prior_memory);
 		const adaptiveConfig = this.computeAdaptiveLoopConfig(input, memoryState);
@@ -1722,9 +1852,7 @@ export class DebugFixLoopEngine {
 				const branchedFixPathCandidates = fixPathCandidates.slice(0, branchCount);
 				attempts[attempts.length - 1].hypothesis_branch_count = branchedFixPathCandidates.length;
 				attempts[attempts.length - 1].fix_path_candidates = branchedFixPathCandidates;
-				const selectedFixPath =
-					branchedFixPathCandidates.find((candidate) => candidate.feasible) ||
-					branchedFixPathCandidates[0];
+				const selectedFixPath = branchedFixPathCandidates.find((candidate) => candidate.feasible);
 				if (!selectedFixPath) {
 					this.recordDeadEndFingerprint(
 						memoryState,
@@ -1732,18 +1860,54 @@ export class DebugFixLoopEngine {
 						selected.hypothesis.family,
 						currentCommand
 					);
+					this.updateModuleAreaMemory({
+						memory: memoryState,
+						hypothesis: selected.hypothesis,
+						probeGain: averageProbeGain,
+						outcome: 'failed',
+					});
 					return this.buildFailureResult(
 						attempts,
 						'command_not_allowed',
-						'Triage produced commands outside task allowlist.',
+						'No feasible follow-up command is allowed by task contract.',
 						{
 							attempt,
-							blocking_reasons: ['triage_command_not_allowed'],
+							blocking_reasons: ['triage_command_not_allowed', 'no_feasible_followup_command'],
 						},
 						memoryState
 					);
 				}
 				attempts[attempts.length - 1].selected_command = selectedFixPath.command;
+				const passingSelectedValidation = [...dualTrackValidation.results, ...extraPrechecks].find(
+					(validation) => validation.command === selectedFixPath.command && validation.pass
+				);
+				if (passingSelectedValidation) {
+					const selectedCommandResult: CommandCheckResult = {
+						command: selectedFixPath.command,
+						exit_code: passingSelectedValidation.exit_code,
+						pass: true,
+						stdout: passingSelectedValidation.signal_excerpt,
+						duration_ms: passingSelectedValidation.duration_ms,
+					};
+					attempts[attempts.length - 1].selected_command_result = selectedCommandResult;
+					const completionFromValidatedSelection = await this.evaluateCompletionForPassingCheck({
+						loopInput: input,
+						deps,
+						attempt,
+						check: selectedCommandResult,
+						attempts,
+						effectiveChangedFiles,
+						memoryState,
+						solvedContext: {
+							failureFingerprintKey,
+							selectedFamily: selected.hypothesis.family,
+							selectedCommand: selectedFixPath.command,
+							selectedHypothesis: selected.hypothesis,
+							selectedProbeGain: probeExecution.average_information_gain,
+						},
+					});
+					return completionFromValidatedSelection;
+				}
 				const selectedProbeResults =
 					probeExecution.results_by_hypothesis[selected.hypothesis.id] || [];
 				const probeConflict = hasConflictingProbeOutcomes(selectedProbeResults);
@@ -1894,121 +2058,23 @@ export class DebugFixLoopEngine {
 				continue;
 			}
 
-			const reviewFindings = this.reviewEngine.analyzePatch({
-				task: input.task,
-				changed_files: effectiveChangedFiles,
-				diff_text: input.diff_text,
-			});
-			deps.emitLifecycle?.({
-				type: 'review-findings',
+			const completionResult = await this.evaluateCompletionForPassingCheck({
+				loopInput: input,
+				deps,
 				attempt,
-				findings: reviewFindings,
-			});
-
-			const targetedChecks = [check];
-			const highRiskEdit =
-				input.task.risk_level === 'high' ||
-				reviewFindings.some(
-					(finding) =>
-						finding.regression_risk === 'high' ||
-						finding.severity === 'critical' ||
-						finding.severity === 'high' ||
-						finding.missing_tests
-				);
-			let decision: CompletionDecision = this.gateEngine.evaluate({
-				task: input.task,
-				targeted_checks: targetedChecks,
-				review_findings: reviewFindings,
-				cross_package_change: effectiveChangedFiles.some((filePath) =>
-					filePath.includes('/packages/')
-				),
-				high_risk_edit: highRiskEdit,
-			});
-
-			if (
-				decision.requires_full_suite &&
-				decision.blocking_reasons.includes('full_suite_required')
-			) {
-				const fullSuiteCommand = this.resolveFullSuiteCommand(input);
-				if (fullSuiteCommand) {
-					const fullSuiteResult = await deps.runCommand(fullSuiteCommand);
-					const fullSuiteChecks = [toCheckResult(fullSuiteCommand, fullSuiteResult)];
-					decision = this.gateEngine.evaluate({
-						task: input.task,
-						targeted_checks: targetedChecks,
-						full_suite_checks: fullSuiteChecks,
-						review_findings: reviewFindings,
-						cross_package_change: effectiveChangedFiles.some((filePath) =>
-							filePath.includes('/packages/')
-						),
-						high_risk_edit: highRiskEdit,
-					});
-				}
-			}
-			deps.emitLifecycle?.({ type: 'gate-result', attempt, decision });
-
-			if (decision.decision === 'complete') {
-				if (
-					previousFailureFingerprintKey &&
-					previousSelectedFamily &&
-					previousSelectedCommand &&
-					previousSelectedHypothesis
-				) {
-					this.recordSolvedFingerprint(
-						memoryState,
-						previousFailureFingerprintKey,
-						previousSelectedFamily,
-						previousSelectedCommand
-					);
-					this.updateModuleAreaMemory({
-						memory: memoryState,
-						hypothesis: previousSelectedHypothesis,
-						probeGain: previousSelectedProbeGain,
-						outcome: 'solved',
-					});
-				}
-				return {
-					status: 'complete',
-					attempts,
-					decision,
-					review_findings: reviewFindings,
-					memory_state: memoryState,
-				};
-			}
-
-			if (
-				previousFailureFingerprintKey &&
-				previousSelectedFamily &&
-				previousSelectedCommand &&
-				previousSelectedHypothesis
-			) {
-				this.recordDeadEndFingerprint(
-					memoryState,
-					previousFailureFingerprintKey,
-					previousSelectedFamily,
-					previousSelectedCommand
-				);
-				this.updateModuleAreaMemory({
-					memory: memoryState,
-					hypothesis: previousSelectedHypothesis,
-					probeGain: previousSelectedProbeGain,
-					outcome: 'failed',
-				});
-			}
-			return {
-				status: 'failed',
-				reason: decision.blocking_reasons.join(',') || 'gate_blocked',
+				check,
 				attempts,
-				decision,
-				review_findings: reviewFindings,
-				memory_state: memoryState,
-				failure: {
-					code: 'gate_blocked',
-					message: 'Gate engine blocked completion.',
-					attempt,
-					blocking_reasons: decision.blocking_reasons,
+				effectiveChangedFiles,
+				memoryState,
+				solvedContext: {
+					failureFingerprintKey: previousFailureFingerprintKey,
+					selectedFamily: previousSelectedFamily,
+					selectedCommand: previousSelectedCommand,
+					selectedHypothesis: previousSelectedHypothesis,
+					selectedProbeGain: previousSelectedProbeGain,
 				},
-			};
+			});
+			return completionResult;
 		}
 
 		if (
