@@ -1,161 +1,43 @@
-/**
- * Maestro Mobile Web Service Worker
- *
- * Provides offline capability for the mobile web interface.
- * When offline, displays a disconnected state to inform the user
- * that they cannot communicate with the Maestro desktop app.
- *
- * Strategy:
- * - Cache essential app shell (HTML, CSS, JS, icons) on install
- * - Network-first for API calls (they require live connection)
- * - Cache-first for static assets
- * - Show offline fallback when network unavailable
- */
-
-const CACHE_NAME = 'maestro-mobile-v1';
-
-// Assets to cache on install (app shell)
+const BASE_PATH = '/app';
+const VERSION = new URL(self.location.href).searchParams.get('v') || 'dev';
+const CACHE_NAME = `maestro-remote-${VERSION}`;
+const ICON_URL = `${BASE_PATH}/icons/icon-192x192.png`;
 const PRECACHE_ASSETS = [
-	'./',
-	'./manifest.json',
-	'./icons/icon-72x72.png',
-	'./icons/icon-96x96.png',
-	'./icons/icon-192x192.png',
+	BASE_PATH,
+	`${BASE_PATH}/manifest.json`,
+	`${BASE_PATH}/icons/icon-72x72.png`,
+	`${BASE_PATH}/icons/icon-96x96.png`,
+	`${BASE_PATH}/icons/icon-192x192.png`,
+	`${BASE_PATH}/icons/icon-512x512.png`,
 ];
+const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const seenEventIds = new Map();
 
-// Install event - cache essential assets
-self.addEventListener('install', (event) => {
-	console.log('[SW] Installing service worker...');
-
-	event.waitUntil(
-		caches
-			.open(CACHE_NAME)
-			.then((cache) => {
-				console.log('[SW] Caching app shell...');
-				// Use addAll for precaching, but don't fail install if some assets are missing
-				return cache.addAll(PRECACHE_ASSETS).catch((err) => {
-					console.warn('[SW] Some precache assets failed to cache:', err);
-					// Still succeed install - we'll cache on fetch
-				});
-			})
-			.then(() => {
-				console.log('[SW] Installation complete');
-				// Skip waiting to activate immediately
-				return self.skipWaiting();
-			})
-	);
-});
-
-// Activate event - clean up old caches
-self.addEventListener('activate', (event) => {
-	console.log('[SW] Activating service worker...');
-
-	event.waitUntil(
-		caches
-			.keys()
-			.then((cacheNames) => {
-				return Promise.all(
-					cacheNames
-						.filter((name) => name.startsWith('maestro-') && name !== CACHE_NAME)
-						.map((name) => {
-							console.log('[SW] Deleting old cache:', name);
-							return caches.delete(name);
-						})
-				);
-			})
-			.then(() => {
-				console.log('[SW] Activation complete');
-				// Take control of all pages immediately
-				return self.clients.claim();
-			})
-	);
-});
-
-// Fetch event - handle requests with appropriate caching strategy
-self.addEventListener('fetch', (event) => {
-	const { request } = event;
-	const url = new URL(request.url);
-
-	// Skip non-GET requests
-	if (request.method !== 'GET') {
-		return;
+function pruneSeenEventIds() {
+	const cutoff = Date.now() - DEDUPE_WINDOW_MS;
+	for (const [eventId, timestamp] of seenEventIds.entries()) {
+		if (timestamp < cutoff) {
+			seenEventIds.delete(eventId);
+		}
 	}
+}
 
-	// Skip WebSocket connections
-	if (url.protocol === 'ws:' || url.protocol === 'wss:') {
-		return;
+function rememberEvent(eventId) {
+	pruneSeenEventIds();
+	if (!eventId) {
+		return false;
 	}
-
-	// API requests - network only, no caching (requires live connection)
-	// Note: URLs include security token in path, e.g., /{TOKEN}/api/... or /{TOKEN}/ws/...
-	if (url.pathname.includes('/api/') || url.pathname.includes('/ws/')) {
-		event.respondWith(
-			fetch(request).catch(() => {
-				// Return a JSON error response for API requests when offline
-				return new Response(
-					JSON.stringify({
-						error: 'offline',
-						message: 'You are offline. Please reconnect to use Maestro.',
-					}),
-					{
-						status: 503,
-						statusText: 'Service Unavailable',
-						headers: {
-							'Content-Type': 'application/json',
-						},
-					}
-				);
-			})
-		);
-		return;
+	if (seenEventIds.has(eventId)) {
+		return true;
 	}
+	seenEventIds.set(eventId, Date.now());
+	return false;
+}
 
-	// Static assets - cache-first with network fallback
-	if (isStaticAsset(url.pathname)) {
-		event.respondWith(
-			caches.match(request).then((cachedResponse) => {
-				if (cachedResponse) {
-					// Return cached version and update cache in background
-					fetchAndCache(request);
-					return cachedResponse;
-				}
-				// Not in cache, fetch from network and cache
-				return fetchAndCache(request);
-			})
-		);
-		return;
-	}
-
-	// HTML/main document - network-first with cache fallback
-	event.respondWith(
-		fetch(request)
-			.then((response) => {
-				// Clone response before caching
-				if (response.ok) {
-					const responseClone = response.clone();
-					caches.open(CACHE_NAME).then((cache) => {
-						cache.put(request, responseClone);
-					});
-				}
-				return response;
-			})
-			.catch(async () => {
-				// Network failed, try cache
-				const cachedResponse = await caches.match(request);
-				if (cachedResponse) {
-					return cachedResponse;
-				}
-				// If no cached HTML, return offline fallback
-				return caches.match('./');
-			})
-	);
-});
-
-/**
- * Check if URL is a static asset that should be cached
- */
 function isStaticAsset(pathname) {
 	return (
+		pathname.startsWith(`${BASE_PATH}/assets/`) ||
+		pathname.startsWith(`${BASE_PATH}/icons/`) ||
 		pathname.endsWith('.js') ||
 		pathname.endsWith('.css') ||
 		pathname.endsWith('.png') ||
@@ -164,24 +46,24 @@ function isStaticAsset(pathname) {
 		pathname.endsWith('.svg') ||
 		pathname.endsWith('.ico') ||
 		pathname.endsWith('.woff') ||
-		pathname.endsWith('.woff2') ||
-		pathname.endsWith('.json')
+		pathname.endsWith('.woff2')
 	);
 }
 
-/**
- * Fetch from network and update cache
- */
+function isApiRequest(pathname) {
+	return pathname.startsWith(`${BASE_PATH}/api/`) || pathname.startsWith(`${BASE_PATH}/ws`);
+}
+
 async function fetchAndCache(request) {
 	try {
 		const response = await fetch(request);
 		if (response.ok) {
+			const responseClone = response.clone();
 			const cache = await caches.open(CACHE_NAME);
-			cache.put(request, response.clone());
+			await cache.put(request, responseClone);
 		}
 		return response;
 	} catch (error) {
-		// Network failed, try cache as last resort
 		const cached = await caches.match(request);
 		if (cached) {
 			return cached;
@@ -190,33 +72,282 @@ async function fetchAndCache(request) {
 	}
 }
 
-// Handle messages from the main app
-self.addEventListener('message', (event) => {
-	if (event.data === 'skipWaiting') {
-		self.skipWaiting();
+async function getAppShellFallback() {
+	return (await caches.match(BASE_PATH)) || (await caches.match(`${BASE_PATH}/`));
+}
+
+async function hasVisibleClient() {
+	const clients = await self.clients.matchAll({
+		type: 'window',
+		includeUncontrolled: true,
+	});
+	return clients.some((client) => client.visibilityState === 'visible' || client.focused);
+}
+
+async function showResponseNotification(eventPayload, source) {
+	if (!eventPayload?.eventId) {
+		return;
 	}
 
-	// Allow main app to check if SW is active
-	if (event.data === 'ping') {
-		event.ports[0]?.postMessage('pong');
+	if (rememberEvent(eventPayload.eventId)) {
+		return;
 	}
-});
 
-// Broadcast connection status changes to all clients
-async function broadcastToClients(message) {
-	const clients = await self.clients.matchAll({ type: 'window' });
-	clients.forEach((client) => {
-		client.postMessage(message);
+	if (source === 'push' && (await hasVisibleClient())) {
+		return;
+	}
+
+	const title = eventPayload.title || `${eventPayload.sessionName || 'Maestro'} - Response Ready`;
+	const body = eventPayload.body || 'AI response completed.';
+	const deepLinkUrl = eventPayload.deepLinkUrl || BASE_PATH;
+
+	await self.registration.showNotification(title, {
+		body,
+		icon: ICON_URL,
+		badge: ICON_URL,
+		tag: `maestro-response-${eventPayload.eventId}`,
+		renotify: false,
+		data: {
+			eventId: eventPayload.eventId,
+			sessionId: eventPayload.sessionId || null,
+			tabId: eventPayload.tabId || null,
+			deepLinkUrl,
+		},
 	});
 }
 
-// Listen for online/offline events and notify clients
-self.addEventListener('online', () => {
-	console.log('[SW] Online');
-	broadcastToClients({ type: 'connection-change', online: true });
+function resolveDeepLink(deepLinkUrl) {
+	try {
+		return new URL(deepLinkUrl, self.location.origin).toString();
+	} catch {
+		return `${self.location.origin}${BASE_PATH}`;
+	}
+}
+
+function urlBase64ToUint8Array(base64String) {
+	const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+	const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+	const rawData = atob(base64);
+	return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
+function serializeSubscription(subscription) {
+	return subscription.toJSON
+		? subscription.toJSON()
+		: {
+				endpoint: subscription.endpoint,
+				expirationTime: subscription.expirationTime,
+				keys: {
+					p256dh: subscription.getKey('p256dh'),
+					auth: subscription.getKey('auth'),
+				},
+			};
+}
+
+async function cacheAppShell(response) {
+	if (!response.ok) {
+		return;
+	}
+
+	const cache = await caches.open(CACHE_NAME);
+	await cache.put(BASE_PATH, response);
+}
+
+self.addEventListener('install', (event) => {
+	event.waitUntil(
+		caches
+			.open(CACHE_NAME)
+			.then((cache) => cache.addAll(PRECACHE_ASSETS).catch(() => undefined))
+			.then(() => self.skipWaiting())
+	);
 });
 
-self.addEventListener('offline', () => {
-	console.log('[SW] Offline');
-	broadcastToClients({ type: 'connection-change', online: false });
+self.addEventListener('activate', (event) => {
+	event.waitUntil(
+		caches
+			.keys()
+			.then((cacheNames) =>
+				Promise.all(
+					cacheNames
+						.filter((name) => name.startsWith('maestro-remote-') && name !== CACHE_NAME)
+						.map((name) => caches.delete(name))
+				)
+			)
+			.then(() => self.clients.claim())
+	);
+});
+
+self.addEventListener('fetch', (event) => {
+	const { request } = event;
+	const url = new URL(request.url);
+
+	if (request.method !== 'GET') {
+		return;
+	}
+
+	if (url.protocol === 'ws:' || url.protocol === 'wss:') {
+		return;
+	}
+
+	if (isApiRequest(url.pathname)) {
+		event.respondWith(
+			fetch(request).catch(
+				() =>
+					new Response(
+						JSON.stringify({
+							error: 'offline',
+							message: 'You are offline. Please reconnect to use Maestro.',
+						}),
+						{
+							status: 503,
+							statusText: 'Service Unavailable',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+						}
+					)
+			)
+		);
+		return;
+	}
+
+	if (isStaticAsset(url.pathname)) {
+		event.respondWith(
+			caches.match(request).then((cachedResponse) => {
+				if (cachedResponse) {
+					fetchAndCache(request).catch(() => undefined);
+					return cachedResponse;
+				}
+				return fetchAndCache(request);
+			})
+		);
+		return;
+	}
+
+	const isNavigationRequest =
+		request.mode === 'navigate' ||
+		request.headers.get('accept')?.includes('text/html') ||
+		url.pathname === BASE_PATH ||
+		url.pathname.startsWith(`${BASE_PATH}/session/`);
+
+	if (!isNavigationRequest) {
+		return;
+	}
+
+	event.respondWith(
+		fetch(request)
+			.then((response) => {
+				if (response.ok) {
+					const responseClone = response.clone();
+					event.waitUntil(cacheAppShell(responseClone).catch(() => undefined));
+				}
+				return response;
+			})
+			.catch(async () => {
+				const appShell = await getAppShellFallback();
+				if (appShell) {
+					return appShell;
+				}
+				return new Response('Offline', { status: 503, statusText: 'Offline' });
+			})
+	);
+});
+
+self.addEventListener('message', (event) => {
+	const message = event.data;
+
+	if (message === 'skipWaiting' || message?.type === 'skipWaiting') {
+		self.skipWaiting();
+		return;
+	}
+
+	if (message === 'ping' || message?.type === 'ping') {
+		event.ports[0]?.postMessage('pong');
+		return;
+	}
+
+	if (message?.type === 'show-local-notification') {
+		event.waitUntil(showResponseNotification(message.payload, 'local'));
+	}
+});
+
+self.addEventListener('push', (event) => {
+	if (!event.data) {
+		return;
+	}
+
+	event.waitUntil(
+		(async () => {
+			try {
+				const payload = event.data.json();
+				if (payload?.type === 'response_completed') {
+					await showResponseNotification(payload.event, 'push');
+				}
+			} catch (error) {
+				console.error('[SW] Failed to handle push event', error);
+			}
+		})()
+	);
+});
+
+self.addEventListener('notificationclick', (event) => {
+	event.notification.close();
+	const deepLinkUrl = resolveDeepLink(event.notification.data?.deepLinkUrl || BASE_PATH);
+
+	event.waitUntil(
+		(async () => {
+			const clients = await self.clients.matchAll({
+				type: 'window',
+				includeUncontrolled: true,
+			});
+			for (const client of clients) {
+				if ('navigate' in client) {
+					await client.navigate(deepLinkUrl);
+				}
+				await client.focus();
+				return;
+			}
+
+			await self.clients.openWindow(deepLinkUrl);
+		})()
+	);
+});
+
+self.addEventListener('pushsubscriptionchange', (event) => {
+	event.waitUntil(
+		(async () => {
+			try {
+				const statusResponse = await fetch(`${BASE_PATH}/api/push/status`, {
+					credentials: 'same-origin',
+				});
+				if (!statusResponse.ok) {
+					return;
+				}
+
+				const status = await statusResponse.json();
+				if (!status?.publicKey) {
+					return;
+				}
+
+				const subscription = await self.registration.pushManager.subscribe({
+					userVisibleOnly: true,
+					applicationServerKey: urlBase64ToUint8Array(status.publicKey),
+				});
+
+				await fetch(`${BASE_PATH}/api/push/subscribe`, {
+					method: 'POST',
+					credentials: 'same-origin',
+					headers: {
+						'Content-Type': 'application/json',
+					},
+					body: JSON.stringify({
+						subscription: serializeSubscription(subscription),
+						deviceLabel: 'PWA',
+					}),
+				});
+			} catch (error) {
+				console.error('[SW] Failed to refresh push subscription', error);
+			}
+		})()
+	);
 });

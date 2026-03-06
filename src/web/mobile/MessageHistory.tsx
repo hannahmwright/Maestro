@@ -10,20 +10,13 @@ import { ArrowDown } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
+import { ToolActivityBlock } from './ToolActivityBlock';
+import type { LogEntry } from '../hooks/useMobileSessionManagement';
 
 /** Threshold for character-based truncation */
 const CHAR_TRUNCATE_THRESHOLD = 500;
 /** Threshold for line-based truncation */
 const LINE_TRUNCATE_THRESHOLD = 8;
-
-export interface LogEntry {
-	id?: string;
-	timestamp: number;
-	text?: string;
-	content?: string;
-	source?: 'user' | 'stdout' | 'stderr' | 'system';
-	type?: string;
-}
 
 export interface MessageHistoryProps {
 	/** Log entries to display */
@@ -229,15 +222,11 @@ export function MessageHistory({
 				style={{
 					display: 'flex',
 					flexDirection: 'column',
-					gap: '8px',
-					padding: '12px',
-					// Use flex: 1 when maxHeight is "none" to fill available space
+					gap: '18px',
+					padding: '18px 16px 28px',
 					...(maxHeight === 'none' ? { flex: 1, minHeight: 0 } : { maxHeight }),
 					overflowY: 'auto',
 					overflowX: 'hidden',
-					backgroundColor: colors.bgMain,
-					borderRadius: '8px',
-					border: `1px solid ${colors.border}`,
 				}}
 			>
 				{logs.map((entry, index) => {
@@ -247,10 +236,27 @@ export function MessageHistory({
 					const isUser = source === 'user';
 					const isError = source === 'stderr';
 					const isSystem = source === 'system';
+					const isThinking = source === 'thinking';
+					const isTool = source === 'tool';
+					const isAssistantResponse =
+						inputMode === 'ai' && !isUser && !isError && !isSystem && !isThinking && !isTool;
 					const messageKey = entry.id || `${entry.timestamp}-${index}`;
 					const isExpanded = expandedMessages.has(messageKey);
-					const isTruncatable = shouldTruncate(text);
+					const isTruncatable = !isAssistantResponse && !isTool && shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
+					const messageLabel = isUser
+						? 'You'
+						: isError
+							? 'Error'
+							: isSystem
+								? 'System'
+								: isThinking
+									? 'Reasoning'
+									: inputMode === 'ai'
+										? isTool
+											? 'Tool'
+											: 'Model'
+										: 'Output';
 
 					return (
 						<div
@@ -264,55 +270,56 @@ export function MessageHistory({
 							style={{
 								display: 'flex',
 								flexDirection: 'column',
-								gap: '4px',
-								padding: '10px 12px',
-								borderRadius: '8px',
+								gap: isAssistantResponse ? '6px' : '8px',
+								padding: isAssistantResponse ? 0 : '12px 14px',
+								borderRadius: isAssistantResponse ? 0 : '14px',
 								backgroundColor: isUser
-									? `${colors.accent}15`
+									? `${colors.accent}14`
 									: isError
 										? `${colors.error}10`
-										: isSystem
-											? `${colors.textDim}10`
-											: colors.bgSidebar,
-								border: `1px solid ${
-									isUser ? `${colors.accent}30` : isError ? `${colors.error}30` : colors.border
-								}`,
+										: isThinking
+											? 'transparent'
+											: isSystem
+												? `${colors.textDim}10`
+												: 'transparent',
+								border:
+									isAssistantResponse || isThinking || isTool
+										? 'none'
+										: `1px solid ${
+												isUser
+													? `${colors.accent}30`
+													: isError
+														? `${colors.error}28`
+														: colors.border
+											}`,
 								cursor: isTruncatable ? 'pointer' : 'default',
-								// Align user messages to the right
-								alignSelf: isUser ? 'flex-end' : 'flex-start',
-								maxWidth: '90%',
+								alignSelf: isUser ? 'flex-end' : 'stretch',
+								maxWidth: isAssistantResponse ? '100%' : '88%',
 							}}
 						>
-							{/* Header: source and time */}
 							<div
 								style={{
 									display: 'flex',
 									alignItems: 'center',
+									justifyContent: isAssistantResponse ? 'flex-end' : 'flex-start',
 									gap: '8px',
 									fontSize: '10px',
 									color: colors.textDim,
 								}}
 							>
-								<span
-									style={{
-										fontWeight: 600,
-										textTransform: 'uppercase',
-										letterSpacing: '0.5px',
-										color: isUser ? colors.accent : isError ? colors.error : colors.textDim,
-									}}
-								>
-									{isUser
-										? 'You'
-										: isError
-											? 'Error'
-											: isSystem
-												? 'System'
-												: inputMode === 'ai'
-													? 'AI'
-													: 'Output'}
-								</span>
+								{!isAssistantResponse && (
+									<span
+										style={{
+											fontWeight: 600,
+											textTransform: 'uppercase',
+											letterSpacing: '0.08em',
+											color: isUser ? colors.accent : isError ? colors.error : colors.textDim,
+										}}
+									>
+										{messageLabel}
+									</span>
+								)}
 								<span style={{ opacity: 0.7 }}>{formatTime(entry.timestamp)}</span>
-								{/* Show expand/collapse indicator for truncatable messages */}
 								{isTruncatable && (
 									<span
 										style={{
@@ -331,14 +338,44 @@ export function MessageHistory({
 								style={{
 									color: isError ? colors.error : colors.textMain,
 									textAlign: 'left',
+									paddingTop: isAssistantResponse ? '2px' : 0,
 								}}
 							>
-								{inputMode === 'terminal' || isUser ? (
-									// Terminal output and user input: render as plain monospace text
+								{isTool ? (
+									<ToolActivityBlock
+										log={entry}
+										expanded={isExpanded}
+										onToggleExpanded={() => toggleExpanded(messageKey)}
+									/>
+								) : isThinking ? (
+									<div
+										style={{
+											paddingLeft: '12px',
+											borderLeft: `2px solid ${colors.accent}`,
+											fontSize: '13px',
+											lineHeight: 1.65,
+											color: colors.textMain,
+										}}
+									>
+										<div
+											style={{
+												fontSize: '10px',
+												fontWeight: 700,
+												letterSpacing: '0.08em',
+												textTransform: 'uppercase',
+												color: colors.accent,
+												marginBottom: '6px',
+											}}
+										>
+											thinking
+										</div>
+										<MobileMarkdownRenderer content={displayText} fontSize={13} />
+									</div>
+								) : inputMode === 'terminal' || isUser ? (
 									<div
 										style={{
 											fontSize: '13px',
-											lineHeight: 1.5,
+											lineHeight: 1.65,
 											fontFamily: 'ui-monospace, monospace',
 											whiteSpace: 'pre-wrap',
 											wordBreak: 'break-word',
@@ -347,10 +384,11 @@ export function MessageHistory({
 										{displayText}
 									</div>
 								) : (
-									// AI responses: render as formatted markdown
-									<MobileMarkdownRenderer content={displayText} />
+									<MobileMarkdownRenderer
+										content={displayText}
+										fontSize={isAssistantResponse ? 14 : 13}
+									/>
 								)}
-								{/* Show truncation indicator at end of text */}
 								{isTruncatable && !isExpanded && (
 									<span style={{ color: colors.textDim, fontStyle: 'italic', fontSize: '13px' }}>
 										{'\n'}... (tap to expand)

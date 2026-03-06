@@ -138,7 +138,7 @@ export interface UseDebouncedPersistenceReturn {
 	/** True if there are pending changes that haven't been persisted yet */
 	isPending: boolean;
 	/** Force immediate persistence of pending changes */
-	flushNow: () => void;
+	flushNow: (force?: boolean) => void;
 }
 
 /** Default debounce delay in milliseconds */
@@ -194,18 +194,21 @@ export function useDebouncedPersistence(
 	 * - App quit/visibility change
 	 * - Tab switching
 	 */
-	const flushNow = useCallback(() => {
-		// Clear any pending timer
-		if (timerRef.current) {
-			clearTimeout(timerRef.current);
-			timerRef.current = null;
-		}
+	const flushNow = useCallback(
+		(force: boolean = false) => {
+			// Clear any pending timer
+			if (timerRef.current) {
+				clearTimeout(timerRef.current);
+				timerRef.current = null;
+			}
 
-		// Only flush if there are pending changes
-		if (isPending) {
-			persistSessions();
-		}
-	}, [isPending, persistSessions]);
+			// Only flush if there are pending changes
+			if (force || isPending) {
+				persistSessions();
+			}
+		},
+		[isPending, persistSessions]
+	);
 
 	// Debounced persistence effect
 	useEffect(() => {

@@ -1,7 +1,6 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
+import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Loader2 } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
-import { getStatusColor } from '../utils/theme';
 
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
@@ -84,6 +83,9 @@ export const SessionItem = memo(function SessionItem({
 	onStartRename,
 	onToggleBookmark,
 }: SessionItemProps) {
+	const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
+	const isWorking = session.state === 'busy' || isInBatch;
+
 	// Determine if we show the GIT/LOCAL badge (not shown in bookmark variant, terminal sessions, or worktree variant)
 	const showGitLocalBadge =
 		variant !== 'bookmark' && variant !== 'worktree' && session.toolType !== 'terminal';
@@ -313,44 +315,31 @@ export const SessionItem = memo(function SessionItem({
 						</button>
 					))}
 
-				{/* AI Status Indicator with Unread Badge - ml-auto ensures it aligns to right edge */}
-				<div className="relative ml-auto">
-					<div
-						className={`w-2 h-2 rounded-full ${session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
-						style={
-							session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
-								? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
-								: {
-										backgroundColor: isInBatch
-											? theme.colors.warning
-											: getStatusColor(session.state, theme),
-									}
-						}
-						title={
-							session.toolType === 'claude-code' && !session.agentSessionId
-								? 'No active Claude session'
-								: session.state === 'idle'
-									? 'Ready and waiting'
-									: session.state === 'busy'
-										? session.cliActivity
-											? `CLI: Running playbook "${session.cliActivity.playbookName}"`
-											: 'Agent is thinking'
-										: session.state === 'connecting'
-											? 'Attempting to establish connection'
-											: session.state === 'error'
-												? 'No connection with agent'
-												: 'Waiting for input'
-						}
-					/>
-					{/* Unread Notification Badge */}
-					{!isActive && session.aiTabs?.some((tab) => tab.hasUnread) && (
-						<div
-							className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
-							style={{ backgroundColor: theme.colors.error }}
-							title="Unread messages"
-						/>
-					)}
-				</div>
+				{/* Session activity indicator: spinner while working, dot when awaiting user input */}
+				{(isWorking || hasUnreadTabs) && (
+					<div className="ml-auto flex items-center">
+						{isWorking ? (
+							<span
+								title={
+									session.cliActivity
+										? `CLI: Running playbook "${session.cliActivity.playbookName}"`
+										: 'Agent is working'
+								}
+							>
+								<Loader2
+									className="w-3 h-3 animate-spin"
+									style={{ color: isInBatch ? theme.colors.warning : theme.colors.accent }}
+								/>
+							</span>
+						) : (
+							<div
+								className="w-2 h-2 rounded-full"
+								style={{ backgroundColor: theme.colors.accent }}
+								title="Awaiting your input"
+							/>
+						)}
+					</div>
+				)}
 			</div>
 		</div>
 	);

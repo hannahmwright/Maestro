@@ -251,6 +251,12 @@ export function createProcessApi() {
 			return () => ipcRenderer.removeListener('process:session-id', handler);
 		},
 
+		onModel: (callback: (sessionId: string, model: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string, model: string) => callback(sessionId, model);
+			ipcRenderer.on('process:model', handler);
+			return () => ipcRenderer.removeListener('process:model', handler);
+		},
+
 		/**
 		 * Subscribe to slash commands discovered from agent
 		 */
@@ -388,6 +394,15 @@ export function createProcessApi() {
 			return () => ipcRenderer.removeListener('remote:selectTab', handler);
 		},
 
+		onRemoteSetSessionModel: (
+			callback: (sessionId: string, model: string | null) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, model: string | null) =>
+				callback(sessionId, model);
+			ipcRenderer.on('remote:setSessionModel', handler);
+			return () => ipcRenderer.removeListener('remote:setSessionModel', handler);
+		},
+
 		/**
 		 * Subscribe to remote new tab from web interface
 		 */
@@ -405,6 +420,19 @@ export function createProcessApi() {
 		 */
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null): void => {
 			ipcRenderer.send(responseChannel, result);
+		},
+
+		onRemoteDeleteSession: (
+			callback: (sessionId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, responseChannel: string) =>
+				callback(sessionId, responseChannel);
+			ipcRenderer.on('remote:deleteSession', handler);
+			return () => ipcRenderer.removeListener('remote:deleteSession', handler);
+		},
+
+		sendRemoteDeleteSessionResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
 		},
 
 		/**

@@ -385,10 +385,15 @@ export class ChildProcessSpawner {
 				projectPath: config.projectPath,
 				sshRemoteId: config.sshRemoteId,
 				sshRemoteHost: config.sshRemoteHost,
+				currentModel: config.resolvedModel,
 				taskContract: config.taskContract,
 			};
 
 			this.processes.set(sessionId, managedProcess);
+
+			if (config.resolvedModel) {
+				this.emitter.emit('model', sessionId, config.resolvedModel);
+			}
 
 			logger.debug('[ProcessManager] Setting up stdout/stderr/exit handlers', 'ProcessManager', {
 				sessionId,

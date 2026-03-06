@@ -21,6 +21,7 @@ import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
+import { readLocalCodexModel, readRemoteCodexModel } from '../../utils/codex-config';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import {
@@ -61,6 +62,18 @@ const handlerOpts = (
  */
 interface AgentConfigsData {
 	configs: Record<string, Record<string, any>>;
+}
+
+function getSshRemoteById(
+	store: Store<MaestroSettings>,
+	sshRemoteId?: string | null
+): SshRemoteConfig | undefined {
+	if (!sshRemoteId) {
+		return undefined;
+	}
+
+	const sshRemotes = store.get('sshRemotes', []) as SshRemoteConfig[];
+	return sshRemotes.find((remote) => remote.id === sshRemoteId);
 }
 
 /**
@@ -201,6 +214,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sessionCustomEnvVars: config.sessionCustomEnvVars,
 				});
 				finalArgs = configResolution.args;
+				let resolvedModel =
+					configResolution.effectiveModel ||
+					(typeof config.modelId === 'string' && config.modelId.trim()
+						? config.modelId.trim()
+						: undefined);
 
 				if (configResolution.modelSource === 'session' && config.sessionCustomModel) {
 					logger.debug(`Using session-level model for ${config.toolType}`, LOG_CONTEXT, {
@@ -213,6 +231,17 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						`Appending custom args for ${config.toolType} (${configResolution.customArgsSource}-level)`,
 						LOG_CONTEXT
 					);
+				}
+
+				if (!resolvedModel && config.toolType === 'codex') {
+					const sshRemoteId =
+						config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig.remoteId
+							? config.sessionSshRemoteConfig.remoteId
+							: null;
+					const sshRemote = getSshRemoteById(settingsStore, sshRemoteId);
+					resolvedModel = sshRemote
+						? (await readRemoteCodexModel(sshRemote)) || undefined
+						: readLocalCodexModel() || undefined;
 				}
 
 				// Session-level reasoning effort override (Codex only).
@@ -602,6 +631,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					projectPath: config.cwd,
 					taskContractInput: config.taskContractInput,
 					taskContract: spawnTaskContract,
+					resolvedModel,
 					// SSH remote context (for SSH-specific error messages)
 					sshRemoteId: sshRemoteUsed?.id,
 					sshRemoteHost: sshRemoteUsed?.host,

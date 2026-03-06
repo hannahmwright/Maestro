@@ -10,7 +10,7 @@
  * Calls IPC: window.maestro.tunnel, window.maestro.live
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 // ============================================================================
 // Return type
@@ -34,6 +34,31 @@ export interface UseLiveModeReturn {
 export function useLiveMode(): UseLiveModeReturn {
 	const [isLiveMode, setIsLiveMode] = useState(false);
 	const [webInterfaceUrl, setWebInterfaceUrl] = useState<string | null>(null);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		const syncLiveMode = async () => {
+			try {
+				const status = await (window as any).maestro.live.getServerStatus();
+				if (cancelled) return;
+				setIsLiveMode(status.active);
+				setWebInterfaceUrl(status.url);
+			} catch (error) {
+				console.error('[useLiveMode] Failed to sync live mode state:', error);
+			}
+		};
+
+		void syncLiveMode();
+		const interval = window.setInterval(() => {
+			void syncLiveMode();
+		}, 5000);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(interval);
+		};
+	}, []);
 
 	const toggleGlobalLive = useCallback(async () => {
 		try {

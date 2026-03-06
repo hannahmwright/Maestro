@@ -80,20 +80,33 @@ export interface MessageHandlerCallbacks {
 	selectSession: (sessionId: string, tabId?: string) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	newTab: (sessionId: string) => Promise<{ tabId: string } | null>;
+	deleteSession: (sessionId: string) => Promise<boolean>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (sessionId: string, tabId: string, newName: string) => Promise<boolean>;
 	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
 	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
 	toggleBookmark: (sessionId: string) => Promise<boolean>;
-	getSessions: () => Array<{
-		id: string;
-		name: string;
-		toolType: string;
-		state: string;
-		inputMode: string;
-		cwd: string;
-		agentSessionId?: string | null;
-	}>;
+	getSessions: () =>
+		| Array<{
+				id: string;
+				name: string;
+				toolType: string;
+				state: string;
+				inputMode: string;
+				cwd: string;
+				agentSessionId?: string | null;
+		  }>
+		| Promise<
+				Array<{
+					id: string;
+					name: string;
+					toolType: string;
+					state: string;
+					inputMode: string;
+					cwd: string;
+					agentSessionId?: string | null;
+				}>
+		  >;
 	getLiveSessionInfo: (sessionId: string) => LiveSessionInfo | undefined;
 	isSessionLive: (sessionId: string) => boolean;
 }
@@ -163,7 +176,7 @@ export class WebSocketMessageHandler {
 				break;
 
 			case 'get_sessions':
-				this.handleGetSessions(client);
+				void this.handleGetSessions(client);
 				break;
 
 			case 'select_tab':
@@ -172,6 +185,10 @@ export class WebSocketMessageHandler {
 
 			case 'new_tab':
 				this.handleNewTab(client, message);
+				break;
+
+			case 'delete_session':
+				this.handleDeleteSession(client, message);
 				break;
 
 			case 'close_tab':
@@ -384,13 +401,13 @@ export class WebSocketMessageHandler {
 	/**
 	 * Handle get_sessions message - request updated sessions list
 	 */
-	private handleGetSessions(client: WebClient): void {
+	private async handleGetSessions(client: WebClient): Promise<void> {
 		if (
 			this.callbacks.getSessions &&
 			this.callbacks.getLiveSessionInfo &&
 			this.callbacks.isSessionLive
 		) {
-			const allSessions = this.callbacks.getSessions();
+			const allSessions = await this.callbacks.getSessions();
 			// Enrich sessions with live info if available
 			const sessionsWithLiveInfo = allSessions.map((s) => {
 				const liveInfo = this.callbacks.getLiveSessionInfo!(s.id);
@@ -465,6 +482,33 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to create tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle delete_session message - delete an agent/session from desktop
+	 */
+	private handleDeleteSession(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received delete_session message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.deleteSession) {
+			this.sendError(client, 'Session deletion not configured');
+			return;
+		}
+
+		this.callbacks
+			.deleteSession(sessionId)
+			.then((success) => {
+				this.send(client, { type: 'delete_session_result', success, sessionId });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to delete session: ${error.message}`);
 			});
 	}
 

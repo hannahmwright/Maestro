@@ -5,18 +5,26 @@
  * Routes handle static files, dashboard views, PWA files, and security redirects.
  *
  * Routes:
- * - / - Redirect to GitHub (no access without token)
+ * - / - Redirect to /app
  * - /health - Health check endpoint
- * - /$TOKEN/manifest.json - PWA manifest
- * - /$TOKEN/sw.js - PWA service worker
- * - /$TOKEN - Dashboard (list all sessions)
- * - /$TOKEN/session/:sessionId - Single session view
- * - /:token - Invalid token catch-all, redirect to GitHub
+ * - /app/manifest.json - PWA manifest
+ * - /app/sw.js - PWA service worker
+ * - /app - Dashboard (list all sessions)
+ * - /app/session/:sessionId - Single session view
+ * - /:token - Legacy compatibility redirect to the stable scope
  */
 
 import { FastifyInstance, FastifyReply } from 'fastify';
+import { randomUUID } from 'crypto';
 import path from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
+import {
+	WEB_APP_BASE_PATH,
+	WEB_APP_ICONS_PATH,
+	WEB_APP_MANIFEST_PATH,
+	WEB_APP_SERVICE_WORKER_PATH,
+	type MaestroWebConfig,
+} from '../../../shared/remote-web';
 import { logger } from '../../utils/logger';
 
 // Logger context for all static route logs
@@ -32,6 +40,7 @@ const REDIRECT_URL = 'https://runmaestro.ai';
 interface CachedFile {
 	content: string;
 	exists: boolean;
+	mtimeMs: number;
 }
 
 const fileCache = new Map<string, CachedFile>();
@@ -42,22 +51,22 @@ const fileCache = new Map<string, CachedFile>();
  */
 function getCachedFile(filePath: string): string | null {
 	const cached = fileCache.get(filePath);
-	if (cached !== undefined) {
-		return cached.exists ? cached.content : null;
-	}
-
-	// First access - read from disk and cache
 	if (!existsSync(filePath)) {
-		fileCache.set(filePath, { content: '', exists: false });
+		fileCache.set(filePath, { content: '', exists: false, mtimeMs: 0 });
 		return null;
 	}
 
 	try {
+		const stats = statSync(filePath);
+		if (cached !== undefined && cached.exists && cached.mtimeMs === stats.mtimeMs) {
+			return cached.content;
+		}
+
 		const content = readFileSync(filePath, 'utf-8');
-		fileCache.set(filePath, { content, exists: true });
+		fileCache.set(filePath, { content, exists: true, mtimeMs: stats.mtimeMs });
 		return content;
 	} catch {
-		fileCache.set(filePath, { content: '', exists: false });
+		fileCache.set(filePath, { content: '', exists: false, mtimeMs: 0 });
 		return null;
 	}
 }
@@ -71,10 +80,16 @@ function getCachedFile(filePath: string): string | null {
 export class StaticRoutes {
 	private securityToken: string;
 	private webAssetsPath: string | null;
+	private getPushPublicKey: () => string | undefined;
 
-	constructor(securityToken: string, webAssetsPath: string | null) {
+	constructor(
+		securityToken: string,
+		webAssetsPath: string | null,
+		options?: { getPushPublicKey?: () => string | undefined }
+	) {
 		this.securityToken = securityToken;
 		this.webAssetsPath = webAssetsPath;
+		this.getPushPublicKey = options?.getPushPublicKey || (() => undefined);
 	}
 
 	/**
@@ -102,7 +117,7 @@ export class StaticRoutes {
 
 	/**
 	 * Serve the index.html file for SPA routes
-	 * Rewrites asset paths to include the security token
+	 * Rewrites asset paths to use the stable /app scope.
 	 */
 	private serveIndexHtml(reply: FastifyReply, sessionId?: string, tabId?: string | null): void {
 		if (!this.webAssetsPath) {
@@ -127,29 +142,42 @@ export class StaticRoutes {
 			// Use cached HTML and transform asset paths
 			let html = cachedHtml;
 
-			// Transform relative paths to use the token-prefixed absolute paths
-			html = html.replace(/\.\/assets\//g, `/${this.securityToken}/assets/`);
-			html = html.replace(/\.\/manifest\.json/g, `/${this.securityToken}/manifest.json`);
-			html = html.replace(/\.\/icons\//g, `/${this.securityToken}/icons/`);
-			html = html.replace(/\.\/sw\.js/g, `/${this.securityToken}/sw.js`);
+			// Transform relative paths to use the stable /app absolute paths
+			html = html.replace(/\.\/assets\//g, `${WEB_APP_BASE_PATH}/assets/`);
+			html = html.replace(/\.\/manifest\.json/g, WEB_APP_MANIFEST_PATH);
+			html = html.replace(/\.\/icons\//g, `${WEB_APP_ICONS_PATH}/`);
+			html = html.replace(/\.\/sw\.js/g, WEB_APP_SERVICE_WORKER_PATH);
+			html = html.replace(
+				/<link\s+rel="manifest"\s+href="([^"]+)"(?:\s+crossorigin="[^"]*")?\s*\/?>/i,
+				`<link rel="manifest" href="${WEB_APP_MANIFEST_PATH}" crossorigin="use-credentials" />`
+			);
 
 			// Sanitize sessionId and tabId to prevent XSS attacks
 			// Only allow safe characters (alphanumeric, hyphens, underscores)
 			const safeSessionId = this.sanitizeId(sessionId);
 			const safeTabId = this.sanitizeId(tabId);
+			const pushPublicKey = this.getPushPublicKey();
+			const webConfig: MaestroWebConfig = {
+				basePath: WEB_APP_BASE_PATH,
+				sessionId: safeSessionId,
+				tabId: safeTabId,
+				apiBase: `${WEB_APP_BASE_PATH}/api`,
+				wsUrl: `${WEB_APP_BASE_PATH}/ws`,
+				authMode: 'cloudflare-access',
+				clientInstanceId: `${this.securityToken}-${randomUUID()}`,
+				webPush: {
+					enabled: Boolean(pushPublicKey),
+					publicKey: pushPublicKey,
+				},
+			};
 
-			// Inject config for the React app to know the token and session context
+			// Inject config for the React app to know the stable base path and session context.
 			const configScript = `<script>
-        window.__MAESTRO_CONFIG__ = {
-          securityToken: "${this.securityToken}",
-          sessionId: ${safeSessionId ? `"${safeSessionId}"` : 'null'},
-          tabId: ${safeTabId ? `"${safeTabId}"` : 'null'},
-          apiBase: "/${this.securityToken}/api",
-          wsUrl: "/${this.securityToken}/ws"
-        };
+        window.__MAESTRO_CONFIG__ = ${JSON.stringify(webConfig)};
       </script>`;
 			html = html.replace('</head>', `${configScript}</head>`);
 
+			reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
 			reply.type('text/html').send(html);
 		} catch (err) {
 			logger.error('Error serving index.html', LOG_CONTEXT, err);
@@ -166,9 +194,9 @@ export class StaticRoutes {
 	registerRoutes(server: FastifyInstance): void {
 		const token = this.securityToken;
 
-		// Root path - redirect to GitHub (no access without token)
+		// Root path - redirect to the stable app scope.
 		server.get('/', async (_request, reply) => {
-			return reply.redirect(302, REDIRECT_URL);
+			return reply.redirect(302, WEB_APP_BASE_PATH);
 		});
 
 		// Health check (no auth required)
@@ -177,7 +205,7 @@ export class StaticRoutes {
 		});
 
 		// PWA manifest.json (cached)
-		server.get(`/${token}/manifest.json`, async (_request, reply) => {
+		server.get(WEB_APP_MANIFEST_PATH, async (_request, reply) => {
 			if (!this.webAssetsPath) {
 				return reply.code(404).send({ error: 'Not Found' });
 			}
@@ -186,11 +214,12 @@ export class StaticRoutes {
 			if (content === null) {
 				return reply.code(404).send({ error: 'Not Found' });
 			}
+			reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
 			return reply.type('application/json').send(content);
 		});
 
 		// PWA service worker (cached)
-		server.get(`/${token}/sw.js`, async (_request, reply) => {
+		server.get(WEB_APP_SERVICE_WORKER_PATH, async (_request, reply) => {
 			if (!this.webAssetsPath) {
 				return reply.code(404).send({ error: 'Not Found' });
 			}
@@ -199,36 +228,54 @@ export class StaticRoutes {
 			if (content === null) {
 				return reply.code(404).send({ error: 'Not Found' });
 			}
+			reply.header('Cache-Control', 'no-store, no-cache, must-revalidate');
 			return reply.type('application/javascript').send(content);
 		});
 
 		// Dashboard - list all live sessions
-		server.get(`/${token}`, async (_request, reply) => {
+		server.get(WEB_APP_BASE_PATH, async (_request, reply) => {
 			this.serveIndexHtml(reply);
 		});
 
 		// Dashboard with trailing slash
-		server.get(`/${token}/`, async (_request, reply) => {
+		server.get(`${WEB_APP_BASE_PATH}/`, async (_request, reply) => {
 			this.serveIndexHtml(reply);
 		});
 
-		// Single session view - works for any valid session (security token protects access)
+		// Single session view - perimeter auth (for example Cloudflare Access) protects access.
 		// Supports ?tabId=xxx query parameter for deep-linking to specific tabs
-		server.get(`/${token}/session/:sessionId`, async (request, reply) => {
+		server.get(`${WEB_APP_BASE_PATH}/session/:sessionId`, async (request, reply) => {
 			const { sessionId } = request.params as { sessionId: string };
 			const { tabId } = request.query as { tabId?: string };
 			// Note: Session validation happens in the frontend via the sessions list
 			this.serveIndexHtml(reply, sessionId, tabId || null);
 		});
 
-		// Catch-all for invalid tokens - redirect to GitHub
+		// Legacy compatibility: redirect the old tokenized routes to /app.
+		server.get(`/${token}`, async (_request, reply) => {
+			return reply.redirect(302, WEB_APP_BASE_PATH);
+		});
+
+		server.get(`/${token}/`, async (_request, reply) => {
+			return reply.redirect(302, WEB_APP_BASE_PATH);
+		});
+
+		server.get(`/${token}/session/:sessionId`, async (request, reply) => {
+			const { sessionId } = request.params as { sessionId: string };
+			const { tabId } = request.query as { tabId?: string };
+			const destination = `${WEB_APP_BASE_PATH}/session/${encodeURIComponent(sessionId)}${
+				tabId ? `?tabId=${encodeURIComponent(tabId)}` : ''
+			}`;
+			return reply.redirect(302, destination);
+		});
+
+		// Catch-all for invalid tokens - redirect to website.
 		server.get('/:token', async (request, reply) => {
 			const { token: reqToken } = request.params as { token: string };
 			if (!this.validateToken(reqToken)) {
 				return reply.redirect(302, REDIRECT_URL);
 			}
-			// Valid token but no specific route - serve dashboard
-			this.serveIndexHtml(reply);
+			return reply.redirect(302, WEB_APP_BASE_PATH);
 		});
 
 		logger.debug('Static routes registered', LOG_CONTEXT);

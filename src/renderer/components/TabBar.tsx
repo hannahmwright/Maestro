@@ -191,7 +191,7 @@ function getTabDisplayName(tab: AITab): string {
 /**
  * Individual tab component styled like browser tabs (Safari/Chrome).
  * All tabs have visible borders; active tab connects to content area.
- * Includes hover overlay with session info and actions.
+ * Includes a context menu with session info and actions.
  *
  * Wrapped with React.memo to prevent unnecessary re-renders when sibling tabs change.
  */
@@ -240,8 +240,8 @@ const Tab = memo(function Tab({
 		left: number;
 		tabWidth?: number;
 	} | null>(null);
-	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const tabRef = useRef<HTMLDivElement>(null);
+	const overlayRef = useRef<HTMLDivElement>(null);
 
 	// Register ref with parent for scroll-into-view functionality
 	const setTabRef = useCallback(
@@ -252,41 +252,18 @@ const Tab = memo(function Tab({
 		[registerRef]
 	);
 
+	const updateOverlayPosition = useCallback(() => {
+		if (!tabRef.current) return;
+		const rect = tabRef.current.getBoundingClientRect();
+		setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
+	}, []);
+
 	const handleMouseEnter = () => {
 		setIsHovered(true);
-		// Only show overlay if there's something meaningful to show:
-		// - Tabs with sessions or logs: always show (for session/context actions)
-		// - Tabs without sessions or logs: show if there are move actions available
-		if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab) return;
-
-		// Open overlay after delay
-		hoverTimeoutRef.current = setTimeout(() => {
-			// Calculate position for fixed overlay - connect directly to tab bottom
-			if (tabRef.current) {
-				const rect = tabRef.current.getBoundingClientRect();
-				// Position overlay directly at tab bottom (no gap) for connected appearance
-				// Store tab width for connector sizing
-				setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
-			}
-			setOverlayOpen(true);
-		}, 400);
 	};
-
-	// Ref to track if mouse is over the overlay
-	const isOverOverlayRef = useRef(false);
 
 	const handleMouseLeave = () => {
 		setIsHovered(false);
-		if (hoverTimeoutRef.current) {
-			clearTimeout(hoverTimeoutRef.current);
-			hoverTimeoutRef.current = null;
-		}
-		// Delay closing overlay to allow mouse to reach it (there's a gap between tab and overlay)
-		hoverTimeoutRef.current = setTimeout(() => {
-			if (!isOverOverlayRef.current) {
-				setOverlayOpen(false);
-			}
-		}, 100);
 	};
 
 	// Event handlers using stable tabId to avoid inline closure captures
@@ -299,6 +276,19 @@ const Tab = memo(function Tab({
 			}
 		},
 		[canClose, onClose, tabId]
+	);
+
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			// Only show menu if there's something meaningful to show.
+			if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab) return;
+			e.preventDefault();
+			e.stopPropagation();
+			setIsHovered(true);
+			updateOverlayPosition();
+			setOverlayOpen(true);
+		},
+		[isFirstTab, isLastTab, tab.agentSessionId, tab.logs, updateOverlayPosition]
 	);
 
 	const handleCloseClick = useCallback(
@@ -459,6 +449,7 @@ const Tab = memo(function Tab({
 
 	// Handlers for drag events using stable tabId
 	const handleTabSelect = useCallback(() => {
+		setOverlayOpen(false);
 		onSelect(tabId);
 	}, [onSelect, tabId]);
 
@@ -478,10 +469,49 @@ const Tab = memo(function Tab({
 
 	const handleTabDrop = useCallback(
 		(e: React.DragEvent) => {
+			setOverlayOpen(false);
 			onDrop(tabId, e);
 		},
 		[onDrop, tabId]
 	);
+
+	useEffect(() => {
+		if (!overlayOpen) return;
+
+		const closeOverlay = () => {
+			setOverlayOpen(false);
+			setIsHovered(false);
+		};
+
+		const handlePointerDown = (event: MouseEvent) => {
+			const target = event.target as Node;
+			if (overlayRef.current?.contains(target) || tabRef.current?.contains(target)) {
+				return;
+			}
+			closeOverlay();
+		};
+
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				closeOverlay();
+			}
+		};
+
+		const handleWindowChange = () => {
+			closeOverlay();
+		};
+
+		document.addEventListener('mousedown', handlePointerDown);
+		document.addEventListener('keydown', handleKeyDown);
+		window.addEventListener('resize', handleWindowChange);
+		window.addEventListener('scroll', handleWindowChange, true);
+		return () => {
+			document.removeEventListener('mousedown', handlePointerDown);
+			document.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('resize', handleWindowChange);
+			window.removeEventListener('scroll', handleWindowChange, true);
+		};
+	}, [overlayOpen]);
 
 	// Memoize display name to avoid recalculation on every render
 	const displayName = useMemo(() => getTabDisplayName(tab), [tab.name, tab.agentSessionId]);
@@ -537,6 +567,7 @@ const Tab = memo(function Tab({
 			style={tabStyle}
 			onClick={handleTabSelect}
 			onMouseDown={handleMouseDown}
+			onContextMenu={handleContextMenu}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
 			draggable
@@ -545,17 +576,18 @@ const Tab = memo(function Tab({
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
 		>
-			{/* Busy indicator - pulsing dot for tabs in write mode */}
+			{/* Working indicator - spinner while the agent is actively running */}
 			{tab.state === 'busy' && (
-				<div
-					className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.warning }}
-				/>
+				<span title="Agent is working">
+					<Loader2
+						className="w-3 h-3 shrink-0 animate-spin"
+						style={{ color: theme.colors.warning }}
+					/>
+				</span>
 			)}
 
-			{/* Generating name indicator - spinning loader while tab name is being generated */}
-			{/* Show regardless of busy state since tab naming runs in parallel with the main request */}
-			{tab.isGeneratingName && (
+			{/* Generating name indicator - only when not already showing working spinner */}
+			{tab.state !== 'busy' && tab.isGeneratingName && (
 				<span title="Generating tab name...">
 					<Loader2
 						className="w-3 h-3 shrink-0 animate-spin"
@@ -617,31 +649,18 @@ const Tab = memo(function Tab({
 				</button>
 			)}
 
-			{/* Hover overlay with session info and actions - rendered via portal to escape stacking context */}
+			{/* Context menu with session info and actions - rendered via portal to escape stacking context */}
 			{overlayOpen &&
 				overlayPosition &&
 				createPortal(
 					<div
+						ref={overlayRef}
 						className="fixed z-[100]"
 						style={{
 							top: overlayPosition.top,
 							left: overlayPosition.left,
 						}}
 						onClick={(e) => e.stopPropagation()}
-						onMouseEnter={() => {
-							// Keep overlay open when mouse enters it
-							isOverOverlayRef.current = true;
-							if (hoverTimeoutRef.current) {
-								clearTimeout(hoverTimeoutRef.current);
-								hoverTimeoutRef.current = null;
-							}
-						}}
-						onMouseLeave={() => {
-							// Close overlay when mouse leaves it
-							isOverOverlayRef.current = false;
-							setOverlayOpen(false);
-							setIsHovered(false);
-						}}
 					>
 						{/* Main overlay content - connects directly to tab like an open folder */}
 						<div
@@ -980,7 +999,7 @@ type MailFilterMenuPosition = { top: number; left: number };
  * - Shows filename without extension as label
  * - Displays extension as a colored badge
  * - Shows pencil icon when tab has unsaved edits
- * - Includes hover overlay with file-specific actions
+ * - Includes a context menu with file-specific actions
  *
  * Wrapped with React.memo to prevent unnecessary re-renders when sibling tabs change.
  */
@@ -1017,8 +1036,8 @@ const FileTab = memo(function FileTab({
 		left: number;
 		tabWidth?: number;
 	} | null>(null);
-	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const tabRef = useRef<HTMLDivElement>(null);
+	const overlayRef = useRef<HTMLDivElement>(null);
 
 	// Register ref with parent for scroll-into-view functionality
 	const setTabRef = useCallback(
@@ -1029,36 +1048,18 @@ const FileTab = memo(function FileTab({
 		[registerRef]
 	);
 
+	const updateOverlayPosition = useCallback(() => {
+		if (!tabRef.current) return;
+		const rect = tabRef.current.getBoundingClientRect();
+		setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
+	}, []);
+
 	const handleMouseEnter = () => {
 		setIsHovered(true);
-		// Open overlay after delay
-		hoverTimeoutRef.current = setTimeout(() => {
-			// Calculate position for fixed overlay - connect directly to tab bottom
-			if (tabRef.current) {
-				const rect = tabRef.current.getBoundingClientRect();
-				// Position overlay directly at tab bottom (no gap) for connected appearance
-				// Store tab width for connector sizing
-				setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
-			}
-			setOverlayOpen(true);
-		}, 400);
 	};
-
-	// Ref to track if mouse is over the overlay
-	const isOverOverlayRef = useRef(false);
 
 	const handleMouseLeave = () => {
 		setIsHovered(false);
-		if (hoverTimeoutRef.current) {
-			clearTimeout(hoverTimeoutRef.current);
-			hoverTimeoutRef.current = null;
-		}
-		// Delay closing overlay to allow mouse to reach it (there's a gap between tab and overlay)
-		hoverTimeoutRef.current = setTimeout(() => {
-			if (!isOverOverlayRef.current) {
-				setOverlayOpen(false);
-			}
-		}, 100);
 	};
 
 	// Event handlers using stable tabId to avoid inline closure captures
@@ -1071,6 +1072,17 @@ const FileTab = memo(function FileTab({
 			}
 		},
 		[onClose, tab.id]
+	);
+
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			e.stopPropagation();
+			setIsHovered(true);
+			updateOverlayPosition();
+			setOverlayOpen(true);
+		},
+		[updateOverlayPosition]
 	);
 
 	const handleCloseClick = useCallback(
@@ -1178,6 +1190,7 @@ const FileTab = memo(function FileTab({
 
 	// Handlers for drag events using stable tabId
 	const handleTabSelect = useCallback(() => {
+		setOverlayOpen(false);
 		onSelect(tab.id);
 	}, [onSelect, tab.id]);
 
@@ -1197,10 +1210,49 @@ const FileTab = memo(function FileTab({
 
 	const handleTabDrop = useCallback(
 		(e: React.DragEvent) => {
+			setOverlayOpen(false);
 			onDrop(tab.id, e);
 		},
 		[onDrop, tab.id]
 	);
+
+	useEffect(() => {
+		if (!overlayOpen) return;
+
+		const closeOverlay = () => {
+			setOverlayOpen(false);
+			setIsHovered(false);
+		};
+
+		const handlePointerDown = (event: MouseEvent) => {
+			const target = event.target as Node;
+			if (overlayRef.current?.contains(target) || tabRef.current?.contains(target)) {
+				return;
+			}
+			closeOverlay();
+		};
+
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				closeOverlay();
+			}
+		};
+
+		const handleWindowChange = () => {
+			closeOverlay();
+		};
+
+		document.addEventListener('mousedown', handlePointerDown);
+		document.addEventListener('keydown', handleKeyDown);
+		window.addEventListener('resize', handleWindowChange);
+		window.addEventListener('scroll', handleWindowChange, true);
+		return () => {
+			document.removeEventListener('mousedown', handlePointerDown);
+			document.removeEventListener('keydown', handleKeyDown);
+			window.removeEventListener('resize', handleWindowChange);
+			window.removeEventListener('scroll', handleWindowChange, true);
+		};
+	}, [overlayOpen]);
 
 	// Get extension badge colors
 	const extensionColors = useMemo(
@@ -1260,6 +1312,7 @@ const FileTab = memo(function FileTab({
 			style={tabStyle}
 			onClick={handleTabSelect}
 			onMouseDown={handleMouseDown}
+			onContextMenu={handleContextMenu}
 			onMouseEnter={handleMouseEnter}
 			onMouseLeave={handleMouseLeave}
 			draggable
@@ -1320,31 +1373,18 @@ const FileTab = memo(function FileTab({
 				</button>
 			)}
 
-			{/* Hover overlay with file info and actions - rendered via portal to escape stacking context */}
+			{/* Context menu with file info and actions - rendered via portal to escape stacking context */}
 			{overlayOpen &&
 				overlayPosition &&
 				createPortal(
 					<div
+						ref={overlayRef}
 						className="fixed z-[100]"
 						style={{
 							top: overlayPosition.top,
 							left: overlayPosition.left,
 						}}
 						onClick={(e) => e.stopPropagation()}
-						onMouseEnter={() => {
-							// Keep overlay open when mouse enters it
-							isOverOverlayRef.current = true;
-							if (hoverTimeoutRef.current) {
-								clearTimeout(hoverTimeoutRef.current);
-								hoverTimeoutRef.current = null;
-							}
-						}}
-						onMouseLeave={() => {
-							// Close overlay when mouse leaves it
-							isOverOverlayRef.current = false;
-							setOverlayOpen(false);
-							setIsHovered(false);
-						}}
 					>
 						{/* Main overlay content - connects directly to tab like an open folder */}
 						<div

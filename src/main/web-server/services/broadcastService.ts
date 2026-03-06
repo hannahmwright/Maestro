@@ -17,6 +17,7 @@
  * - autorun_state: Auto Run batch processing state
  * - user_input: User input from desktop (for web client sync)
  * - session_output: Session output data
+ * - session_log_entry: Structured session log upserts (tool/thinking)
  */
 
 import { WebSocket } from 'ws';
@@ -29,6 +30,8 @@ import type {
 	SessionBroadcastData,
 	AutoRunState,
 	CliActivity,
+	ResponseCompletedEvent,
+	WebSessionLogEntryEvent,
 } from '../types';
 
 // Re-export types for backwards compatibility
@@ -112,6 +115,8 @@ export class BroadcastService {
 			toolType?: string;
 			inputMode?: string;
 			cwd?: string;
+			contextUsage?: number;
+			effectiveContextWindow?: number | null;
 			cliActivity?: CliActivity;
 		}
 	): void {
@@ -239,6 +244,14 @@ export class BroadcastService {
 		});
 	}
 
+	broadcastSessionLogEntry(event: WebSessionLogEntryEvent): void {
+		this.broadcastToSession(event.sessionId, {
+			type: 'session_log_entry',
+			...event,
+			timestamp: Date.now(),
+		});
+	}
+
 	/**
 	 * Broadcast session live status change
 	 * Called when a session is marked as live (visible in web interface)
@@ -260,6 +273,14 @@ export class BroadcastService {
 		this.broadcastToAll({
 			type: 'session_offline',
 			sessionId,
+			timestamp: Date.now(),
+		});
+	}
+
+	broadcastResponseCompleted(event: ResponseCompletedEvent): void {
+		this.broadcastToSession(event.sessionId, {
+			type: 'response_completed',
+			event,
 			timestamp: Date.now(),
 		});
 	}

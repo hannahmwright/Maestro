@@ -13,7 +13,7 @@
  * - Auto-expanding textarea for multi-line commands (up to 4 lines)
  * - Minimum 44px touch targets per Apple HIG guidelines
  * - Mode toggle button (AI / Terminal) with visual indicator
- * - Voice input button for speech-to-text (uses Web Speech API)
+ * - Voice input button for in-browser recording with desktop transcription
  * - Interrupt button (red X) REPLACES send button when session is busy
  *   (saves horizontal space - only one action button visible at a time)
  * - Recent command chips for quick access to recently sent commands
@@ -29,19 +29,16 @@ import { useSwipeUp } from '../hooks/useSwipeUp';
 import { useVoiceInput } from '../hooks/useVoiceInput';
 import { useKeyboardVisibility } from '../hooks/useKeyboardVisibility';
 import { useSlashCommandAutocomplete } from '../hooks/useSlashCommandAutocomplete';
-import { useLongPressMenu } from '../hooks/useLongPressMenu';
 import { RecentCommandChips } from './RecentCommandChips';
 import {
 	SlashCommandAutocomplete,
 	type SlashCommand,
 	DEFAULT_SLASH_COMMANDS,
 } from './SlashCommandAutocomplete';
-import { QuickActionsMenu } from './QuickActionsMenu';
 import { triggerHaptic } from './constants';
 import {
-	InputModeToggleButton,
+	ModelSelectorButton,
 	VoiceInputButton,
-	SlashCommandButton,
 	SendInterruptButton,
 	ExpandedModeSendInterruptButton,
 } from './CommandInputButtons';
@@ -110,8 +107,6 @@ export interface CommandInputBarProps {
 	disabled?: boolean;
 	/** Current input mode (AI or terminal) */
 	inputMode?: InputMode;
-	/** Callback when input mode is toggled */
-	onModeToggle?: (mode: InputMode) => void;
 	/** Whether the active session is busy (AI thinking) */
 	isSessionBusy?: boolean;
 	/** Callback when interrupt button is pressed */
@@ -126,8 +121,16 @@ export interface CommandInputBarProps {
 	slashCommands?: SlashCommand[];
 	/** Whether a session is currently active (for quick actions menu) */
 	hasActiveSession?: boolean;
-	/** Current working directory (shown in terminal mode) */
-	cwd?: string;
+	/** Whether the active session supports model selection */
+	supportsModelSelection?: boolean;
+	/** Current display label for the selected/runtime model */
+	modelLabel?: string;
+	/** Active provider tool type for selector branding */
+	modelToolType?: string | null;
+	/** Load available models for the current session */
+	loadModels?: (forceRefresh?: boolean) => Promise<string[]>;
+	/** Apply a selected model to the current session */
+	onSelectModel?: (model: string | null) => Promise<void> | void;
 	/** Callback when input receives focus */
 	onInputFocus?: () => void;
 	/** Callback when input loses focus */
@@ -151,7 +154,6 @@ export function CommandInputBar({
 	value: controlledValue,
 	disabled: externalDisabled,
 	inputMode = 'ai',
-	onModeToggle,
 	isSessionBusy = false,
 	onInterrupt,
 	onHistoryOpen,
@@ -159,7 +161,11 @@ export function CommandInputBar({
 	onSelectRecentCommand,
 	slashCommands = DEFAULT_SLASH_COMMANDS,
 	hasActiveSession = false,
-	cwd,
+	supportsModelSelection = false,
+	modelLabel = 'Model',
+	modelToolType,
+	loadModels,
+	onSelectModel,
 	onInputFocus,
 	onInputBlur,
 	showRecentCommands = true,
@@ -167,6 +173,7 @@ export function CommandInputBar({
 	const colors = useThemeColors();
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
+	const modelMenuRef = useRef<HTMLDivElement>(null);
 
 	// Mobile phone detection
 	const isMobilePhone = useIsMobilePhone();
@@ -185,6 +192,9 @@ export function CommandInputBar({
 
 	// Track textarea height for auto-expansion
 	const [textareaHeight, setTextareaHeight] = useState(MIN_INPUT_HEIGHT);
+	const [modelMenuOpen, setModelMenuOpen] = useState(false);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [loadingModels, setLoadingModels] = useState(false);
 
 	// Internal state for uncontrolled mode
 	const [internalValue, setInternalValue] = useState('');
@@ -218,7 +228,7 @@ export function CommandInputBar({
 		inputRef: textareaRef as React.RefObject<HTMLTextAreaElement | HTMLInputElement | null>,
 	});
 
-	// Voice input hook - handles speech recognition
+	// Voice input hook - handles local recording and desktop transcription
 	const handleVoiceTranscription = useCallback(
 		(newText: string) => {
 			if (controlledValue === undefined) {
@@ -231,6 +241,9 @@ export function CommandInputBar({
 
 	const {
 		isListening,
+		isTranscribing,
+		voiceState,
+		voiceStatusText,
 		voiceSupported,
 		toggleVoiceInput: handleVoiceToggle,
 	} = useVoiceInput({
@@ -240,39 +253,27 @@ export function CommandInputBar({
 		focusRef: textareaRef as React.RefObject<HTMLTextAreaElement>,
 	});
 
-	// Long-press menu hook - handles quick actions menu state and touch handlers
-	const {
-		isMenuOpen: quickActionsOpen,
-		menuAnchor: quickActionsAnchor,
-		sendButtonRef,
-		handleTouchStart: handleSendButtonTouchStart,
-		handleTouchEnd: handleSendButtonTouchEnd,
-		handleTouchMove: handleSendButtonTouchMove,
-		handleQuickAction,
-		closeMenu: handleCloseQuickActions,
-	} = useLongPressMenu({
-		inputMode,
-		onModeToggle,
-		disabled: isDisabled,
-		value,
-	});
-
 	// Separate flag for whether send is blocked (AI thinking)
 	// When true, shows X button instead of send button
 	const isSendBlocked = inputMode === 'ai' && isSessionBusy;
+	const composerSurfaceStyle: React.CSSProperties = {
+		background: `linear-gradient(180deg, ${colors.bgSidebar}f2 0%, ${colors.bgMain}f4 100%)`,
+		backdropFilter: 'blur(22px)',
+		WebkitBackdropFilter: 'blur(22px)',
+		border: `1px solid ${colors.border}`,
+		boxShadow: '0 -10px 28px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+	};
 
 	// Get placeholder text based on state
 	const getPlaceholder = () => {
 		if (isOffline) return 'Offline...';
 		if (!isConnected) return 'Connecting...';
+		if (voiceState === 'requesting') return 'Waiting for microphone...';
+		if (voiceState === 'recording') return 'Listening... tap the mic again to stop';
+		if (voiceState === 'transcribing') return 'Transcribing voice note...';
 		// In AI mode when busy, show helpful hint that user can still type
 		if (inputMode === 'ai' && isSessionBusy) return 'AI thinking... (type your next message)';
-		// In terminal mode, show shortened cwd as placeholder hint
-		if (inputMode === 'terminal' && cwd) {
-			const shortCwd = cwd.replace(/^\/Users\/[^/]+/, '~');
-			return shortCwd;
-		}
-		return placeholder || 'Enter command...';
+		return placeholder || 'Message agent...';
 	};
 
 	/**
@@ -347,50 +348,18 @@ export function CommandInputBar({
 
 	/**
 	 * Handle key press events
-	 * AI mode: Enter adds newline, Cmd/Ctrl+Enter submits
-	 * Terminal mode: Enter submits (Shift+Enter adds newline)
+	 * Plain Enter submits in the compact mobile composer.
+	 * Shift+Enter still inserts a newline for longer prompts.
 	 */
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-			if (inputMode === 'ai') {
-				// AI mode: Cmd+Enter (Mac) or Ctrl+Enter (Windows/Linux) submits
-				if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-					e.preventDefault();
-					if (!isSendBlocked) {
-						handleSubmit(e);
-					}
-				}
-				// Plain Enter adds newline (default behavior)
-				return;
-			}
-			// Terminal mode: Submit on Enter (Shift+Enter adds newline)
 			if (e.key === 'Enter' && !e.shiftKey) {
 				e.preventDefault();
 				handleSubmit(e);
 			}
 		},
-		[handleSubmit, inputMode, isSendBlocked]
+		[handleSubmit]
 	);
-
-	/**
-	 * Handle mode toggle between AI and Terminal
-	 */
-	const handleModeToggle = useCallback(() => {
-		const newMode = inputMode === 'ai' ? 'terminal' : 'ai';
-		onModeToggle?.(newMode);
-	}, [inputMode, onModeToggle]);
-
-	/**
-	 * Focus input when mode changes
-	 * This allows users to immediately start typing after switching modes
-	 */
-	useEffect(() => {
-		// Small delay to ensure the DOM has updated after mode switch
-		const timer = setTimeout(() => {
-			textareaRef.current?.focus();
-		}, 50);
-		return () => clearTimeout(timer);
-	}, [inputMode]);
 
 	/**
 	 * Handle interrupt button press
@@ -421,6 +390,80 @@ export function CommandInputBar({
 			document.removeEventListener('mousedown', handleClickOutside);
 		};
 	}, [isExpanded, isMobilePhone, inputMode]);
+
+	useEffect(() => {
+		const handleClickOutside = (event: MouseEvent | TouchEvent) => {
+			const target = event.target as Node;
+			if (modelMenuRef.current && !modelMenuRef.current.contains(target)) {
+				setModelMenuOpen(false);
+			}
+		};
+
+		document.addEventListener('mousedown', handleClickOutside);
+		document.addEventListener('touchstart', handleClickOutside);
+		return () => {
+			document.removeEventListener('mousedown', handleClickOutside);
+			document.removeEventListener('touchstart', handleClickOutside);
+		};
+	}, []);
+
+	useEffect(() => {
+		if (!supportsModelSelection) {
+			setModelMenuOpen(false);
+		}
+	}, [supportsModelSelection]);
+
+	const handleModelMenuToggle = useCallback(async () => {
+		if (!supportsModelSelection || !loadModels) {
+			return;
+		}
+
+		const nextOpen = !modelMenuOpen;
+		setModelMenuOpen(nextOpen);
+		if (!nextOpen) {
+			return;
+		}
+
+		setLoadingModels(true);
+		try {
+			const models = await loadModels(false);
+			setAvailableModels(models);
+		} finally {
+			setLoadingModels(false);
+		}
+	}, [loadModels, modelMenuOpen, supportsModelSelection]);
+
+	const handleRefreshModels = useCallback(async () => {
+		if (!loadModels) return;
+		setLoadingModels(true);
+		try {
+			const models = await loadModels(true);
+			setAvailableModels(models);
+		} finally {
+			setLoadingModels(false);
+		}
+	}, [loadModels]);
+
+	const handleSelectModelInternal = useCallback(
+		async (model: string | null) => {
+			if (!onSelectModel) return;
+			await onSelectModel(model);
+			setModelMenuOpen(false);
+		},
+		[onSelectModel]
+	);
+	const selectableModels = React.useMemo(() => {
+		const normalizedCurrentModel = modelLabel.trim();
+		const models = [...availableModels];
+		if (
+			normalizedCurrentModel &&
+			normalizedCurrentModel !== 'Model' &&
+			!models.includes(normalizedCurrentModel)
+		) {
+			models.unshift(normalizedCurrentModel);
+		}
+		return models;
+	}, [availableModels, modelLabel]);
 
 	/**
 	 * Handle focus to expand input on mobile in AI mode
@@ -497,8 +540,7 @@ export function CommandInputBar({
 				paddingLeft: 'env(safe-area-inset-left)',
 				paddingRight: 'env(safe-area-inset-right)',
 				paddingTop: onHistoryOpen ? '4px' : '12px', // Reduced top padding when swipe handle is shown
-				backgroundColor: colors.bgSidebar,
-				borderTop: `1px solid ${colors.border}`,
+				background: 'linear-gradient(180deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.08) 100%)',
 				// Smooth transition when keyboard appears/disappears
 				transition: isKeyboardVisible ? 'none' : 'bottom 0.15s ease-out, height 200ms ease-out',
 				// On mobile when expanded, use flexbox for proper layout
@@ -559,6 +601,114 @@ export function CommandInputBar({
 				isInputExpanded={isExpanded}
 			/>
 
+			{supportsModelSelection && modelMenuOpen && (
+				<div
+					ref={modelMenuRef}
+					style={{
+						position: 'absolute',
+						left: '12px',
+						right: '12px',
+						bottom: mobileExpandedHeight ? `calc(${MOBILE_EXPANDED_HEIGHT_VH}vh + 78px)` : '84px',
+						zIndex: 110,
+						borderRadius: '20px',
+						border: `1px solid ${colors.border}`,
+						background: `linear-gradient(180deg, ${colors.bgSidebar}fa 0%, ${colors.bgMain}fa 100%)`,
+						backdropFilter: 'blur(22px)',
+						WebkitBackdropFilter: 'blur(22px)',
+						boxShadow: '0 18px 36px rgba(15, 23, 42, 0.22)',
+						padding: '12px',
+						display: 'flex',
+						flexDirection: 'column',
+						gap: '10px',
+					}}
+				>
+					<div
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'space-between',
+							gap: '12px',
+						}}
+					>
+						<div
+							style={{
+								fontSize: '12px',
+								fontWeight: 700,
+								color: colors.textMain,
+								letterSpacing: '0.04em',
+								textTransform: 'uppercase',
+							}}
+						>
+							Model
+						</div>
+						<button
+							type="button"
+							onClick={() => void handleRefreshModels()}
+							style={{
+								border: 'none',
+								background: 'transparent',
+								color: colors.accent,
+								fontSize: '12px',
+								fontWeight: 600,
+								cursor: 'pointer',
+							}}
+						>
+							{loadingModels ? 'Loading...' : 'Refresh'}
+						</button>
+					</div>
+					<div
+						style={{
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '6px',
+							maxHeight: '220px',
+							overflowY: 'auto',
+						}}
+					>
+						{selectableModels.map((model) => {
+							const isSelected = model === modelLabel;
+							return (
+								<button
+									key={model}
+									type="button"
+									onClick={() => void handleSelectModelInternal(model)}
+									style={{
+										padding: '12px 14px',
+										borderRadius: '14px',
+										border: `1px solid ${colors.border}`,
+										backgroundColor: isSelected ? `${colors.accent}18` : `${colors.bgMain}cc`,
+										color: isSelected ? colors.accent : colors.textMain,
+										fontSize: '13px',
+										fontWeight: 500,
+										textAlign: 'left',
+										cursor: 'pointer',
+										overflow: 'hidden',
+										textOverflow: 'ellipsis',
+										whiteSpace: 'nowrap',
+									}}
+								>
+									{model}
+								</button>
+							);
+						})}
+						{!loadingModels && selectableModels.length === 0 && (
+							<div
+								style={{
+									padding: '12px 14px',
+									borderRadius: '14px',
+									border: `1px solid ${colors.border}`,
+									backgroundColor: `${colors.bgMain}cc`,
+									color: colors.textDim,
+									fontSize: '13px',
+								}}
+							>
+								No models available
+							</div>
+						)}
+					</div>
+				</div>
+			)}
+
 			{/* EXPANDED MOBILE AI MODE - Full width textarea with send button below */}
 			{mobileExpandedHeight ? (
 				<form
@@ -567,11 +717,12 @@ export function CommandInputBar({
 						display: 'flex',
 						flexDirection: 'column',
 						gap: '8px',
-						paddingLeft: '16px',
-						paddingRight: '16px',
+						padding: '14px 14px 12px',
 						flex: 1,
 						maxWidth: '100%',
 						overflow: 'hidden',
+						borderRadius: '26px 26px 0 0',
+						...composerSurfaceStyle,
 					}}
 				>
 					{/* Full-width textarea */}
@@ -592,12 +743,12 @@ export function CommandInputBar({
 							flex: 1,
 							width: '100%',
 							padding: '14px 18px',
-							borderRadius: '12px',
-							backgroundColor: colors.bgMain,
-							border: `2px solid ${colors.accent}`,
-							boxShadow: `0 0 0 3px ${colors.accent}33`,
+							borderRadius: '20px',
+							backgroundColor: `${colors.bgMain}d9`,
+							border: `1px solid ${colors.border}`,
+							boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.04)',
 							color: colors.textMain,
-							fontSize: '17px',
+							fontSize: '16px',
 							fontFamily: 'inherit',
 							lineHeight: `${LINE_HEIGHT}px`,
 							outline: 'none',
@@ -637,168 +788,121 @@ export function CommandInputBar({
 					onSubmit={handleMobileSubmit}
 					style={{
 						display: 'flex',
+						flexDirection: 'column',
 						gap: '8px',
-						alignItems: 'flex-end', // Align to bottom for multi-line textarea
-						paddingLeft: '16px',
-						paddingRight: '16px',
+						alignItems: 'stretch',
+						padding: '10px 12px',
 						// Ensure form doesn't overflow screen width
 						maxWidth: '100%',
 						overflow: 'hidden',
+						margin: '0 12px',
+						borderRadius: '24px',
+						...composerSurfaceStyle,
 					}}
 				>
-					{/* Mode toggle button - AI / Terminal */}
-					{/* NOTE: Mode toggle is NOT disabled when session is busy - user should always be able to switch modes */}
-					<InputModeToggleButton
-						inputMode={inputMode}
-						onModeToggle={handleModeToggle}
-						disabled={externalDisabled || isOffline || !isConnected}
-					/>
-
-					{/* Voice input button - only shown if speech recognition is supported */}
-					{voiceSupported && (
-						<VoiceInputButton
-							isListening={isListening}
-							onToggle={handleVoiceToggle}
-							disabled={isDisabled}
-						/>
-					)}
-
-					{/* Slash command button - only shown in AI mode */}
-					{inputMode === 'ai' && (
-						<SlashCommandButton
-							isOpen={slashCommandOpen}
-							onOpen={openSlashCommandAutocomplete}
-							disabled={isDisabled}
-						/>
-					)}
-
-					{/* Terminal mode: $ prefix + input in a container - single line, tight height */}
-					{inputMode === 'terminal' ? (
+					{voiceStatusText && (
 						<div
 							style={{
-								flex: 1,
-								// minWidth: 0 is critical for flex items to shrink below content size
-								minWidth: 0,
-								display: 'flex',
+								display: 'inline-flex',
 								alignItems: 'center',
-								borderRadius: '12px',
-								backgroundColor: colors.bgMain,
-								border: `2px solid ${colors.border}`,
-								// Tight padding to match button height (48px total with border)
-								padding: '0 14px',
-								height: `${MIN_INPUT_HEIGHT}px`,
-								gap: '6px',
-								opacity: isDisabled ? 0.5 : 1,
+								gap: '8px',
+								alignSelf: 'flex-start',
+								padding: '8px 12px',
+								borderRadius: '999px',
+								border: `1px solid ${voiceState === 'recording' ? '#ef444455' : `${colors.accent}33`}`,
+								backgroundColor: voiceState === 'recording' ? '#ef444414' : `${colors.bgMain}cc`,
+								color: voiceState === 'recording' ? '#ef4444' : colors.textDim,
+								fontSize: '12px',
+								fontWeight: 600,
+								boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
 							}}
 						>
-							{/* $ prompt */}
 							<span
 								style={{
-									color: colors.accent,
-									fontSize: '17px',
-									fontFamily: 'ui-monospace, monospace',
-									fontWeight: 600,
+									width: '8px',
+									height: '8px',
+									borderRadius: '999px',
+									backgroundColor: voiceState === 'recording' ? '#ef4444' : colors.accent,
+									opacity: 0.95,
+									animation:
+										voiceState === 'recording'
+											? 'pulseDot 1.2s ease-in-out infinite'
+											: voiceState === 'transcribing' || voiceState === 'requesting'
+												? 'pulseDot 1.2s ease-in-out infinite'
+												: 'none',
 									flexShrink: 0,
 								}}
-							>
-								$
-							</span>
-							<input
-								ref={textareaRef as unknown as React.RefObject<HTMLInputElement>}
-								type="text"
-								value={value}
-								onChange={(e) =>
-									handleChange(e as unknown as React.ChangeEvent<HTMLTextAreaElement>)
-								}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter') {
-										e.preventDefault();
-										handleSubmit(e as unknown as React.FormEvent);
-									}
-								}}
-								placeholder={getPlaceholder()}
-								disabled={isDisabled}
-								autoComplete="off"
-								autoCorrect="off"
-								autoCapitalize="off"
-								spellCheck={false}
-								enterKeyHint="send"
-								style={{
-									flex: 1,
-									padding: 0,
-									border: 'none',
-									backgroundColor: 'transparent',
-									color: isDisabled ? colors.textDim : colors.textMain,
-									fontSize: '17px',
-									fontFamily: 'ui-monospace, monospace',
-									outline: 'none',
-									width: '100%',
-								}}
-								onFocus={(e) => {
-									const container = e.currentTarget.parentElement;
-									if (container) container.style.borderColor = colors.accent;
-									onInputFocus?.();
-								}}
-								onBlur={(e) => {
-									const container = e.currentTarget.parentElement;
-									if (container) container.style.borderColor = colors.border;
-									onInputBlur?.();
-								}}
-								aria-label="Shell command input"
 							/>
+							<span>{voiceStatusText}</span>
 						</div>
-					) : (
-						/* AI mode: regular textarea - on mobile phone, focus triggers expanded mode */
-						/* On mobile, collapsed state shows single-line height matching buttons */
+					)}
+
+					<div
+						style={{
+							display: 'flex',
+							gap: '8px',
+							alignItems: 'flex-end',
+							maxWidth: '100%',
+							overflow: 'hidden',
+						}}
+					>
+						{/* Voice input button - only shown if local recording is supported */}
+						{voiceSupported && (
+							<VoiceInputButton
+								isListening={isListening}
+								isRequesting={voiceState === 'requesting'}
+								isTranscribing={isTranscribing}
+								statusText={voiceStatusText}
+								onToggle={handleVoiceToggle}
+								disabled={isDisabled || isTranscribing}
+							/>
+						)}
+
+						{supportsModelSelection && (
+							<ModelSelectorButton
+								label={modelLabel}
+								toolType={modelToolType}
+								onClick={() => void handleModelMenuToggle()}
+								disabled={isDisabled || !hasActiveSession || isTranscribing}
+								isOpen={modelMenuOpen}
+							/>
+						)}
+
 						<textarea
 							ref={textareaRef}
 							value={value}
 							onChange={handleChange}
 							onKeyDown={handleKeyDown}
 							placeholder={getPlaceholder()}
-							disabled={isDisabled}
+							disabled={isDisabled || isTranscribing}
 							autoComplete="off"
 							autoCorrect="off"
 							autoCapitalize="off"
 							spellCheck={false}
-							enterKeyHint="enter"
+							enterKeyHint="send"
 							rows={1}
 							style={{
 								flex: 1,
-								// minWidth: 0 is critical for flex items to shrink below content size
 								minWidth: 0,
-								// On mobile collapsed state: tighter padding to match button height (48px)
-								// height = padding-top + line-height + padding-bottom + border = 11 + 22 + 11 + 4 = 48
-								// On desktop/tablet: use original larger padding for comfort
-								padding: isMobilePhone ? '11px 14px' : '14px 18px',
-								borderRadius: '12px',
-								backgroundColor: colors.bgMain,
-								border: `2px solid ${colors.border}`,
-								// Never ghost out the input - user can always type
+								padding: isMobilePhone ? '12px 14px' : '14px 18px',
+								borderRadius: '18px',
+								backgroundColor: `${colors.bgMain}c4`,
+								border: '1px solid transparent',
 								color: colors.textMain,
-								// 16px minimum prevents iOS zoom on focus, 17px for better readability
-								fontSize: '17px',
+								fontSize: '16px',
 								fontFamily: 'inherit',
 								lineHeight: `${LINE_HEIGHT}px`,
 								outline: 'none',
-								// On mobile: force single-line height to match buttons (48px)
-								// On desktop: use auto-expanding height
 								height: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${textareaHeight}px`,
-								// Large minimum height for easy touch targeting
 								minHeight: `${MIN_INPUT_HEIGHT}px`,
 								maxHeight: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${MAX_TEXTAREA_HEIGHT}px`,
-								// Reset appearance for consistent styling
 								WebkitAppearance: 'none',
 								appearance: 'none',
-								// Remove default textarea resize handle
 								resize: 'none',
-								// Smooth height transitions for auto-expansion
-								transition: 'height 100ms ease-out, border-color 150ms ease, box-shadow 150ms ease',
-								// Better text rendering on mobile
+								transition:
+									'height 100ms ease-out, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease',
 								WebkitFontSmoothing: 'antialiased',
 								MozOsxFontSmoothing: 'grayscale',
-								// On mobile collapsed: hide overflow (single line)
-								// On desktop: enable scrolling when content exceeds max height
 								overflowY: isMobilePhone
 									? 'hidden'
 									: textareaHeight >= MAX_TEXTAREA_HEIGHT
@@ -808,33 +912,27 @@ export function CommandInputBar({
 								wordWrap: 'break-word',
 							}}
 							onFocus={(e) => {
-								// Add focus ring for accessibility
-								e.currentTarget.style.borderColor = colors.accent;
-								e.currentTarget.style.boxShadow = `0 0 0 3px ${colors.accent}33`;
+								e.currentTarget.style.borderColor = `${colors.accent}55`;
+								e.currentTarget.style.backgroundColor = `${colors.bgMain}ee`;
+								e.currentTarget.style.boxShadow = `0 0 0 3px ${colors.accent}22`;
 								handleMobileAIFocus();
 							}}
 							onBlur={(e) => {
-								// Remove focus ring
-								e.currentTarget.style.borderColor = colors.border;
+								e.currentTarget.style.borderColor = 'transparent';
+								e.currentTarget.style.backgroundColor = `${colors.bgMain}c4`;
 								e.currentTarget.style.boxShadow = 'none';
 								onInputBlur?.();
 							}}
-							aria-label="AI message input. Press the send button to submit."
+							aria-label="Message input. Type slash commands directly if needed."
 							aria-multiline="true"
 						/>
-					)}
 
-					{/* Action button - shows either Interrupt (Red X) when AI is busy, or Send button otherwise */}
-					{/* The X button only shows in AI mode when busy - terminal mode always shows Send */}
-					<SendInterruptButton
-						isInterruptMode={inputMode === 'ai' && isSessionBusy}
-						isSendDisabled={isDisabled || !value.trim()}
-						onInterrupt={handleInterrupt}
-						sendButtonRef={sendButtonRef}
-						onTouchStart={handleSendButtonTouchStart}
-						onTouchEnd={handleSendButtonTouchEnd}
-						onTouchMove={handleSendButtonTouchMove}
-					/>
+						<SendInterruptButton
+							isInterruptMode={inputMode === 'ai' && isSessionBusy}
+							isSendDisabled={isDisabled || isTranscribing || !value.trim()}
+							onInterrupt={handleInterrupt}
+						/>
+					</div>
 				</form>
 			)}
 
@@ -849,18 +947,18 @@ export function CommandInputBar({
               box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
             }
           }
+
+					@keyframes pulseDot {
+						0%, 100% { opacity: 0.5; transform: scale(0.9); }
+						50% { opacity: 1; transform: scale(1.1); }
+					}
+
+					@keyframes spin {
+						from { transform: rotate(0deg); }
+						to { transform: rotate(360deg); }
+					}
         `}
 			</style>
-
-			{/* Quick actions menu - shown on long-press of send button */}
-			<QuickActionsMenu
-				isOpen={quickActionsOpen}
-				onClose={handleCloseQuickActions}
-				onSelectAction={handleQuickAction}
-				inputMode={inputMode}
-				anchorPosition={quickActionsAnchor}
-				hasActiveSession={hasActiveSession}
-			/>
 		</div>
 	);
 }

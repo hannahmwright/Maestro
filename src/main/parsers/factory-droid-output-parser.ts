@@ -146,6 +146,7 @@ export class FactoryDroidOutputParser implements AgentOutputParser {
 			return {
 				type: 'init',
 				sessionId: data.session_id,
+				model: data.model,
 				raw: data,
 			};
 		}

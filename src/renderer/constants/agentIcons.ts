@@ -17,53 +17,14 @@
  */
 
 import type { ToolType } from '../types';
+import {
+	AGENT_ICONS,
+	DEFAULT_AGENT_ICON,
+	getAgentIcon,
+	getAgentIconForToolType,
+} from '../../shared/agent-icons';
 
-/**
- * Mapping of agent type IDs to their display icons.
- * Icons should be recognizable and distinct for each agent type.
- */
-export const AGENT_ICONS: Record<string, string> = {
-	// Primary agents
-	'claude-code': '🤖',
-	claude: '🤖',
-
-	// OpenAI family
-	'openai-codex': '◇',
-	codex: '◇',
-
-	// Google family
-	'gemini-cli': '🔷',
-	gemini: '🔷',
-
-	// Alibaba family
-	'qwen3-coder': '⬡',
-	qwen: '⬡',
-
-	// Open-source alternatives
-	opencode: '📟',
-
-	// Enterprise
-	'factory-droid': '🏭',
-
-	// Terminal/shell (internal)
-	terminal: '💻',
-};
-
-/**
- * Default icon for unknown or unrecognized agent types
- */
-export const DEFAULT_AGENT_ICON = '🔧';
-
-/**
- * Get the display icon for an agent type.
- * Returns a default icon if the agent type is not recognized.
- *
- * @param agentId - The agent type ID (e.g., 'claude-code', 'gemini-cli')
- * @returns The corresponding icon string
- */
-export function getAgentIcon(agentId: string): string {
-	return AGENT_ICONS[agentId] || DEFAULT_AGENT_ICON;
-}
+export { AGENT_ICONS, DEFAULT_AGENT_ICON, getAgentIcon };
 
 /**
  * Get the display icon for a ToolType.
@@ -72,8 +33,6 @@ export function getAgentIcon(agentId: string): string {
  * @param toolType - The ToolType value
  * @returns The corresponding icon string
  */
-export function getAgentIconForToolType(toolType: ToolType): string {
-	return getAgentIcon(toolType);
-}
+export { getAgentIconForToolType };
 
 export default AGENT_ICONS;

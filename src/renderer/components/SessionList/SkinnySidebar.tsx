@@ -1,6 +1,6 @@
 import { memo } from 'react';
+import { Loader2 } from 'lucide-react';
 import type { Session, Group, Theme } from '../../types';
-import { getStatusColor } from '../../utils/theme';
 import { SessionTooltipContent } from './SessionTooltipContent';
 
 interface SkinnySidebarProps {
@@ -33,12 +33,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 			{sortedSessions.map((session) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
-				const effectiveStatusColor = isInBatch
-					? theme.colors.warning
-					: session.toolType === 'claude-code' && !session.agentSessionId
-						? undefined
-						: getStatusColor(session.state, theme);
-				const shouldPulse = session.state === 'busy' || isInBatch;
+				const isWorking = session.state === 'busy' || isInBatch;
 
 				return (
 					<div
@@ -57,30 +52,34 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 						className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all outline-none ${activeSessionId === session.id ? '' : 'hover:bg-white/10'}`}
 					>
 						<div className="relative">
-							<div
-								className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
-								style={{
-									opacity: activeSessionId === session.id ? 1 : 0.25,
-									...(session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
-										? {
-												border: `1.5px solid ${theme.colors.textDim}`,
-												backgroundColor: 'transparent',
-											}
-										: {
-												backgroundColor: effectiveStatusColor,
-											}),
-								}}
-								title={
-									session.toolType === 'claude-code' && !session.agentSessionId
-										? 'No active Claude session'
-										: undefined
-								}
-							/>
-							{activeSessionId !== session.id && hasUnreadTabs && (
+							{isWorking ? (
+								<span title="Agent is working">
+									<Loader2
+										className="w-3 h-3 animate-spin"
+										style={{
+											opacity: activeSessionId === session.id ? 1 : 0.6,
+											color: isInBatch ? theme.colors.warning : theme.colors.accent,
+										}}
+									/>
+								</span>
+							) : hasUnreadTabs ? (
 								<div
-									className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
-									style={{ backgroundColor: theme.colors.error }}
-									title="Unread messages"
+									className="w-2 h-2 rounded-full"
+									style={{
+										opacity: activeSessionId === session.id ? 1 : 0.7,
+										backgroundColor: theme.colors.accent,
+									}}
+									title="Awaiting your input"
+								/>
+							) : (
+								<div
+									className="w-2 h-2 rounded-full"
+									style={{
+										opacity: activeSessionId === session.id ? 0.9 : 0.35,
+										border: `1px solid ${theme.colors.textDim}`,
+										backgroundColor: 'transparent',
+									}}
+									title="Idle"
 								/>
 							)}
 						</div>

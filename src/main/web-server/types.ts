@@ -5,6 +5,17 @@
 
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
+import type {
+	PushStatusResponse,
+	PushSubscriptionRecord,
+	ResponseCompletedEvent,
+	WebSessionLogEntryEvent,
+	WebVoiceTranscriptionStatusResponse,
+	WebRemoteLogEntry,
+	WebVoiceTranscriptionRequest,
+	WebVoiceTranscriptionResponse,
+	WebPushSubscriptionInput,
+} from '../../shared/remote-web';
 
 // Re-export Theme for convenience
 export type { Theme } from '../../shared/theme-types';
@@ -50,6 +61,7 @@ export interface AITabData {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	currentModel?: string | null;
 }
 
 /**
@@ -102,6 +114,8 @@ export interface SessionData {
 	groupId: string | null;
 	groupName: string | null;
 	groupEmoji: string | null;
+	contextUsage?: number;
+	effectiveContextWindow?: number | null;
 	usageStats?: SessionUsageStats | null;
 	lastResponse?: LastResponsePreview | null;
 	agentSessionId?: string | null;
@@ -109,6 +123,13 @@ export interface SessionData {
 	thinkingStartTime?: number | null;
 	aiTabs?: AITabData[];
 	activeTabId?: string;
+	isGitRepo?: boolean;
+	gitFileCount?: number;
+	customModel?: string | null;
+	effectiveModelLabel?: string | null;
+	supportsModelSelection?: boolean;
+	parentSessionId?: string | null;
+	worktreeBranch?: string | null;
 	/** Whether session is bookmarked (shows in Bookmarks group) */
 	bookmarked?: boolean;
 }
@@ -123,8 +144,8 @@ export interface SessionDetail {
 	state: string;
 	inputMode: string;
 	cwd: string;
-	aiLogs?: Array<{ timestamp: number; content: string; type?: string }>;
-	shellLogs?: Array<{ timestamp: number; content: string; type?: string }>;
+	aiLogs?: WebRemoteLogEntry[];
+	shellLogs?: WebRemoteLogEntry[];
 	usageStats?: {
 		inputTokens?: number;
 		outputTokens?: number;
@@ -133,6 +154,8 @@ export interface SessionDetail {
 	agentSessionId?: string;
 	isGitRepo?: boolean;
 	activeTabId?: string;
+	customModel?: string | null;
+	supportsModelSelection?: boolean;
 }
 
 /**
@@ -148,10 +171,23 @@ export interface SessionBroadcastData {
 	groupId?: string | null;
 	groupName?: string | null;
 	groupEmoji?: string | null;
+	effectiveContextWindow?: number | null;
+	isGitRepo?: boolean;
 	/** Worktree subagent support */
 	parentSessionId?: string | null;
 	worktreeBranch?: string | null;
 }
+
+export type {
+	ResponseCompletedEvent,
+	PushStatusResponse,
+	PushSubscriptionRecord,
+	WebSessionLogEntryEvent,
+	WebVoiceTranscriptionStatusResponse,
+	WebVoiceTranscriptionRequest,
+	WebVoiceTranscriptionResponse,
+	WebPushSubscriptionInput,
+};
 
 // =============================================================================
 // AutoRun Types
@@ -220,13 +256,30 @@ export interface WebClientMessage {
 /**
  * Callback type for fetching sessions data.
  */
-export type GetSessionsCallback = () => SessionData[];
+export type GetSessionsCallback = () => Promise<SessionData[]> | SessionData[];
 
 /**
  * Callback type for fetching single session details.
  * Optional tabId allows fetching logs for a specific tab (avoids race conditions).
  */
 export type GetSessionDetailCallback = (sessionId: string, tabId?: string) => SessionDetail | null;
+export type GetSessionModelsCallback = (
+	sessionId: string,
+	forceRefresh?: boolean
+) => Promise<string[]> | string[];
+export type TranscribeAudioCallback = (
+	request: WebVoiceTranscriptionRequest
+) => Promise<WebVoiceTranscriptionResponse>;
+export type GetVoiceTranscriptionStatusCallback = () =>
+	| Promise<WebVoiceTranscriptionStatusResponse>
+	| WebVoiceTranscriptionStatusResponse;
+export type PrewarmVoiceTranscriptionCallback = () =>
+	| Promise<WebVoiceTranscriptionStatusResponse>
+	| WebVoiceTranscriptionStatusResponse;
+export type SetSessionModelCallback = (
+	sessionId: string,
+	model: string | null
+) => Promise<boolean> | boolean;
 
 /**
  * Callback type for sending commands to a session.
@@ -270,6 +323,7 @@ export type SelectSessionCallback = (sessionId: string, tabId?: string) => Promi
  */
 export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type NewTabCallback = (sessionId: string) => Promise<{ tabId: string } | null>;
+export type DeleteSessionCallback = (sessionId: string) => Promise<boolean>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type RenameTabCallback = (
 	sessionId: string,
@@ -306,6 +360,20 @@ export type GetHistoryCallback = (
 	projectPath?: string,
 	sessionId?: string
 ) => import('../../shared/types').HistoryEntry[];
+
+export type GetPushStatusCallback = (endpoint?: string) => PushStatusResponse;
+
+export type SubscribePushCallback = (
+	subscription: WebPushSubscriptionInput,
+	metadata?: {
+		userAgent?: string;
+		deviceLabel?: string;
+	}
+) => PushSubscriptionRecord;
+
+export type UnsubscribePushCallback = (endpoint: string) => boolean;
+
+export type SendTestPushCallback = (endpoint?: string) => Promise<boolean>;
 
 /**
  * Callback to get all connected web clients.

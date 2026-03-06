@@ -21,6 +21,7 @@
  */
 
 import { ipcMain } from 'electron';
+import type { ResponseCompletedEvent, WebRemoteLogEntry } from '../../../shared/remote-web';
 
 import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
@@ -105,8 +106,37 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 		'web:broadcastTabsChange',
 		async (_, sessionId: string, aiTabs: AITabData[], activeTabId: string) => {
 			const webServer = getWebServer();
-			if (webServer && webServer.getWebClientCount() > 0) {
+			if (webServer) {
 				webServer.broadcastTabsChange(sessionId, aiTabs, activeTabId);
+				return true;
+			}
+			return false;
+		}
+	);
+
+	ipcMain.handle(
+		'web:broadcastSessionAdded',
+		async (
+			_,
+			session: {
+				id: string;
+				name: string;
+				toolType: string;
+				state: string;
+				inputMode: string;
+				cwd: string;
+				groupId?: string | null;
+				groupName?: string | null;
+				groupEmoji?: string | null;
+				effectiveContextWindow?: number | null;
+				isGitRepo?: boolean;
+				parentSessionId?: string | null;
+				worktreeBranch?: string | null;
+			}
+		) => {
+			const webServer = getWebServer();
+			if (webServer) {
+				webServer.broadcastSessionAdded(session);
 				return true;
 			}
 			return false;
@@ -127,16 +157,55 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				toolType?: string;
 				inputMode?: string;
 				cwd?: string;
+				contextUsage?: number;
+				effectiveContextWindow?: number | null;
 			}
 		) => {
 			const webServer = getWebServer();
-			if (webServer && webServer.getWebClientCount() > 0) {
+			if (webServer) {
 				webServer.broadcastSessionStateChange(sessionId, state, additionalData);
 				return true;
 			}
 			return false;
 		}
 	);
+
+	ipcMain.handle('web:broadcastSessionRemoved', async (_, sessionId: string) => {
+		const webServer = getWebServer();
+		if (webServer) {
+			webServer.broadcastSessionRemoved(sessionId);
+			return true;
+		}
+		return false;
+	});
+
+	ipcMain.handle(
+		'web:broadcastSessionLogEntry',
+		async (
+			_,
+			sessionId: string,
+			tabId: string | null,
+			inputMode: 'ai' | 'terminal',
+			logEntry: WebRemoteLogEntry
+		) => {
+			const webServer = getWebServer();
+			if (webServer && webServer.getWebClientCount() > 0) {
+				webServer.broadcastSessionLogEntry(sessionId, tabId, inputMode, logEntry);
+				return true;
+			}
+			return false;
+		}
+	);
+
+	ipcMain.handle('web:broadcastResponseCompleted', async (_, event: ResponseCompletedEvent) => {
+		const webServer = getWebServer();
+		if (!webServer) {
+			return false;
+		}
+
+		await webServer.broadcastResponseCompleted(event);
+		return true;
+	});
 
 	// Live session management - toggle sessions as live/offline in web interface
 	ipcMain.handle('live:toggle', async (_, sessionId: string, agentSessionId?: string) => {
@@ -196,6 +265,19 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			return null;
 		}
 		return webServer.getSecureUrl();
+	});
+
+	ipcMain.handle('live:getServerStatus', async () => {
+		const webServer = getWebServer();
+		if (!webServer) {
+			return { active: false, url: null };
+		}
+
+		const active = webServer.isActive();
+		return {
+			active,
+			url: active ? webServer.getSecureUrl() : null,
+		};
 	});
 
 	ipcMain.handle('live:getLiveSessions', async () => {

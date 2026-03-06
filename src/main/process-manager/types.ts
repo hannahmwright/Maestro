@@ -46,6 +46,8 @@ export interface ProcessConfig {
 	taskContractInput?: Partial<TaskContractInput>;
 	/** Fully-resolved Task Contract attached to this session/process. */
 	taskContract?: TaskContract;
+	/** Resolved model seed for runtime UI state. */
+	resolvedModel?: string;
 }
 
 /**
@@ -82,6 +84,7 @@ export interface ManagedProcess {
 	projectPath?: string;
 	sshRemoteId?: string;
 	sshRemoteHost?: string;
+	currentModel?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	taskContract?: TaskContract;
@@ -127,6 +130,7 @@ export interface ProcessManagerEvents {
 	'command-exit': (sessionId: string, code: number) => void;
 	usage: (sessionId: string, stats: UsageStats) => void;
 	'session-id': (sessionId: string, agentSessionId: string) => void;
+	model: (sessionId: string, model: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
 	'thinking-chunk': (sessionId: string, text: string) => void;
 	'tool-execution': (sessionId: string, tool: ToolExecution) => void;

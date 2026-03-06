@@ -1964,14 +1964,132 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
 			expect(screen.getByText('[DONE]')).toBeInTheDocument();
-			expect(screen.getByText(/March 3 2026 weekday/)).toBeInTheDocument();
+			expect(screen.getByText('0 results from 1 search')).toBeInTheDocument();
+			expect(screen.queryByText(/March 3 2026 weekday/)).not.toBeInTheDocument();
 			expect(screen.queryByText('Web Search Timeline')).not.toBeInTheDocument();
 
 			fireEvent.click(screen.getByRole('button', { name: /Details/i }));
 
 			await waitFor(() => {
 				expect(screen.getByText('Web Search Timeline')).toBeInTheDocument();
-				expect(screen.getByRole('button', { name: 'March 3 2026 weekday' })).toBeInTheDocument();
+				expect(screen.getByText('March 3 2026 weekday')).toBeInTheDocument();
+			});
+		});
+
+		it('shows running web searches as they stream with per-search progress', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'web:search',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							searches: [
+								{
+									id: 'search-1',
+									query: 'latest maestro release notes',
+									status: 'completed',
+									timestamp: 1000,
+									domains: ['docs.runmaestro.ai'],
+									sourceUrls: ['https://docs.runmaestro.ai/changelog'],
+									responsePreview: 'Release notes and changelog overview',
+								},
+								{
+									id: 'search-2',
+									query: 'maestro search aggregation bug',
+									status: 'running',
+									timestamp: 2000,
+								},
+							],
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('Web Search Timeline')).toBeInTheDocument();
+			expect(screen.getByText('latest maestro release notes')).toBeInTheDocument();
+			expect(screen.getByText('maestro search aggregation bug')).toBeInTheDocument();
+			expect(screen.getByText('Release notes and changelog overview')).toBeInTheDocument();
+			expect(screen.getByText('waiting for response sources...')).toBeInTheDocument();
+		});
+
+		it('shows collapsed web search result counts and all source favicons, then expands into query/response cards', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'web:search',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							searches: [
+								{
+									id: 'search-1',
+									query: 'maestro release notes',
+									status: 'completed',
+									timestamp: 1000,
+									domains: ['docs.runmaestro.ai', 'github.com', 'news.ycombinator.com'],
+									sourceUrls: [
+										'https://docs.runmaestro.ai/changelog',
+										'https://github.com/runmaestro/maestro/releases/tag/v1',
+										'https://news.ycombinator.com/item?id=1',
+									],
+									responsePreview: 'Release notes, GitHub release, and launch discussion',
+								},
+								{
+									id: 'search-2',
+									query: 'maestro search sources',
+									status: 'completed',
+									timestamp: 2000,
+									domains: ['openai.com', 'developer.mozilla.org', 'electronjs.org'],
+									sourceUrls: [
+										'https://openai.com/index/search',
+										'https://developer.mozilla.org/en-US/docs/Web/API/URL',
+										'https://www.electronjs.org/docs/latest/api/shell',
+									],
+									responsePreview: 'Search implementation references and Electron shell docs',
+								},
+							],
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getByText('6 results from 2 searches')).toBeInTheDocument();
+			expect(screen.queryByText('maestro release notes')).not.toBeInTheDocument();
+			expect(screen.getByTitle('docs.runmaestro.ai')).toBeInTheDocument();
+			expect(screen.getByTitle('github.com')).toBeInTheDocument();
+			expect(screen.getByTitle('news.ycombinator.com')).toBeInTheDocument();
+			expect(screen.getByTitle('openai.com')).toBeInTheDocument();
+			expect(screen.getByTitle('developer.mozilla.org')).toBeInTheDocument();
+			expect(screen.getByTitle('electronjs.org')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByRole('button', { name: /Details/i }));
+
+			await waitFor(() => {
+				expect(screen.getByText('Web Search Timeline')).toBeInTheDocument();
+				expect(screen.getByText('maestro release notes')).toBeInTheDocument();
+				expect(screen.getByText('maestro search sources')).toBeInTheDocument();
+				expect(
+					screen.getByText('Release notes, GitHub release, and launch discussion')
+				).toBeInTheDocument();
+				expect(
+					screen.getByText('Search implementation references and Electron shell docs')
+				).toBeInTheDocument();
+				expect(screen.getAllByText('Response Sources')).toHaveLength(2);
 			});
 		});
 

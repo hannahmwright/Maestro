@@ -774,7 +774,6 @@ function MaestroConsoleInner() {
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
 		handleSetTabExecutionMode,
-		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
 		handleSetTabReasoningEffort,
 		handleOpenFileTab,
@@ -974,18 +973,6 @@ function MaestroConsoleInner() {
 
 	// PERF: Memoize hasNoAgents check for SettingsModal (only depends on session count)
 	const hasNoAgents = useMemo(() => sessions.length === 0, [sessions.length]);
-
-	// Remote integration hook - handles web interface communication
-	useRemoteIntegration({
-		activeSessionId,
-		isLiveMode,
-		sessionsRef,
-		activeSessionIdRef,
-		setSessions,
-		setActiveSessionId,
-		defaultSaveToHistory,
-		defaultShowThinking,
-	});
 
 	// Web broadcasting hook - handles external history change notifications
 	useWebBroadcasting({
@@ -1564,6 +1551,19 @@ function MaestroConsoleInner() {
 		pushNavigation,
 	});
 
+	// Remote integration hook - handles web interface communication
+	useRemoteIntegration({
+		activeSessionId,
+		isLiveMode,
+		sessionsRef,
+		activeSessionIdRef,
+		setSessions,
+		setActiveSessionId,
+		defaultSaveToHistory,
+		defaultShowThinking,
+		performDeleteSession,
+	});
+
 	// NOTE: Theme CSS variables and scrollbar fade animations are now handled by useThemeStyles hook
 	// NOTE: Main keyboard handler is now provided by useMainKeyboardHandler hook
 	// NOTE: Sync selectedSidebarIndex with activeSessionId is now handled by useKeyboardNavigation hook
@@ -1812,7 +1812,6 @@ function MaestroConsoleInner() {
 	const {
 		handlePromptComposerSubmit,
 		handlePromptComposerSend,
-		handlePromptToggleTabSaveToHistory,
 		handlePromptToggleTabReadOnlyMode,
 		handlePromptToggleTabShowThinking,
 		handlePromptToggleEnterToSend,
@@ -2168,7 +2167,6 @@ function MaestroConsoleInner() {
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
 		handleSetTabExecutionMode,
-		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
 		handleSetTabReasoningEffort,
 		toggleUnreadFilter,
@@ -2668,10 +2666,6 @@ function MaestroConsoleInner() {
 								: undefined
 					}
 					onPromptOpenLightbox={handleSetLightboxImage}
-					promptTabSaveToHistory={activeGroupChatId ? false : (activeTab?.saveToHistory ?? false)}
-					onPromptToggleTabSaveToHistory={
-						activeGroupChatId ? undefined : handlePromptToggleTabSaveToHistory
-					}
 					promptTabReadOnlyMode={
 						activeGroupChatId ? groupChatReadOnlyMode : (activeTab?.readOnlyMode ?? false)
 					}

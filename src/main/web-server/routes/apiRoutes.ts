@@ -2,7 +2,8 @@
  * API Routes for Web Server
  *
  * This module contains all REST API route handlers extracted from web-server.ts.
- * Routes are under /$TOKEN/api/* and handle session data, theme, history, and commands.
+ * Routes are under /app/api/* and handle session data, theme, history, commands,
+ * and web push subscription management.
  *
  * API Endpoints:
  * - GET /api/sessions - List all sessions with live info
@@ -14,6 +15,15 @@
  */
 
 import { FastifyInstance } from 'fastify';
+import {
+	WEB_APP_API_BASE_PATH,
+	type PushStatusResponse,
+	type PushSubscriptionRecord,
+	type WebVoiceTranscriptionRequest,
+	type WebVoiceTranscriptionResponse,
+	type WebVoiceTranscriptionStatusResponse,
+	type WebPushSubscriptionInput,
+} from '../../../shared/remote-web';
 import { HistoryEntry } from '../../../shared/types';
 import { logger } from '../../utils/logger';
 import type { Theme, SessionData, SessionDetail, LiveSessionInfo, RateLimitConfig } from '../types';
@@ -37,14 +47,31 @@ const LOG_CONTEXT = 'WebServer:API';
  * Callbacks required by API routes
  */
 export interface ApiRouteCallbacks {
-	getSessions: () => SessionData[];
+	getSessions: () => Promise<SessionData[]> | SessionData[];
 	getSessionDetail: (sessionId: string, tabId?: string) => SessionDetail | null;
+	getSessionModels: (sessionId: string, forceRefresh?: boolean) => Promise<string[]> | string[];
+	transcribeAudio: (
+		request: WebVoiceTranscriptionRequest
+	) => Promise<WebVoiceTranscriptionResponse | null>;
+	getVoiceTranscriptionStatus: () => Promise<WebVoiceTranscriptionStatusResponse | null>;
+	prewarmVoiceTranscription: () => Promise<WebVoiceTranscriptionStatusResponse | null>;
 	getTheme: () => Theme | null;
 	writeToSession: (sessionId: string, data: string) => boolean;
 	interruptSession: (sessionId: string) => Promise<boolean>;
+	setSessionModel: (sessionId: string, model: string | null) => Promise<boolean> | boolean;
 	getHistory: (projectPath?: string, sessionId?: string) => HistoryEntry[];
 	getLiveSessionInfo: (sessionId: string) => LiveSessionInfo | undefined;
 	isSessionLive: (sessionId: string) => boolean;
+	getPushStatus: (endpoint?: string) => PushStatusResponse;
+	subscribePush: (
+		subscription: WebPushSubscriptionInput,
+		metadata?: {
+			userAgent?: string;
+			deviceLabel?: string;
+		}
+	) => PushSubscriptionRecord;
+	unsubscribePush: (endpoint: string) => boolean;
+	sendTestPush: (endpoint?: string) => Promise<boolean>;
 }
 
 /**
@@ -56,10 +83,8 @@ export interface ApiRouteCallbacks {
 export class ApiRoutes {
 	private callbacks: Partial<ApiRouteCallbacks> = {};
 	private rateLimitConfig: RateLimitConfig;
-	private securityToken: string;
 
-	constructor(securityToken: string, rateLimitConfig: RateLimitConfig) {
-		this.securityToken = securityToken;
+	constructor(rateLimitConfig: RateLimitConfig) {
 		this.rateLimitConfig = rateLimitConfig;
 	}
 
@@ -81,11 +106,9 @@ export class ApiRoutes {
 	 * Register all API routes on the Fastify server
 	 */
 	registerRoutes(server: FastifyInstance): void {
-		const token = this.securityToken;
-
-		// Get all sessions (not just "live" ones - security token protects access)
+		// Get all sessions (not just "live" ones - perimeter auth protects access)
 		server.get(
-			`/${token}/api/sessions`,
+			`${WEB_APP_API_BASE_PATH}/sessions`,
 			{
 				config: {
 					rateLimit: {
@@ -95,7 +118,7 @@ export class ApiRoutes {
 				},
 			},
 			async () => {
-				const sessions = this.callbacks.getSessions ? this.callbacks.getSessions() : [];
+				const sessions = this.callbacks.getSessions ? await this.callbacks.getSessions() : [];
 
 				// Enrich all sessions with live info if available
 				const sessionData = sessions.map((s) => {
@@ -116,10 +139,10 @@ export class ApiRoutes {
 			}
 		);
 
-		// Session detail endpoint - works for any valid session (security token protects access)
+		// Session detail endpoint - works for any valid session.
 		// Optional ?tabId= query param to fetch logs for a specific tab (avoids race conditions)
 		server.get(
-			`/${token}/api/session/:id`,
+			`${WEB_APP_API_BASE_PATH}/session/:id`,
 			{
 				config: {
 					rateLimit: {
@@ -162,9 +185,217 @@ export class ApiRoutes {
 			}
 		);
 
-		// Send command to session - works for any valid session (security token protects access)
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/session/:id/models`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const { forceRefresh } = request.query as { forceRefresh?: string };
+
+				if (!this.callbacks.getSessionModels) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Session model discovery service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const models = await this.callbacks.getSessionModels(id, forceRefresh === 'true');
+				return {
+					models,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
 		server.post(
-			`/${token}/api/session/:id/send`,
+			`${WEB_APP_API_BASE_PATH}/transcribe`,
+			{
+				bodyLimit: 12 * 1024 * 1024,
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const body = request.body as WebVoiceTranscriptionRequest | undefined;
+
+				if (!body?.audioBase64 || !body?.mimeType) {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: 'audioBase64 and mimeType are required',
+						timestamp: Date.now(),
+					});
+				}
+
+				if (!this.callbacks.transcribeAudio) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Voice transcription service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				try {
+					const result = await this.callbacks.transcribeAudio(body);
+					if (!result) {
+						return reply.code(503).send({
+							error: 'Service Unavailable',
+							message: 'Voice transcription is unavailable',
+							timestamp: Date.now(),
+						});
+					}
+
+					return {
+						...result,
+						timestamp: Date.now(),
+					};
+				} catch (error) {
+					logger.warn('Voice transcription request failed', LOG_CONTEXT, { error });
+					return reply.code(500).send({
+						error: 'Internal Server Error',
+						message: error instanceof Error ? error.message : 'Voice transcription failed',
+						timestamp: Date.now(),
+					});
+				}
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/transcribe/status`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (_request, reply) => {
+				if (!this.callbacks.getVoiceTranscriptionStatus) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Voice transcription status service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const status = await this.callbacks.getVoiceTranscriptionStatus();
+				if (!status) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Voice transcription is unavailable',
+						timestamp: Date.now(),
+					});
+				}
+
+				return {
+					...status,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/transcribe/prewarm`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (_request, reply) => {
+				if (!this.callbacks.prewarmVoiceTranscription) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Voice transcription prewarm service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				try {
+					const status = await this.callbacks.prewarmVoiceTranscription();
+					if (!status) {
+						return reply.code(503).send({
+							error: 'Service Unavailable',
+							message: 'Voice transcription is unavailable',
+							timestamp: Date.now(),
+						});
+					}
+
+					return {
+						...status,
+						timestamp: Date.now(),
+					};
+				} catch (error) {
+					logger.warn('Voice transcription prewarm failed', LOG_CONTEXT, { error });
+					return reply.code(500).send({
+						error: 'Internal Server Error',
+						message: error instanceof Error ? error.message : 'Voice transcription prewarm failed',
+						timestamp: Date.now(),
+					});
+				}
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/session/:id/model`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const body = request.body as { model?: string | null } | undefined;
+				const model = typeof body?.model === 'string' ? body.model : (body?.model ?? null);
+
+				if (!this.callbacks.setSessionModel) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Session model update service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const success = await this.callbacks.setSessionModel(
+					id,
+					model?.trim() ? model.trim() : null
+				);
+				if (!success) {
+					return reply.code(500).send({
+						error: 'Internal Server Error',
+						message: 'Failed to update session model',
+						timestamp: Date.now(),
+					});
+				}
+
+				return {
+					success: true,
+					model: model?.trim() ? model.trim() : null,
+					sessionId: id,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		// Send command to session - works for any valid session.
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/session/:id/send`,
 			{
 				config: {
 					rateLimit: {
@@ -214,7 +445,7 @@ export class ApiRoutes {
 
 		// Theme endpoint
 		server.get(
-			`/${token}/api/theme`,
+			`${WEB_APP_API_BASE_PATH}/theme`,
 			{
 				config: {
 					rateLimit: {
@@ -248,9 +479,9 @@ export class ApiRoutes {
 			}
 		);
 
-		// Interrupt session - works for any valid session (security token protects access)
+		// Interrupt session - works for any valid session.
 		server.post(
-			`/${token}/api/session/:id/interrupt`,
+			`${WEB_APP_API_BASE_PATH}/session/:id/interrupt`,
 			{
 				config: {
 					rateLimit: {
@@ -299,7 +530,7 @@ export class ApiRoutes {
 
 		// History endpoint - returns history entries filtered by project/session
 		server.get(
-			`/${token}/api/history`,
+			`${WEB_APP_API_BASE_PATH}/history`,
 			{
 				config: {
 					rateLimit: {
@@ -337,6 +568,143 @@ export class ApiRoutes {
 						timestamp: Date.now(),
 					});
 				}
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/push/status`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.getPushStatus) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Push status service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const { endpoint } = request.query as { endpoint?: string };
+				return {
+					...this.callbacks.getPushStatus(endpoint),
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/push/subscribe`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.subscribePush) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Push subscribe service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const body = request.body as {
+					subscription?: WebPushSubscriptionInput;
+					deviceLabel?: string;
+				};
+				if (
+					!body?.subscription?.endpoint ||
+					!body.subscription.keys?.p256dh ||
+					!body.subscription.keys?.auth
+				) {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: 'A valid push subscription is required',
+						timestamp: Date.now(),
+					});
+				}
+
+				const record = this.callbacks.subscribePush(body.subscription, {
+					userAgent: request.headers['user-agent'],
+					deviceLabel: body.deviceLabel,
+				});
+				return {
+					success: true,
+					record,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/push/unsubscribe`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.unsubscribePush) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Push unsubscribe service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const body = request.body as { endpoint?: string };
+				if (!body?.endpoint) {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: 'Push endpoint is required',
+						timestamp: Date.now(),
+					});
+				}
+
+				return {
+					success: this.callbacks.unsubscribePush(body.endpoint),
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/push/test`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.sendTestPush) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Push test service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const body = request.body as { endpoint?: string } | undefined;
+				const success = await this.callbacks.sendTestPush(body?.endpoint);
+				return {
+					success,
+					timestamp: Date.now(),
+				};
 			}
 		);
 

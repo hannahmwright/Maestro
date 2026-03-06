@@ -26,6 +26,14 @@ interface ThinkingStatusPillProps {
 	onInterrupt?: () => void;
 }
 
+const THINKING_PILL_BG = '#FFF7BD';
+const THINKING_PILL_BORDER = 'rgba(224, 207, 109, 0.7)';
+const THINKING_PILL_DOT = '#d8e763';
+const THINKING_MORE_BG = 'rgba(216, 231, 99, 0.22)';
+const THINKING_MORE_BORDER = 'rgba(198, 215, 101, 0.58)';
+const THINKING_MORE_TEXT = '#6f7f1b';
+const STOP_BUTTON_BG = '#d96b6b';
+
 // ElapsedTimeDisplay - shows time since thinking started
 const ElapsedTimeDisplay = memo(
 	({ startTime, textColor }: { startTime: number; textColor: string }) => {
@@ -255,7 +263,7 @@ const ThinkingItemRow = memo(
 					{/* Pulsing yellow circle indicator */}
 					<div
 						className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-						style={{ backgroundColor: theme.colors.warning }}
+						style={{ backgroundColor: THINKING_PILL_DOT }}
 					/>
 					{/* Maestro session name (from left bar) + Tab name */}
 					<span className="text-xs truncate">
@@ -367,7 +375,7 @@ const AutoRunPill = memo(
 									isStopping ? 'cursor-not-allowed' : 'hover:opacity-80'
 								}`}
 								style={{
-									backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
+									backgroundColor: isStopping ? theme.colors.warning : STOP_BUTTON_BG,
 									color: isStopping ? theme.colors.bgMain : 'white',
 									pointerEvents: isStopping ? 'none' : 'auto',
 								}}
@@ -476,14 +484,14 @@ function ThinkingStatusPillInner({
 			<div
 				className="flex items-center gap-2 px-4 py-1.5 rounded-full"
 				style={{
-					backgroundColor: theme.colors.warning + '20',
-					border: `1px solid ${theme.colors.border}`,
+					backgroundColor: THINKING_PILL_BG,
+					border: `1px solid ${THINKING_PILL_BORDER}`,
 				}}
 			>
 				{/* Thinking Pill - Pulsing yellow circle indicator */}
 				<div
 					className="w-2.5 h-2.5 rounded-full shrink-0 animate-pulse"
-					style={{ backgroundColor: theme.colors.warning }}
+					style={{ backgroundColor: THINKING_PILL_DOT }}
 				/>
 
 				{/* Maestro session name - always visible, not clickable */}
@@ -564,12 +572,12 @@ function ThinkingStatusPillInner({
 						<div
 							className="w-5 h-5 rounded-full flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
 							style={{
-								backgroundColor: theme.colors.warning + '40',
-								border: `1px solid ${theme.colors.warning}60`,
+								backgroundColor: THINKING_MORE_BG,
+								border: `1px solid ${THINKING_MORE_BORDER}`,
 							}}
 							title={`+${additionalItems.length} more thinking`}
 						>
-							<span className="text-[10px] font-bold" style={{ color: theme.colors.warning }}>
+							<span className="text-[10px] font-bold" style={{ color: THINKING_MORE_TEXT }}>
 								+{additionalItems.length}
 							</span>
 						</div>
@@ -617,7 +625,7 @@ function ThinkingStatusPillInner({
 							onClick={onInterrupt}
 							className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors hover:opacity-80"
 							style={{
-								backgroundColor: theme.colors.error,
+								backgroundColor: STOP_BUTTON_BG,
 								color: 'white',
 							}}
 							title="Interrupt Claude (Ctrl+C)"

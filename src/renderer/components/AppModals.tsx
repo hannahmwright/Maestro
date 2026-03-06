@@ -942,8 +942,6 @@ export interface AppUtilityModalsProps {
 		contextImages?: string[],
 		source?: 'staged' | 'history'
 	) => void;
-	promptTabSaveToHistory: boolean;
-	onPromptToggleTabSaveToHistory?: () => void;
 	promptTabReadOnlyMode: boolean;
 	onPromptToggleTabReadOnlyMode: () => void;
 	promptTabShowThinking: ThinkingMode;
@@ -1120,8 +1118,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	setPromptComposerStagedImages,
 	onPromptImageAttachBlocked,
 	onPromptOpenLightbox,
-	promptTabSaveToHistory,
-	onPromptToggleTabSaveToHistory,
 	promptTabReadOnlyMode,
 	onPromptToggleTabReadOnlyMode,
 	promptTabShowThinking,
@@ -1354,8 +1350,6 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					setStagedImages={setPromptComposerStagedImages}
 					onImageAttachBlocked={onPromptImageAttachBlocked}
 					onOpenLightbox={onPromptOpenLightbox}
-					tabSaveToHistory={promptTabSaveToHistory}
-					onToggleTabSaveToHistory={onPromptToggleTabSaveToHistory}
 					tabReadOnlyMode={promptTabReadOnlyMode}
 					onToggleTabReadOnlyMode={onPromptToggleTabReadOnlyMode}
 					tabShowThinking={promptTabShowThinking}
@@ -2025,8 +2019,6 @@ export interface AppModalsProps {
 		contextImages?: string[],
 		source?: 'staged' | 'history'
 	) => void;
-	promptTabSaveToHistory: boolean;
-	onPromptToggleTabSaveToHistory?: () => void;
 	promptTabReadOnlyMode: boolean;
 	onPromptToggleTabReadOnlyMode: () => void;
 	promptTabShowThinking: ThinkingMode;
@@ -2383,8 +2375,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		setPromptComposerStagedImages,
 		onPromptImageAttachBlocked,
 		onPromptOpenLightbox,
-		promptTabSaveToHistory,
-		onPromptToggleTabSaveToHistory,
 		promptTabReadOnlyMode,
 		onPromptToggleTabReadOnlyMode,
 		promptTabShowThinking,
@@ -2692,8 +2682,6 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				setPromptComposerStagedImages={setPromptComposerStagedImages}
 				onPromptImageAttachBlocked={onPromptImageAttachBlocked}
 				onPromptOpenLightbox={onPromptOpenLightbox}
-				promptTabSaveToHistory={promptTabSaveToHistory}
-				onPromptToggleTabSaveToHistory={onPromptToggleTabSaveToHistory}
 				promptTabReadOnlyMode={promptTabReadOnlyMode}
 				onPromptToggleTabReadOnlyMode={onPromptToggleTabReadOnlyMode}
 				promptTabShowThinking={promptTabShowThinking}

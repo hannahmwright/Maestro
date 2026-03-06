@@ -260,6 +260,26 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);
+				void window.maestro.web.broadcastSessionAdded({
+					id: newSession.id,
+					name: newSession.name,
+					toolType: newSession.toolType,
+					state: newSession.state,
+					inputMode: newSession.inputMode,
+					cwd: newSession.cwd,
+					groupId: newSession.groupId || null,
+					groupName: null,
+					groupEmoji: null,
+					effectiveContextWindow:
+						typeof newSession.customContextWindow === 'number' && newSession.customContextWindow > 0
+							? newSession.customContextWindow
+							: null,
+					isGitRepo: newSession.isGitRepo,
+					parentSessionId: newSession.parentSessionId || null,
+					worktreeBranch: newSession.worktreeBranch || null,
+				});
+				void window.maestro.live.broadcastActiveSession(newId);
+				setTimeout(() => flushSessionPersistence(), 0);
 				(window as any).maestro.stats.recordSessionCreated({
 					sessionId: newId,
 					agentType: agentId,

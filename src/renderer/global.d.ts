@@ -455,8 +455,15 @@ interface MaestroAPI {
 		onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectSession: (callback: (sessionId: string) => void) => () => void;
 		onRemoteSelectTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
+		onRemoteSetSessionModel: (
+			callback: (sessionId: string, model: string | null) => void
+		) => () => void;
 		onRemoteNewTab: (callback: (sessionId: string, responseChannel: string) => void) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
+		onRemoteDeleteSession: (
+			callback: (sessionId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteDeleteSessionResponse: (responseChannel: string, success: boolean) => void;
 		onRemoteCloseTab: (callback: (sessionId: string, tabId: string) => void) => () => void;
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string) => void
@@ -550,6 +557,7 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+		onModel: (callback: (sessionId: string, model: string) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;
 		onAgentError: (
 			callback: (
@@ -642,6 +650,21 @@ interface MaestroAPI {
 			}>,
 			activeTabId: string
 		) => Promise<void>;
+		broadcastSessionAdded: (session: {
+			id: string;
+			name: string;
+			toolType: string;
+			state: string;
+			inputMode: string;
+			cwd: string;
+			groupId?: string | null;
+			groupName?: string | null;
+			groupEmoji?: string | null;
+			effectiveContextWindow?: number | null;
+			isGitRepo?: boolean;
+			parentSessionId?: string | null;
+			worktreeBranch?: string | null;
+		}) => Promise<boolean>;
 		broadcastSessionState: (
 			sessionId: string,
 			state: string,
@@ -650,8 +673,44 @@ interface MaestroAPI {
 				toolType?: string;
 				inputMode?: string;
 				cwd?: string;
+				contextUsage?: number;
+				effectiveContextWindow?: number | null;
 			}
 		) => Promise<boolean>;
+		broadcastSessionRemoved: (sessionId: string) => Promise<boolean>;
+		broadcastSessionLogEntry: (
+			sessionId: string,
+			tabId: string | null,
+			inputMode: 'ai' | 'terminal',
+			logEntry: {
+				id?: string;
+				timestamp: number;
+				text?: string;
+				content?: string;
+				source?: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error' | 'thinking' | 'tool';
+				type?: string;
+				metadata?: {
+					toolState?: {
+						id?: string;
+						status?: 'running' | 'completed' | 'error' | 'success' | 'failed' | string;
+						input?: unknown;
+						output?: unknown;
+						[key: string]: unknown;
+					};
+				};
+			}
+		) => Promise<boolean>;
+		broadcastResponseCompleted: (event: {
+			eventId: string;
+			sessionId: string;
+			tabId: string | null;
+			sessionName: string;
+			toolType: string;
+			completedAt: number;
+			title: string;
+			body: string;
+			deepLinkUrl: string;
+		}) => Promise<boolean>;
 	};
 	// Git API - all methods accept optional sshRemoteId and remoteCwd for remote execution via SSH
 	git: {
@@ -925,6 +984,7 @@ interface MaestroAPI {
 		) => Promise<{ live: boolean; url: string | null }>;
 		getStatus: (sessionId: string) => Promise<{ live: boolean; url: string | null }>;
 		getDashboardUrl: () => Promise<string | null>;
+		getServerStatus: () => Promise<{ active: boolean; url: string | null }>;
 		getLiveSessions: () => Promise<
 			Array<{ sessionId: string; agentSessionId?: string; enabledAt: number }>
 		>;

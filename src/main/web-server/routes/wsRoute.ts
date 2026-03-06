@@ -4,7 +4,7 @@
  * This module contains the WebSocket route setup extracted from web-server.ts.
  * Handles WebSocket connections, initial state sync, and message delegation.
  *
- * Route: /$TOKEN/ws
+ * Route: /app/ws
  *
  * Connection Flow:
  * 1. Client connects with optional ?sessionId= query param
@@ -16,6 +16,7 @@
  */
 
 import { FastifyInstance } from 'fastify';
+import { WEB_APP_WS_PATH } from '../../../shared/remote-web';
 import { logger } from '../../utils/logger';
 import type {
 	Theme,
@@ -43,7 +44,7 @@ export type WsSessionData = SessionData;
  * Callbacks required by WebSocket route
  */
 export interface WsRouteCallbacks {
-	getSessions: () => SessionData[];
+	getSessions: () => Promise<SessionData[]> | SessionData[];
 	getTheme: () => Theme | null;
 	getCustomCommands: () => CustomAICommand[];
 	getAutoRunStates: () => Map<string, AutoRunState>;
@@ -62,13 +63,10 @@ export interface WsRouteCallbacks {
  * Delegates message handling to WebSocketMessageHandler via callbacks.
  */
 export class WsRoute {
-	private securityToken: string;
 	private callbacks: Partial<WsRouteCallbacks> = {};
 	private clientIdCounter: number = 0;
 
-	constructor(securityToken: string) {
-		this.securityToken = securityToken;
-	}
+	constructor() {}
 
 	/**
 	 * Set the callbacks for WebSocket operations
@@ -81,9 +79,7 @@ export class WsRoute {
 	 * Register the WebSocket route on the Fastify server
 	 */
 	registerRoute(server: FastifyInstance): void {
-		const token = this.securityToken;
-
-		server.get(`/${token}/ws`, { websocket: true }, (connection, request) => {
+		server.get(WEB_APP_WS_PATH, { websocket: true }, (connection, request) => {
 			const clientId = `web-client-${++this.clientIdCounter}`;
 
 			// Extract sessionId from query string if provided (for session-specific subscriptions)
@@ -115,25 +111,37 @@ export class WsRoute {
 				})
 			);
 
-			// Send initial sessions list (all sessions, not just "live" ones)
 			if (this.callbacks.getSessions) {
-				const allSessions = this.callbacks.getSessions();
-				const sessionsWithLiveInfo = allSessions.map((s) => {
-					const liveInfo = this.callbacks.getLiveSessionInfo?.(s.id);
-					return {
-						...s,
-						agentSessionId: liveInfo?.agentSessionId || s.agentSessionId,
-						liveEnabledAt: liveInfo?.enabledAt,
-						isLive: this.callbacks.isSessionLive?.(s.id) || false,
-					};
-				});
-				connection.socket.send(
-					JSON.stringify({
-						type: 'sessions_list',
-						sessions: sessionsWithLiveInfo,
-						timestamp: Date.now(),
-					})
-				);
+				void (async () => {
+					try {
+						const allSessions = await this.callbacks.getSessions!();
+						const sessionsWithLiveInfo = allSessions.map((s) => {
+							const liveInfo = this.callbacks.getLiveSessionInfo?.(s.id);
+							return {
+								...s,
+								agentSessionId: liveInfo?.agentSessionId || s.agentSessionId,
+								liveEnabledAt: liveInfo?.enabledAt,
+								isLive: this.callbacks.isSessionLive?.(s.id) || false,
+							};
+						});
+						connection.socket.send(
+							JSON.stringify({
+								type: 'sessions_list',
+								sessions: sessionsWithLiveInfo,
+								timestamp: Date.now(),
+							})
+						);
+					} catch (error) {
+						logger.error('Failed to send initial sessions list', LOG_CONTEXT, error);
+						connection.socket.send(
+							JSON.stringify({
+								type: 'error',
+								message: 'Failed to load sessions',
+								timestamp: Date.now(),
+							})
+						);
+					}
+				})();
 			}
 
 			// Send current theme

@@ -2,25 +2,20 @@
  * Maestro Web Config
  *
  * Configuration injected by the server into window.__MAESTRO_CONFIG__
- * This tells the React app about the security token and current context.
+ * This tells the React app about the stable route base and current context.
  */
 import { webLogger } from './logger';
+import {
+	WEB_APP_API_BASE_PATH,
+	WEB_APP_BASE_PATH,
+	WEB_APP_WS_PATH,
+	type MaestroWebConfig,
+} from '../../shared/remote-web';
 
 /**
  * Configuration injected by the server
  */
-export interface MaestroConfig {
-	/** Security token (UUID) - required in all API/WS URLs */
-	securityToken: string;
-	/** Session ID if viewing a specific session, null for dashboard */
-	sessionId: string | null;
-	/** Tab ID if viewing a specific tab within a session, null for default tab */
-	tabId: string | null;
-	/** Base path for API requests (e.g., "/$TOKEN/api") */
-	apiBase: string;
-	/** WebSocket URL path (e.g., "/$TOKEN/ws") */
-	wsUrl: string;
-}
+export type MaestroConfig = MaestroWebConfig;
 
 // Extend Window interface
 declare global {
@@ -38,15 +33,11 @@ export function getMaestroConfig(): MaestroConfig {
 		return window.__MAESTRO_CONFIG__;
 	}
 
-	// Development fallback - use current URL structure
-	// In dev mode, you'd need to manually set the token
+	// Development fallback - infer stable /app-style routes from the current URL.
 	webLogger.warn('No __MAESTRO_CONFIG__ found, using development defaults', 'Config');
 
-	// Try to extract token from URL path (e.g., /abc123-def456/...)
 	const pathParts = window.location.pathname.split('/').filter(Boolean);
-	const token = pathParts[0] || 'dev-token';
-
-	// Check if we're on a session route (e.g., /$TOKEN/session/$SESSION_ID)
+	const basePath = pathParts[0] === WEB_APP_BASE_PATH.replace('/', '') ? WEB_APP_BASE_PATH : '';
 	const sessionId = pathParts[1] === 'session' ? pathParts[2] || null : null;
 
 	// Extract tabId from query parameter (e.g., ?tabId=abc123)
@@ -54,11 +45,16 @@ export function getMaestroConfig(): MaestroConfig {
 	const tabId = urlParams.get('tabId');
 
 	return {
-		securityToken: token,
+		basePath: basePath || WEB_APP_BASE_PATH,
 		sessionId,
 		tabId,
-		apiBase: `/${token}/api`,
-		wsUrl: `/${token}/ws`,
+		apiBase: basePath ? WEB_APP_API_BASE_PATH : '/api',
+		wsUrl: basePath ? WEB_APP_WS_PATH : '/ws',
+		authMode: 'cloudflare-access',
+		clientInstanceId: 'dev-client',
+		webPush: {
+			enabled: false,
+		},
 	};
 }
 
@@ -117,7 +113,7 @@ export function buildWebSocketUrl(sessionId?: string): string {
  */
 export function getDashboardUrl(): string {
 	const config = getMaestroConfig();
-	return `${window.location.origin}/${config.securityToken}`;
+	return `${window.location.origin}${config.basePath}`;
 }
 
 /**
@@ -125,7 +121,7 @@ export function getDashboardUrl(): string {
  */
 export function getSessionUrl(sessionId: string, tabId?: string | null): string {
 	const config = getMaestroConfig();
-	const baseUrl = `${window.location.origin}/${config.securityToken}/session/${sessionId}`;
+	const baseUrl = `${window.location.origin}${config.basePath}/session/${sessionId}`;
 	if (tabId) {
 		return `${baseUrl}?tabId=${encodeURIComponent(tabId)}`;
 	}
@@ -149,4 +145,13 @@ export function updateUrlForSessionTab(sessionId: string, tabId?: string | null)
 	if (window.location.href !== newUrl) {
 		window.history.replaceState({ sessionId, tabId }, '', newUrl);
 	}
+}
+
+/**
+ * Build an absolute asset URL within the web app scope.
+ */
+export function buildScopedAssetUrl(assetPath: string): string {
+	const config = getMaestroConfig();
+	const normalizedPath = assetPath.startsWith('/') ? assetPath : `/${assetPath}`;
+	return `${window.location.origin}${config.basePath}${normalizedPath}`;
 }

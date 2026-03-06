@@ -29,6 +29,7 @@ function getGitHash() {
 	}
 }
 const gitHash = getGitHash();
+const buildId = process.env.VITE_BUILD_ID || new Date().toISOString();
 
 export default defineConfig(({ mode }) => ({
 	plugins: [react()],
@@ -46,6 +47,7 @@ export default defineConfig(({ mode }) => ({
 	define: {
 		__APP_VERSION__: JSON.stringify(appVersion),
 		__GIT_HASH__: JSON.stringify(gitHash),
+		__BUILD_ID__: JSON.stringify(buildId),
 	},
 
 	esbuild: {
@@ -114,20 +116,32 @@ export default defineConfig(({ mode }) => ({
 						return 'react';
 					}
 
-					// Mobile-specific dependencies (future-proofing for Phase 1)
-					// When mobile-specific libraries are added, they'll be bundled separately
-					if (id.includes('/mobile/') && !id.includes('node_modules')) {
-						return 'mobile';
+					// Markdown and code-highlighting are the heaviest web-only vendors.
+					// Keep them out of the main mobile shell so the PWA becomes interactive faster.
+					if (id.includes('node_modules/react-syntax-highlighter')) {
+						return 'syntax-highlighter';
 					}
-
-					// Desktop-specific dependencies (future-proofing for Phase 2)
-					// When desktop-specific libraries are added, they'll be bundled separately
-					if (id.includes('/desktop/') && !id.includes('node_modules')) {
-						return 'desktop';
+					if (id.includes('node_modules/refractor')) {
+						return 'refractor';
 					}
-
-					// Shared web components stay in main bundle or get split automatically
-					// This allows React.lazy() to create async chunks for mobile/desktop
+					if (
+						id.includes('node_modules/react-markdown') ||
+						id.includes('node_modules/remark-gfm') ||
+						id.includes('node_modules/mdast-') ||
+						id.includes('node_modules/micromark') ||
+						id.includes('node_modules/hast-') ||
+						id.includes('node_modules/unist-') ||
+						id.includes('node_modules/unified') ||
+						id.includes('node_modules/property-information') ||
+						id.includes('node_modules/vfile') ||
+						id.includes('node_modules/comma-separated-tokens') ||
+						id.includes('node_modules/space-separated-tokens')
+					) {
+						return 'markdown';
+					}
+					if (id.includes('node_modules/lucide-react')) {
+						return 'icons';
+					}
 
 					// Return undefined for other modules to let Rollup handle them
 					return undefined;
@@ -151,11 +165,11 @@ export default defineConfig(({ mode }) => ({
 		strictPort: true,
 		// Proxy API calls to the running Maestro app during development
 		proxy: {
-			'/api': {
+			'/app/api': {
 				target: 'http://localhost:45678',
 				changeOrigin: true,
 			},
-			'/ws': {
+			'/app/ws': {
 				target: 'ws://localhost:45678',
 				ws: true,
 			},

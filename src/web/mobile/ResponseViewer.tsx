@@ -19,13 +19,13 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import type { LastResponsePreview } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { normalizeMobileCodeLanguage, SyntaxHighlighter } from './prismLight';
 
 /**
  * Represents a response item that can be navigated to
@@ -74,70 +74,6 @@ function formatTimestamp(timestamp: number): string {
 		hour: '2-digit',
 		minute: '2-digit',
 	});
-}
-
-/**
- * Language mapping for common file extensions and language identifiers
- */
-const LANGUAGE_MAP: Record<string, string> = {
-	ts: 'typescript',
-	tsx: 'tsx',
-	js: 'javascript',
-	jsx: 'jsx',
-	json: 'json',
-	md: 'markdown',
-	py: 'python',
-	python: 'python',
-	rb: 'ruby',
-	ruby: 'ruby',
-	go: 'go',
-	golang: 'go',
-	rs: 'rust',
-	rust: 'rust',
-	java: 'java',
-	c: 'c',
-	cpp: 'cpp',
-	'c++': 'cpp',
-	cs: 'csharp',
-	csharp: 'csharp',
-	php: 'php',
-	html: 'html',
-	css: 'css',
-	scss: 'scss',
-	sass: 'sass',
-	sql: 'sql',
-	sh: 'bash',
-	bash: 'bash',
-	shell: 'bash',
-	zsh: 'bash',
-	yaml: 'yaml',
-	yml: 'yaml',
-	toml: 'toml',
-	xml: 'xml',
-	swift: 'swift',
-	kotlin: 'kotlin',
-	kt: 'kotlin',
-	scala: 'scala',
-	r: 'r',
-	lua: 'lua',
-	perl: 'perl',
-	dockerfile: 'dockerfile',
-	docker: 'dockerfile',
-	makefile: 'makefile',
-	make: 'makefile',
-	graphql: 'graphql',
-	gql: 'graphql',
-	diff: 'diff',
-	patch: 'diff',
-};
-
-/**
- * Normalize language identifier to a known language
- */
-function normalizeLanguage(lang: string | undefined): string {
-	if (!lang) return 'text';
-	const normalized = lang.toLowerCase().trim();
-	return LANGUAGE_MAP[normalized] || normalized || 'text';
 }
 
 /**
@@ -193,7 +129,7 @@ function parseTextWithCodeBlocks(text: string): TextSegment[] {
 			segments.push({
 				type: 'code',
 				content: code.trimEnd(), // Remove trailing whitespace but keep leading
-				language: normalizeLanguage(language),
+				language: normalizeMobileCodeLanguage(language),
 			});
 		}
 

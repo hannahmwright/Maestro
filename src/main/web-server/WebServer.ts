@@ -3,21 +3,20 @@
  *
  * Architecture:
  * - Single server on random port
- * - Security token (UUID) generated at startup, required in all URLs
- * - Routes: /$TOKEN/ (dashboard), /$TOKEN/session/:id (session view)
+ * - Routes: /app (dashboard), /app/session/:id (session view)
  * - Live sessions: Only sessions marked as "live" appear in dashboard
  * - WebSocket: Real-time updates for session state, logs, theme
+ * - Optional legacy token redirects preserved for compatibility only
  *
  * URL Structure:
- *   http://localhost:PORT/$TOKEN/                  → Dashboard (all live sessions)
- *   http://localhost:PORT/$TOKEN/session/$UUID     → Single session view
- *   http://localhost:PORT/$TOKEN/api/*             → REST API
- *   http://localhost:PORT/$TOKEN/ws                → WebSocket
+ *   http://localhost:PORT/app                      → Dashboard (all live sessions)
+ *   http://localhost:PORT/app/session/$UUID        → Single session view
+ *   http://localhost:PORT/app/api/*                → REST API
+ *   http://localhost:PORT/app/ws                   → WebSocket
  *
  * Security:
- * - Token regenerated on each app restart
- * - Invalid/missing token redirects to website
- * - No access without knowing the token
+ * - Stable browser-facing scope for Cloudflare Access and PWA installability
+ * - Legacy token regenerated on each app restart for internal compatibility redirects
  */
 
 import Fastify from 'fastify';
@@ -31,10 +30,18 @@ import path from 'path';
 import { existsSync } from 'fs';
 import { getLocalIpAddressSync } from '../utils/networkUtils';
 import { logger } from '../utils/logger';
+import { WebPushManager } from '../web-push-manager';
 import { WebSocketMessageHandler } from './handlers';
 import { BroadcastService } from './services';
 import { ApiRoutes, StaticRoutes, WsRoute } from './routes';
 import { LiveSessionManager, CallbackRegistry } from './managers';
+import {
+	WEB_APP_ASSETS_PATH,
+	WEB_APP_BASE_PATH,
+	WEB_APP_ICONS_PATH,
+	type ResponseCompletedEvent,
+	type WebRemoteLogEntry,
+} from '../../shared/remote-web';
 
 // Import shared types from canonical location
 import type {
@@ -46,17 +53,24 @@ import type {
 	AutoRunState,
 	CliActivity,
 	SessionBroadcastData,
+	SessionData,
 	WebClient,
 	WebClientMessage,
 	GetSessionsCallback,
 	GetSessionDetailCallback,
+	GetSessionModelsCallback,
+	GetVoiceTranscriptionStatusCallback,
+	TranscribeAudioCallback,
+	PrewarmVoiceTranscriptionCallback,
 	WriteToSessionCallback,
 	ExecuteCommandCallback,
 	InterruptSessionCallback,
+	SetSessionModelCallback,
 	SwitchModeCallback,
 	SelectSessionCallback,
 	SelectTabCallback,
 	NewTabCallback,
+	DeleteSessionCallback,
 	CloseTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
@@ -101,6 +115,9 @@ export class WebServer {
 
 	// Broadcast service instance
 	private broadcastService: BroadcastService;
+	private webPushManager: WebPushManager;
+	private liveSessionOverrides: Map<string, Partial<SessionData>> = new Map();
+	private removedSessionIds: Set<string> = new Set();
 
 	// Route instances
 	private apiRoutes: ApiRoutes;
@@ -133,6 +150,7 @@ export class WebServer {
 		// Initialize the broadcast service
 		this.broadcastService = new BroadcastService();
 		this.broadcastService.setGetWebClientsCallback(() => this.webClients);
+		this.webPushManager = new WebPushManager();
 
 		// Wire up live session manager to broadcast service
 		this.liveSessionManager.setBroadcastCallbacks({
@@ -145,9 +163,11 @@ export class WebServer {
 		});
 
 		// Initialize route handlers
-		this.apiRoutes = new ApiRoutes(this.securityToken, this.rateLimitConfig);
-		this.staticRoutes = new StaticRoutes(this.securityToken, this.webAssetsPath);
-		this.wsRoute = new WsRoute(this.securityToken);
+		this.apiRoutes = new ApiRoutes(this.rateLimitConfig);
+		this.staticRoutes = new StaticRoutes(this.securityToken, this.webAssetsPath, {
+			getPushPublicKey: () => this.webPushManager.getPublicKey(),
+		});
+		this.wsRoute = new WsRoute();
 
 		// Note: setupMiddleware and setupRoutes are called in start() to handle async properly
 	}
@@ -220,11 +240,10 @@ export class WebServer {
 	}
 
 	/**
-	 * Get the full secure URL (with token)
-	 * Uses the detected local IP address for LAN accessibility
+	 * Get the public dashboard URL.
 	 */
 	getSecureUrl(): string {
-		return `http://${this.localIpAddress}:${this.port}/${this.securityToken}`;
+		return `http://${this.localIpAddress}:${this.port}${WEB_APP_BASE_PATH}`;
 	}
 
 	/**
@@ -232,7 +251,7 @@ export class WebServer {
 	 * Uses the detected local IP address for LAN accessibility
 	 */
 	getSessionUrl(sessionId: string): string {
-		return `http://${this.localIpAddress}:${this.port}/${this.securityToken}/session/${sessionId}`;
+		return `http://${this.localIpAddress}:${this.port}${WEB_APP_BASE_PATH}/session/${sessionId}`;
 	}
 
 	// ============ Callback Setters (Delegated to CallbackRegistry) ============
@@ -243,6 +262,22 @@ export class WebServer {
 
 	setGetSessionDetailCallback(callback: GetSessionDetailCallback): void {
 		this.callbackRegistry.setGetSessionDetailCallback(callback);
+	}
+
+	setGetSessionModelsCallback(callback: GetSessionModelsCallback): void {
+		this.callbackRegistry.setGetSessionModelsCallback(callback);
+	}
+
+	setTranscribeAudioCallback(callback: TranscribeAudioCallback): void {
+		this.callbackRegistry.setTranscribeAudioCallback(callback);
+	}
+
+	setGetVoiceTranscriptionStatusCallback(callback: GetVoiceTranscriptionStatusCallback): void {
+		this.callbackRegistry.setGetVoiceTranscriptionStatusCallback(callback);
+	}
+
+	setPrewarmVoiceTranscriptionCallback(callback: PrewarmVoiceTranscriptionCallback): void {
+		this.callbackRegistry.setPrewarmVoiceTranscriptionCallback(callback);
 	}
 
 	setGetThemeCallback(callback: GetThemeCallback): void {
@@ -265,6 +300,10 @@ export class WebServer {
 		this.callbackRegistry.setInterruptSessionCallback(callback);
 	}
 
+	setSetSessionModelCallback(callback: SetSessionModelCallback): void {
+		this.callbackRegistry.setSetSessionModelCallback(callback);
+	}
+
 	setSwitchModeCallback(callback: SwitchModeCallback): void {
 		this.callbackRegistry.setSwitchModeCallback(callback);
 	}
@@ -279,6 +318,10 @@ export class WebServer {
 
 	setNewTabCallback(callback: NewTabCallback): void {
 		this.callbackRegistry.setNewTabCallback(callback);
+	}
+
+	setDeleteSessionCallback(callback: DeleteSessionCallback): void {
+		this.callbackRegistry.setDeleteSessionCallback(callback);
 	}
 
 	setCloseTabCallback(callback: CloseTabCallback): void {
@@ -359,7 +402,7 @@ export class WebServer {
 			if (existsSync(assetsPath)) {
 				await this.server.register(fastifyStatic, {
 					root: assetsPath,
-					prefix: `/${this.securityToken}/assets/`,
+					prefix: `${WEB_APP_ASSETS_PATH}/`,
 					decorateReply: false,
 				});
 			}
@@ -369,7 +412,7 @@ export class WebServer {
 			if (existsSync(iconsPath)) {
 				await this.server.register(fastifyStatic, {
 					root: iconsPath,
-					prefix: `/${this.securityToken}/icons/`,
+					prefix: `${WEB_APP_ICONS_PATH}/`,
 					decorateReply: false,
 				});
 			}
@@ -377,27 +420,41 @@ export class WebServer {
 	}
 
 	private setupRoutes(): void {
+		const getMergedSessions = async () => this.getMergedSessions();
+
 		// Setup static routes (dashboard, PWA files, health check)
 		this.staticRoutes.registerRoutes(this.server);
 
 		// Setup API routes callbacks and register routes
 		this.apiRoutes.setCallbacks({
-			getSessions: () => this.callbackRegistry.getSessions(),
+			getSessions: getMergedSessions,
 			getSessionDetail: (sessionId, tabId) =>
 				this.callbackRegistry.getSessionDetail(sessionId, tabId),
+			getSessionModels: (sessionId, forceRefresh) =>
+				this.callbackRegistry.getSessionModels(sessionId, forceRefresh),
+			transcribeAudio: async (request) => this.callbackRegistry.transcribeAudio(request),
+			getVoiceTranscriptionStatus: async () => this.callbackRegistry.getVoiceTranscriptionStatus(),
+			prewarmVoiceTranscription: async () => this.callbackRegistry.prewarmVoiceTranscription(),
 			getTheme: () => this.callbackRegistry.getTheme(),
 			writeToSession: (sessionId, data) => this.callbackRegistry.writeToSession(sessionId, data),
 			interruptSession: async (sessionId) => this.callbackRegistry.interruptSession(sessionId),
+			setSessionModel: async (sessionId, model) =>
+				this.callbackRegistry.setSessionModel(sessionId, model),
 			getHistory: (projectPath, sessionId) =>
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
 			isSessionLive: (sessionId) => this.liveSessionManager.isSessionLive(sessionId),
+			getPushStatus: (endpoint) => this.webPushManager.getStatus(endpoint),
+			subscribePush: (subscription, metadata) =>
+				this.webPushManager.subscribe(subscription, metadata),
+			unsubscribePush: (endpoint) => this.webPushManager.unsubscribe(endpoint),
+			sendTestPush: async (endpoint) => this.webPushManager.sendTestPush(endpoint),
 		});
 		this.apiRoutes.registerRoutes(this.server);
 
 		// Setup WebSocket route callbacks and register route
 		this.wsRoute.setCallbacks({
-			getSessions: () => this.callbackRegistry.getSessions(),
+			getSessions: getMergedSessions,
 			getTheme: () => this.callbackRegistry.getTheme(),
 			getCustomCommands: () => this.callbackRegistry.getCustomCommands(),
 			getAutoRunStates: () => this.liveSessionManager.getAutoRunStates(),
@@ -442,6 +499,7 @@ export class WebServer {
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
 			newTab: async (sessionId: string) => this.callbackRegistry.newTab(sessionId),
+			deleteSession: async (sessionId: string) => this.callbackRegistry.deleteSession(sessionId),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>
@@ -451,7 +509,7 @@ export class WebServer {
 			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
 				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
 			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
-			getSessions: () => this.callbackRegistry.getSessions(),
+			getSessions: async () => this.getMergedSessions(),
 			getLiveSessionInfo: (sessionId: string) =>
 				this.liveSessionManager.getLiveSessionInfo(sessionId),
 			isSessionLive: (sessionId: string) => this.liveSessionManager.isSessionLive(sessionId),
@@ -476,17 +534,33 @@ export class WebServer {
 			toolType?: string;
 			inputMode?: string;
 			cwd?: string;
+			contextUsage?: number;
+			effectiveContextWindow?: number | null;
 			cliActivity?: CliActivity;
 		}
 	): void {
+		this.removedSessionIds.delete(sessionId);
+		this.liveSessionOverrides.set(sessionId, {
+			...(this.liveSessionOverrides.get(sessionId) ?? {}),
+			id: sessionId,
+			state,
+			...additionalData,
+		});
 		this.broadcastService.broadcastSessionStateChange(sessionId, state, additionalData);
 	}
 
 	broadcastSessionAdded(session: SessionBroadcastData): void {
+		this.removedSessionIds.delete(session.id);
+		this.liveSessionOverrides.set(session.id, {
+			...(this.liveSessionOverrides.get(session.id) ?? {}),
+			...session,
+		});
 		this.broadcastService.broadcastSessionAdded(session);
 	}
 
 	broadcastSessionRemoved(sessionId: string): void {
+		this.liveSessionOverrides.delete(sessionId);
+		this.removedSessionIds.add(sessionId);
 		this.broadcastService.broadcastSessionRemoved(sessionId);
 	}
 
@@ -499,6 +573,13 @@ export class WebServer {
 	}
 
 	broadcastTabsChange(sessionId: string, aiTabs: AITabData[], activeTabId: string): void {
+		this.removedSessionIds.delete(sessionId);
+		this.liveSessionOverrides.set(sessionId, {
+			...(this.liveSessionOverrides.get(sessionId) ?? {}),
+			id: sessionId,
+			aiTabs,
+			activeTabId,
+		});
 		this.broadcastService.broadcastTabsChange(sessionId, aiTabs, activeTabId);
 	}
 
@@ -516,6 +597,25 @@ export class WebServer {
 
 	broadcastUserInput(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): void {
 		this.broadcastService.broadcastUserInput(sessionId, command, inputMode);
+	}
+
+	broadcastSessionLogEntry(
+		sessionId: string,
+		tabId: string | null,
+		inputMode: 'ai' | 'terminal',
+		logEntry: WebRemoteLogEntry
+	): void {
+		this.broadcastService.broadcastSessionLogEntry({
+			sessionId,
+			tabId,
+			inputMode,
+			logEntry,
+		});
+	}
+
+	async broadcastResponseCompleted(event: ResponseCompletedEvent): Promise<void> {
+		this.broadcastService.broadcastResponseCompleted(event);
+		await this.webPushManager.sendResponseCompleted(event);
 	}
 
 	// ============ Server Lifecycle ============
@@ -573,6 +673,8 @@ export class WebServer {
 
 		// Clear all session state (handles live sessions and autorun states)
 		this.liveSessionManager.clearAll();
+		this.liveSessionOverrides.clear();
+		this.removedSessionIds.clear();
 
 		try {
 			await this.server.close();
@@ -597,5 +699,27 @@ export class WebServer {
 
 	getServer(): FastifyInstance {
 		return this.server;
+	}
+
+	private async getMergedSessions(): Promise<SessionData[]> {
+		const baseSessions = await this.callbackRegistry.getSessions();
+		const mergedSessions = baseSessions
+			.filter((session) => !this.removedSessionIds.has(session.id))
+			.map((session) => ({
+				...session,
+				...(this.liveSessionOverrides.get(session.id) ?? {}),
+			}));
+
+		for (const [sessionId, override] of this.liveSessionOverrides.entries()) {
+			if (this.removedSessionIds.has(sessionId) || !override.id) {
+				continue;
+			}
+
+			if (!mergedSessions.some((session) => session.id === sessionId)) {
+				mergedSessions.push(override as SessionData);
+			}
+		}
+
+		return mergedSessions;
 	}
 }

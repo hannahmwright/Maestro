@@ -17,7 +17,7 @@
  */
 
 import React from 'react';
-import { PenLine, ImageIcon, History, Eye, Brain, Keyboard, Search } from 'lucide-react';
+import { PenLine, ImageIcon, Eye, Brain, Keyboard, Search } from 'lucide-react';
 import type { TourStepConfig } from './useTour';
 import type { Shortcut } from '../../../types';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
@@ -48,7 +48,6 @@ const inputAreaIconsContent = (
 		<div>
 			Look for these controls: <TourIcon icon={PenLine} /> opens an expanded prompt editor,{' '}
 			<TourIcon icon={ImageIcon} /> lets you attach files (or just paste),{' '}
-			<TourIcon icon={History} label="History" /> toggles session history,{' '}
 			<TourIcon icon={Eye} label="Read-only" /> prevents file changes,{' '}
 			<TourIcon icon={Brain} label="Thinking" /> toggles display of agent thinking, and{' '}
 			<TourIcon icon={Keyboard} label="Enter" /> switches the submit hotkey.
@@ -75,15 +74,14 @@ const tabSearchIconContent = (
  * 1) Auto Run panel - explain what's running right now
  * 2) Auto Run document selector - show Auto Run documents
  * 3) Files tab - show file explorer
- * 4) History tab - explain auto vs manual entries
- * 5) Left panel hamburger menu - show menu options
- * 6) Remote control - LIVE/OFFLINE toggle, QR code, Cloudflare tunnel
- * 7) Left panel agent list - explain agents and groups
- * 8) Main terminal area + tabs - explain AI Terminal and tab usage
- * 9) Agent Sessions button - browse previous conversations
- * 10) Input area - explain messaging the AI
- * 11) Terminal mode - teach Cmd+J shortcut
- * 12) Keyboard shortcuts - mention Cmd+/ for all shortcuts, end tour
+ * 4) Left panel hamburger menu - show menu options
+ * 5) Remote control - LIVE/OFFLINE toggle, QR code, Cloudflare tunnel
+ * 6) Left panel agent list - explain agents and groups
+ * 7) Main terminal area + tabs - explain AI Terminal and tab usage
+ * 8) Agent Sessions button - browse previous conversations
+ * 9) Input area - explain messaging the AI
+ * 10) Terminal mode - teach Cmd+J shortcut
+ * 11) Keyboard shortcuts - mention Cmd+/ for all shortcuts, end tour
  */
 export const tourSteps: TourStepConfig[] = [
 	{
@@ -119,18 +117,6 @@ export const tourSteps: TourStepConfig[] = [
 		selector: '[data-tour="files-tab"]',
 		position: 'left',
 		uiActions: [{ type: 'setRightTab', value: 'files' }, { type: 'openRightPanel' }],
-	},
-	{
-		id: 'history-tab',
-		title: 'History & Tracking',
-		description:
-			'The History tab tracks all AI interactions in your session. Auto Run entries are tracked automatically, and separate from manual interactions. You can toggle history per-message using the "History" bubble (with the clock icon) in the input area. Configure the default value under Settings → General.\n\nSwitch between the list view and the details view to drill into any entry. From the details view you can also resume the session where that entry took place.\n\nHistory also serves as memory for all Maestro agents—they know how to locate and parse the history file, giving them context about prior work. Press {{goToHistory}} to jump here.',
-		descriptionGeneric:
-			'The History tab tracks all AI interactions in your session. Auto Run entries are tracked automatically, and separate from manual interactions. You can toggle history per-message using the "History" bubble (with the clock icon) in the input area. Configure the default value under Settings → General.\n\nSwitch between the list view and the details view to drill into any entry. From the details view you can also resume the session where that entry took place.\n\nHistory also serves as memory for all Maestro agents—they know how to locate and parse the history file, giving them context about prior work. Press {{goToHistory}} to jump here.',
-		wide: true,
-		selector: '[data-tour="history-tab"]',
-		position: 'left',
-		uiActions: [{ type: 'setRightTab', value: 'history' }, { type: 'openRightPanel' }],
 	},
 	{
 		id: 'hamburger-menu',

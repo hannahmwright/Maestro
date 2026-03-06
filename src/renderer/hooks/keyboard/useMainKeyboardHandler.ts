@@ -301,17 +301,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				ctx.setActiveFocus('right');
 				trackShortcut('goToFiles');
-			} else if (ctx.isShortcut(e, 'goToHistory')) {
-				e.preventDefault();
-				ctx.setRightPanelOpen(true);
-				// In group chat, Cmd+Shift+H goes to History tab (same concept)
-				if (ctx.activeGroupChatId) {
-					ctx.setGroupChatRightTab('history');
-				} else {
-					ctx.handleSetActiveRightTab('history');
-				}
-				ctx.setActiveFocus('right');
-				trackShortcut('goToHistory');
 			} else if (ctx.isShortcut(e, 'goToAutoRun')) {
 				e.preventDefault();
 				ctx.setRightPanelOpen(true);
@@ -604,21 +593,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					);
 					trackShortcut('toggleReadOnlyMode');
 				}
-				if (ctx.isTabShortcut(e, 'toggleSaveToHistory')) {
-					e.preventDefault();
-					ctx.setSessions((prev: Session[]) =>
-						prev.map((s: Session) => {
-							if (s.id !== ctx.activeSession!.id) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab: AITab) =>
-									tab.id === s.activeTabId ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-								),
-							};
-						})
-					);
-					trackShortcut('toggleSaveToHistory');
-				}
 				if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
 					e.preventDefault();
 					// Helper to cycle through thinking modes: off -> on -> sticky -> off
@@ -743,9 +717,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				} else if (ctx.activeFocus === 'sidebar') {
 					// Sidebar filter - handled by SessionList component, just track here
 					trackShortcut('filterSessions');
-				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'history') {
-					// History filter - handled by HistoryPanel component, just track here
-					trackShortcut('filterHistory');
 				} else if (ctx.activeFocus === 'main') {
 					// Main panel search - handled by TerminalOutput component, just track here
 					trackShortcut('searchOutput');

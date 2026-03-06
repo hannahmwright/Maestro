@@ -10,6 +10,7 @@
  */
 
 import React, { createContext, useContext, useEffect, useMemo } from 'react';
+import { CODEX_DEFAULT_FONT_STACK } from '../../shared/fonts';
 import type { Theme, ThemeColors } from '../../shared/theme-types';
 import { injectCSSProperties, removeCSSProperties } from '../utils/cssCustomProperties';
 import { useDeviceColorScheme, type ColorSchemePreference } from '../hooks/useDeviceColorScheme';
@@ -171,9 +172,14 @@ export function ThemeProvider({
 	// Inject CSS custom properties whenever the theme changes
 	useEffect(() => {
 		injectCSSProperties(activeTheme);
+		const fontFamily = activeTheme.fontFamily || CODEX_DEFAULT_FONT_STACK;
+		document.documentElement.style.setProperty('--font-interface', fontFamily);
+		document.body.style.fontFamily = fontFamily;
 
 		// Cleanup on unmount
 		return () => {
+			document.documentElement.style.removeProperty('--font-interface');
+			document.body.style.removeProperty('font-family');
 			removeCSSProperties();
 		};
 	}, [activeTheme]);

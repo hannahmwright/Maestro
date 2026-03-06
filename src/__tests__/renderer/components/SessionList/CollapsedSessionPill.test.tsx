@@ -130,7 +130,7 @@ describe('CollapsedSessionPill', () => {
 		expect(stopPropagationSpy).toHaveBeenCalled();
 	});
 
-	it('shows unread indicator on last segment when session has unread tabs', () => {
+	it('shows awaiting-input indicator when session has unread tabs', () => {
 		const session = makeSession({
 			aiTabs: [{ hasUnread: true } as any],
 		});
@@ -138,13 +138,12 @@ describe('CollapsedSessionPill', () => {
 
 		const { container } = render(<CollapsedSessionPill {...props} />);
 
-		// The unread indicator is a small dot
 		const segment = container.firstElementChild!.firstElementChild!;
-		const unreadDot = segment.querySelector('.rounded-full');
-		expect(unreadDot).toBeTruthy();
+		const awaitingDot = segment.querySelector('[title="Awaiting your input"]');
+		expect(awaitingDot).toBeTruthy();
 	});
 
-	it('applies batch styling when session is in active batch', () => {
+	it('shows spinner when session is in active batch', () => {
 		const session = makeSession({ id: 'batch-session' });
 		const props = createDefaultProps({
 			session,
@@ -153,11 +152,11 @@ describe('CollapsedSessionPill', () => {
 
 		const { container } = render(<CollapsedSessionPill {...props} />);
 
-		const segment = container.firstElementChild!.firstElementChild!;
-		expect(segment.className).toContain('animate-pulse');
+		const spinner = container.querySelector('[title="Agent is working"] .animate-spin');
+		expect(spinner).toBeTruthy();
 	});
 
-	it('applies hollow style for claude-code sessions without agentSessionId', () => {
+	it('renders neutral idle segment style for claude-code sessions without agentSessionId', () => {
 		const session = makeSession({
 			toolType: 'claude-code',
 			agentSessionId: undefined,
@@ -168,7 +167,7 @@ describe('CollapsedSessionPill', () => {
 
 		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
 		expect(segment.style.border).toContain('1px solid');
-		expect(segment.style.backgroundColor).toBe('transparent');
+		expect(segment.style.backgroundColor).not.toBe('transparent');
 	});
 
 	it('renders tooltip content within each segment', () => {
@@ -181,7 +180,7 @@ describe('CollapsedSessionPill', () => {
 		expect(screen.getByText('My Test Agent')).toBeTruthy();
 	});
 
-	it('does not show unread dot on non-last segments in multi-segment pill', () => {
+	it('shows awaiting-input indicator on any segment with unread tabs', () => {
 		const parent = makeSession({ id: 'p1', aiTabs: [{ hasUnread: true } as any] });
 		const child = makeSession({ id: 'c1', aiTabs: [{ hasUnread: true } as any] });
 
@@ -193,10 +192,9 @@ describe('CollapsedSessionPill', () => {
 		const { container } = render(<CollapsedSessionPill {...props} />);
 
 		const segments = container.firstElementChild!.children;
-		// First segment (parent) should NOT have unread dot (it's not last)
 		const firstSegment = segments[0];
-		const firstDots = firstSegment.querySelectorAll('.w-1\\.5.h-1\\.5');
-		expect(firstDots.length).toBe(0);
+		const firstAwaitingDot = firstSegment.querySelector('[title="Awaiting your input"]');
+		expect(firstAwaitingDot).toBeTruthy();
 	});
 
 	it('uses gap between segments only when there are worktrees', () => {

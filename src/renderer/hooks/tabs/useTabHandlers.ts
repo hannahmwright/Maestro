@@ -80,7 +80,6 @@ export interface TabHandlersReturn {
 	handleTabMarkUnread: (tabId: string) => void;
 	handleToggleTabReadOnlyMode: () => void;
 	handleSetTabExecutionMode: (mode: AgentExecutionMode) => void;
-	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
 	handleSetTabReasoningEffort: (effort: ReasoningEffort) => void;
 
@@ -1133,25 +1132,6 @@ export function useTabHandlers(): TabHandlersReturn {
 		);
 	}, []);
 
-	const handleToggleTabSaveToHistory = useCallback(() => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const session = sessions.find((s) => s.id === activeSessionId);
-		if (!session) return;
-		const currentActiveTab = getActiveTab(session);
-		if (!currentActiveTab) return;
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === currentActiveTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-					),
-				};
-			})
-		);
-	}, []);
-
 	const handleToggleTabShowThinking = useCallback(() => {
 		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
 		const session = sessions.find((s) => s.id === activeSessionId);
@@ -1464,7 +1444,6 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
 		handleSetTabExecutionMode,
-		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
 		handleSetTabReasoningEffort,
 

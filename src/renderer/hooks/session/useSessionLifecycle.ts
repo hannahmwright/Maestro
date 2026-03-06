@@ -34,7 +34,7 @@ import { captureException } from '../../utils/sentry';
 
 export interface SessionLifecycleDeps {
 	/** Flush debounced session persistence immediately (from useDebouncedPersistence) */
-	flushSessionPersistence: () => void;
+	flushSessionPersistence: (force?: boolean) => void;
 	/** Track removed worktree paths to prevent re-discovery (from useWorktreeHandlers) */
 	setRemovedWorktreePaths: React.Dispatch<React.SetStateAction<Set<string>>>;
 	/** Push a navigation entry to the shared history stack */
@@ -332,11 +332,14 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 
 			const { sessions: currentSessions } = useSessionStore.getState();
 			const newSessions = currentSessions.filter((s) => s.id !== id);
+			const nextActiveSessionId = newSessions[0]?.id || '';
 			useSessionStore.getState().setSessions(newSessions);
+			void window.maestro.web.broadcastSessionRemoved(id);
 			// Flush immediately for critical operation (session deletion)
-			setTimeout(() => flushSessionPersistence(), 0);
-			if (newSessions.length > 0) {
-				useSessionStore.getState().setActiveSessionId(newSessions[0].id);
+			setTimeout(() => flushSessionPersistence(true), 0);
+			if (nextActiveSessionId) {
+				useSessionStore.getState().setActiveSessionId(nextActiveSessionId);
+				void window.maestro.live.broadcastActiveSession(nextActiveSessionId);
 			} else {
 				useSessionStore.getState().setActiveSessionId('');
 			}

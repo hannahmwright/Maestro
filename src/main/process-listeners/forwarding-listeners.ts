@@ -33,6 +33,10 @@ export function setupForwardingListeners(
 		safeSend('process:tool-execution', sessionId, toolEvent);
 	});
 
+	processManager.on('model', (sessionId: string, model: string) => {
+		safeSend('process:model', sessionId, model);
+	});
+
 	// Handle stderr separately from runCommand (for clean command execution)
 	processManager.on('stderr', (sessionId: string, data: string) => {
 		safeSend('process:stderr', sessionId, data);

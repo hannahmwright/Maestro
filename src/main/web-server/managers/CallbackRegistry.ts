@@ -9,13 +9,19 @@ import { logger } from '../../utils/logger';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
+	GetSessionModelsCallback,
+	GetVoiceTranscriptionStatusCallback,
+	PrewarmVoiceTranscriptionCallback,
+	TranscribeAudioCallback,
 	WriteToSessionCallback,
 	ExecuteCommandCallback,
 	InterruptSessionCallback,
+	SetSessionModelCallback,
 	SwitchModeCallback,
 	SelectSessionCallback,
 	SelectTabCallback,
 	NewTabCallback,
+	DeleteSessionCallback,
 	CloseTabCallback,
 	RenameTabCallback,
 	StarTabCallback,
@@ -34,15 +40,21 @@ const LOG_CONTEXT = 'CallbackRegistry';
 export interface WebServerCallbacks {
 	getSessions: GetSessionsCallback | null;
 	getSessionDetail: GetSessionDetailCallback | null;
+	getSessionModels: GetSessionModelsCallback | null;
 	getTheme: GetThemeCallback | null;
 	getCustomCommands: GetCustomCommandsCallback | null;
+	transcribeAudio: TranscribeAudioCallback | null;
+	getVoiceTranscriptionStatus: GetVoiceTranscriptionStatusCallback | null;
+	prewarmVoiceTranscription: PrewarmVoiceTranscriptionCallback | null;
 	writeToSession: WriteToSessionCallback | null;
 	executeCommand: ExecuteCommandCallback | null;
 	interruptSession: InterruptSessionCallback | null;
+	setSessionModel: SetSessionModelCallback | null;
 	switchMode: SwitchModeCallback | null;
 	selectSession: SelectSessionCallback | null;
 	selectTab: SelectTabCallback | null;
 	newTab: NewTabCallback | null;
+	deleteSession: DeleteSessionCallback | null;
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
 	starTab: StarTabCallback | null;
@@ -55,15 +67,21 @@ export class CallbackRegistry {
 	private callbacks: WebServerCallbacks = {
 		getSessions: null,
 		getSessionDetail: null,
+		getSessionModels: null,
 		getTheme: null,
 		getCustomCommands: null,
+		transcribeAudio: null,
+		getVoiceTranscriptionStatus: null,
+		prewarmVoiceTranscription: null,
 		writeToSession: null,
 		executeCommand: null,
 		interruptSession: null,
+		setSessionModel: null,
 		switchMode: null,
 		selectSession: null,
 		selectTab: null,
 		newTab: null,
+		deleteSession: null,
 		closeTab: null,
 		renameTab: null,
 		starTab: null,
@@ -74,12 +92,19 @@ export class CallbackRegistry {
 
 	// ============ Getter Methods ============
 
-	getSessions(): ReturnType<GetSessionsCallback> | [] {
-		return this.callbacks.getSessions?.() ?? [];
+	async getSessions(): Promise<Awaited<ReturnType<GetSessionsCallback>> | []> {
+		return (await this.callbacks.getSessions?.()) ?? [];
 	}
 
 	getSessionDetail(sessionId: string, tabId?: string): ReturnType<GetSessionDetailCallback> | null {
 		return this.callbacks.getSessionDetail?.(sessionId, tabId) ?? null;
+	}
+
+	async getSessionModels(
+		sessionId: string,
+		forceRefresh?: boolean
+	): Promise<Awaited<ReturnType<GetSessionModelsCallback>> | []> {
+		return (await this.callbacks.getSessionModels?.(sessionId, forceRefresh)) ?? [];
 	}
 
 	getTheme(): ReturnType<GetThemeCallback> | null {
@@ -88,6 +113,27 @@ export class CallbackRegistry {
 
 	getCustomCommands(): ReturnType<GetCustomCommandsCallback> | [] {
 		return this.callbacks.getCustomCommands?.() ?? [];
+	}
+
+	async transcribeAudio(
+		request: Parameters<TranscribeAudioCallback>[0]
+	): Promise<Awaited<ReturnType<TranscribeAudioCallback>> | null> {
+		if (!this.callbacks.transcribeAudio) return null;
+		return this.callbacks.transcribeAudio(request);
+	}
+
+	async getVoiceTranscriptionStatus(): Promise<Awaited<
+		ReturnType<GetVoiceTranscriptionStatusCallback>
+	> | null> {
+		if (!this.callbacks.getVoiceTranscriptionStatus) return null;
+		return this.callbacks.getVoiceTranscriptionStatus();
+	}
+
+	async prewarmVoiceTranscription(): Promise<Awaited<
+		ReturnType<PrewarmVoiceTranscriptionCallback>
+	> | null> {
+		if (!this.callbacks.prewarmVoiceTranscription) return null;
+		return this.callbacks.prewarmVoiceTranscription();
 	}
 
 	writeToSession(sessionId: string, data: string): boolean {
@@ -105,6 +151,11 @@ export class CallbackRegistry {
 
 	async interruptSession(sessionId: string): Promise<boolean> {
 		return this.callbacks.interruptSession?.(sessionId) ?? false;
+	}
+
+	async setSessionModel(sessionId: string, model: string | null): Promise<boolean> {
+		if (!this.callbacks.setSessionModel) return false;
+		return this.callbacks.setSessionModel(sessionId, model);
 	}
 
 	async switchMode(sessionId: string, mode: 'ai' | 'terminal'): Promise<boolean> {
@@ -125,6 +176,11 @@ export class CallbackRegistry {
 	async newTab(sessionId: string): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
 		return this.callbacks.newTab(sessionId);
+	}
+
+	async deleteSession(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.deleteSession) return false;
+		return this.callbacks.deleteSession(sessionId);
 	}
 
 	async closeTab(sessionId: string, tabId: string): Promise<boolean> {
@@ -166,12 +222,28 @@ export class CallbackRegistry {
 		this.callbacks.getSessionDetail = callback;
 	}
 
+	setGetSessionModelsCallback(callback: GetSessionModelsCallback): void {
+		this.callbacks.getSessionModels = callback;
+	}
+
 	setGetThemeCallback(callback: GetThemeCallback): void {
 		this.callbacks.getTheme = callback;
 	}
 
 	setGetCustomCommandsCallback(callback: GetCustomCommandsCallback): void {
 		this.callbacks.getCustomCommands = callback;
+	}
+
+	setTranscribeAudioCallback(callback: TranscribeAudioCallback): void {
+		this.callbacks.transcribeAudio = callback;
+	}
+
+	setGetVoiceTranscriptionStatusCallback(callback: GetVoiceTranscriptionStatusCallback): void {
+		this.callbacks.getVoiceTranscriptionStatus = callback;
+	}
+
+	setPrewarmVoiceTranscriptionCallback(callback: PrewarmVoiceTranscriptionCallback): void {
+		this.callbacks.prewarmVoiceTranscription = callback;
 	}
 
 	setWriteToSessionCallback(callback: WriteToSessionCallback): void {
@@ -184,6 +256,10 @@ export class CallbackRegistry {
 
 	setInterruptSessionCallback(callback: InterruptSessionCallback): void {
 		this.callbacks.interruptSession = callback;
+	}
+
+	setSetSessionModelCallback(callback: SetSessionModelCallback): void {
+		this.callbacks.setSessionModel = callback;
 	}
 
 	setSwitchModeCallback(callback: SwitchModeCallback): void {
@@ -204,6 +280,10 @@ export class CallbackRegistry {
 	setNewTabCallback(callback: NewTabCallback): void {
 		logger.info('[CallbackRegistry] setNewTabCallback called', LOG_CONTEXT);
 		this.callbacks.newTab = callback;
+	}
+
+	setDeleteSessionCallback(callback: DeleteSessionCallback): void {
+		this.callbacks.deleteSession = callback;
 	}
 
 	setCloseTabCallback(callback: CloseTabCallback): void {

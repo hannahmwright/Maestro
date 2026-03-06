@@ -21,7 +21,6 @@ interface TabBarProps {
 	onRenameTab?: (tabId: string, newName: string) => void;
 	onStarTab?: (tabId: string, starred: boolean) => void;
 	onReorderTab?: (fromIndex: number, toIndex: number) => void;
-	onOpenTabSearch?: () => void;
 }
 
 interface TabProps {
@@ -80,35 +79,28 @@ function Tab({
 				style={{
 					display: 'flex',
 					alignItems: 'center',
-					gap: '6px',
-					padding: '6px 10px',
-					paddingRight: canClose && isActive ? '28px' : '10px',
-					// Browser-style tab with rounded top corners
-					borderTopLeftRadius: '6px',
-					borderTopRightRadius: '6px',
-					// Active tab has visible borders, inactive tabs have no borders
-					borderTop: isActive ? `1px solid ${colors.border}` : '1px solid transparent',
-					borderLeft: isActive ? `1px solid ${colors.border}` : '1px solid transparent',
-					borderRight: isActive ? `1px solid ${colors.border}` : '1px solid transparent',
-					// Active tab connects to content (no bottom border)
-					borderBottom: isActive ? `1px solid ${colors.bgMain}` : '1px solid transparent',
-					// Active tab has bright background matching content, inactive are transparent
-					backgroundColor: isActive
-						? colors.bgMain
+					gap: '7px',
+					padding: '8px 12px',
+					paddingRight: canClose && isActive ? '30px' : '12px',
+					borderRadius: '16px',
+					border: isActive ? `1px solid ${colors.accent}40` : '1px solid rgba(255, 255, 255, 0.06)',
+					background: isActive
+						? `linear-gradient(180deg, ${colors.accent}18 0%, rgba(255, 255, 255, 0.08) 100%)`
 						: isHovered
-							? 'rgba(255, 255, 255, 0.08)'
-							: 'transparent',
+							? 'linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.06) 100%)'
+							: 'linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.03) 100%)',
+					backdropFilter: 'blur(18px)',
+					WebkitBackdropFilter: 'blur(18px)',
 					color: isActive ? colors.textMain : colors.textDim,
 					fontSize: '12px',
-					fontWeight: isActive ? 600 : 400,
+					fontWeight: isActive ? 650 : 500,
 					fontFamily: 'monospace',
 					cursor: 'pointer',
 					whiteSpace: 'nowrap',
-					transition: 'all 0.15s ease',
-					// Active tab sits on top of the bar's bottom border
-					marginBottom: isActive ? '-1px' : '0',
-					zIndex: isActive ? 1 : 0,
-					// Allow native touch scrolling
+					transition: 'all 0.18s ease',
+					boxShadow: isActive
+						? '0 14px 28px rgba(15, 23, 42, 0.14), 0 3px 10px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.08)'
+						: '0 8px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
 					touchAction: 'pan-x pan-y',
 					WebkitTapHighlightColor: 'transparent',
 					userSelect: 'none',
@@ -159,23 +151,23 @@ function Tab({
 					onMouseLeave={() => setIsCloseHovered(false)}
 					style={{
 						position: 'absolute',
-						right: '4px',
+						right: '6px',
 						top: '50%',
 						transform: 'translateY(-50%)',
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
-						width: '20px',
-						height: '20px',
-						borderRadius: '4px',
+						width: '18px',
+						height: '18px',
+						borderRadius: '999px',
 						border: 'none',
-						fontSize: '12px',
+						fontSize: '11px',
 						color: isCloseHovered ? colors.textMain : colors.textDim,
-						backgroundColor: isCloseHovered ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
+						background: isCloseHovered ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)',
 						cursor: 'pointer',
 						padding: 0,
 						zIndex: 2,
-						transition: 'background-color 0.1s ease, color 0.1s ease',
+						transition: 'background-color 0.12s ease, color 0.12s ease',
 					}}
 					aria-label="Close tab"
 				>
@@ -341,10 +333,14 @@ function TabActionsPopover({
 				aria-label={`Actions for tab ${displayName}`}
 				style={{
 					...calculatePosition(),
-					backgroundColor: colors.bgSidebar,
-					borderRadius: '12px',
-					border: `1px solid ${colors.border}`,
-					boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+					background:
+						'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.05) 100%)',
+					backdropFilter: 'blur(22px)',
+					WebkitBackdropFilter: 'blur(22px)',
+					borderRadius: '18px',
+					border: '1px solid rgba(255, 255, 255, 0.10)',
+					boxShadow:
+						'0 24px 48px rgba(15, 23, 42, 0.18), 0 8px 20px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.07)',
 					overflow: 'hidden',
 					animation: 'tabPopoverFadeIn 0.15s ease-out',
 				}}
@@ -352,9 +348,9 @@ function TabActionsPopover({
 				{/* Header */}
 				<div
 					style={{
-						padding: '10px 14px',
-						borderBottom: `1px solid ${colors.border}`,
-						backgroundColor: `${colors.accent}10`,
+						padding: '12px 15px',
+						borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+						background: `linear-gradient(180deg, ${colors.accent}12 0%, rgba(255, 255, 255, 0.04) 100%)`,
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'space-between',
@@ -543,7 +539,6 @@ export function TabBar({
 	onRenameTab,
 	onStarTab,
 	onReorderTab,
-	onOpenTabSearch,
 }: TabBarProps) {
 	const colors = useThemeColors();
 	const [popoverState, setPopoverState] = useState<TabPopoverState | null>(null);
@@ -556,82 +551,72 @@ export function TabBar({
 		setPopoverState(null);
 	}, []);
 
-	// Don't render if there's only one tab
-	if (tabs.length <= 1) {
-		return null;
-	}
-
 	const canClose = tabs.length > 1;
 
 	return (
 		<div
 			style={{
 				display: 'flex',
-				alignItems: 'flex-end',
-				backgroundColor: colors.bgSidebar,
-				borderBottom: `1px solid ${colors.border}`,
+				alignItems: 'center',
+				padding: '4px 10px 10px',
+				background:
+					'linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%)',
+				backdropFilter: 'blur(18px)',
+				WebkitBackdropFilter: 'blur(18px)',
+				boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.04)',
 			}}
 		>
-			{/* Pinned buttons - search and new tab */}
+			{/* Scrollable tabs area */}
 			<div
 				style={{
-					flexShrink: 0,
-					padding: '8px 0 0 8px',
 					display: 'flex',
+					flex: 1,
 					alignItems: 'center',
-					gap: '6px',
+					gap: '8px',
+					padding: '6px 8px',
+					overflowX: 'auto',
+					WebkitOverflowScrolling: 'touch',
+					scrollbarWidth: 'none',
+					msOverflowStyle: 'none',
+					borderRadius: '20px',
+					border: '1px solid rgba(255, 255, 255, 0.08)',
+					background:
+						'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)',
+					backdropFilter: 'blur(18px)',
+					WebkitBackdropFilter: 'blur(18px)',
+					boxShadow: '0 14px 30px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 				}}
+				className="hide-scrollbar"
 			>
-				{/* Search tabs button */}
-				{onOpenTabSearch && (
-					<button
-						onClick={onOpenTabSearch}
-						style={{
-							display: 'flex',
-							alignItems: 'center',
-							justifyContent: 'center',
-							width: '28px',
-							height: '28px',
-							borderRadius: '14px',
-							border: `1px solid ${colors.border}`,
-							backgroundColor: colors.bgMain,
-							color: colors.textDim,
-							cursor: 'pointer',
-							marginBottom: '4px',
-						}}
-						title={`Search ${tabs.length} tabs`}
-					>
-						<svg
-							width="14"
-							height="14"
-							viewBox="0 0 24 24"
-							fill="none"
-							stroke="currentColor"
-							strokeWidth="2"
-							strokeLinecap="round"
-							strokeLinejoin="round"
-						>
-							<circle cx="11" cy="11" r="8" />
-							<line x1="21" y1="21" x2="16.65" y2="16.65" />
-						</svg>
-					</button>
-				)}
-
-				{/* New tab button */}
+				{tabs.map((tab, index) => (
+					<Tab
+						key={tab.id}
+						tab={tab}
+						tabIndex={index}
+						isActive={tab.id === activeTabId}
+						canClose={canClose}
+						colors={colors}
+						onSelect={() => onSelectTab(tab.id)}
+						onClose={() => onCloseTab(tab.id)}
+						onLongPress={handleTabLongPress}
+					/>
+				))}
 				<button
 					onClick={onNewTab}
 					style={{
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'center',
-						width: '28px',
-						height: '28px',
-						borderRadius: '14px',
-						border: `1px solid ${colors.border}`,
-						backgroundColor: colors.bgMain,
-						color: colors.textDim,
+						width: '34px',
+						height: '34px',
+						borderRadius: '999px',
+						border: '1px solid rgba(255, 255, 255, 0.08)',
+						background: `linear-gradient(180deg, ${colors.accent}14 0%, rgba(255, 255, 255, 0.06) 100%)`,
+						color: colors.textMain,
 						cursor: 'pointer',
-						marginBottom: '4px',
+						flexShrink: 0,
+						boxShadow:
+							'0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 					}}
 					title="New Tab"
 				>
@@ -649,36 +634,6 @@ export function TabBar({
 						<line x1="5" y1="12" x2="19" y2="12" />
 					</svg>
 				</button>
-			</div>
-
-			{/* Scrollable tabs area */}
-			<div
-				style={{
-					display: 'flex',
-					flex: 1,
-					alignItems: 'flex-end',
-					gap: '2px',
-					padding: '8px 8px 0 8px',
-					overflowX: 'auto',
-					WebkitOverflowScrolling: 'touch',
-					scrollbarWidth: 'none',
-					msOverflowStyle: 'none',
-				}}
-				className="hide-scrollbar"
-			>
-				{tabs.map((tab, index) => (
-					<Tab
-						key={tab.id}
-						tab={tab}
-						tabIndex={index}
-						isActive={tab.id === activeTabId}
-						canClose={canClose}
-						colors={colors}
-						onSelect={() => onSelectTab(tab.id)}
-						onClose={() => onCloseTab(tab.id)}
-						onLongPress={handleTabLongPress}
-					/>
-				))}
 			</div>
 
 			{/* Tab actions popover */}

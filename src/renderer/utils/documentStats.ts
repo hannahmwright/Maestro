@@ -231,7 +231,12 @@ function stripMarkdownSyntax(content: string): string {
 	// Tables typically have: | col1 | col2 | followed by |---|---| separator
 	text = text.replace(/^\s*\|.+\|\s*$/gm, '');
 	// Also remove table separator lines like |---|---|
-	text = text.replace(/^\s*\|[-:\s|]+\|\s*$/gm, '');
+	const markdownTableSeparatorChars = '[-:' + '\\s|]+';
+	const markdownTableSeparatorPattern = new RegExp(
+		`^\\s*\\|${markdownTableSeparatorChars}\\|\\s*$`,
+		'gm'
+	);
+	text = text.replace(markdownTableSeparatorPattern, '');
 
 	// Remove images ![alt](url)
 	text = text.replace(/!\[[^\]]*\]\([^)]+\)/g, '');

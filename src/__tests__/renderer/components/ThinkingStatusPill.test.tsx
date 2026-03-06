@@ -798,11 +798,11 @@ describe('ThinkingStatusPill', () => {
 	});
 
 	describe('styling', () => {
-		it('applies warning color to pulsing indicator in thinking mode', () => {
+		it('applies pastel yellow color to pulsing indicator in thinking mode', () => {
 			const item = createThinkingItem();
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
 			const indicator = document.querySelector('.animate-pulse');
-			expect(indicator).toHaveStyle({ backgroundColor: mockTheme.colors.warning });
+			expect(indicator).toHaveStyle({ backgroundColor: '#d8e763' });
 		});
 
 		it('applies accent color to pulsing indicator in AutoRun mode', () => {
@@ -830,7 +830,7 @@ describe('ThinkingStatusPill', () => {
 				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} onInterrupt={() => {}} />
 			);
 			const stopButton = screen.getByText('Stop').closest('button');
-			expect(stopButton).toHaveStyle({ backgroundColor: mockTheme.colors.error });
+			expect(stopButton).toHaveStyle({ backgroundColor: '#d96b6b' });
 		});
 
 		it('applies accent color to Claude ID button', () => {

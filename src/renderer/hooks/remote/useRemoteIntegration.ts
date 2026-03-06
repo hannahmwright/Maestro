@@ -1,6 +1,40 @@
 import { useEffect, useRef } from 'react';
 import type { Session, SessionState, ThinkingMode } from '../../types';
 import { createTab, closeTab } from '../../utils/tabHelpers';
+import { WEB_APP_BASE_PATH, type ResponseCompletedEvent } from '../../../shared/remote-web';
+
+function buildResponseCompletedEvent(session: Session): ResponseCompletedEvent | null {
+	const activeTab =
+		session.aiTabs?.find((tab) => tab.id === session.activeTabId) || session.aiTabs?.[0];
+	if (!activeTab) return null;
+
+	const lastAiLog = [...activeTab.logs]
+		.reverse()
+		.find((log) => log.source === 'stdout' || log.source === 'stderr');
+	if (!lastAiLog?.text) return null;
+
+	const lines = lastAiLog.text
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line && !line.startsWith('```') && line !== '---');
+	const body = (lines[0] || 'AI response completed').slice(0, 140);
+	const deepLinkUrl = `${WEB_APP_BASE_PATH}/session/${encodeURIComponent(session.id)}${
+		activeTab.id ? `?tabId=${encodeURIComponent(activeTab.id)}` : ''
+	}`;
+	const completedAt = lastAiLog.timestamp || Date.now();
+
+	return {
+		eventId: `response:${session.id}:${activeTab.id}:${completedAt}`,
+		sessionId: session.id,
+		tabId: activeTab.id,
+		sessionName: session.name,
+		toolType: session.toolType,
+		completedAt,
+		title: `${session.name} - Response Ready`,
+		body,
+		deepLinkUrl,
+	};
+}
 
 /**
  * Dependencies for the useRemoteIntegration hook.
@@ -23,6 +57,8 @@ export interface UseRemoteIntegrationDeps {
 	defaultSaveToHistory: boolean;
 	/** Default value for showThinking on new tabs */
 	defaultShowThinking: ThinkingMode;
+	/** Delete an agent/session using the shared desktop lifecycle */
+	performDeleteSession: (session: Session, eraseWorkingDirectory: boolean) => Promise<void>;
 }
 
 /**
@@ -60,6 +96,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		setActiveSessionId,
 		defaultSaveToHistory,
 		defaultShowThinking,
+		performDeleteSession,
 	} = deps;
 
 	// Broadcast active session change to web clients
@@ -280,6 +317,20 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		const unsubscribeSetSessionModel = window.maestro.process.onRemoteSetSessionModel(
+			(sessionId: string, model: string | null) => {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						return {
+							...s,
+							customModel: model?.trim() ? model.trim() : undefined,
+						};
+					})
+				);
+			}
+		);
+
 		// Handle remote new tab from web interface
 		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
 			(sessionId: string, responseChannel: string) => {
@@ -306,6 +357,25 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				} else {
 					window.maestro.process.sendRemoteNewTabResponse(responseChannel, null);
 				}
+			}
+		);
+
+		const unsubscribeDeleteSession = window.maestro.process.onRemoteDeleteSession(
+			(sessionId: string, responseChannel: string) => {
+				const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+				if (!session) {
+					window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, false);
+					return;
+				}
+
+				void performDeleteSession(session, false)
+					.then(() => {
+						window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, true);
+					})
+					.catch((error) => {
+						console.error('[Remote] Failed to delete session:', error);
+						window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, false);
+					});
 			}
 		);
 
@@ -426,14 +496,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
+			unsubscribeSetSessionModel();
 			unsubscribeNewTab();
+			unsubscribeDeleteSession();
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
 			unsubscribeStarTab();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
 		};
-	}, [sessionsRef, activeSessionIdRef, setSessions, setActiveSessionId, defaultSaveToHistory]);
+	}, [
+		sessionsRef,
+		activeSessionIdRef,
+		setSessions,
+		setActiveSessionId,
+		defaultSaveToHistory,
+		defaultShowThinking,
+		performDeleteSession,
+	]);
 
 	// Broadcast tab changes to web clients when tabs, activeTabId, or tab properties change
 	// PERFORMANCE FIX: This effect was previously missing its dependency array, causing it to
@@ -448,6 +528,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	// This is separate from tab changes because session state (busy/idle) changes need
 	// to be broadcast immediately for proper UI feedback on the web interface
 	const prevSessionStatesRef = useRef<Map<string, string>>(new Map());
+	const prevContextUsageRef = useRef<Map<string, number | null>>(new Map());
+	const prevResponseEventIdsRef = useRef<Map<string, string>>(new Map());
 
 	// Only set up the interval when live mode is active
 	useEffect(() => {
@@ -463,21 +545,48 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// Broadcast session state changes (busy/idle) to web clients
 				// This bypasses the debounced persistence which resets state to 'idle' before saving
 				const prevState = prevSessionStatesRef.current.get(session.id);
-				if (prevState !== session.state) {
+				const currentContextUsage =
+					typeof session.contextUsage === 'number' ? session.contextUsage : null;
+				const activeTab =
+					session.aiTabs?.find((tab) => tab.id === session.activeTabId) ?? session.aiTabs?.[0];
+				const effectiveContextWindow =
+					typeof session.customContextWindow === 'number' && session.customContextWindow > 0
+						? session.customContextWindow
+						: typeof activeTab?.usageStats?.contextWindow === 'number' &&
+							  activeTab.usageStats.contextWindow > 0
+							? activeTab.usageStats.contextWindow
+							: null;
+				const prevContextUsage = prevContextUsageRef.current.get(session.id) ?? null;
+				if (prevState !== session.state || prevContextUsage !== currentContextUsage) {
 					window.maestro.web.broadcastSessionState(session.id, session.state, {
 						name: session.name,
 						toolType: session.toolType,
 						inputMode: session.inputMode,
 						cwd: session.cwd,
+						contextUsage: session.contextUsage,
+						effectiveContextWindow,
 					});
+
+					if (prevState === 'busy' && session.state === 'idle') {
+						const responseCompletedEvent = buildResponseCompletedEvent(session);
+						const previousEventId = prevResponseEventIdsRef.current.get(session.id);
+						if (responseCompletedEvent && responseCompletedEvent.eventId !== previousEventId) {
+							window.maestro.web.broadcastResponseCompleted(responseCompletedEvent);
+							prevResponseEventIdsRef.current.set(session.id, responseCompletedEvent.eventId);
+						}
+					}
 					prevSessionStatesRef.current.set(session.id, session.state);
+					prevContextUsageRef.current.set(session.id, currentContextUsage);
 				}
 
 				if (!session.aiTabs || session.aiTabs.length === 0) return;
 
 				// Create a hash of tab properties that should trigger a broadcast when changed
 				const tabsHash = session.aiTabs
-					.map((t) => `${t.id}:${t.name || ''}:${t.starred}:${t.state}`)
+					.map(
+						(t) =>
+							`${t.id}:${t.name || ''}:${t.starred}:${t.state}:${t.currentModel || ''}:${t.usageStats?.inputTokens || 0}:${t.usageStats?.outputTokens || 0}:${t.usageStats?.cacheReadInputTokens || 0}:${t.usageStats?.cacheCreationInputTokens || 0}:${t.usageStats?.contextWindow || 0}:${t.usageStats?.reasoningTokens || 0}`
+					)
 					.join('|');
 
 				const prev = prevTabsRef.current.get(session.id);
@@ -504,6 +613,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						createdAt: tab.createdAt,
 						state: tab.state,
 						thinkingStartTime: tab.thinkingStartTime,
+						currentModel: tab.currentModel || null,
 					}));
 
 					window.maestro.web.broadcastTabsChange(session.id, tabsForBroadcast, current.activeTabId);

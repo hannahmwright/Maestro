@@ -48,6 +48,7 @@ import { getActiveTab, getWriteModeTab } from '../../utils/tabHelpers';
 import { formatRelativeTime } from '../../../shared/formatters';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { autorunSynopsisPrompt } from '../../../prompts';
+import type { WebRemoteLogEntry } from '../../../shared/remote-web';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 
@@ -202,6 +203,23 @@ function extractStringArray(value: unknown): string[] {
 	);
 }
 
+function summarizeUnknownValue(value: unknown, max = 280): string | undefined {
+	if (value === null || value === undefined) return undefined;
+	if (typeof value === 'string') {
+		const compact = value.replace(/\s+/g, ' ').trim();
+		if (!compact) return undefined;
+		return compact.length > max ? compact.substring(0, max) + '\u2026' : compact;
+	}
+	if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+	try {
+		const json = JSON.stringify(value);
+		if (!json) return undefined;
+		return json.length > max ? json.substring(0, max) + '\u2026' : json;
+	} catch {
+		return undefined;
+	}
+}
+
 function extractWebSearchQueries(state: Record<string, unknown>): string[] {
 	const querySet = new Set<string>();
 	const push = (value: unknown) => {
@@ -316,7 +334,9 @@ interface WebSearchAggregateEntry {
 	status: 'running' | 'completed' | 'error';
 	timestamp: number;
 	domains?: string[];
+	sourceUrls?: string[];
 	latestResponseDomain?: string;
+	responsePreview?: string;
 }
 
 function getWebSearchAggregateEntries(
@@ -353,7 +373,20 @@ function getWebSearchAggregateEntries(
 			status,
 			timestamp,
 			domains,
+			sourceUrls: Array.isArray(record.sourceUrls)
+				? record.sourceUrls.filter(
+						(value): value is string => typeof value === 'string' && value.trim().length > 0
+					)
+				: Array.isArray(record.urls)
+					? record.urls.filter(
+							(value): value is string => typeof value === 'string' && value.trim().length > 0
+						)
+					: [],
 			latestResponseDomain,
+			responsePreview:
+				typeof record.responsePreview === 'string' && record.responsePreview.trim()
+					? record.responsePreview.trim()
+					: undefined,
 		});
 	}
 	return entries;
@@ -364,6 +397,84 @@ function extractWebSearchLatestResponseDomain(state: Record<string, unknown>): s
 	return domains.length > 0 ? domains[domains.length - 1] : undefined;
 }
 
+function mergeUniqueStrings(existing: string[] | undefined, incoming: string[]): string[] {
+	const merged = new Set<string>(existing || []);
+	for (const value of incoming) {
+		if (typeof value !== 'string') continue;
+		const trimmed = value.trim();
+		if (!trimmed) continue;
+		merged.add(trimmed);
+	}
+	return [...merged];
+}
+
+function extractWebSearchSourceUrls(state: Record<string, unknown>): string[] {
+	const urls: string[] = [];
+	const seen = new Set<string>();
+	const maxUrls = 32;
+
+	const push = (value: string) => {
+		const trimmed = value.trim().replace(/[),.;:!?]+$/, '');
+		if (!trimmed || seen.has(trimmed)) return;
+		seen.add(trimmed);
+		urls.push(trimmed);
+	};
+
+	const visit = (value: unknown, depth = 0) => {
+		if (!value || depth > 4 || urls.length >= maxUrls) return;
+		if (typeof value === 'string') {
+			URL_DOMAIN_RE.lastIndex = 0;
+			let urlMatch: RegExpExecArray | null = null;
+			while ((urlMatch = URL_DOMAIN_RE.exec(value)) !== null) {
+				push(urlMatch[0]);
+				if (urls.length >= maxUrls) return;
+			}
+			return;
+		}
+
+		if (Array.isArray(value)) {
+			for (const entry of value) {
+				visit(entry, depth + 1);
+				if (urls.length >= maxUrls) break;
+			}
+			return;
+		}
+
+		if (typeof value === 'object') {
+			for (const entry of Object.values(value as Record<string, unknown>)) {
+				visit(entry, depth + 1);
+				if (urls.length >= maxUrls) break;
+			}
+		}
+	};
+
+	visit(state.output);
+	visit(state.result);
+	visit(state.action);
+	const input = asRecord(state.input);
+	if (input) {
+		visit(input.action);
+	}
+	return urls;
+}
+
+function stripWebSearchUrls(text: string): string {
+	return text.replace(URL_DOMAIN_RE, ' ').replace(SITE_FILTER_RE, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function extractWebSearchResponsePreview(state: Record<string, unknown>): string | undefined {
+	const candidates = [state.output, state.result];
+	for (const candidate of candidates) {
+		const summary = summarizeUnknownValue(candidate, 280);
+		if (!summary) continue;
+		const cleaned = stripWebSearchUrls(summary);
+		if (!cleaned) continue;
+		if (cleaned === '{}' || cleaned === '[]') continue;
+		return cleaned;
+	}
+	return undefined;
+}
+
 function mergeWebSearchAggregateEntries(
 	existingEntries: WebSearchAggregateEntry[],
 	invocationId: string | undefined,
@@ -371,7 +482,9 @@ function mergeWebSearchAggregateEntries(
 	queries: string[],
 	timestamp: number,
 	domains: string[],
-	latestResponseDomain?: string
+	latestResponseDomain?: string,
+	sourceUrls: string[] = [],
+	responsePreview?: string
 ): WebSearchAggregateEntry[] {
 	const merged = [...existingEntries];
 	const findFallbackTargetIndex = (): number => {
@@ -406,6 +519,8 @@ function mergeWebSearchAggregateEntries(
 						timestamp,
 						domains: mergeUniqueDomains(merged[targetIndex].domains, domains),
 						latestResponseDomain: latestResponseDomain || merged[targetIndex].latestResponseDomain,
+						sourceUrls: mergeUniqueStrings(merged[targetIndex].sourceUrls, sourceUrls),
+						responsePreview: responsePreview || merged[targetIndex].responsePreview,
 					};
 					continue;
 				}
@@ -424,6 +539,8 @@ function mergeWebSearchAggregateEntries(
 					timestamp,
 					domains: mergeUniqueDomains(merged[idx].domains, domains),
 					latestResponseDomain: latestResponseDomain || merged[idx].latestResponseDomain,
+					sourceUrls: mergeUniqueStrings(merged[idx].sourceUrls, sourceUrls),
+					responsePreview: responsePreview || merged[idx].responsePreview,
 				};
 			} else {
 				// Completion/error payloads can contain query-like text that doesn't exactly
@@ -439,6 +556,8 @@ function mergeWebSearchAggregateEntries(
 							domains: mergeUniqueDomains(merged[fallbackIndex].domains, domains),
 							latestResponseDomain:
 								latestResponseDomain || merged[fallbackIndex].latestResponseDomain,
+							sourceUrls: mergeUniqueStrings(merged[fallbackIndex].sourceUrls, sourceUrls),
+							responsePreview: responsePreview || merged[fallbackIndex].responsePreview,
 						};
 						continue;
 					}
@@ -451,7 +570,9 @@ function mergeWebSearchAggregateEntries(
 					status,
 					timestamp,
 					domains: mergeUniqueDomains(undefined, domains),
+					sourceUrls: mergeUniqueStrings(undefined, sourceUrls),
 					latestResponseDomain,
+					responsePreview,
 				});
 			}
 		}
@@ -469,6 +590,8 @@ function mergeWebSearchAggregateEntries(
 					timestamp,
 					domains: mergeUniqueDomains(merged[i].domains, domains),
 					latestResponseDomain: latestResponseDomain || merged[i].latestResponseDomain,
+					sourceUrls: mergeUniqueStrings(merged[i].sourceUrls, sourceUrls),
+					responsePreview: responsePreview || merged[i].responsePreview,
 				};
 				touched = true;
 			}
@@ -487,6 +610,8 @@ function mergeWebSearchAggregateEntries(
 				timestamp,
 				domains: mergeUniqueDomains(merged[fallbackIndex].domains, domains),
 				latestResponseDomain: latestResponseDomain || merged[fallbackIndex].latestResponseDomain,
+				sourceUrls: mergeUniqueStrings(merged[fallbackIndex].sourceUrls, sourceUrls),
+				responsePreview: responsePreview || merged[fallbackIndex].responsePreview,
 			};
 			return merged;
 		}
@@ -544,6 +669,32 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getGroups = () => useSessionStore.getState().groups;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
+		const broadcastSessionLogEntry = (
+			sessionId: string,
+			tabId: string | null,
+			inputMode: 'ai' | 'terminal',
+			logEntry: LogEntry
+		) => {
+			const webLogEntry: WebRemoteLogEntry = {
+				id: logEntry.id,
+				timestamp: logEntry.timestamp,
+				text: logEntry.text,
+				source: logEntry.source,
+				metadata: logEntry.metadata
+					? {
+							toolState: logEntry.metadata.toolState
+								? { ...logEntry.metadata.toolState }
+								: undefined,
+						}
+					: undefined,
+			};
+
+			void window.maestro.web
+				.broadcastSessionLogEntry(sessionId, tabId, inputMode, webLogEntry)
+				.catch((error) => {
+					console.error('[Web] Failed to broadcast session log entry', error);
+				});
+		};
 
 		// ================================================================
 		// onData — Handle process output data (BATCHED for performance)
@@ -827,7 +978,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						const shouldSynopsis =
 							currentSession.executionQueue.length === 0 &&
 							(completedTab?.agentSessionId || currentSession.agentSessionId) &&
-							(completedTab?.saveToHistory || currentSession.pendingAICommandForSynopsis);
+							!!currentSession.pendingAICommandForSynopsis;
 
 						if (shouldSynopsis) {
 							synopsisData = {
@@ -1324,6 +1475,46 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			}
 		);
 
+		const unsubscribeModel = window.maestro.process.onModel((sessionId: string, model: string) => {
+			const trimmedModel = model.trim();
+			if (!trimmedModel || isBatchSession(sessionId) || isSynopsisSession(sessionId)) {
+				return;
+			}
+
+			const parsed = parseSessionId(sessionId);
+			const actualSessionId = parsed.actualSessionId;
+			const tabId = parsed.tabId ?? undefined;
+
+			setSessions((prev) =>
+				prev.map((session) => {
+					if (session.id !== actualSessionId) return session;
+
+					let targetTab;
+					if (tabId) {
+						targetTab = session.aiTabs?.find((tab) => tab.id === tabId);
+					}
+
+					if (!targetTab) {
+						const awaitingTab = session.aiTabs?.find(
+							(tab) => tab.awaitingSessionId && !tab.agentSessionId
+						);
+						targetTab = awaitingTab || getActiveTab(session);
+					}
+
+					if (!targetTab || !session.aiTabs) {
+						return session;
+					}
+
+					return {
+						...session,
+						aiTabs: session.aiTabs.map((tab) =>
+							tab.id === targetTab.id ? { ...tab, currentModel: trimmedModel } : tab
+						),
+					};
+				})
+			);
+		});
+
 		// ================================================================
 		// onSlashCommands — Handle slash commands from Claude Code init
 		// ================================================================
@@ -1764,6 +1955,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						const chunksToProcess = new Map(buffer);
 						buffer.clear();
 						thinkingChunkRafIdRef.current = null;
+						const logEntriesToBroadcast: Array<{
+							sessionId: string;
+							tabId: string;
+							logEntry: LogEntry;
+						}> = [];
 
 						setSessions((prev) =>
 							prev.map((s) => {
@@ -1801,35 +1997,47 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 											console.warn(
 												'[App] Detected malformed thinking content, replacing instead of appending'
 											);
+											const updatedThinkingLog: LogEntry = {
+												...lastLog,
+												text: bufferedContent,
+											};
 											updatedTabs = updatedTabs.map((tab) =>
 												tab.id === chunkTabId
 													? {
 															...tab,
 															logs: [
 																...tab.logs.slice(0, -1),
-																{
-																	...lastLog,
-																	text: bufferedContent,
-																},
+																updatedThinkingLog,
 															],
 														}
 													: tab
 											);
+											logEntriesToBroadcast.push({
+												sessionId: s.id,
+												tabId: chunkTabId,
+												logEntry: updatedThinkingLog,
+											});
 										} else {
+											const updatedThinkingLog: LogEntry = {
+												...lastLog,
+												text: combinedText,
+											};
 											updatedTabs = updatedTabs.map((tab) =>
 												tab.id === chunkTabId
 													? {
 															...tab,
 															logs: [
 																...tab.logs.slice(0, -1),
-																{
-																	...lastLog,
-																	text: combinedText,
-																},
+																updatedThinkingLog,
 															],
 														}
 													: tab
 											);
+											logEntriesToBroadcast.push({
+												sessionId: s.id,
+												tabId: chunkTabId,
+												logEntry: updatedThinkingLog,
+											});
 										}
 									} else {
 										const newLog: LogEntry = {
@@ -1838,20 +2046,29 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 											source: 'thinking',
 											text: bufferedContent,
 										};
-										updatedTabs = updatedTabs.map((tab) =>
-											tab.id === chunkTabId
-												? {
-														...tab,
-														logs: [...tab.logs, newLog],
-													}
-												: tab
-										);
+											updatedTabs = updatedTabs.map((tab) =>
+												tab.id === chunkTabId
+													? {
+															...tab,
+															logs: [...tab.logs, newLog],
+														}
+													: tab
+											);
+											logEntriesToBroadcast.push({
+												sessionId: s.id,
+												tabId: chunkTabId,
+												logEntry: newLog,
+											});
+										}
 									}
-								}
 
 								return updatedTabs === s.aiTabs ? s : { ...s, aiTabs: updatedTabs };
 							})
 						);
+
+						for (const entry of logEntriesToBroadcast) {
+							broadcastSessionLogEntry(entry.sessionId, entry.tabId, 'ai', entry.logEntry);
+						}
 					});
 				}
 			}
@@ -1872,6 +2089,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					actualSessionId = sessionId;
 				}
 
+				const toolLogToBroadcast: LogEntry | null = null;
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
@@ -1952,9 +2170,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					? normalizeToolStatus(incomingState.status)
 					: undefined;
 				const responseDomains = isWebSearch ? extractWebSearchResponseDomains(incomingState) : [];
+				const sourceUrls = isWebSearch ? extractWebSearchSourceUrls(incomingState) : [];
 				const latestResponseDomain = isWebSearch
 					? extractWebSearchLatestResponseDomain(incomingState)
 					: undefined;
+				const responsePreview = isWebSearch
+					? extractWebSearchResponsePreview(incomingState)
+					: undefined;
+				let toolLogToBroadcast: LogEntry | null = null;
 
 				setSessions((prev) =>
 					prev.map((s) => {
@@ -2024,7 +2247,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									queries,
 									toolEvent.timestamp,
 									responseDomains,
-									latestResponseDomain
+									latestResponseDomain,
+									sourceUrls,
+									responsePreview
 								);
 								mergedState = {
 									...existingState,
@@ -2062,7 +2287,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							}
 
 							updatedLogs = [...targetTab.logs];
-							updatedLogs[openToolLogIndex] = {
+							const updatedToolLog: LogEntry = {
 								...existingLog,
 								timestamp: toolEvent.timestamp,
 								metadata: {
@@ -2070,6 +2295,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									toolState: mergedState,
 								},
 							};
+							updatedLogs[openToolLogIndex] = updatedToolLog;
+							toolLogToBroadcast = updatedToolLog;
 						} else {
 							const fallbackStatus = normalizedStatus || 'running';
 							const webSearchEntries = isWebSearch
@@ -2080,7 +2307,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 										extractWebSearchQueries(incomingState),
 										toolEvent.timestamp,
 										responseDomains,
-										latestResponseDomain
+										latestResponseDomain,
+										sourceUrls,
+										responsePreview
 									)
 								: [];
 
@@ -2106,6 +2335,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								},
 							};
 							updatedLogs = [...targetTab.logs, toolLog];
+							toolLogToBroadcast = toolLog;
 						}
 
 						return {
@@ -2121,6 +2351,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						};
 					})
 				);
+				if (toolLogToBroadcast) {
+					broadcastSessionLogEntry(actualSessionId, tabId, 'ai', toolLogToBroadcast);
+				}
 			}
 		);
 
@@ -2131,6 +2364,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeData();
 			unsubscribeExit();
 			unsubscribeSessionId();
+			unsubscribeModel();
 			unsubscribeSlashCommands();
 			unsubscribeStderr();
 			unsubscribeCommandExit();

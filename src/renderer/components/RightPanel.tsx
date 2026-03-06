@@ -18,7 +18,6 @@ import {
 import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
-import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
 import { AutoRunExpandedModal } from './AutoRunExpandedModal';
 import { ProcessesPanel } from './ProcessesPanel';
@@ -189,7 +188,6 @@ export const RightPanel = memo(
 		const autoRunContent = session?.autoRunContent ?? '';
 		const autoRunContentVersion = session?.autoRunContentVersion ?? 0;
 
-		const historyPanelRef = useRef<HistoryPanelHandle>(null);
 		const autoRunRef = useRef<AutoRunHandle>(null);
 		const {
 			panelRef,
@@ -299,9 +297,7 @@ export const RightPanel = memo(
 		useImperativeHandle(
 			ref,
 			() => ({
-				refreshHistoryPanel: () => {
-					historyPanelRef.current?.refreshHistory();
-				},
+				refreshHistoryPanel: () => {},
 				focusAutoRun: () => {
 					autoRunRef.current?.focus();
 				},
@@ -315,16 +311,6 @@ export const RightPanel = memo(
 			}),
 			[toggleAutoRunExpanded]
 		);
-
-		// Focus the history panel when switching to history tab
-		useEffect(() => {
-			if (activeRightTab === 'history' && rightPanelOpen && activeFocus === 'right') {
-				// Small delay to ensure the panel is rendered
-				requestAnimationFrame(() => {
-					historyPanelRef.current?.focus();
-				});
-			}
-		}, [activeRightTab, rightPanelOpen, activeFocus]);
 
 		// Focus the auto run panel when switching to autorun tab
 		useEffect(() => {
@@ -425,7 +411,6 @@ export const RightPanel = memo(
 					{(
 						[
 							{ id: 'files', label: 'Files' },
-							{ id: 'history', label: 'History' },
 							{ id: 'processes', label: 'Processes' },
 							{ id: 'autorun', label: 'Auto Run' },
 						] as const
@@ -512,22 +497,6 @@ export const RightPanel = memo(
 								onFocusFileInGraph={onFocusFileInGraph}
 								lastGraphFocusFile={lastGraphFocusFile}
 								onOpenLastDocumentGraph={onOpenLastDocumentGraph}
-							/>
-						</div>
-					)}
-
-					{activeRightTab === 'history' && (
-						<div data-tour="history-panel" className="h-full">
-							<HistoryPanel
-								ref={historyPanelRef}
-								session={session}
-								theme={theme}
-								onJumpToAgentSession={onJumpToAgentSession}
-								onResumeSession={onResumeSession}
-								onOpenSessionAsTab={onOpenSessionAsTab}
-								onOpenAboutModal={onOpenAboutModal}
-								fileTree={filteredFileTree}
-								onFileClick={onFileClick}
 							/>
 						</div>
 					)}
@@ -751,19 +720,6 @@ export const RightPanel = memo(
 										Loop {currentSessionBatchState.loopIteration + 1} of{' '}
 										{currentSessionBatchState.maxLoops ?? '∞'}
 									</span>
-								)}
-								{/* View history link - only shown on auto-run tab */}
-								{activeRightTab === 'autorun' && (
-									<button
-										className="text-[10px] whitespace-nowrap bg-transparent border-none p-0 cursor-pointer"
-										style={{
-											color: theme.colors.textDim,
-											textDecoration: 'underline',
-										}}
-										onClick={() => setActiveRightTab('history')}
-									>
-										View history
-									</button>
 								)}
 							</div>
 						</div>

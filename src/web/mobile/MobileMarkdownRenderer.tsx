@@ -17,10 +17,10 @@
 import React, { memo, useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
+import { normalizeMobileCodeLanguage, SyntaxHighlighter } from './prismLight';
 
 /**
  * Props for MobileMarkdownRenderer
@@ -162,7 +162,7 @@ const CodeBlockWithCopy = memo(
 					style={syntaxStyle}
 					customStyle={{
 						margin: 0,
-						padding: '12px',
+						padding: '12px 14px',
 						fontSize: '12px',
 						lineHeight: 1.5,
 						backgroundColor: bgColor,
@@ -195,7 +195,7 @@ export const MobileMarkdownRenderer = memo(
 			<div
 				style={{
 					fontSize: `${fontSize}px`,
-					lineHeight: 1.6,
+					lineHeight: 1.7,
 					color: colors.textMain,
 					wordBreak: 'break-word',
 				}}
@@ -227,7 +227,7 @@ export const MobileMarkdownRenderer = memo(
 							if (codeElement?.props) {
 								const { className, children: codeChildren } = codeElement.props;
 								const match = (className || '').match(/language-(\w+)/);
-								const language = match ? match[1] : 'text';
+								const language = normalizeMobileCodeLanguage(match ? match[1] : 'text');
 								const codeContent = String(codeChildren).replace(/\n$/, '');
 
 								return (
@@ -252,9 +252,9 @@ export const MobileMarkdownRenderer = memo(
 								<code
 									{...props}
 									style={{
-										backgroundColor: colors.bgActivity,
-										padding: '2px 6px',
-										borderRadius: '4px',
+										backgroundColor: `${colors.bgActivity}cc`,
+										padding: '1px 5px',
+										borderRadius: '5px',
 										fontSize: '0.9em',
 										fontFamily:
 											'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
@@ -266,7 +266,7 @@ export const MobileMarkdownRenderer = memo(
 						},
 
 						// Paragraphs
-						p: ({ children }) => <p style={{ margin: '8px 0' }}>{children}</p>,
+						p: ({ children }) => <p style={{ margin: '6px 0 10px' }}>{children}</p>,
 
 						// Headings
 						h1: ({ children }) => (
@@ -344,26 +344,28 @@ export const MobileMarkdownRenderer = memo(
 
 						// Lists
 						ul: ({ children }) => (
-							<ul style={{ margin: '8px 0', paddingLeft: '24px', listStyleType: 'disc' }}>
+							<ul style={{ margin: '6px 0 10px', paddingLeft: '22px', listStyleType: 'disc' }}>
 								{children}
 							</ul>
 						),
 						ol: ({ children }) => (
-							<ol style={{ margin: '8px 0', paddingLeft: '24px', listStyleType: 'decimal' }}>
+							<ol style={{ margin: '6px 0 10px', paddingLeft: '22px', listStyleType: 'decimal' }}>
 								{children}
 							</ol>
 						),
-						li: ({ children }) => <li style={{ margin: '4px 0' }}>{children}</li>,
+						li: ({ children }) => <li style={{ margin: '3px 0' }}>{children}</li>,
 
 						// Blockquotes
 						blockquote: ({ children }) => (
 							<blockquote
 								style={{
-									margin: '8px 0',
-									paddingLeft: '16px',
+									margin: '10px 0',
+									padding: '2px 0 2px 14px',
 									borderLeft: `3px solid ${colors.accent}`,
 									color: colors.textDim,
 									fontStyle: 'italic',
+									backgroundColor: `${colors.bgActivity}55`,
+									borderRadius: '0 8px 8px 0',
 								}}
 							>
 								{children}
@@ -383,12 +385,13 @@ export const MobileMarkdownRenderer = memo(
 
 						// Tables
 						table: ({ children }) => (
-							<div style={{ overflowX: 'auto', margin: '8px 0' }}>
+							<div style={{ overflowX: 'auto', margin: '10px 0' }}>
 								<table
 									style={{
 										width: '100%',
 										borderCollapse: 'collapse',
 										fontSize: '0.9em',
+										backgroundColor: `${colors.bgMain}88`,
 									}}
 								>
 									{children}

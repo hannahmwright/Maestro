@@ -129,18 +129,21 @@ describe('web/mobile/constants', () => {
 	describe('supportsVoiceInput', () => {
 		afterEach(() => {
 			// @ts-expect-error - Testing cleanup
-			delete window.webkitSpeechRecognition;
-			// @ts-expect-error - Testing cleanup
-			delete window.SpeechRecognition;
+			delete window.MediaRecorder;
+			Object.defineProperty(global, 'navigator', { value: {}, configurable: true });
 		});
 
-		it('should return true when speech recognition API exists', () => {
-			// @ts-expect-error - Testing webkit property
-			window.webkitSpeechRecognition = class {};
+		it('should return true when local recording APIs exist', () => {
+			// @ts-expect-error - Testing support injection
+			window.MediaRecorder = class {};
+			Object.defineProperty(global, 'navigator', {
+				value: { mediaDevices: { getUserMedia: () => Promise.resolve(null) } },
+				configurable: true,
+			});
 			expect(supportsVoiceInput()).toBe(true);
 		});
 
-		it('should return false when neither API exists', () => {
+		it('should return false when recording APIs are missing', () => {
 			expect(supportsVoiceInput()).toBe(false);
 		});
 	});

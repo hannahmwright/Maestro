@@ -37,6 +37,9 @@ vi.mock('lucide-react', () => ({
 	ChevronDown: () => <span data-testid="icon-chevron-down" />,
 	ChevronUp: () => <span data-testid="icon-chevron-up" />,
 	Activity: () => <span data-testid="icon-activity" />,
+	Loader2: ({ className }: { className?: string }) => (
+		<span data-testid="icon-loader2" className={className} />
+	),
 	X: () => <span data-testid="icon-x" />,
 	Keyboard: () => <span data-testid="icon-keyboard" />,
 	Radio: () => <span data-testid="icon-radio" />,
@@ -1209,18 +1212,17 @@ describe('SessionList', () => {
 			expect(screen.getByText('Idle Session')).toBeInTheDocument();
 		});
 
-		it('shows busy status with pulse animation', () => {
+		it('shows working spinner when session is busy', () => {
 			const sessions = [createMockSession({ id: 's1', name: 'Busy Session', state: 'busy' })];
 			useSessionStore.setState({ sessions: sessions });
 			useUIStore.setState({ leftSidebarOpen: true });
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
-			// Look for animate-pulse class on status indicator
-			const pulsingElements = container.querySelectorAll('.animate-pulse');
-			expect(pulsingElements.length).toBeGreaterThan(0);
+			const spinner = screen.getByTestId('icon-loader2');
+			expect(spinner).toHaveClass('animate-spin');
 		});
 
 		it('shows AUTO badge for batch sessions', () => {
@@ -1513,7 +1515,7 @@ describe('SessionList', () => {
 	// ============================================================================
 
 	describe('Skinny Mode', () => {
-		it('renders session dots in collapsed mode', () => {
+		it('renders session status markers in collapsed mode', () => {
 			const sessions = [
 				createMockSession({ id: 's1', name: 'Session 1' }),
 				createMockSession({ id: 's2', name: 'Session 2' }),
@@ -1525,9 +1527,8 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Should have circular session indicators
-			const dots = container.querySelectorAll('.rounded-full.w-3.h-3');
-			expect(dots.length).toBe(2);
+			const markers = container.querySelectorAll('[title="Idle"]');
+			expect(markers.length).toBe(2);
 		});
 
 		it('selects session when dot clicked in collapsed mode', () => {
@@ -2405,7 +2406,7 @@ describe('SessionList', () => {
 	// ============================================================================
 
 	describe('Claude Session Status', () => {
-		it('shows hollow indicator for claude type without agentSessionId', () => {
+		it('does not show a status dot for idle claude session in expanded mode', () => {
 			const sessions = [
 				createMockSession({
 					id: 's1',
@@ -2419,20 +2420,19 @@ describe('SessionList', () => {
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
-			// Should have hollow indicator (border instead of solid background)
-			const indicator = container.querySelector('[title="No active Claude session"]');
-			expect(indicator).toBeInTheDocument();
+			expect(screen.queryByTitle('Awaiting your input')).not.toBeInTheDocument();
 		});
 
-		it('shows solid indicator for claude type with agentSessionId', () => {
+		it('shows awaiting-input dot when claude session has unread output', () => {
 			const sessions = [
 				createMockSession({
 					id: 's1',
 					name: 'Claude Session',
 					toolType: 'claude-code',
 					agentSessionId: 'session-123',
+					aiTabs: [{ hasUnread: true } as any],
 				}),
 			];
 			useSessionStore.setState({ sessions: sessions });
@@ -2440,14 +2440,12 @@ describe('SessionList', () => {
 			const props = createDefaultProps({
 				sortedSessions: sessions,
 			});
-			const { container } = render(<SessionList {...props} />);
+			render(<SessionList {...props} />);
 
-			// Should NOT have hollow indicator
-			const indicator = container.querySelector('[title="No active Claude session"]');
-			expect(indicator).not.toBeInTheDocument();
+			expect(screen.getByTitle('Awaiting your input')).toBeInTheDocument();
 		});
 
-		it('shows hollow indicator in skinny mode for claude without session', () => {
+		it('shows idle indicator in skinny mode for claude without session', () => {
 			const sessions = [
 				createMockSession({
 					id: 's1',
@@ -2463,8 +2461,7 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Should have hollow indicator in skinny mode
-			const indicator = container.querySelector('[title="No active Claude session"]');
+			const indicator = container.querySelector('[title="Idle"]');
 			expect(indicator).toBeInTheDocument();
 		});
 	});

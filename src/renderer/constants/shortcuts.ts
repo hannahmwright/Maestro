@@ -25,7 +25,6 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	settings: { id: 'settings', label: 'Open Settings', keys: ['Meta', ','] },
 	agentSettings: { id: 'agentSettings', label: 'Open Agent Settings', keys: ['Alt', 'Meta', ','] },
 	goToFiles: { id: 'goToFiles', label: 'Go to Files Tab', keys: ['Meta', 'Shift', 'f'] },
-	goToHistory: { id: 'goToHistory', label: 'Go to History Tab', keys: ['Meta', 'Shift', 'h'] },
 	goToAutoRun: { id: 'goToAutoRun', label: 'Go to Auto Run Tab', keys: ['Meta', 'Shift', '1'] },
 	copyFilePath: { id: 'copyFilePath', label: 'Copy File Path (in Preview)', keys: ['Meta', 'p'] },
 	toggleMarkdownMode: {
@@ -93,11 +92,6 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Filter Sessions (in Left Panel)',
 		keys: ['Meta', 'f'],
 	},
-	filterHistory: {
-		id: 'filterHistory',
-		label: 'Filter History (in History tab)',
-		keys: ['Meta', 'f'],
-	},
 	searchLogs: { id: 'searchLogs', label: 'Search System Logs', keys: ['Meta', 'f'] },
 	searchOutput: {
 		id: 'searchOutput',
@@ -148,11 +142,6 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 		id: 'toggleReadOnlyMode',
 		label: 'Toggle Read-Only Mode',
 		keys: ['Meta', 'r'],
-	},
-	toggleSaveToHistory: {
-		id: 'toggleSaveToHistory',
-		label: 'Toggle Save to History',
-		keys: ['Meta', 's'],
 	},
 	toggleShowThinking: {
 		id: 'toggleShowThinking',

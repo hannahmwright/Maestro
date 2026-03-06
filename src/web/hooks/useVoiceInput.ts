@@ -1,112 +1,48 @@
-/**
- * useVoiceInput - Voice input hook using Web Speech API
- *
- * Provides speech-to-text functionality for mobile web input.
- * Uses the Web Speech API (SpeechRecognition) with vendor prefix fallback.
- *
- * Features:
- * - Browser support detection
- * - Real-time interim results for live transcription
- * - Automatic language detection
- * - Haptic feedback integration
- * - Proper cleanup on unmount
- */
-
 import { useRef, useState, useCallback, useEffect } from 'react';
+import { buildApiUrl } from '../utils/config';
 import { webLogger } from '../utils/logger';
+import type {
+	WebVoiceTranscriptionRequest,
+	WebVoiceTranscriptionResponse,
+	WebVoiceTranscriptionStatusResponse,
+} from '../../shared/remote-web';
 
-/**
- * Web Speech API type declarations
- * These are needed because TypeScript doesn't include these by default
- */
-export interface SpeechRecognitionEvent extends Event {
-	readonly resultIndex: number;
-	readonly results: SpeechRecognitionResultList;
-}
+const MAX_RECORDING_MS = 90_000;
+const MICROPHONE_REQUEST_TIMEOUT_MS = 12_000;
+const RECORDING_TICK_MS = 250;
+type VoiceBackendState = 'unknown' | 'warming' | 'ready' | 'unavailable';
 
-export interface SpeechRecognitionResultList {
-	readonly length: number;
-	item(index: number): SpeechRecognitionResult;
-	[index: number]: SpeechRecognitionResult;
-}
-
-export interface SpeechRecognitionResult {
-	readonly isFinal: boolean;
-	readonly length: number;
-	item(index: number): SpeechRecognitionAlternative;
-	[index: number]: SpeechRecognitionAlternative;
-}
-
-export interface SpeechRecognitionAlternative {
-	readonly transcript: string;
-	readonly confidence: number;
-}
-
-export interface SpeechRecognitionErrorEvent extends Event {
-	readonly error: string;
-	readonly message: string;
-}
-
-export interface SpeechRecognition extends EventTarget {
-	continuous: boolean;
-	interimResults: boolean;
-	lang: string;
-	maxAlternatives: number;
-	onaudioend: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onaudiostart: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onend: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onerror: ((this: SpeechRecognition, ev: SpeechRecognitionErrorEvent) => void) | null;
-	onnomatch: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onresult: ((this: SpeechRecognition, ev: SpeechRecognitionEvent) => void) | null;
-	onsoundend: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onsoundstart: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onspeechend: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onspeechstart: ((this: SpeechRecognition, ev: Event) => void) | null;
-	onstart: ((this: SpeechRecognition, ev: Event) => void) | null;
-	abort(): void;
-	start(): void;
-	stop(): void;
-}
-
-export interface SpeechRecognitionConstructor {
-	new (): SpeechRecognition;
-}
-
-declare global {
-	interface Window {
-		SpeechRecognition?: SpeechRecognitionConstructor;
-		webkitSpeechRecognition?: SpeechRecognitionConstructor;
-	}
-}
-
-/**
- * Check if speech recognition is supported in the current browser
- */
-export function isSpeechRecognitionSupported(): boolean {
+export function isVoiceRecordingSupported(): boolean {
 	return (
 		typeof window !== 'undefined' &&
-		(!!window.SpeechRecognition || !!window.webkitSpeechRecognition)
+		typeof navigator !== 'undefined' &&
+		!!navigator.mediaDevices?.getUserMedia &&
+		typeof window.MediaRecorder !== 'undefined'
 	);
 }
 
-/**
- * Get the SpeechRecognition constructor (with vendor prefix fallback)
- */
-export function getSpeechRecognition(): SpeechRecognitionConstructor | null {
-	if (typeof window === 'undefined') return null;
-	return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+function getPreferredMimeType(): string {
+	if (typeof window === 'undefined' || typeof window.MediaRecorder === 'undefined') {
+		return '';
+	}
+
+	for (const mimeType of [
+		'audio/webm;codecs=opus',
+		'audio/mp4',
+		'audio/webm',
+		'audio/ogg;codecs=opus',
+	]) {
+		if (
+			typeof window.MediaRecorder.isTypeSupported === 'function' &&
+			window.MediaRecorder.isTypeSupported(mimeType)
+		) {
+			return mimeType;
+		}
+	}
+
+	return '';
 }
 
-/**
- * Trigger haptic feedback using the Vibration API
- * Uses short vibrations for tactile confirmation on mobile devices
- *
- * @param pattern - Vibration pattern in milliseconds or single duration
- *   - 'light' (10ms) - subtle tap for button presses
- *   - 'medium' (25ms) - standard confirmation feedback
- *   - 'strong' (50ms) - important action confirmation
- *   - number - custom duration in milliseconds
- */
 function triggerHapticFeedback(pattern: 'light' | 'medium' | 'strong' | number = 'medium'): void {
 	if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
 		const duration =
@@ -115,192 +51,510 @@ function triggerHapticFeedback(pattern: 'light' | 'medium' | 'strong' | number =
 		try {
 			navigator.vibrate(duration);
 		} catch {
-			// Silently fail if vibration is not allowed (e.g., permissions, battery saver)
+			// Ignore vibration failures.
 		}
 	}
 }
 
-/** Options for configuring voice input behavior */
+async function getMicrophonePermissionState(): Promise<PermissionState | null> {
+	if (
+		typeof navigator === 'undefined' ||
+		!('permissions' in navigator) ||
+		!navigator.permissions?.query
+	) {
+		return null;
+	}
+
+	try {
+		const status = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+		return status.state;
+	} catch {
+		return null;
+	}
+}
+
+function formatRecordingDuration(durationMs: number): string {
+	const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+	const buffer = new Uint8Array(await blob.arrayBuffer());
+	let binary = '';
+	const chunkSize = 0x8000;
+	for (let index = 0; index < buffer.length; index += chunkSize) {
+		const chunk = buffer.subarray(index, index + chunkSize);
+		binary += String.fromCharCode(...chunk);
+	}
+	return btoa(binary);
+}
+
+function mergeTranscriptIntoDraft(
+	currentValue: string,
+	transcript: string,
+	selection: { start: number; end: number } | null
+): { value: string; caretPosition: number } {
+	const cleanedTranscript = transcript.trim();
+	if (!cleanedTranscript) {
+		return {
+			value: currentValue,
+			caretPosition: selection?.end ?? currentValue.length,
+		};
+	}
+
+	if (!selection) {
+		const separator = currentValue.trim().length > 0 ? ' ' : '';
+		const nextValue = `${currentValue}${separator}${cleanedTranscript}`;
+		return {
+			value: nextValue,
+			caretPosition: nextValue.length,
+		};
+	}
+
+	const before = currentValue.slice(0, selection.start);
+	const after = currentValue.slice(selection.end);
+	const needsLeadingSpace = before.length > 0 && !/\s$/.test(before);
+	const needsTrailingSpace = after.length > 0 && !/^\s/.test(after);
+	const insertedText = `${needsLeadingSpace ? ' ' : ''}${cleanedTranscript}${needsTrailingSpace ? ' ' : ''}`;
+	const nextValue = `${before}${insertedText}${after}`;
+	return {
+		value: nextValue,
+		caretPosition: before.length + insertedText.length,
+	};
+}
+
+type VoiceInputState = 'idle' | 'requesting' | 'recording' | 'transcribing' | 'error';
+
 export interface UseVoiceInputOptions {
-	/** Current text input value to append transcription to */
 	currentValue: string;
-	/** Whether voice input should be disabled */
 	disabled?: boolean;
-	/** Callback when transcription text changes */
 	onTranscriptionChange: (newValue: string) => void;
-	/** Ref to focus after voice input ends */
 	focusRef?: React.RefObject<HTMLTextAreaElement | HTMLInputElement>;
 }
 
-/** Return value from useVoiceInput hook */
 export interface UseVoiceInputReturn {
-	/** Whether currently listening for voice input */
 	isListening: boolean;
-	/** Whether voice input is supported in the current browser */
+	isTranscribing: boolean;
 	voiceSupported: boolean;
-	/** Start voice input */
+	voiceState: VoiceInputState;
+	voiceStatusText: string | null;
+	voiceError: string | null;
 	startVoiceInput: () => void;
-	/** Stop voice input */
 	stopVoiceInput: () => void;
-	/** Toggle voice input on/off */
 	toggleVoiceInput: () => void;
 }
 
-/**
- * Hook for voice input using Web Speech API
- *
- * @param options - Configuration options
- * @returns Voice input state and handlers
- *
- * @example
- * ```tsx
- * const { isListening, voiceSupported, toggleVoiceInput } = useVoiceInput({
- *   currentValue: inputValue,
- *   onTranscriptionChange: setInputValue,
- *   focusRef: textareaRef,
- * });
- *
- * if (voiceSupported) {
- *   return (
- *     <button onClick={toggleVoiceInput}>
- *       {isListening ? 'Stop' : 'Start'} Voice Input
- *     </button>
- *   );
- * }
- * ```
- */
 export function useVoiceInput({
 	currentValue,
 	disabled = false,
 	onTranscriptionChange,
 	focusRef,
 }: UseVoiceInputOptions): UseVoiceInputReturn {
-	// Voice input state
-	const [isListening, setIsListening] = useState(false);
-	const [voiceSupported] = useState(() => isSpeechRecognitionSupported());
-	const recognitionRef = useRef<SpeechRecognition | null>(null);
+	const [voiceState, setVoiceState] = useState<VoiceInputState>('idle');
+	const [voiceError, setVoiceError] = useState<string | null>(null);
+	const currentValueRef = useRef(currentValue);
+	const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+	const mediaStreamRef = useRef<MediaStream | null>(null);
+	const chunksRef = useRef<Blob[]>([]);
+	const recordingTimerRef = useRef<number | null>(null);
+	const recordingDurationIntervalRef = useRef<number | null>(null);
+	const microphoneRequestTokenRef = useRef(0);
+	const selectionRef = useRef<{ start: number; end: number } | null>(null);
+	const [recordingDurationMs, setRecordingDurationMs] = useState(0);
+	const [backendState, setBackendState] = useState<VoiceBackendState>('unknown');
+	const [, setBackendError] = useState<string | null>(null);
+	const recorderSupported = isVoiceRecordingSupported();
+	const voiceSupported = recorderSupported && backendState !== 'unavailable';
 
-	/**
-	 * Initialize speech recognition when voice input starts
-	 */
-	const startVoiceInput = useCallback(() => {
-		if (!voiceSupported || disabled) return;
+	useEffect(() => {
+		currentValueRef.current = currentValue;
+	}, [currentValue]);
 
-		const SpeechRecognitionClass = getSpeechRecognition();
-		if (!SpeechRecognitionClass) return;
+	const applyBackendStatus = useCallback((status: WebVoiceTranscriptionStatusResponse) => {
+		if (status.ready) {
+			setBackendState('ready');
+			setBackendError(null);
+			return;
+		}
 
-		// Create new recognition instance
-		const recognition = new SpeechRecognitionClass();
-		recognition.continuous = false;
-		recognition.interimResults = true;
-		recognition.lang = navigator.language || 'en-US';
-		recognition.maxAlternatives = 1;
+		if (status.warming) {
+			setBackendState('warming');
+			setBackendError(null);
+			return;
+		}
 
-		// Store reference for cleanup
-		recognitionRef.current = recognition;
+		if (status.available) {
+			setBackendState('unknown');
+			setBackendError(null);
+			return;
+		}
 
-		// Track interim results to update input in real-time
-		let finalTranscript = '';
+		setBackendState('unavailable');
+		setBackendError(status.error || 'Voice transcription is unavailable.');
+	}, []);
 
-		recognition.onstart = () => {
-			setIsListening(true);
-			triggerHapticFeedback('medium');
-		};
-
-		recognition.onresult = (event: SpeechRecognitionEvent) => {
-			let interimTranscript = '';
-
-			for (let i = event.resultIndex; i < event.results.length; i++) {
-				const result = event.results[i];
-				if (result.isFinal) {
-					finalTranscript += result[0].transcript;
-				} else {
-					interimTranscript += result[0].transcript;
-				}
-			}
-
-			// Update input with current transcription (append to existing value)
-			const currentText = currentValue.trim();
-			const separator = currentText ? ' ' : '';
-			const newText = currentText + separator + (finalTranscript || interimTranscript);
-
-			onTranscriptionChange(newText);
-		};
-
-		recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-			webLogger.warn('Speech recognition error', 'VoiceInput', event.error);
-			setIsListening(false);
-			recognitionRef.current = null;
-
-			// Haptic feedback on error
-			if (event.error !== 'aborted' && event.error !== 'no-speech') {
-				triggerHapticFeedback('strong');
-			}
-		};
-
-		recognition.onend = () => {
-			setIsListening(false);
-			recognitionRef.current = null;
-			triggerHapticFeedback('light');
-
-			// Focus input after voice input ends
-			focusRef?.current?.focus();
-		};
+	const warmVoiceBackend = useCallback(async () => {
+		if (!recorderSupported) {
+			return;
+		}
 
 		try {
-			recognition.start();
-		} catch (err) {
-			webLogger.warn('Failed to start speech recognition', 'VoiceInput', err);
-			setIsListening(false);
-			recognitionRef.current = null;
-		}
-	}, [voiceSupported, disabled, currentValue, onTranscriptionChange, focusRef]);
-
-	/**
-	 * Stop voice input
-	 */
-	const stopVoiceInput = useCallback(() => {
-		if (recognitionRef.current) {
-			try {
-				recognitionRef.current.stop();
-			} catch {
-				// Ignore errors when stopping
+			const statusResponse = await fetch(buildApiUrl('/transcribe/status'), {
+				cache: 'no-store',
+			});
+			if (!statusResponse.ok) {
+				return;
 			}
-			recognitionRef.current = null;
-		}
-		setIsListening(false);
-	}, []);
 
-	/**
-	 * Toggle voice input on/off
-	 */
-	const toggleVoiceInput = useCallback(() => {
-		if (isListening) {
-			stopVoiceInput();
-		} else {
-			startVoiceInput();
-		}
-	}, [isListening, startVoiceInput, stopVoiceInput]);
+			const statusPayload = (await statusResponse.json()) as WebVoiceTranscriptionStatusResponse & {
+				timestamp?: number;
+			};
+			applyBackendStatus(statusPayload);
 
-	/**
-	 * Cleanup recognition on unmount
-	 */
+			if (statusPayload.ready || statusPayload.warming) {
+				return;
+			}
+
+			setBackendState('warming');
+			const prewarmResponse = await fetch(buildApiUrl('/transcribe/prewarm'), {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({}),
+			});
+			if (!prewarmResponse.ok) {
+				return;
+			}
+
+			const prewarmPayload =
+				(await prewarmResponse.json()) as WebVoiceTranscriptionStatusResponse & {
+					timestamp?: number;
+				};
+			applyBackendStatus(prewarmPayload);
+		} catch (error) {
+			webLogger.warn('Voice transcription backend warmup failed', 'VoiceInput', { error });
+		}
+	}, [applyBackendStatus, recorderSupported]);
+
 	useEffect(() => {
-		return () => {
-			if (recognitionRef.current) {
-				try {
-					recognitionRef.current.abort();
-				} catch {
-					// Ignore errors during cleanup
-				}
+		if (!recorderSupported) {
+			setBackendState('unavailable');
+			setBackendError('Voice recording is not supported in this browser.');
+			return;
+		}
+
+		void warmVoiceBackend();
+	}, [recorderSupported, warmVoiceBackend]);
+
+	useEffect(() => {
+		if (!recorderSupported) {
+			return;
+		}
+
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible' && backendState !== 'ready') {
+				void warmVoiceBackend();
 			}
 		};
+
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		return () => {
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+		};
+	}, [backendState, recorderSupported, warmVoiceBackend]);
+
+	const clearRecordingTimer = useCallback(() => {
+		if (recordingTimerRef.current !== null) {
+			window.clearTimeout(recordingTimerRef.current);
+			recordingTimerRef.current = null;
+		}
 	}, []);
 
-	return {
-		isListening,
+	const clearRecordingDurationInterval = useCallback(() => {
+		if (recordingDurationIntervalRef.current !== null) {
+			window.clearInterval(recordingDurationIntervalRef.current);
+			recordingDurationIntervalRef.current = null;
+		}
+	}, []);
+
+	const cleanupStream = useCallback(() => {
+		clearRecordingTimer();
+		clearRecordingDurationInterval();
+		mediaRecorderRef.current = null;
+		if (mediaStreamRef.current) {
+			for (const track of mediaStreamRef.current.getTracks()) {
+				track.stop();
+			}
+			mediaStreamRef.current = null;
+		}
+	}, [clearRecordingDurationInterval, clearRecordingTimer]);
+
+	const finalizeTranscription = useCallback(async () => {
+		const recordedBlob = new Blob(chunksRef.current, {
+			type: mediaRecorderRef.current?.mimeType || getPreferredMimeType() || 'audio/webm',
+		});
+		chunksRef.current = [];
+
+		if (recordedBlob.size === 0) {
+			setVoiceState('error');
+			setVoiceError('No speech captured. Try again.');
+			triggerHapticFeedback('light');
+			return;
+		}
+
+		setVoiceState('transcribing');
+		setVoiceError(null);
+
+		try {
+			const body: WebVoiceTranscriptionRequest = {
+				audioBase64: await blobToBase64(recordedBlob),
+				mimeType: recordedBlob.type || 'audio/webm',
+				language: 'en',
+			};
+			const response = await fetch(buildApiUrl('/transcribe'), {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(body),
+			});
+
+			if (!response.ok) {
+				const errorPayload = (await response.json().catch(() => null)) as {
+					message?: string;
+				} | null;
+				throw new Error(errorPayload?.message || 'Voice transcription failed.');
+			}
+
+			const payload = (await response.json()) as WebVoiceTranscriptionResponse & {
+				timestamp?: number;
+			};
+			setBackendState('ready');
+			setBackendError(null);
+			if (!payload.text.trim()) {
+				setVoiceState('error');
+				setVoiceError('No speech detected. Try again.');
+				triggerHapticFeedback('light');
+				return;
+			}
+
+			const merged = mergeTranscriptIntoDraft(
+				currentValueRef.current,
+				payload.text,
+				selectionRef.current
+			);
+			onTranscriptionChange(merged.value);
+			triggerHapticFeedback('medium');
+
+			requestAnimationFrame(() => {
+				const input = focusRef?.current;
+				if (!input) {
+					return;
+				}
+				input.focus();
+				if ('setSelectionRange' in input) {
+					input.setSelectionRange(merged.caretPosition, merged.caretPosition);
+				}
+			});
+
+			setVoiceState('idle');
+			setRecordingDurationMs(0);
+		} catch (error) {
+			webLogger.error('Voice transcription request failed', 'VoiceInput', error);
+			if (error instanceof Error && /unavailable|not configured/i.test(error.message)) {
+				setBackendState('unavailable');
+				setBackendError(error.message);
+			}
+			setVoiceState('error');
+			setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.');
+			triggerHapticFeedback('strong');
+		}
+	}, [focusRef, onTranscriptionChange]);
+
+	const cancelPendingMicrophoneRequest = useCallback(() => {
+		microphoneRequestTokenRef.current += 1;
+		setVoiceState('idle');
+		setVoiceError(null);
+		setRecordingDurationMs(0);
+	}, []);
+
+	const stopVoiceInput = useCallback(() => {
+		if (voiceState === 'requesting') {
+			cancelPendingMicrophoneRequest();
+			return;
+		}
+
+		const recorder = mediaRecorderRef.current;
+		if (!recorder || recorder.state === 'inactive') {
+			return;
+		}
+
+		clearRecordingTimer();
+		recorder.stop();
+	}, [cancelPendingMicrophoneRequest, clearRecordingTimer, voiceState]);
+
+	const startVoiceInput = useCallback(async () => {
+		if (
+			!voiceSupported ||
+			disabled ||
+			voiceState === 'transcribing' ||
+			voiceState === 'requesting'
+		) {
+			return;
+		}
+
+		try {
+			setVoiceError(null);
+			setVoiceState('requesting');
+			setRecordingDurationMs(0);
+			const requestToken = microphoneRequestTokenRef.current + 1;
+			microphoneRequestTokenRef.current = requestToken;
+
+			const permissionState = await getMicrophonePermissionState();
+			if (permissionState === 'denied') {
+				throw new Error('Microphone access is blocked in this browser.');
+			}
+
+			const input = focusRef?.current;
+			if (input && 'selectionStart' in input && 'selectionEnd' in input) {
+				selectionRef.current = {
+					start: input.selectionStart ?? currentValueRef.current.length,
+					end: input.selectionEnd ?? currentValueRef.current.length,
+				};
+			} else {
+				selectionRef.current = null;
+			}
+
+			const stream = (await Promise.race([
+				navigator.mediaDevices.getUserMedia({
+					audio: {
+						echoCancellation: true,
+						noiseSuppression: true,
+						autoGainControl: true,
+					},
+				}),
+				new Promise<never>((_, reject) => {
+					window.setTimeout(() => {
+						reject(new Error('Microphone request timed out. Tap the mic to try again.'));
+					}, MICROPHONE_REQUEST_TIMEOUT_MS);
+				}),
+			])) as MediaStream;
+
+			if (microphoneRequestTokenRef.current !== requestToken) {
+				for (const track of stream.getTracks()) {
+					track.stop();
+				}
+				return;
+			}
+
+			mediaStreamRef.current = stream;
+
+			const preferredMimeType = getPreferredMimeType();
+			const recorder = preferredMimeType
+				? new MediaRecorder(stream, { mimeType: preferredMimeType })
+				: new MediaRecorder(stream);
+			mediaRecorderRef.current = recorder;
+			chunksRef.current = [];
+
+			recorder.ondataavailable = (event) => {
+				if (event.data.size > 0) {
+					chunksRef.current.push(event.data);
+				}
+			};
+
+			recorder.onstart = () => {
+				setVoiceState('recording');
+				setRecordingDurationMs(0);
+				const recordingStartedAt = Date.now();
+				clearRecordingDurationInterval();
+				recordingDurationIntervalRef.current = window.setInterval(() => {
+					setRecordingDurationMs(Date.now() - recordingStartedAt);
+				}, RECORDING_TICK_MS);
+				triggerHapticFeedback('medium');
+			};
+
+			recorder.onstop = () => {
+				cleanupStream();
+				void finalizeTranscription();
+			};
+
+			recorder.onerror = (event) => {
+				webLogger.error('Voice recording failed', 'VoiceInput', event);
+				cleanupStream();
+				setVoiceState('error');
+				setVoiceError('Unable to record audio.');
+				triggerHapticFeedback('strong');
+			};
+
+			recorder.start();
+			recordingTimerRef.current = window.setTimeout(() => {
+				stopVoiceInput();
+			}, MAX_RECORDING_MS);
+		} catch (error) {
+			webLogger.error('Failed to start voice recording', 'VoiceInput', error);
+			cleanupStream();
+			if (error instanceof Error && /unavailable|not configured/i.test(error.message)) {
+				setBackendState('unavailable');
+				setBackendError(error.message);
+			}
+			setVoiceState('error');
+			setVoiceError(error instanceof Error ? error.message : 'Microphone access failed.');
+			triggerHapticFeedback('strong');
+		}
+	}, [
+		cleanupStream,
+		clearRecordingDurationInterval,
+		disabled,
+		finalizeTranscription,
+		focusRef,
+		stopVoiceInput,
+		voiceState,
 		voiceSupported,
-		startVoiceInput,
+	]);
+
+	const toggleVoiceInput = useCallback(() => {
+		if (voiceState === 'recording' || voiceState === 'requesting') {
+			stopVoiceInput();
+			return;
+		}
+
+		void startVoiceInput();
+	}, [startVoiceInput, stopVoiceInput, voiceState]);
+
+	useEffect(() => {
+		return () => {
+			microphoneRequestTokenRef.current += 1;
+			if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+				mediaRecorderRef.current.stop();
+			}
+			cleanupStream();
+		};
+	}, [cleanupStream]);
+
+	const voiceStatusText =
+		voiceState === 'requesting'
+			? 'Waiting for microphone… tap again to cancel'
+			: voiceState === 'recording'
+				? `Listening… ${formatRecordingDuration(recordingDurationMs)}`
+				: voiceState === 'transcribing'
+					? 'Transcribing…'
+					: voiceState === 'error'
+						? voiceError
+						: null;
+
+	return {
+		isListening: voiceState === 'recording' || voiceState === 'requesting',
+		isTranscribing: voiceState === 'transcribing',
+		voiceSupported,
+		voiceState,
+		voiceStatusText,
+		voiceError,
+		startVoiceInput: () => {
+			void startVoiceInput();
+		},
 		stopVoiceInput,
 		toggleVoiceInput,
 	};

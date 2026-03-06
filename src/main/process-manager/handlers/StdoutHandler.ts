@@ -234,6 +234,14 @@ export class StdoutHandler {
 
 		if (!event) return;
 
+		if (typeof event.model === 'string' && event.model.trim()) {
+			const nextModel = event.model.trim();
+			if (managedProcess.currentModel !== nextModel) {
+				managedProcess.currentModel = nextModel;
+				this.emitter.emit('model', sessionId, nextModel);
+			}
+		}
+
 		// Extract usage
 		const usage = outputParser.extractUsage(event);
 		if (usage) {

@@ -23,6 +23,28 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
 
+const isSameCalendarDay = (left: string | number, right: string | number): boolean => {
+	const leftDate = new Date(left);
+	const rightDate = new Date(right);
+	return (
+		leftDate.getFullYear() === rightDate.getFullYear() &&
+		leftDate.getMonth() === rightDate.getMonth() &&
+		leftDate.getDate() === rightDate.getDate()
+	);
+};
+
+const formatChatDateSeparator = (timestamp: string | number): string => {
+	const date = new Date(timestamp);
+	const now = new Date();
+	const weekday = date.toLocaleDateString(undefined, { weekday: 'short' });
+	const month = date.toLocaleDateString(undefined, { month: 'short' });
+	const day = date.getDate();
+	const year = date.getFullYear();
+	return year === now.getFullYear()
+		? `${weekday} ${month} ${day}`
+		: `${weekday} ${month} ${day}, ${year}`;
+};
+
 interface GroupChatMessagesProps {
 	theme: Theme;
 	messages: GroupChatMessage[];
@@ -156,25 +178,9 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 
 		// Format timestamp like AI Terminal (outside bubble)
 		// Accepts both ISO string and Unix timestamp
-		const formatTimestamp = (timestamp: string | number) => {
+		const formatTime = (timestamp: string | number) => {
 			const date = new Date(timestamp);
-			const today = new Date();
-			const isToday = date.toDateString() === today.toDateString();
-			const time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-			if (isToday) {
-				return time;
-			}
-			const year = date.getFullYear();
-			const month = String(date.getMonth() + 1).padStart(2, '0');
-			const day = String(date.getDate()).padStart(2, '0');
-			return (
-				<>
-					<div>
-						{year}-{month}-{day}
-					</div>
-					<div>{time}</div>
-				</>
-			);
+			return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 		};
 
 		return (
@@ -216,6 +222,13 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 						const isSystem = msg.from === 'system';
 						const msgKey = `${msg.timestamp}-${index}`;
 						const isExpanded = expandedMessages.has(msgKey);
+						const previousTimestamp = index > 0 ? messages[index - 1].timestamp : undefined;
+						const showDateSeparator =
+							previousTimestamp === undefined ||
+							!isSameCalendarDay(previousTimestamp, msg.timestamp);
+						const dateSeparatorLabel = showDateSeparator
+							? formatChatDateSeparator(msg.timestamp)
+							: null;
 
 						// Calculate if content should be collapsed
 						const lineCount = msg.content.split('\n').length;
@@ -236,171 +249,196 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 								: getParticipantColor(msg.from);
 
 						return (
-							<div
-								key={msgKey}
-								data-message-timestamp={msg.timestamp}
-								className={`flex gap-4 group ${isUser ? 'flex-row-reverse' : ''} px-6 py-2`}
-							>
-								{/* Timestamp - outside bubble, like AI Terminal */}
-								<div
-									className={`w-20 shrink-0 text-[10px] pt-2 ${isUser ? 'text-right' : 'text-left'}`}
-									style={{ color: theme.colors.textDim, opacity: 0.6 }}
-								>
-									{formatTimestamp(msg.timestamp)}
-								</div>
-
-								{/* Message bubble */}
-								<div
-									className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isUser ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
-									style={{
-										backgroundColor: isUser
-											? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
-											: theme.colors.bgActivity,
-										borderColor: isUser ? theme.colors.accent + '40' : theme.colors.border,
-										borderLeftWidth: !isUser ? '3px' : undefined,
-										borderLeftColor: !isUser ? senderColor : undefined,
-										color: theme.colors.textMain,
-									}}
-								>
-									{/* Sender label for non-user messages */}
-									{!isUser && (
-										<div className="text-xs font-medium mb-2" style={{ color: senderColor }}>
-											{msg.from === 'moderator'
-												? 'Moderator'
-												: msg.from === 'system'
-													? 'System'
-													: msg.from}
-										</div>
-									)}
-
-									{/* Message content */}
-									{shouldCollapse && !isExpanded ? (
-										// Collapsed view
-										<div>
+							<div key={msgKey}>
+								{showDateSeparator && dateSeparatorLabel && (
+									<div className="px-6 py-2">
+										<div className="flex items-center gap-3">
 											<div
-												className="text-sm overflow-hidden"
-												style={{ maxHeight: `${maxOutputLines * 1.5}em` }}
-											>
-												{!isUser && !markdownEditMode ? (
-													<MarkdownRenderer
-														content={displayContent}
-														theme={theme}
-														onCopy={copyToClipboard}
-													/>
-												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? displayContent : stripMarkdown(displayContent)}
-													</div>
-												)}
-											</div>
-											<button
-												onClick={() => toggleExpanded(msgKey)}
-												className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
-												style={{
-													borderColor: theme.colors.border,
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.accent,
-												}}
-											>
-												<ChevronDown className="w-3 h-3" />
-												Show all {lineCount} lines
-											</button>
-										</div>
-									) : shouldCollapse && isExpanded ? (
-										// Expanded view (was collapsed)
-										<div>
+												className="h-px flex-1"
+												style={{ backgroundColor: theme.colors.border, opacity: 0.5 }}
+											/>
 											<div
-												className="text-sm overflow-auto scrollbar-thin"
-												style={{ maxHeight: '600px', overscrollBehavior: 'contain' }}
-												onWheel={(e) => {
-													const el = e.currentTarget;
-													const { scrollTop, scrollHeight, clientHeight } = el;
-													const atTop = scrollTop <= 0;
-													const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
-													if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) {
-														e.stopPropagation();
-													}
-												}}
-											>
-												{!isUser && !markdownEditMode ? (
-													<MarkdownRenderer
-														content={msg.content}
-														theme={theme}
-														onCopy={copyToClipboard}
-													/>
-												) : (
-													<div className="whitespace-pre-wrap">
-														{isUser ? msg.content : stripMarkdown(msg.content)}
-													</div>
-												)}
-											</div>
-											<button
-												onClick={() => toggleExpanded(msgKey)}
-												className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
+												className="text-[11px] px-2 py-0.5 rounded-full"
 												style={{
-													borderColor: theme.colors.border,
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.accent,
+													backgroundColor: `${theme.colors.bgActivity}cc`,
+													border: `1px solid ${theme.colors.border}`,
+													color: theme.colors.textDim,
 												}}
 											>
-												<ChevronUp className="w-3 h-3" />
-												Show less
-											</button>
-										</div>
-									) : !isUser && !markdownEditMode ? (
-										// Normal non-collapsed markdown view
-										<div className="text-sm">
-											<MarkdownRenderer
-												content={msg.content}
-												theme={theme}
-												onCopy={copyToClipboard}
+												{dateSeparatorLabel}
+											</div>
+											<div
+												className="h-px flex-1"
+												style={{ backgroundColor: theme.colors.border, opacity: 0.5 }}
 											/>
 										</div>
-									) : (
-										// User message or raw mode
-										<div className="text-sm whitespace-pre-wrap">
-											{isUser ? msg.content : stripMarkdown(msg.content)}
-										</div>
-									)}
+									</div>
+								)}
+								<div
+									data-message-timestamp={msg.timestamp}
+									className={`flex gap-4 group ${isUser ? 'flex-row-reverse' : ''} px-6 py-2`}
+								>
+									{/* Timestamp - outside bubble, like AI Terminal */}
+									<div
+										className={`w-20 shrink-0 text-[10px] pt-2 ${isUser ? 'text-right' : 'text-left'}`}
+										style={{ color: theme.colors.textDim, opacity: 0.6 }}
+									>
+										{formatTime(msg.timestamp)}
+									</div>
 
-									{/* Action buttons - bottom right corner (non-user messages only) */}
-									{!isUser && (
-										<div
-											className="absolute bottom-2 right-2 flex items-center gap-1"
-											style={{ transition: 'opacity 0.15s ease-in-out' }}
-										>
-											{/* Markdown toggle button */}
-											{onToggleMarkdownEditMode && (
-												<button
-													onClick={onToggleMarkdownEditMode}
-													className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-													style={{
-														color: markdownEditMode ? theme.colors.accent : theme.colors.textDim,
-													}}
-													title={
-														markdownEditMode
-															? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
-															: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
-													}
+									{/* Message bubble */}
+									<div
+										className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isUser ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+										style={{
+											backgroundColor: isUser
+												? `color-mix(in srgb, ${theme.colors.accent} 20%, ${theme.colors.bgSidebar})`
+												: theme.colors.bgActivity,
+											borderColor: isUser ? theme.colors.accent + '40' : theme.colors.border,
+											borderLeftWidth: !isUser ? '3px' : undefined,
+											borderLeftColor: !isUser ? senderColor : undefined,
+											color: theme.colors.textMain,
+										}}
+									>
+										{/* Sender label for non-user messages */}
+										{!isUser && (
+											<div className="text-xs font-medium mb-2" style={{ color: senderColor }}>
+												{msg.from === 'moderator'
+													? 'Moderator'
+													: msg.from === 'system'
+														? 'System'
+														: msg.from}
+											</div>
+										)}
+
+										{/* Message content */}
+										{shouldCollapse && !isExpanded ? (
+											// Collapsed view
+											<div>
+												<div
+													className="text-sm overflow-hidden"
+													style={{ maxHeight: `${maxOutputLines * 1.5}em` }}
 												>
-													{markdownEditMode ? (
-														<Eye className="w-4 h-4" />
+													{!isUser && !markdownEditMode ? (
+														<MarkdownRenderer
+															content={displayContent}
+															theme={theme}
+															onCopy={copyToClipboard}
+														/>
 													) : (
-														<FileText className="w-4 h-4" />
+														<div className="whitespace-pre-wrap">
+															{isUser ? displayContent : stripMarkdown(displayContent)}
+														</div>
 													)}
+												</div>
+												<button
+													onClick={() => toggleExpanded(msgKey)}
+													className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
+													style={{
+														borderColor: theme.colors.border,
+														backgroundColor: theme.colors.bgActivity,
+														color: theme.colors.accent,
+													}}
+												>
+													<ChevronDown className="w-3 h-3" />
+													Show all {lineCount} lines
 												</button>
-											)}
-											{/* Copy to Clipboard Button */}
-											<button
-												onClick={() => copyToClipboard(msg.content)}
-												className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
-												style={{ color: theme.colors.textDim }}
-												title="Copy to clipboard"
+											</div>
+										) : shouldCollapse && isExpanded ? (
+											// Expanded view (was collapsed)
+											<div>
+												<div
+													className="text-sm overflow-auto scrollbar-thin"
+													style={{ maxHeight: '600px', overscrollBehavior: 'contain' }}
+													onWheel={(e) => {
+														const el = e.currentTarget;
+														const { scrollTop, scrollHeight, clientHeight } = el;
+														const atTop = scrollTop <= 0;
+														const atBottom = scrollTop + clientHeight >= scrollHeight - 1;
+														if ((e.deltaY < 0 && !atTop) || (e.deltaY > 0 && !atBottom)) {
+															e.stopPropagation();
+														}
+													}}
+												>
+													{!isUser && !markdownEditMode ? (
+														<MarkdownRenderer
+															content={msg.content}
+															theme={theme}
+															onCopy={copyToClipboard}
+														/>
+													) : (
+														<div className="whitespace-pre-wrap">
+															{isUser ? msg.content : stripMarkdown(msg.content)}
+														</div>
+													)}
+												</div>
+												<button
+													onClick={() => toggleExpanded(msgKey)}
+													className="flex items-center gap-2 mt-2 text-xs px-3 py-1.5 rounded border hover:opacity-70 transition-opacity"
+													style={{
+														borderColor: theme.colors.border,
+														backgroundColor: theme.colors.bgActivity,
+														color: theme.colors.accent,
+													}}
+												>
+													<ChevronUp className="w-3 h-3" />
+													Show less
+												</button>
+											</div>
+										) : !isUser && !markdownEditMode ? (
+											// Normal non-collapsed markdown view
+											<div className="text-sm">
+												<MarkdownRenderer
+													content={msg.content}
+													theme={theme}
+													onCopy={copyToClipboard}
+												/>
+											</div>
+										) : (
+											// User message or raw mode
+											<div className="text-sm whitespace-pre-wrap">
+												{isUser ? msg.content : stripMarkdown(msg.content)}
+											</div>
+										)}
+
+										{/* Action buttons - bottom right corner (non-user messages only) */}
+										{!isUser && (
+											<div
+												className="absolute bottom-2 right-2 flex items-center gap-1"
+												style={{ transition: 'opacity 0.15s ease-in-out' }}
 											>
-												<Copy className="w-3.5 h-3.5" />
-											</button>
-										</div>
-									)}
+												{/* Markdown toggle button */}
+												{onToggleMarkdownEditMode && (
+													<button
+														onClick={onToggleMarkdownEditMode}
+														className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+														style={{
+															color: markdownEditMode ? theme.colors.accent : theme.colors.textDim,
+														}}
+														title={
+															markdownEditMode
+																? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
+																: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
+														}
+													>
+														{markdownEditMode ? (
+															<Eye className="w-4 h-4" />
+														) : (
+															<FileText className="w-4 h-4" />
+														)}
+													</button>
+												)}
+												{/* Copy to Clipboard Button */}
+												<button
+													onClick={() => copyToClipboard(msg.content)}
+													className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
+													style={{ color: theme.colors.textDim }}
+													title="Copy to clipboard"
+												>
+													<Copy className="w-3.5 h-3.5" />
+												</button>
+											</div>
+										)}
+									</div>
 								</div>
 							</div>
 						);

@@ -79,6 +79,8 @@ export interface Theme {
 	name: string;
 	/** Theme mode (light, dark, or vibe) */
 	mode: ThemeMode;
+	/** Optional interface font family applied across the app shell */
+	fontFamily?: string;
 	/** Color palette */
 	colors: ThemeColors;
 }

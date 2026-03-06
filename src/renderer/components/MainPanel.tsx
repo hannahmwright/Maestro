@@ -181,7 +181,6 @@ interface MainPanelProps {
 	) => void;
 	onToggleTabReadOnlyMode?: () => void;
 	onSetTabExecutionMode?: (mode: AgentExecutionMode) => void;
-	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
 	onSetTabReasoningEffort?: (effort: ReasoningEffort) => void;
 	onToggleUnreadFilter?: () => void;
@@ -1846,8 +1845,6 @@ export const MainPanel = React.memo(
 											onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
 											tabExecutionMode={activeTab?.executionMode}
 											onSetTabExecutionMode={props.onSetTabExecutionMode}
-											tabSaveToHistory={activeTab?.saveToHistory ?? false}
-											onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
 											tabShowThinking={activeTab?.showThinking ?? 'off'}
 											onToggleTabShowThinking={props.onToggleTabShowThinking}
 											tabReasoningEffort={activeTab?.reasoningEffort ?? agentReasoningEffort}

@@ -54,7 +54,7 @@ import type { AgentError } from '../../shared/types';
 
 export type SessionState = 'idle' | 'busy' | 'waiting_input' | 'connecting' | 'error';
 export type FileChangeType = 'modified' | 'added' | 'deleted';
-export type RightPanelTab = 'files' | 'history' | 'processes' | 'autorun';
+export type RightPanelTab = 'files' | 'processes' | 'autorun';
 export type SettingsTab = 'general' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
@@ -425,6 +425,7 @@ export interface AITab {
 	lastSynopsisTime?: number; // Timestamp of last synopsis generation (for time-window context in prompts)
 	showThinking?: ThinkingMode; // Controls thinking display: 'off' | 'on' (temporary) | 'sticky' (persistent)
 	reasoningEffort?: ReasoningEffort; // Model reasoning effort override for this tab
+	currentModel?: string; // Runtime model used by this tab's current/latest AI turn
 	awaitingSessionId?: boolean; // True when this tab sent a message and is awaiting its session ID
 	thinkingStartTime?: number; // Timestamp when tab started thinking (for elapsed time display)
 	scrollTop?: number; // Saved scroll position for this tab's output view

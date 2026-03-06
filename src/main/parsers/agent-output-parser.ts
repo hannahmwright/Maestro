@@ -75,6 +75,11 @@ export interface ParsedEvent {
 	sessionId?: string;
 
 	/**
+	 * Resolved model identifier reported by the provider (if available).
+	 */
+	model?: string;
+
+	/**
 	 * Text content (for 'text', 'result', 'error' types)
 	 */
 	text?: string;

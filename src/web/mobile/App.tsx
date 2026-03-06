@@ -5,8 +5,9 @@
  * Focused on quick command input and session monitoring.
  */
 
-import React, { useEffect, useCallback, useState, useMemo, useRef } from 'react';
+import React, { lazy, Suspense, useEffect, useCallback, useState, useMemo, useRef } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
+import type { ResponseCompletedEvent } from '../../shared/remote-web';
 import {
 	useWebSocket,
 	type CustomCommand,
@@ -14,36 +15,51 @@ import {
 	type AITabData,
 } from '../hooks/useWebSocket';
 // Command history is no longer used in the mobile UI
-import { useNotifications } from '../hooks/useNotifications';
+import { useNotifications, type NotificationPermission } from '../hooks/useNotifications';
 import { useUnreadBadge } from '../hooks/useUnreadBadge';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { useMobileSessionManagement } from '../hooks/useMobileSessionManagement';
-import { useOfflineStatus, useMaestroMode, useDesktopTheme } from '../main';
+import { useInstallPrompt } from '../hooks/useInstallPrompt';
+import { usePushSubscription } from '../hooks/usePushSubscription';
+import { useOfflineStatus, useDesktopTheme } from '../main';
+import { showLocalServiceWorkerNotification } from '../utils/serviceWorker';
 import { buildApiUrl } from '../utils/config';
-import { formatCost } from '../../shared/formatters';
-// SYNC: Uses estimateContextUsage() from shared/contextUsage.ts
-// See that file for the canonical formula and all locations that must stay in sync.
-import { estimateContextUsage } from '../../renderer/utils/contextUsage';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
-import { SessionPillBar } from './SessionPillBar';
-import { AllSessionsView } from './AllSessionsView';
-import { MobileHistoryPanel } from './MobileHistoryPanel';
 import { CommandInputBar, type InputMode } from './CommandInputBar';
 import { DEFAULT_SLASH_COMMANDS, type SlashCommand } from './SlashCommandAutocomplete';
 // CommandHistoryDrawer and RecentCommandChips removed for simpler mobile UI
-import { ResponseViewer, type ResponseItem } from './ResponseViewer';
 import { OfflineQueueBanner } from './OfflineQueueBanner';
 import { MessageHistory } from './MessageHistory';
 import { AutoRunIndicator } from './AutoRunIndicator';
 import { TabBar } from './TabBar';
-import { TabSearchModal } from './TabSearchModal';
+import type { ResponseItem } from './ResponseViewer';
 import type { Session, LastResponsePreview } from '../hooks/useSessions';
 // View state utilities are now accessed through useMobileViewState hook
 // Keeping import for TypeScript types only if needed
 import { useMobileKeyboardHandler } from '../hooks/useMobileKeyboardHandler';
 import { useMobileViewState } from '../hooks/useMobileViewState';
 import { useMobileAutoReconnect } from '../hooks/useMobileAutoReconnect';
+import { MobileNavigationDrawer } from './MobileNavigationDrawer';
+import { calculateContextDisplay } from '../../renderer/utils/contextUsage';
+
+const MobileHistoryPanel = lazy(() =>
+	import('./MobileHistoryPanel').then((module) => ({
+		default: module.MobileHistoryPanel ?? module.default,
+	}))
+);
+
+const TabSearchModal = lazy(() =>
+	import('./TabSearchModal').then((module) => ({
+		default: module.TabSearchModal ?? module.default,
+	}))
+);
+
+const ResponseViewer = lazy(() =>
+	import('./ResponseViewer').then((module) => ({
+		default: module.ResponseViewer ?? module.default,
+	}))
+);
 
 /**
  * Get the active tab from a session
@@ -53,38 +69,97 @@ function getActiveTabFromSession(session: Session | null | undefined): AITabData
 	return session.aiTabs.find((tab) => tab.id === session.activeTabId) || null;
 }
 
-/**
- * Header component for the mobile app
- * Compact single-line header showing: Maestro | Session Name | Claude ID | Status | Cost | Context
- */
-interface MobileHeaderProps {
-	activeSession?: Session | null;
+function normalizeModelLabel(model: string | null | undefined): string | null {
+	const normalized = model?.trim();
+	if (!normalized) return null;
+	if (normalized.toLowerCase() === 'default') return null;
+	return normalized;
 }
 
-function MobileHeader({ activeSession }: MobileHeaderProps) {
+interface MobileHeaderProps {
+	activeSession?: Session | null;
+	drawerOpen: boolean;
+	onToggleDrawer: () => void;
+	canOpenTabSearch: boolean;
+	onOpenTabSearch: () => void;
+}
+
+function MobileHeader({
+	activeSession,
+	drawerOpen,
+	onToggleDrawer,
+	canOpenTabSearch,
+	onOpenTabSearch,
+}: MobileHeaderProps) {
 	const colors = useThemeColors();
-	const { isSession, goToDashboard } = useMaestroMode();
-
-	// Get active tab for per-tab data (agentSessionId, usageStats)
 	const activeTab = getActiveTabFromSession(activeSession);
-
-	// Session status and usage - prefer tab-level data
-	const sessionState = activeTab?.state || activeSession?.state || 'idle';
-	const isThinking = sessionState === 'busy';
-	// Use tab's usageStats if available, otherwise fall back to session-level (deprecated)
-	const tabUsageStats = activeTab?.usageStats;
-	const cost = tabUsageStats?.totalCostUsd ?? activeSession?.usageStats?.totalCostUsd;
-	const contextUsage = estimateContextUsage(
-		tabUsageStats ?? activeSession?.usageStats ?? {},
-		activeSession?.toolType
-	);
-
-	// Get status dot color
-	const getStatusDotColor = () => {
-		if (sessionState === 'busy') return colors.warning;
-		if (sessionState === 'error') return colors.error;
-		if (sessionState === 'connecting') return colors.warning;
-		return colors.success; // idle
+	const contextUsagePercentage = activeTab?.usageStats
+		? calculateContextDisplay(
+				{
+					inputTokens: activeTab.usageStats.inputTokens,
+					outputTokens: activeTab.usageStats.outputTokens,
+					cacheReadInputTokens: activeTab.usageStats.cacheReadInputTokens ?? 0,
+					cacheCreationInputTokens: activeTab.usageStats.cacheCreationInputTokens ?? 0,
+				},
+				activeSession?.effectiveContextWindow ??
+					activeTab.usageStats.contextWindow ??
+					activeSession?.usageStats?.contextWindow ??
+					0,
+				activeSession?.toolType,
+				activeSession?.contextUsage ?? null
+			).percentage
+		: activeSession?.usageStats
+			? calculateContextDisplay(
+					{
+						inputTokens: activeSession.usageStats.inputTokens,
+						outputTokens: activeSession.usageStats.outputTokens,
+						cacheReadInputTokens: activeSession.usageStats.cacheReadInputTokens ?? 0,
+						cacheCreationInputTokens: activeSession.usageStats.cacheCreationInputTokens ?? 0,
+					},
+					activeSession.effectiveContextWindow ?? activeSession.usageStats.contextWindow ?? 0,
+					activeSession.toolType,
+					activeSession.contextUsage ?? null
+				).percentage
+			: null;
+	const contextBarColor =
+		contextUsagePercentage === null
+			? colors.textDim
+			: contextUsagePercentage >= 90
+				? colors.error
+				: contextUsagePercentage >= 70
+					? colors.warning
+					: colors.success;
+	const glassControlStyle: React.CSSProperties = {
+		display: 'flex',
+		alignItems: 'center',
+		justifyContent: 'center',
+		width: '42px',
+		height: '42px',
+		borderRadius: '15px',
+		border: '1px solid rgba(255, 255, 255, 0.08)',
+		background:
+			'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.05) 100%)',
+		backdropFilter: 'blur(18px)',
+		WebkitBackdropFilter: 'blur(18px)',
+		boxShadow:
+			'0 14px 28px rgba(15, 23, 42, 0.12), 0 4px 12px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.07)',
+		cursor: 'pointer',
+		flexShrink: 0,
+	};
+	const titleSurfaceStyle: React.CSSProperties = {
+		display: 'flex',
+		flexDirection: 'column',
+		gap: '7px',
+		minWidth: 0,
+		padding: '8px 10px 8px 12px',
+		borderRadius: '18px',
+		border: '1px solid rgba(255, 255, 255, 0.08)',
+		background:
+			'linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.04) 100%)',
+		backdropFilter: 'blur(18px)',
+		WebkitBackdropFilter: 'blur(18px)',
+		boxShadow:
+			'0 14px 28px rgba(15, 23, 42, 0.10), 0 4px 12px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 	};
 
 	return (
@@ -93,180 +168,633 @@ function MobileHeader({ activeSession }: MobileHeaderProps) {
 				display: 'flex',
 				alignItems: 'center',
 				justifyContent: 'space-between',
-				padding: '8px 12px',
-				paddingTop: 'max(8px, env(safe-area-inset-top))',
-				borderBottom: `1px solid ${colors.border}`,
-				backgroundColor: colors.bgSidebar,
-				minHeight: '44px',
-				gap: '8px',
+				padding: '10px 12px 10px',
+				paddingTop: 'max(12px, env(safe-area-inset-top))',
+				background:
+					'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)',
+				backdropFilter: 'blur(26px)',
+				WebkitBackdropFilter: 'blur(26px)',
+				minHeight: '58px',
+				gap: '12px',
+				borderBottomLeftRadius: '24px',
+				borderBottomRightRadius: '24px',
+				borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
+				boxShadow:
+					'0 20px 38px rgba(15, 23, 42, 0.12), 0 8px 18px rgba(15, 23, 42, 0.06), inset 0 -1px 0 rgba(255, 255, 255, 0.04)',
 			}}
 		>
-			{/* Left: Maestro logo with wand icon */}
-			<div
-				onClick={isSession ? goToDashboard : undefined}
+			<button
+				type="button"
+				onClick={onToggleDrawer}
+				aria-label={drawerOpen ? 'Close navigation' : 'Open navigation'}
 				style={{
-					display: 'flex',
-					alignItems: 'center',
-					gap: '6px',
-					cursor: isSession ? 'pointer' : 'default',
-					flexShrink: 0,
+					...glassControlStyle,
+					border: drawerOpen ? `1px solid ${colors.accent}55` : glassControlStyle.border,
+					background: drawerOpen
+						? `linear-gradient(180deg, ${colors.accent}18 0%, rgba(255, 255, 255, 0.04) 100%)`
+						: glassControlStyle.background,
+					color: drawerOpen ? colors.accent : colors.textMain,
 				}}
-				title={isSession ? 'Go to dashboard' : undefined}
 			>
-				{/* Wand icon */}
 				<svg
 					width="18"
 					height="18"
 					viewBox="0 0 24 24"
 					fill="none"
-					stroke={colors.accent}
+					stroke="currentColor"
 					strokeWidth="2"
 					strokeLinecap="round"
 					strokeLinejoin="round"
 				>
-					<path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z" />
-					<path d="m14 7 3 3" />
-					<path d="M5 6v4" />
-					<path d="M19 14v4" />
-					<path d="M10 2v2" />
-					<path d="M7 8H3" />
-					<path d="M21 16h-4" />
-					<path d="M11 3H9" />
+					<path d="M4 7h16" />
+					<path d="M4 12h16" />
+					<path d="M4 17h16" />
 				</svg>
-				<span
-					style={{
-						fontSize: '16px',
-						fontWeight: 600,
-						color: colors.textMain,
-					}}
-				>
-					Maestro
-				</span>
-			</div>
+			</button>
 
-			{/* Center: Session info (name + Claude session ID + status + usage) */}
-			{activeSession && (
+			<div
+				style={{
+					flex: 1,
+					minWidth: 0,
+				}}
+			>
 				<div
 					style={{
-						flex: 1,
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						gap: '6px',
-						minWidth: 0,
-						overflow: 'hidden',
+						...titleSurfaceStyle,
 					}}
 				>
-					{/* Session status dot */}
-					<span
+					<div
 						style={{
-							width: '8px',
-							height: '8px',
-							borderRadius: '50%',
-							backgroundColor: getStatusDotColor(),
-							flexShrink: 0,
-							animation: isThinking ? 'pulse 1.5s ease-in-out infinite' : 'none',
-						}}
-						title={`Session ${sessionState}`}
-					/>
-
-					{/* Session name */}
-					<span
-						style={{
-							fontSize: '13px',
-							fontWeight: 500,
-							color: colors.textMain,
-							overflow: 'hidden',
-							textOverflow: 'ellipsis',
-							whiteSpace: 'nowrap',
+							display: 'flex',
+							alignItems: 'center',
+							gap: '8px',
+							minWidth: 0,
 						}}
 					>
-						{activeSession.name}
-					</span>
-
-					{/* Claude Session ID pill - use active tab's agentSessionId */}
-					{(activeTab?.agentSessionId || activeSession.agentSessionId) && (
 						<span
 							style={{
-								fontSize: '10px',
-								color: colors.textDim,
-								fontFamily: 'monospace',
-								backgroundColor: colors.bgMain,
-								padding: '2px 4px',
-								borderRadius: '3px',
-								flexShrink: 0,
+								fontSize: '15px',
+								fontWeight: 650,
+								color: colors.textMain,
+								minWidth: 0,
+								overflow: 'hidden',
+								textOverflow: 'ellipsis',
+								whiteSpace: 'nowrap',
+								letterSpacing: '-0.02em',
 							}}
-							title={`Claude Session: ${activeTab?.agentSessionId || activeSession.agentSessionId}`}
 						>
-							{(activeTab?.agentSessionId || activeSession.agentSessionId)?.slice(0, 8)}
+							{activeSession?.name || 'Select an agent'}
 						</span>
-					)}
-
-					{/* Cost */}
-					{cost != null && cost > 0 && (
-						<span
-							style={{
-								fontSize: '10px',
-								color: colors.textDim,
-								backgroundColor: `${colors.textDim}15`,
-								padding: '2px 4px',
-								borderRadius: '3px',
-								flexShrink: 0,
-							}}
-							title={`Session cost: ${formatCost(cost)}`}
-						>
-							{formatCost(cost)}
-						</span>
-					)}
-
-					{/* Context usage bar */}
-					{contextUsage != null && (
+						{activeSession && (
+							<span
+								style={{
+									display: 'inline-flex',
+									alignItems: 'center',
+									gap: '5px',
+									padding: '5px 10px',
+									borderRadius: '999px',
+									border: '1px solid rgba(255, 255, 255, 0.08)',
+									background: `linear-gradient(180deg, ${colors.accent}14 0%, rgba(255, 255, 255, 0.05) 100%)`,
+									backdropFilter: 'blur(16px)',
+									WebkitBackdropFilter: 'blur(16px)',
+									color: colors.textMain,
+									fontSize: '10px',
+									fontWeight: 600,
+									lineHeight: 1,
+									flexShrink: 0,
+									whiteSpace: 'nowrap',
+									boxShadow:
+										'0 12px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+								}}
+							>
+								<span style={{ lineHeight: 1 }}>{activeSession.groupEmoji || '📂'}</span>
+								<span>{activeSession.groupName || 'Ungrouped'}</span>
+							</span>
+						)}
+					</div>
+					{contextUsagePercentage !== null && activeSession && (
 						<div
+							title={`Context window ${contextUsagePercentage}% used`}
+							aria-label={`Context window ${contextUsagePercentage}% used`}
 							style={{
 								display: 'flex',
 								alignItems: 'center',
-								gap: '3px',
-								flexShrink: 0,
+								gap: '8px',
+								minWidth: 0,
 							}}
-							title={`Context: ${contextUsage}%`}
 						>
 							<div
 								style={{
-									width: '30px',
-									height: '4px',
-									backgroundColor: `${colors.textDim}20`,
-									borderRadius: '2px',
+									flex: 1,
+									height: '5px',
+									borderRadius: '999px',
+									background: 'rgba(255, 255, 255, 0.10)',
 									overflow: 'hidden',
+									minWidth: 0,
 								}}
 							>
 								<div
 									style={{
-										width: `${contextUsage}%`,
+										width: `${Math.max(0, Math.min(100, contextUsagePercentage))}%`,
 										height: '100%',
-										backgroundColor:
-											contextUsage >= 90
-												? colors.error
-												: contextUsage >= 70
-													? colors.warning
-													: colors.success,
-										borderRadius: '2px',
+										borderRadius: '999px',
+										background: contextBarColor,
+										boxShadow: `0 0 14px ${contextBarColor}35`,
+										transition: 'width 200ms ease-out, background-color 200ms ease-out',
 									}}
 								/>
 							</div>
-							<span style={{ fontSize: '9px', color: colors.textDim }}>{contextUsage}%</span>
+							<span
+								style={{
+									fontSize: '10px',
+									fontWeight: 600,
+									color: colors.textDim,
+									flexShrink: 0,
+									minWidth: '34px',
+									textAlign: 'right',
+								}}
+							>
+								{contextUsagePercentage}%
+							</span>
 						</div>
 					)}
 				</div>
+			</div>
+
+			{canOpenTabSearch ? (
+				<button
+					type="button"
+					onClick={onOpenTabSearch}
+					aria-label="Search tabs"
+					style={{
+						...glassControlStyle,
+						color: colors.textMain,
+					}}
+				>
+					<svg
+						width="18"
+						height="18"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<circle cx="11" cy="11" r="7" />
+						<path d="m20 20-3.5-3.5" />
+					</svg>
+				</button>
+			) : (
+				<div style={{ width: '40px', height: '40px', flexShrink: 0 }} />
+			)}
+		</header>
+	);
+}
+
+interface AppControlsPanelProps {
+	notificationPermission: NotificationPermission;
+	canInstall: boolean;
+	isInstalled: boolean;
+	isPushSupported: boolean;
+	isPushConfigured: boolean;
+	isPushSubscribed: boolean;
+	isPushLoading: boolean;
+	pushError: string | null;
+	onInstall: () => void;
+	onEnableNotifications: () => void;
+	onEnablePush: () => void;
+	onDisablePush: () => void;
+	onSendTestNotification: () => void;
+	embedded?: boolean;
+	hideHeader?: boolean;
+}
+
+function AppControlsPanel({
+	notificationPermission,
+	canInstall,
+	isInstalled,
+	isPushSupported,
+	isPushConfigured,
+	isPushSubscribed,
+	isPushLoading,
+	pushError,
+	onInstall,
+	onEnableNotifications,
+	onEnablePush,
+	onDisablePush,
+	onSendTestNotification,
+	embedded = false,
+	hideHeader = false,
+}: AppControlsPanelProps) {
+	const colors = useThemeColors();
+
+	const renderIcon = (type: 'install' | 'notifications' | 'push' | 'test') => {
+		switch (type) {
+			case 'install':
+				return (
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<path d="M12 3v12" />
+						<path d="m7 10 5 5 5-5" />
+						<path d="M5 21h14" />
+					</svg>
+				);
+			case 'notifications':
+				return (
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<path d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2a2 2 0 0 1-.6 1.4L4 17h5" />
+						<path d="M9 17a3 3 0 0 0 6 0" />
+					</svg>
+				);
+			case 'push':
+				return (
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<path d="M5 12a7 7 0 0 1 14 0" />
+						<path d="M8.5 12a3.5 3.5 0 0 1 7 0" />
+						<path d="M12 12h.01" />
+						<path d="M4 20h16" />
+					</svg>
+				);
+			case 'test':
+				return (
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+					>
+						<path d="M22 2 11 13" />
+						<path d="M22 2 15 22l-4-9-9-4Z" />
+					</svg>
+				);
+		}
+	};
+
+	const getStatusChipStyle = (
+		tone: 'neutral' | 'success' | 'warning' | 'accent'
+	): React.CSSProperties => {
+		const toneMap = {
+			neutral: {
+				background: 'rgba(255, 255, 255, 0.06)',
+				borderColor: 'rgba(255, 255, 255, 0.08)',
+				color: colors.textDim,
+			},
+			success: {
+				background: `${colors.success}12`,
+				borderColor: `${colors.success}26`,
+				color: colors.success,
+			},
+			warning: {
+				background: `${colors.warning}12`,
+				borderColor: `${colors.warning}26`,
+				color: colors.warning,
+			},
+			accent: {
+				background: `${colors.accent}12`,
+				borderColor: `${colors.accent}22`,
+				color: colors.accent,
+			},
+		} as const;
+
+		const selectedTone = toneMap[tone];
+		return {
+			display: 'inline-flex',
+			alignItems: 'center',
+			gap: '5px',
+			padding: '3px 8px',
+			borderRadius: '999px',
+			border: `1px solid ${selectedTone.borderColor}`,
+			background: selectedTone.background,
+			color: selectedTone.color,
+			fontSize: '9px',
+			fontWeight: 600,
+			letterSpacing: '0.01em',
+		};
+	};
+
+	const primaryButtonStyle: React.CSSProperties = {
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '8px',
+		padding: '9px 12px',
+		borderRadius: '13px',
+		border: `1px solid rgba(255, 255, 255, 0.12)`,
+		background:
+			'linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.08) 100%)',
+		backdropFilter: 'blur(16px)',
+		WebkitBackdropFilter: 'blur(16px)',
+		color: colors.textMain,
+		fontSize: '12px',
+		fontWeight: 600,
+		boxShadow: '0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+		cursor: 'pointer',
+	};
+
+	const secondaryButtonStyle: React.CSSProperties = {
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '8px',
+		padding: '9px 12px',
+		borderRadius: '13px',
+		border: `1px solid rgba(255, 255, 255, 0.08)`,
+		background:
+			'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.05) 100%)',
+		backdropFilter: 'blur(14px)',
+		WebkitBackdropFilter: 'blur(14px)',
+		color: colors.textMain,
+		fontSize: '12px',
+		fontWeight: 500,
+		boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
+		cursor: 'pointer',
+	};
+
+	const installTone = isInstalled ? 'success' : canInstall ? 'accent' : 'neutral';
+	const notificationTone =
+		notificationPermission === 'granted'
+			? 'success'
+			: notificationPermission === 'default'
+				? 'warning'
+				: 'neutral';
+	const pushTone =
+		!isPushSupported || !isPushConfigured ? 'neutral' : isPushSubscribed ? 'success' : 'warning';
+
+	return (
+		<section
+			style={{
+				padding: embedded ? 0 : '12px',
+				borderRadius: embedded ? 0 : '20px',
+				border: embedded ? 'none' : '1px solid rgba(255, 255, 255, 0.08)',
+				background: embedded
+					? 'transparent'
+					: 'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)',
+				backdropFilter: embedded ? undefined : 'blur(22px)',
+				WebkitBackdropFilter: embedded ? undefined : 'blur(22px)',
+				boxShadow: embedded
+					? 'none'
+					: '0 14px 30px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+				display: 'flex',
+				flexDirection: 'column',
+				gap: '10px',
+			}}
+		>
+			{!hideHeader && (
+				<div
+					style={{
+						display: 'flex',
+						justifyContent: 'space-between',
+						gap: '10px',
+						alignItems: 'flex-start',
+					}}
+				>
+					<div style={{ minWidth: 0 }}>
+						<div
+							style={{ fontSize: '14px', fontWeight: 600, color: colors.textMain, lineHeight: 1.1 }}
+						>
+							App Controls
+						</div>
+						<div
+							style={{
+								fontSize: '11px',
+								color: colors.textDim,
+								marginTop: '3px',
+								lineHeight: 1.35,
+							}}
+						>
+							Install the PWA and manage completion alerts.
+						</div>
+					</div>
+					<div
+						style={{
+							display: 'flex',
+							flexWrap: 'wrap',
+							justifyContent: 'flex-end',
+							gap: '5px',
+							maxWidth: '50%',
+						}}
+					>
+						<div style={getStatusChipStyle(installTone)}>
+							<span style={{ opacity: 0.7 }}>Install</span>
+							<span>{isInstalled ? 'Installed' : canInstall ? 'Ready' : 'Unavailable'}</span>
+						</div>
+						<div style={getStatusChipStyle(notificationTone)}>
+							<span style={{ opacity: 0.7 }}>Alerts</span>
+							<span>
+								{notificationPermission === 'granted'
+									? 'On'
+									: notificationPermission === 'default'
+										? 'Pending'
+										: 'Off'}
+							</span>
+						</div>
+						<div style={getStatusChipStyle(pushTone)}>
+							<span style={{ opacity: 0.7 }}>Push</span>
+							<span>
+								{!isPushSupported
+									? 'Unsupported'
+									: !isPushConfigured
+										? 'Unavailable'
+										: isPushSubscribed
+											? 'On'
+											: 'Off'}
+							</span>
+						</div>
+					</div>
+				</div>
 			)}
 
-			{/* Pulse animation for thinking state */}
-			<style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-      `}</style>
-		</header>
+			{hideHeader && (
+				<div
+					style={{
+						display: 'flex',
+						flexWrap: 'wrap',
+						gap: '5px',
+					}}
+				>
+					<div style={getStatusChipStyle(installTone)}>
+						<span style={{ opacity: 0.7 }}>Install</span>
+						<span>{isInstalled ? 'Installed' : canInstall ? 'Ready' : 'Unavailable'}</span>
+					</div>
+					<div style={getStatusChipStyle(notificationTone)}>
+						<span style={{ opacity: 0.7 }}>Alerts</span>
+						<span>
+							{notificationPermission === 'granted'
+								? 'On'
+								: notificationPermission === 'default'
+									? 'Pending'
+									: 'Off'}
+						</span>
+					</div>
+					<div style={getStatusChipStyle(pushTone)}>
+						<span style={{ opacity: 0.7 }}>Push</span>
+						<span>
+							{!isPushSupported
+								? 'Unsupported'
+								: !isPushConfigured
+									? 'Unavailable'
+									: isPushSubscribed
+										? 'On'
+										: 'Off'}
+						</span>
+					</div>
+				</div>
+			)}
+
+			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+				{canInstall && (
+					<button onClick={onInstall} style={primaryButtonStyle}>
+						<span
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								width: '24px',
+								height: '24px',
+								borderRadius: '999px',
+								background: 'rgba(255, 255, 255, 0.14)',
+								color: colors.accent,
+								flexShrink: 0,
+							}}
+						>
+							{renderIcon('install')}
+						</span>
+						<span>Install App</span>
+					</button>
+				)}
+
+				{notificationPermission !== 'granted' && (
+					<button onClick={onEnableNotifications} style={secondaryButtonStyle}>
+						<span
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								width: '24px',
+								height: '24px',
+								borderRadius: '999px',
+								background: 'rgba(255, 255, 255, 0.10)',
+								color: colors.accent,
+								flexShrink: 0,
+							}}
+						>
+							{renderIcon('notifications')}
+						</span>
+						<span>Enable Alerts</span>
+					</button>
+				)}
+
+				{isPushSupported && isPushConfigured && !isPushSubscribed && (
+					<button onClick={onEnablePush} style={primaryButtonStyle} disabled={isPushLoading}>
+						<span
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								width: '24px',
+								height: '24px',
+								borderRadius: '999px',
+								background: 'rgba(255, 255, 255, 0.14)',
+								color: colors.accent,
+								flexShrink: 0,
+							}}
+						>
+							{renderIcon('push')}
+						</span>
+						<span>{isPushLoading ? 'Enabling Push...' : 'Enable Closed-App Push'}</span>
+					</button>
+				)}
+
+				{isPushSupported && isPushConfigured && isPushSubscribed && (
+					<button onClick={onDisablePush} style={secondaryButtonStyle} disabled={isPushLoading}>
+						<span
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								width: '24px',
+								height: '24px',
+								borderRadius: '999px',
+								background: 'rgba(255, 255, 255, 0.10)',
+								color: colors.accent,
+								flexShrink: 0,
+							}}
+						>
+							{renderIcon('push')}
+						</span>
+						<span>{isPushLoading ? 'Updating...' : 'Disable Closed-App Push'}</span>
+					</button>
+				)}
+
+				{isPushSupported && isPushConfigured && isPushSubscribed && (
+					<button
+						onClick={onSendTestNotification}
+						style={secondaryButtonStyle}
+						disabled={isPushLoading}
+					>
+						<span
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								width: '24px',
+								height: '24px',
+								borderRadius: '999px',
+								background: 'rgba(255, 255, 255, 0.10)',
+								color: colors.accent,
+								flexShrink: 0,
+							}}
+						>
+							{renderIcon('test')}
+						</span>
+						<span>Send Test Notification</span>
+					</button>
+				)}
+			</div>
+
+			{pushError && (
+				<div
+					style={{
+						fontSize: '11px',
+						color: colors.error,
+						backgroundColor: `${colors.error}15`,
+						borderRadius: '10px',
+						padding: '7px 9px',
+					}}
+				>
+					{pushError}
+				</div>
+			)}
+		</section>
 	);
 }
 
@@ -289,7 +817,8 @@ export default function MobileApp() {
 	} = useMobileViewState();
 
 	// UI state (not part of session management)
-	const [showAllSessions, setShowAllSessions] = useState(savedState.showAllSessions);
+	const [showNavigationDrawer, setShowNavigationDrawer] = useState(false);
+	const [showAppControlsSheet, setShowAppControlsSheet] = useState(false);
 	const [showHistoryPanel, setShowHistoryPanel] = useState(savedState.showHistoryPanel);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
 	const [commandInput, setCommandInput] = useState('');
@@ -311,7 +840,11 @@ export default function MobileApp() {
 	const [historySearchOpen, setHistorySearchOpen] = useState(savedState.historySearchOpen);
 
 	// Notification permission hook - requests permission on first visit
-	const { permission: notificationPermission, showNotification } = useNotifications({
+	const {
+		permission: notificationPermission,
+		showNotification,
+		requestPermission: requestNotificationPermission,
+	} = useNotifications({
 		autoRequest: true,
 		requestDelay: 3000, // Wait 3 seconds before prompting
 		onGranted: () => {
@@ -323,12 +856,25 @@ export default function MobileApp() {
 		},
 	});
 
-	// Unread badge hook - tracks unread responses and updates app badge
+	const { canInstall, isInstalled, install } = useInstallPrompt();
+
 	const {
-		addUnread: addUnreadResponse,
-		markAllRead: markAllResponsesRead,
-		unreadCount: _unreadCount,
-	} = useUnreadBadge({
+		isSupported: isPushSupported,
+		isConfigured: isPushConfigured,
+		isSubscribed: isPushSubscribed,
+		isLoading: isPushLoading,
+		error: pushError,
+		subscribe: subscribeToPush,
+		unsubscribe: unsubscribeFromPush,
+		sendTestNotification,
+		refresh: refreshPushSubscription,
+	} = usePushSubscription({
+		notificationPermission,
+		requestNotificationPermission,
+	});
+
+	// Unread badge hook - tracks unread responses and updates app badge
+	const { addUnread: addUnreadResponse, unreadCount: _unreadCount } = useUnreadBadge({
 		autoClearOnVisible: true, // Clear badge when user opens the app
 		onCountChange: (count) => {
 			webLogger.debug(`Unread response count: ${count}`, 'Mobile');
@@ -337,101 +883,90 @@ export default function MobileApp() {
 
 	// Reference to send function for offline queue (will be set after useWebSocket)
 	const sendRef = useRef<((sessionId: string, command: string) => boolean) | null>(null);
+	const handledResponseEventIdsRef = useRef<Set<string>>(new Set());
+
+	useEffect(() => {
+		const handleVisibilityChange = () => {
+			if (document.visibilityState === 'visible') {
+				refreshPushSubscription().catch((error) => {
+					webLogger.error(
+						'Failed to refresh push subscription on visibility change',
+						'Mobile',
+						error
+					);
+				});
+			}
+		};
+
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+	}, [refreshPushSubscription]);
 
 	// Save view state when overlays change (using hook's persistence function)
 	useEffect(() => {
-		persistViewState({ showAllSessions, showHistoryPanel, showTabSearch });
-	}, [showAllSessions, showHistoryPanel, showTabSearch, persistViewState]);
+		persistViewState({ showAllSessions: false, showHistoryPanel, showTabSearch });
+	}, [showHistoryPanel, showTabSearch, persistViewState]);
 
 	// Save history panel state when it changes (using hook's persistence function)
 	useEffect(() => {
 		persistHistoryState({ historyFilter, historySearchQuery, historySearchOpen });
 	}, [historyFilter, historySearchQuery, historySearchOpen, persistHistoryState]);
 
-	/**
-	 * Get the first line of a response for notification display
-	 * Strips markdown/code markers and truncates to reasonable length
-	 */
-	const getFirstLineOfResponse = useCallback((text: string): string => {
-		if (!text) return 'Response completed';
-
-		// Split by newlines and find first non-empty, non-markdown line
-		const lines = text.split('\n');
-		for (const line of lines) {
-			const trimmed = line.trim();
-			// Skip empty lines and common markdown markers
-			if (!trimmed) continue;
-			if (trimmed.startsWith('```')) continue;
-			if (trimmed === '---') continue;
-
-			// Found a content line - truncate if too long
-			const maxLength = 100;
-			if (trimmed.length > maxLength) {
-				return trimmed.substring(0, maxLength) + '...';
-			}
-			return trimmed;
-		}
-
-		return 'Response completed';
-	}, []);
-
 	// Ref to WebSocket send function (updated after useWebSocket is initialized)
 	const wsSendRef = useRef<((message: Record<string, unknown>) => boolean) | null>(null);
 
-	// Callback when session response completes - shows notification
-	const handleResponseComplete = useCallback(
-		(session: Session, response?: unknown) => {
-			// Only show if app is backgrounded
-			if (document.visibilityState !== 'hidden') {
+	const rememberResponseEvent = useCallback((eventId: string): boolean => {
+		const handled = handledResponseEventIdsRef.current;
+		if (handled.has(eventId)) {
+			return false;
+		}
+		handled.add(eventId);
+		if (handled.size > 300) {
+			const recentIds = Array.from(handled).slice(-150);
+			handledResponseEventIdsRef.current = new Set(recentIds);
+		}
+		return true;
+	}, []);
+
+	const handleResponseCompletedEvent = useCallback(
+		async (event: ResponseCompletedEvent) => {
+			if (!rememberResponseEvent(event.eventId)) {
 				return;
 			}
 
-			const lastResponse = response as LastResponsePreview | undefined;
+			if (document.visibilityState !== 'hidden') {
+				webLogger.debug(`Response event ${event.eventId} received while visible`, 'Mobile');
+				return;
+			}
 
-			// Generate a unique ID for this response using session ID and timestamp
-			const responseId = `${session.id}-${lastResponse?.timestamp || Date.now()}`;
+			addUnreadResponse(event.eventId);
+			webLogger.debug(`Added unread response event: ${event.eventId}`, 'Mobile');
 
-			// Add to unread badge count (works even without notification permission)
-			addUnreadResponse(responseId);
-			webLogger.debug(`Added unread response: ${responseId}`, 'Mobile');
-
-			// Only show notification if permission is granted
 			if (notificationPermission !== 'granted') {
 				return;
 			}
 
-			const title = `${session.name} - Response Ready`;
-			const firstLine = lastResponse?.text
-				? getFirstLineOfResponse(lastResponse.text)
-				: 'AI response completed';
+			let shown = await showLocalServiceWorkerNotification(event);
+			if (!shown) {
+				shown = await showNotification(event.title, {
+					body: event.body,
+					tag: `maestro-response-${event.eventId}`,
+					silent: false,
+					requireInteraction: false,
+					data: {
+						eventId: event.eventId,
+						sessionId: event.sessionId,
+						tabId: event.tabId,
+						deepLinkUrl: event.deepLinkUrl,
+					},
+				});
+			}
 
-			const notification = showNotification(title, {
-				body: firstLine,
-				tag: `maestro-response-${session.id}`, // Prevent duplicate notifications for same session
-				silent: false,
-				requireInteraction: false, // Auto-dismiss on mobile
-			} as NotificationOptions);
-
-			if (notification) {
-				webLogger.debug(`Notification shown for session: ${session.name}`, 'Mobile');
-
-				// Handle notification click - focus the app
-				notification.onclick = () => {
-					window.focus();
-					notification.close();
-					// Set this session as active and clear badge
-					setActiveSessionId(session.id);
-					markAllResponsesRead();
-				};
+			if (shown) {
+				webLogger.debug(`Notification shown for response event: ${event.eventId}`, 'Mobile');
 			}
 		},
-		[
-			notificationPermission,
-			showNotification,
-			getFirstLineOfResponse,
-			addUnreadResponse,
-			markAllResponsesRead,
-		]
+		[addUnreadResponse, notificationPermission, rememberResponseEvent, showNotification]
 	);
 
 	// Session management hook - handles session state, logs, and WebSocket handlers
@@ -439,7 +974,6 @@ export default function MobileApp() {
 		sessions,
 		setSessions,
 		activeSessionId,
-		setActiveSessionId,
 		activeTabId,
 		activeSession,
 		sessionLogs,
@@ -447,11 +981,11 @@ export default function MobileApp() {
 		handleSelectSession,
 		handleSelectTab,
 		handleNewTab,
+		handleDeleteSession,
 		handleCloseTab,
 		handleRenameTab,
 		handleStarTab,
 		handleReorderTab,
-		handleToggleBookmark,
 		addUserLogEntry,
 		sessionsHandlers,
 	} = useMobileSessionManagement({
@@ -461,7 +995,9 @@ export default function MobileApp() {
 		sendRef: wsSendRef,
 		triggerHaptic,
 		hapticTapPattern: HAPTIC_PATTERNS.tap,
-		onResponseComplete: handleResponseComplete,
+		onResponseCompletedEvent: (event) => {
+			void handleResponseCompletedEvent(event);
+		},
 		onThemeUpdate: setDesktopTheme,
 		onCustomCommands: setCustomCommands,
 		onAutoRunStateChange: (sessionId, state) => {
@@ -475,6 +1011,15 @@ export default function MobileApp() {
 			}));
 		},
 	});
+	const activeTab = getActiveTabFromSession(activeSession);
+	const supportsModelSelection = Boolean(
+		activeSession && activeSession.inputMode === 'ai' && activeSession.supportsModelSelection
+	);
+	const activeModelLabel =
+		normalizeModelLabel(activeTab?.currentModel) ||
+		normalizeModelLabel(activeSession?.customModel) ||
+		normalizeModelLabel(activeSession?.effectiveModelLabel) ||
+		'Model';
 
 	// Save session selection when it changes (using hook's persistence function)
 	useEffect(() => {
@@ -497,61 +1042,27 @@ export default function MobileApp() {
 		wsSendRef.current = send;
 	}, [send]);
 
-	// Connect on mount - use empty dependency array to only connect once
-	// The connect function is stable via useRef pattern in useWebSocket
-	// On mobile browsers, ensure the document is fully loaded before connecting
-	// to avoid race conditions with __MAESTRO_CONFIG__ injection
 	useEffect(() => {
-		let timeoutId: number | null = null;
-		let cancelled = false;
-
-		const scheduleAttempt = (delay: number) => {
-			timeoutId = window.setTimeout(() => {
-				if (cancelled) return;
-				attemptConnect();
-			}, delay);
-		};
-
-		const attemptConnect = () => {
-			if (cancelled) return;
-			// Verify config is available before connecting
-			if (window.__MAESTRO_CONFIG__) {
+		const handleVisibilityChange = () => {
+			if (
+				document.visibilityState === 'visible' &&
+				!isOffline &&
+				connectionState !== 'connected' &&
+				connectionState !== 'authenticated'
+			) {
 				connect();
-			} else {
-				// Config not ready, retry after a short delay
-				webLogger.warn('Config not ready, retrying connection in 100ms', 'Mobile');
-				scheduleAttempt(100);
 			}
 		};
 
-		const scheduleInitialConnect = () => {
-			scheduleAttempt(50);
-		};
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+	}, [connect, connectionState, isOffline]);
 
-		let onLoad: (() => void) | null = null;
-
-		// On mobile Safari, the document may not be fully ready even when React mounts
-		// Use a small delay to ensure everything is initialized
-		if (document.readyState === 'complete') {
-			scheduleInitialConnect();
-		} else {
-			// Wait for page to fully load
-			onLoad = () => {
-				scheduleInitialConnect();
-			};
-			window.addEventListener('load', onLoad);
-		}
-
-		return () => {
-			cancelled = true;
-			if (timeoutId) {
-				window.clearTimeout(timeoutId);
-			}
-			if (onLoad) {
-				window.removeEventListener('load', onLoad);
-			}
-		};
-	}, []);
+	// Connect on mount. The config is injected into the HTML shell before React loads,
+	// so waiting for full page load only adds an extra disconnected -> connecting hop.
+	useEffect(() => {
+		connect();
+	}, [connect]);
 
 	// Update sendRef after WebSocket is initialized (for offline queue)
 	useEffect(() => {
@@ -607,10 +1118,44 @@ export default function MobileApp() {
 		},
 	});
 
-	// Retry connection handler
-	const handleRetry = useCallback(() => {
-		connect();
-	}, [connect]);
+	const handleToggleNavigationDrawer = useCallback(() => {
+		setShowNavigationDrawer((prev) => !prev);
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+	}, []);
+
+	const handleCloseNavigationDrawer = useCallback(() => {
+		setShowNavigationDrawer(false);
+	}, []);
+
+	const handleOpenAppControlsSheet = useCallback(() => {
+		setShowNavigationDrawer(false);
+		setShowAppControlsSheet(true);
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+	}, []);
+
+	const handleCloseAppControlsSheet = useCallback(() => {
+		setShowAppControlsSheet(false);
+	}, []);
+
+	const handleInstallApp = useCallback(() => {
+		void install();
+	}, [install]);
+
+	const handleEnableNotifications = useCallback(() => {
+		void requestNotificationPermission();
+	}, [requestNotificationPermission]);
+
+	const handleEnablePush = useCallback(() => {
+		void subscribeToPush();
+	}, [subscribeToPush]);
+
+	const handleDisablePush = useCallback(() => {
+		void unsubscribeFromPush();
+	}, [unsubscribeFromPush]);
+
+	const handleSendTestNotification = useCallback(() => {
+		void sendTestNotification();
+	}, [sendTestNotification]);
 
 	// Auto-reconnect with countdown timer (extracted to hook)
 	const { reconnectCountdown } = useMobileAutoReconnect({
@@ -619,19 +1164,18 @@ export default function MobileApp() {
 		connect,
 	});
 
-	// Handle opening All Sessions view
-	const handleOpenAllSessions = useCallback(() => {
-		setShowAllSessions(true);
-		triggerHaptic(HAPTIC_PATTERNS.tap);
-	}, []);
-
-	// Handle closing All Sessions view
-	const handleCloseAllSessions = useCallback(() => {
-		setShowAllSessions(false);
-	}, []);
+	const isBootstrappingConnection =
+		!isOffline &&
+		sessions.length === 0 &&
+		(connectionState === 'disconnected' ||
+			connectionState === 'connecting' ||
+			connectionState === 'authenticating') &&
+		!error &&
+		reconnectAttempts === 0;
 
 	// Handle opening History panel (separate from command history drawer)
 	const handleOpenHistoryPanel = useCallback(() => {
+		setShowNavigationDrawer(false);
 		setShowHistoryPanel(true);
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 	}, []);
@@ -643,6 +1187,7 @@ export default function MobileApp() {
 
 	// Handle opening Tab Search modal
 	const handleOpenTabSearch = useCallback(() => {
+		setShowNavigationDrawer(false);
 		setShowTabSearch(true);
 		triggerHaptic(HAPTIC_PATTERNS.tap);
 	}, []);
@@ -651,6 +1196,77 @@ export default function MobileApp() {
 	const handleCloseTabSearch = useCallback(() => {
 		setShowTabSearch(false);
 	}, []);
+
+	const handleSelectSessionFromDrawer = useCallback(
+		(sessionId: string) => {
+			setShowNavigationDrawer(false);
+			handleSelectSession(sessionId);
+		},
+		[handleSelectSession]
+	);
+
+	const handleLoadSessionModels = useCallback(
+		async (forceRefresh = false): Promise<string[]> => {
+			if (!activeSessionId) {
+				return [];
+			}
+
+			const apiUrl = new URL(
+				buildApiUrl(`/session/${activeSessionId}/models`),
+				window.location.origin
+			);
+			if (forceRefresh) {
+				apiUrl.searchParams.set('forceRefresh', 'true');
+			}
+
+			const response = await fetch(apiUrl.toString(), {
+				credentials: 'include',
+			});
+			if (!response.ok) {
+				throw new Error(`Failed to load models for session ${activeSessionId}`);
+			}
+
+			const data = (await response.json()) as { models?: string[] };
+			return Array.isArray(data.models) ? data.models : [];
+		},
+		[activeSessionId]
+	);
+
+	const handleSelectSessionModel = useCallback(
+		async (model: string | null) => {
+			if (!activeSessionId) {
+				return;
+			}
+
+			const normalizedModel = model?.trim() ? model.trim() : null;
+			const response = await fetch(buildApiUrl(`/session/${activeSessionId}/model`), {
+				method: 'POST',
+				credentials: 'include',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					model: normalizedModel,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to update model for session ${activeSessionId}`);
+			}
+
+			setSessions((prev) =>
+				prev.map((session) =>
+					session.id === activeSessionId
+						? {
+								...session,
+								customModel: normalizedModel,
+							}
+						: session
+				)
+			);
+		},
+		[activeSessionId, setSessions]
+	);
 
 	// Handle command submission
 	const handleCommandSubmit = useCallback(
@@ -709,27 +1325,6 @@ export default function MobileApp() {
 	const handleCommandChange = useCallback((value: string) => {
 		setCommandInput(value);
 	}, []);
-
-	// Handle mode toggle between AI and Terminal
-	const handleModeToggle = useCallback(
-		(mode: InputMode) => {
-			if (!activeSessionId) return;
-
-			// Provide haptic feedback
-			triggerHaptic(HAPTIC_PATTERNS.tap);
-
-			// Send mode switch command via WebSocket
-			send({ type: 'switch_mode', sessionId: activeSessionId, mode });
-
-			// Optimistically update local session state
-			setSessions((prev) =>
-				prev.map((s) => (s.id === activeSessionId ? { ...s, inputMode: mode } : s))
-			);
-
-			webLogger.debug(`Mode switched to: ${mode} for session: ${activeSessionId}`, 'Mobile');
-		},
-		[activeSessionId, send]
-	);
 
 	// Handle interrupt request
 	const handleInterrupt = useCallback(async () => {
@@ -811,7 +1406,6 @@ export default function MobileApp() {
 	useMobileKeyboardHandler({
 		activeSessionId,
 		activeSession,
-		handleModeToggle,
 		handleSelectTab,
 	});
 
@@ -844,65 +1438,98 @@ export default function MobileApp() {
 			);
 		}
 
-		if (connectionState === 'disconnected') {
+		if (isBootstrappingConnection) {
 			return (
 				<div
 					style={{
-						marginBottom: '24px',
-						padding: '16px',
-						borderRadius: '12px',
-						backgroundColor: colors.bgSidebar,
-						border: `1px solid ${colors.border}`,
-						maxWidth: '300px',
+						width: '100%',
+						display: 'flex',
+						flexDirection: 'column',
+						flex: 1,
+						minHeight: 0,
+						overflow: 'hidden',
 					}}
 				>
-					<h2 style={{ fontSize: '16px', marginBottom: '8px', color: colors.textMain }}>
-						Connection Lost
-					</h2>
-					<p style={{ fontSize: '14px', color: colors.textDim, marginBottom: '12px' }}>
-						{error || 'Unable to connect to Maestro desktop app.'}
-					</p>
-					<p style={{ fontSize: '12px', color: colors.textDim, marginBottom: '12px' }}>
-						Reconnecting in {reconnectCountdown}s...
-						{reconnectAttempts > 0 && ` (attempt ${reconnectAttempts})`}
-					</p>
-					<button
-						onClick={handleRetry}
+					<div
 						style={{
-							padding: '8px 16px',
-							borderRadius: '6px',
-							backgroundColor: colors.accent,
-							color: '#fff',
-							fontSize: '14px',
-							fontWeight: 500,
-							border: 'none',
-							cursor: 'pointer',
+							padding: '14px 16px 10px',
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '10px',
+							background: `linear-gradient(180deg, ${colors.bgSidebar} 0%, ${colors.bgMain} 100%)`,
 						}}
 					>
-						Retry Now
-					</button>
-				</div>
-			);
-		}
-
-		if (connectionState === 'connecting' || connectionState === 'authenticating') {
-			return (
-				<div
-					style={{
-						marginBottom: '24px',
-						padding: '16px',
-						borderRadius: '12px',
-						backgroundColor: colors.bgSidebar,
-						border: `1px solid ${colors.border}`,
-						maxWidth: '300px',
-					}}
-				>
-					<h2 style={{ fontSize: '16px', marginBottom: '8px', color: colors.textMain }}>
-						Connecting to Maestro...
-					</h2>
-					<p style={{ fontSize: '14px', color: colors.textDim }}>
-						Please wait while we establish a connection to your desktop app.
-					</p>
+						<div
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								gap: '8px',
+								alignSelf: 'flex-start',
+								padding: '8px 12px',
+								borderRadius: '999px',
+								backgroundColor: colors.bgSidebar,
+								border: `1px solid ${colors.border}`,
+								color: colors.textDim,
+								fontSize: '13px',
+							}}
+						>
+							<span
+								style={{
+									width: '8px',
+									height: '8px',
+									borderRadius: '999px',
+									backgroundColor: colors.accent,
+									opacity: 0.9,
+								}}
+							/>
+							Syncing with Maestro…
+						</div>
+					</div>
+					<div
+						style={{
+							flex: 1,
+							padding: '18px 16px',
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '12px',
+						}}
+					>
+						<div
+							style={{
+								height: '16px',
+								width: '84px',
+								borderRadius: '999px',
+								backgroundColor: colors.bgSidebar,
+								opacity: 0.8,
+							}}
+						/>
+						<div
+							style={{
+								height: '54px',
+								borderRadius: '18px',
+								backgroundColor: colors.bgSidebar,
+								opacity: 0.55,
+							}}
+						/>
+						<div
+							style={{
+								height: '14px',
+								width: '72%',
+								borderRadius: '999px',
+								backgroundColor: colors.bgSidebar,
+								opacity: 0.45,
+							}}
+						/>
+						<div
+							style={{
+								height: '14px',
+								width: '58%',
+								borderRadius: '999px',
+								backgroundColor: colors.bgSidebar,
+								opacity: 0.38,
+							}}
+						/>
+					</div>
 				</div>
 			);
 		}
@@ -912,41 +1539,159 @@ export default function MobileApp() {
 			return (
 				<div
 					style={{
-						marginBottom: '24px',
-						padding: '16px',
+						flex: 1,
+						display: 'flex',
+						flexDirection: 'column',
+						alignItems: 'center',
+						justifyContent: 'center',
+						padding: '24px',
 						textAlign: 'center',
 					}}
 				>
-					<p style={{ fontSize: '14px', color: colors.textDim }}>
-						Select a session above to get started
-					</p>
+					<div
+						style={{
+							maxWidth: '320px',
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '14px',
+							alignItems: 'center',
+						}}
+					>
+						<div
+							style={{
+								width: '56px',
+								height: '56px',
+								borderRadius: '18px',
+								backgroundColor: colors.bgSidebar,
+								border: `1px solid ${colors.border}`,
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								color: colors.accent,
+							}}
+						>
+							<svg
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								strokeWidth="2"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+							>
+								<path d="M4 7h16" />
+								<path d="M4 12h16" />
+								<path d="M4 17h16" />
+							</svg>
+						</div>
+						<div>
+							<p
+								style={{
+									fontSize: '20px',
+									fontWeight: 600,
+									color: colors.textMain,
+									margin: 0,
+								}}
+							>
+								Choose an agent
+							</p>
+							<p
+								style={{
+									fontSize: '14px',
+									color: colors.textDim,
+									margin: '8px 0 0',
+								}}
+							>
+								Open the navigation drawer to switch agents and conversations.
+							</p>
+						</div>
+						<button
+							type="button"
+							onClick={handleToggleNavigationDrawer}
+							style={{
+								padding: '12px 16px',
+								borderRadius: '12px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: colors.bgSidebar,
+								color: colors.textMain,
+								fontSize: '14px',
+								fontWeight: 600,
+								cursor: 'pointer',
+							}}
+						>
+							Open Agents
+						</button>
+					</div>
 				</div>
 			);
 		}
 
-		// Get logs based on current input mode
 		const currentLogs =
 			activeSession.inputMode === 'ai' ? sessionLogs.aiLogs : sessionLogs.shellLogs;
+		const hasTabBar =
+			activeSession.inputMode === 'ai' &&
+			!!activeSession.aiTabs &&
+			activeSession.aiTabs.length > 0 &&
+			!!activeSession.activeTabId;
 
-		// Show message history
 		return (
 			<div
 				style={{
 					width: '100%',
-					maxWidth: '100%',
 					display: 'flex',
 					flexDirection: 'column',
-					gap: '8px',
-					alignItems: 'stretch',
 					flex: 1,
-					minHeight: 0, // Required for nested flex scroll to work
-					overflow: 'hidden', // Contain MessageHistory's scroll
+					minHeight: 0,
+					overflow: 'hidden',
 				}}
 			>
+				<div
+					style={{
+						padding: '6px 12px 8px',
+						display: 'flex',
+						flexDirection: 'column',
+						gap: '6px',
+						background: `linear-gradient(180deg, ${colors.bgSidebar} 0%, ${colors.bgMain} 100%)`,
+					}}
+				>
+					{hasTabBar && (
+						<TabBar
+							tabs={activeSession.aiTabs!}
+							activeTabId={activeSession.activeTabId!}
+							onSelectTab={handleSelectTab}
+							onNewTab={handleNewTab}
+							onCloseTab={handleCloseTab}
+							onRenameTab={handleRenameTab}
+							onStarTab={handleStarTab}
+							onReorderTab={handleReorderTab}
+						/>
+					)}
+
+					{activeSessionId && autoRunStates[activeSessionId] && (
+						<AutoRunIndicator
+							state={autoRunStates[activeSessionId]}
+							sessionName={activeSession?.name}
+						/>
+					)}
+
+					{offlineQueueLength > 0 && (
+						<OfflineQueueBanner
+							queue={offlineQueue}
+							status={offlineQueueStatus}
+							onClearQueue={clearOfflineQueue}
+							onProcessQueue={processOfflineQueue}
+							onRemoveCommand={removeQueuedCommand}
+							isOffline={isOffline}
+							isConnected={isActuallyConnected}
+						/>
+					)}
+				</div>
+
 				{isLoadingLogs ? (
 					<div
 						style={{
-							padding: '16px',
+							padding: '24px 16px',
 							textAlign: 'center',
 							color: colors.textDim,
 							fontSize: '13px',
@@ -957,7 +1702,11 @@ export default function MobileApp() {
 				) : currentLogs.length === 0 ? (
 					<div
 						style={{
-							padding: '16px',
+							flex: 1,
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							padding: '24px',
 							textAlign: 'center',
 							color: colors.textDim,
 							fontSize: '14px',
@@ -990,104 +1739,166 @@ export default function MobileApp() {
 		backgroundColor: colors.bgMain,
 		color: colors.textMain,
 	};
-
-	// Determine if session pill bar should be shown
-	const showSessionPillBar =
-		!isOffline &&
-		(connectionState === 'connected' || connectionState === 'authenticated') &&
-		sessions.length > 0;
+	const canOpenTabSearch =
+		activeSession?.inputMode === 'ai' && !!activeSession?.aiTabs && !!activeSession.activeTabId;
 
 	return (
 		<div style={containerStyle}>
-			{/* Header with session info */}
-			<MobileHeader activeSession={activeSession} />
+			<MobileHeader
+				activeSession={activeSession}
+				drawerOpen={showNavigationDrawer}
+				onToggleDrawer={handleToggleNavigationDrawer}
+				canOpenTabSearch={!!canOpenTabSearch}
+				onOpenTabSearch={handleOpenTabSearch}
+			/>
 
-			{/* Session pill bar - Row 1: Groups/Sessions with search button */}
-			{showSessionPillBar && (
-				<SessionPillBar
-					sessions={sessions}
-					activeSessionId={activeSessionId}
-					onSelectSession={handleSelectSession}
-					onOpenAllSessions={handleOpenAllSessions}
-					onOpenHistory={handleOpenHistoryPanel}
-					onToggleBookmark={handleToggleBookmark}
-				/>
-			)}
+			<MobileNavigationDrawer
+				isOpen={showNavigationDrawer}
+				sessions={sessions}
+				activeSessionId={activeSessionId}
+				onClose={handleCloseNavigationDrawer}
+				onOpenControls={handleOpenAppControlsSheet}
+				onSelectSession={handleSelectSessionFromDrawer}
+				onDeleteSession={handleDeleteSession}
+				onOpenTabSearch={handleOpenTabSearch}
+				canOpenTabSearch={!!canOpenTabSearch}
+			/>
 
-			{/* Tab bar - Row 2: Tabs for active session with search button */}
-			{activeSession?.inputMode === 'ai' &&
-				activeSession?.aiTabs &&
-				activeSession.aiTabs.length > 1 &&
-				activeSession.activeTabId && (
-					<TabBar
-						tabs={activeSession.aiTabs}
-						activeTabId={activeSession.activeTabId}
-						onSelectTab={handleSelectTab}
-						onNewTab={handleNewTab}
-						onCloseTab={handleCloseTab}
-						onOpenTabSearch={handleOpenTabSearch}
-						onRenameTab={handleRenameTab}
-						onStarTab={handleStarTab}
-						onReorderTab={handleReorderTab}
+			{showAppControlsSheet && (
+				<div
+					style={{
+						position: 'fixed',
+						inset: 0,
+						zIndex: 170,
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						padding: '20px 16px',
+					}}
+				>
+					<button
+						type="button"
+						onClick={handleCloseAppControlsSheet}
+						aria-label="Close app controls"
+						style={{
+							position: 'absolute',
+							inset: 0,
+							border: 'none',
+							background: 'rgba(2, 8, 23, 0.48)',
+							padding: 0,
+							cursor: 'pointer',
+						}}
 					/>
-				)}
-
-			{/* AutoRun indicator - shown when batch processing is active on desktop */}
-			{activeSessionId && autoRunStates[activeSessionId] && (
-				<AutoRunIndicator
-					state={autoRunStates[activeSessionId]}
-					sessionName={activeSession?.name}
-				/>
-			)}
-
-			{/* Offline queue banner - shown when there are queued commands */}
-			{offlineQueueLength > 0 && (
-				<OfflineQueueBanner
-					queue={offlineQueue}
-					status={offlineQueueStatus}
-					onClearQueue={clearOfflineQueue}
-					onProcessQueue={processOfflineQueue}
-					onRemoveCommand={removeQueuedCommand}
-					isOffline={isOffline}
-					isConnected={isActuallyConnected}
-				/>
-			)}
-
-			{/* All Sessions view - full-screen modal with larger session cards */}
-			{showAllSessions && (
-				<AllSessionsView
-					sessions={sessions}
-					activeSessionId={activeSessionId}
-					onSelectSession={handleSelectSession}
-					onClose={handleCloseAllSessions}
-				/>
+					<div
+						style={{
+							position: 'relative',
+							width: 'min(100%, 368px)',
+							maxHeight: 'min(68dvh, 520px)',
+							padding: '14px 14px 16px',
+							borderRadius: '24px',
+							border: '1px solid rgba(255, 255, 255, 0.14)',
+							background:
+								'linear-gradient(180deg, rgba(245, 247, 252, 0.90) 0%, rgba(236, 240, 248, 0.84) 100%)',
+							backdropFilter: 'blur(30px) saturate(140%)',
+							WebkitBackdropFilter: 'blur(30px) saturate(140%)',
+							boxShadow:
+								'0 28px 64px rgba(2, 8, 23, 0.26), 0 12px 28px rgba(2, 8, 23, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.32)',
+							overflowY: 'auto',
+						}}
+					>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'space-between',
+								gap: '10px',
+								marginBottom: '10px',
+								padding: 0,
+							}}
+						>
+							<div>
+								<div
+									style={{
+										fontSize: '15px',
+										fontWeight: 650,
+										color: colors.textMain,
+										lineHeight: 1.15,
+									}}
+								>
+									App Controls
+								</div>
+							</div>
+							<button
+								type="button"
+								onClick={handleCloseAppControlsSheet}
+								aria-label="Close app controls"
+								style={{
+									width: '30px',
+									height: '30px',
+									borderRadius: '10px',
+									border: '1px solid rgba(255, 255, 255, 0.18)',
+									background: 'rgba(255, 255, 255, 0.42)',
+									color: colors.textMain,
+									display: 'inline-flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									cursor: 'pointer',
+									flexShrink: 0,
+								}}
+							>
+								×
+							</button>
+						</div>
+						<AppControlsPanel
+							notificationPermission={notificationPermission}
+							canInstall={canInstall}
+							isInstalled={isInstalled}
+							isPushSupported={isPushSupported}
+							isPushConfigured={isPushConfigured}
+							isPushSubscribed={isPushSubscribed}
+							isPushLoading={isPushLoading}
+							pushError={pushError}
+							onInstall={handleInstallApp}
+							onEnableNotifications={handleEnableNotifications}
+							onEnablePush={handleEnablePush}
+							onDisablePush={handleDisablePush}
+							onSendTestNotification={handleSendTestNotification}
+							embedded={true}
+							hideHeader={true}
+						/>
+					</div>
+				</div>
 			)}
 
 			{/* History panel - full-screen modal with history entries */}
 			{showHistoryPanel && (
-				<MobileHistoryPanel
-					onClose={handleCloseHistoryPanel}
-					projectPath={activeSession?.cwd}
-					sessionId={activeSessionId || undefined}
-					initialFilter={historyFilter}
-					initialSearchQuery={historySearchQuery}
-					initialSearchOpen={historySearchOpen}
-					onFilterChange={setHistoryFilter}
-					onSearchChange={(query, isOpen) => {
-						setHistorySearchQuery(query);
-						setHistorySearchOpen(isOpen);
-					}}
-				/>
+				<Suspense fallback={null}>
+					<MobileHistoryPanel
+						onClose={handleCloseHistoryPanel}
+						projectPath={activeSession?.cwd}
+						sessionId={activeSessionId || undefined}
+						initialFilter={historyFilter}
+						initialSearchQuery={historySearchQuery}
+						initialSearchOpen={historySearchOpen}
+						onFilterChange={setHistoryFilter}
+						onSearchChange={(query, isOpen) => {
+							setHistorySearchQuery(query);
+							setHistorySearchOpen(isOpen);
+						}}
+					/>
+				</Suspense>
 			)}
 
 			{/* Tab search modal - full-screen modal for searching tabs */}
 			{showTabSearch && activeSession?.aiTabs && activeSession.activeTabId && (
-				<TabSearchModal
-					tabs={activeSession.aiTabs}
-					activeTabId={activeSession.activeTabId}
-					onSelectTab={handleSelectTab}
-					onClose={handleCloseTabSearch}
-				/>
+				<Suspense fallback={null}>
+					<TabSearchModal
+						tabs={activeSession.aiTabs}
+						activeTabId={activeSession.activeTabId}
+						onSelectTab={handleSelectTab}
+						onClose={handleCloseTabSearch}
+					/>
+				</Suspense>
 			)}
 
 			{/* Main content area */}
@@ -1096,29 +1907,24 @@ export default function MobileApp() {
 					flex: 1,
 					display: 'flex',
 					flexDirection: 'column',
-					alignItems: 'center',
-					justifyContent: 'flex-start',
-					padding: '12px',
-					paddingBottom: 'calc(80px + env(safe-area-inset-bottom))', // Account for fixed input bar
-					textAlign: 'center',
-					overflow: 'hidden', // Changed from 'auto' - let MessageHistory handle scrolling
-					minHeight: 0, // Required for flex child to scroll properly
+					paddingBottom: 'calc(80px + env(safe-area-inset-bottom))',
+					overflow: 'hidden',
+					minHeight: 0,
 				}}
 			>
-				{/* Content wrapper */}
 				<div
 					style={{
 						flex: 1,
 						display: 'flex',
 						flexDirection: 'column',
-						alignItems: 'center',
+						alignItems: 'stretch',
 						justifyContent:
 							connectionState === 'connected' || connectionState === 'authenticated'
 								? 'flex-start'
 								: 'center',
 						width: '100%',
 						minHeight: 0,
-						overflow: 'hidden', // Contain child scroll
+						overflow: 'hidden',
 					}}
 				>
 					{renderContent()}
@@ -1141,33 +1947,38 @@ export default function MobileApp() {
 				placeholder={
 					!activeSessionId
 						? 'Select a session first...'
-						: activeSession?.inputMode === 'ai'
-							? isSmallScreen
-								? 'Query AI...'
-								: `Ask ${activeSession?.toolType === 'claude-code' ? 'Claude' : activeSession?.toolType || 'AI'} about ${activeSession?.name || 'this session'}...`
-							: 'Run shell command...'
+						: isSmallScreen
+							? 'Message agent...'
+							: 'Message agent...'
 				}
 				disabled={!activeSessionId}
 				inputMode={(activeSession?.inputMode as InputMode) || 'ai'}
-				onModeToggle={handleModeToggle}
 				isSessionBusy={activeSession?.state === 'busy'}
 				onInterrupt={handleInterrupt}
 				hasActiveSession={!!activeSessionId}
-				cwd={activeSession?.cwd}
+				supportsModelSelection={supportsModelSelection}
+				modelLabel={activeModelLabel}
+				modelToolType={activeSession?.toolType || null}
+				loadModels={handleLoadSessionModels}
+				onSelectModel={handleSelectSessionModel}
 				slashCommands={allSlashCommands}
 				showRecentCommands={false}
 			/>
 
 			{/* Full-screen response viewer modal */}
-			<ResponseViewer
-				isOpen={showResponseViewer}
-				response={selectedResponse}
-				allResponses={allResponses.length > 1 ? allResponses : undefined}
-				currentIndex={responseIndex}
-				onNavigate={handleNavigateResponse}
-				onClose={handleCloseResponseViewer}
-				sessionName={activeSession?.name}
-			/>
+			{(showResponseViewer || selectedResponse) && (
+				<Suspense fallback={null}>
+					<ResponseViewer
+						isOpen={showResponseViewer}
+						response={selectedResponse}
+						allResponses={allResponses.length > 1 ? allResponses : undefined}
+						currentIndex={responseIndex}
+						onNavigate={handleNavigateResponse}
+						onClose={handleCloseResponseViewer}
+						sessionName={activeSession?.name}
+					/>
+				</Suspense>
+			)}
 		</div>
 	);
 }

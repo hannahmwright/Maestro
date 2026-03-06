@@ -120,9 +120,14 @@ export const HAPTIC_PATTERNS = {
 } as const;
 
 /**
- * Check if the device supports the Web Speech API for voice input
+ * Check if the device supports local audio capture for voice input.
+ * Recording is handled in-browser and transcribed by the desktop app.
  */
 export function supportsVoiceInput(): boolean {
 	if (typeof window === 'undefined') return false;
-	return 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+	return (
+		typeof navigator !== 'undefined' &&
+		!!navigator.mediaDevices?.getUserMedia &&
+		typeof window.MediaRecorder !== 'undefined'
+	);
 }

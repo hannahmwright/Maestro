@@ -15,13 +15,157 @@ import {
 	createContext,
 	useContext,
 	useCallback,
+	useRef,
 } from 'react';
 import { ThemeProvider } from './components/ThemeProvider';
-import { registerServiceWorker, isOffline } from './utils/serviceWorker';
+import { registerServiceWorker, isOffline, skipWaiting } from './utils/serviceWorker';
 import { getMaestroConfig } from './utils/config';
 import type { MaestroConfig } from './utils/config';
 import { webLogger } from './utils/logger';
 import type { Theme } from '../shared/theme-types';
+
+const THEME_SNAPSHOT_STORAGE_KEY = 'maestro:web-theme-snapshot';
+function readStoredThemeSnapshot(): Theme | null {
+	if (typeof window === 'undefined') {
+		return null;
+	}
+
+	try {
+		const raw = window.sessionStorage.getItem(THEME_SNAPSHOT_STORAGE_KEY);
+		if (!raw) {
+			return null;
+		}
+		return JSON.parse(raw) as Theme;
+	} catch {
+		return null;
+	}
+}
+
+function persistThemeSnapshot(theme: Theme | null): void {
+	if (typeof window === 'undefined') {
+		return;
+	}
+
+	try {
+		if (!theme) {
+			window.sessionStorage.removeItem(THEME_SNAPSHOT_STORAGE_KEY);
+			return;
+		}
+		window.sessionStorage.setItem(THEME_SNAPSHOT_STORAGE_KEY, JSON.stringify(theme));
+	} catch {
+		// Ignore sessionStorage failures
+	}
+}
+
+interface BuildToastProps {
+	variant: 'update-ready';
+	onAction?: () => void;
+}
+
+function BuildToast({ variant, onAction }: BuildToastProps) {
+	return (
+		<div
+			style={{
+				position: 'fixed',
+				top: '12px',
+				left: '12px',
+				right: '12px',
+				zIndex: 1000,
+				display: 'flex',
+				alignItems: 'center',
+				gap: '12px',
+				padding: '12px 14px',
+				borderRadius: '20px',
+				border: '1px solid rgba(255, 255, 255, 0.10)',
+				background:
+					'linear-gradient(180deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.08) 100%)',
+				boxShadow: '0 18px 40px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255,255,255,0.10)',
+				backdropFilter: 'blur(26px)',
+				WebkitBackdropFilter: 'blur(26px)',
+				color: 'var(--color-text-main)',
+			}}
+		>
+			<div
+				style={{
+					width: '34px',
+					height: '34px',
+					borderRadius: '12px',
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+					flexShrink: 0,
+					background:
+						'linear-gradient(180deg, rgba(10, 132, 255, 0.20) 0%, rgba(10, 132, 255, 0.10) 100%)',
+					border: '1px solid rgba(10, 132, 255, 0.18)',
+				}}
+			>
+				<svg
+					width="17"
+					height="17"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					style={{ color: 'var(--maestro-accent, var(--color-accent))' }}
+				>
+					<path d="M21 12a9 9 0 1 1-2.64-6.36" />
+					<path d="M21 3v6h-6" />
+				</svg>
+			</div>
+
+			<div
+				style={{
+					flex: 1,
+					minWidth: 0,
+					display: 'flex',
+					flexDirection: 'column',
+					gap: '2px',
+				}}
+			>
+				<div
+					style={{
+						fontSize: '13px',
+						fontWeight: 650,
+						letterSpacing: '-0.01em',
+					}}
+				>
+					New web build available
+				</div>
+				<div
+					style={{
+						fontSize: '12px',
+						color: 'var(--color-text-muted, var(--color-text-dim))',
+					}}
+				>
+					Reload to apply the latest changes.
+				</div>
+			</div>
+
+			{onAction && (
+				<button
+					onClick={onAction}
+					style={{
+						border: '1px solid rgba(255, 255, 255, 0.10)',
+						borderRadius: '999px',
+						padding: '9px 14px',
+						background:
+							'linear-gradient(180deg, rgba(255,255,255,0.16) 0%, rgba(255,255,255,0.08) 100%)',
+						color: 'var(--color-text-main)',
+						cursor: 'pointer',
+						fontSize: '12px',
+						fontWeight: 650,
+						boxShadow: '0 10px 24px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255,255,255,0.08)',
+						flexShrink: 0,
+					}}
+				>
+					Reload
+				</button>
+			)}
+		</div>
+	);
+}
 
 /**
  * Context for offline status
@@ -52,8 +196,8 @@ interface MaestroModeContextValue {
 	sessionId: string | null;
 	/** Current tab ID from URL (if specified) */
 	tabId: string | null;
-	/** Security token for API/WS calls */
-	securityToken: string;
+	/** Stable app base path */
+	basePath: string;
 	/** Navigate to dashboard */
 	goToDashboard: () => void;
 	/** Navigate to a specific session (optionally with a specific tab) */
@@ -67,7 +211,7 @@ const MaestroModeContext = createContext<MaestroModeContextValue>({
 	isSession: false,
 	sessionId: null,
 	tabId: null,
-	securityToken: '',
+	basePath: '',
 	goToDashboard: () => {},
 	goToSession: () => {},
 	updateUrl: () => {},
@@ -108,7 +252,7 @@ export function useDesktopTheme(): ThemeUpdateContextValue {
  * Build the Maestro mode context based on injected config.
  */
 export function createMaestroModeContextValue(config: MaestroConfig): MaestroModeContextValue {
-	const baseUrl = `${window.location.origin}/${config.securityToken}`;
+	const baseUrl = `${window.location.origin}${config.basePath}`;
 	const isDashboard = config.sessionId === null;
 
 	const buildSessionUrl = (sessionId: string, tabId?: string | null) => {
@@ -124,7 +268,7 @@ export function createMaestroModeContextValue(config: MaestroConfig): MaestroMod
 		isSession: !isDashboard,
 		sessionId: config.sessionId,
 		tabId: config.tabId,
-		securityToken: config.securityToken,
+		basePath: config.basePath,
 		goToDashboard: () => {
 			window.location.href = baseUrl;
 		},
@@ -154,55 +298,172 @@ const WebApp = lazy(() =>
  * or if there's an error loading the app module
  */
 function PlaceholderApp() {
-	return (
-		<div
-			style={{
-				display: 'flex',
-				flexDirection: 'column',
-				alignItems: 'center',
-				justifyContent: 'center',
-				height: '100vh',
-				padding: '20px',
-				textAlign: 'center',
-				color: 'var(--color-text-main)',
-				backgroundColor: 'var(--color-background)',
-			}}
-		>
-			<h1 style={{ marginBottom: '16px', fontSize: '24px' }}>Maestro Web</h1>
-			<p style={{ marginBottom: '8px', color: 'var(--color-text-muted)' }}>
-				Remote control interface
-			</p>
-			<p style={{ fontSize: '14px', color: 'var(--color-text-muted)' }}>
-				Connect to your Maestro desktop app to get started
-			</p>
-		</div>
-	);
+	return <BootBackdrop />;
 }
 
 /**
  * Loading fallback component
  */
 function LoadingFallback() {
+	return <BootBackdrop />;
+}
+
+function BootBackdrop() {
+	const [showSlowLoadingShell, setShowSlowLoadingShell] = useState(false);
+
+	useEffect(() => {
+		const timeoutId = window.setTimeout(() => {
+			setShowSlowLoadingShell(true);
+		}, 6000);
+
+		return () => window.clearTimeout(timeoutId);
+	}, []);
+
+	if (showSlowLoadingShell) {
+		return (
+			<div
+				style={{
+					minHeight: '100vh',
+					display: 'flex',
+					flexDirection: 'column',
+					background:
+						'linear-gradient(180deg, var(--maestro-bg-sidebar, var(--color-surface)) 0%, var(--maestro-bg-main, var(--color-background)) 100%)',
+					color: 'var(--maestro-text-main, var(--color-text-main))',
+				}}
+			>
+				<div
+					style={{
+						padding: '18px 16px 14px',
+						paddingTop: 'max(16px, env(safe-area-inset-top))',
+						borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+					}}
+				>
+					<div>
+						<div
+							style={{
+								fontSize: '10px',
+								fontWeight: 600,
+								letterSpacing: '0.08em',
+								textTransform: 'uppercase',
+								color: 'var(--maestro-text-dim, var(--color-text-muted))',
+								opacity: 0.76,
+							}}
+						>
+							Maestro Remote
+						</div>
+						<div
+							style={{
+								fontSize: '19px',
+								fontWeight: 650,
+								letterSpacing: '-0.02em',
+								marginTop: '6px',
+							}}
+						>
+							Refreshing Maestro
+						</div>
+					</div>
+					<div
+						style={{
+							width: '32px',
+							height: '32px',
+							borderRadius: '12px',
+							background: 'rgba(255, 255, 255, 0.08)',
+						}}
+					/>
+				</div>
+
+				<div
+					style={{
+						flex: 1,
+						display: 'flex',
+						flexDirection: 'column',
+						padding: '18px 16px calc(96px + env(safe-area-inset-bottom))',
+						gap: '14px',
+					}}
+				>
+					<div
+						style={{
+							fontSize: '13px',
+							color: 'var(--maestro-text-dim, var(--color-text-muted))',
+							opacity: 0.9,
+						}}
+					>
+						Still syncing with your desktop app.
+					</div>
+
+					<div
+						style={{
+							borderRadius: '22px',
+							border: '1px solid rgba(255, 255, 255, 0.08)',
+							background:
+								'linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%)',
+							boxShadow:
+								'0 14px 30px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+							padding: '16px',
+							display: 'flex',
+							flexDirection: 'column',
+							gap: '12px',
+						}}
+					>
+						{[0, 1, 2, 3].map((index) => (
+							<div
+								key={index}
+								style={{
+									height: index === 0 ? '18px' : index === 3 ? '72px' : '14px',
+									width: index === 3 ? '100%' : index === 1 ? '58%' : index === 2 ? '72%' : '34%',
+									borderRadius: '999px',
+									background: 'rgba(255, 255, 255, 0.08)',
+								}}
+							/>
+						))}
+					</div>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div
 			style={{
+				minHeight: '100vh',
 				display: 'flex',
 				alignItems: 'center',
 				justifyContent: 'center',
-				height: '100vh',
-				backgroundColor: 'var(--color-background)',
+				background:
+					'linear-gradient(180deg, var(--maestro-bg-sidebar, var(--color-surface)) 0%, var(--maestro-bg-main, var(--color-background)) 100%)',
+				color: 'var(--maestro-text-main, var(--color-text-main))',
 			}}
 		>
 			<div
 				style={{
-					width: '40px',
-					height: '40px',
-					border: '3px solid var(--color-border)',
-					borderTopColor: 'var(--color-accent)',
-					borderRadius: '50%',
-					animation: 'spin 1s linear infinite',
+					width: '72px',
+					height: '72px',
+					borderRadius: '26px',
+					border: '1px solid rgba(255, 255, 255, 0.10)',
+					background:
+						'linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(255,255,255,0.07) 100%)',
+					boxShadow: '0 18px 36px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255,255,255,0.10)',
+					backdropFilter: 'blur(22px)',
+					WebkitBackdropFilter: 'blur(22px)',
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
 				}}
-			/>
+			>
+				<div
+					style={{
+						width: '28px',
+						height: '28px',
+						borderRadius: '999px',
+						border: '2.5px solid rgba(255, 255, 255, 0.18)',
+						borderTopColor: 'var(--maestro-accent, var(--color-accent))',
+						animation: 'spin 0.85s linear infinite',
+					}}
+				/>
+			</div>
 		</div>
 	);
 }
@@ -212,16 +473,19 @@ function LoadingFallback() {
  */
 export function App() {
 	const [offline, setOffline] = useState(isOffline());
-	const [desktopTheme, setDesktopTheme] = useState<Theme | null>(null);
+	const [desktopTheme, setDesktopTheme] = useState<Theme | null>(() => readStoredThemeSnapshot());
+	const [hasServiceWorkerUpdate, setHasServiceWorkerUpdate] = useState(false);
 	const config = useMemo(() => getMaestroConfig(), []);
+	const hasReloadedForServiceWorkerRef = useRef(false);
 
 	const modeContextValue = useMemo(
 		() => createMaestroModeContextValue(config),
-		[config.securityToken, config.sessionId, config.tabId]
+		[config.basePath, config.sessionId, config.tabId]
 	);
 
 	const handleDesktopTheme = useCallback((theme: Theme) => {
 		webLogger.debug(`Desktop theme received: ${theme.name} (${theme.mode})`, 'App');
+		persistThemeSnapshot(theme);
 		setDesktopTheme(theme);
 	}, []);
 
@@ -241,13 +505,33 @@ export function App() {
 			},
 			onUpdate: () => {
 				webLogger.info('New content available, refresh recommended', 'App');
-				// Could show a toast/notification here prompting user to refresh
+				setHasServiceWorkerUpdate(true);
 			},
 			onOfflineChange: (newOfflineStatus) => {
 				webLogger.debug(`Offline status changed: ${newOfflineStatus}`, 'App');
 				setOffline(newOfflineStatus);
 			},
 		});
+	}, []);
+
+	useEffect(() => {
+		if (!('serviceWorker' in navigator)) {
+			return;
+		}
+
+		const handleControllerChange = () => {
+			if (hasReloadedForServiceWorkerRef.current) {
+				return;
+			}
+			hasReloadedForServiceWorkerRef.current = true;
+			window.requestAnimationFrame(() => {
+				window.location.reload();
+			});
+		};
+
+		navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
+		return () =>
+			navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
 	}, []);
 
 	// Log mode info on mount
@@ -269,6 +553,15 @@ export function App() {
             Once the desktop app sends a theme (via desktopTheme), it will override the device preference.
           */}
 					<ThemeProvider theme={desktopTheme || undefined} useDevicePreference>
+						{hasServiceWorkerUpdate && (
+							<BuildToast
+								variant="update-ready"
+								onAction={() => {
+									skipWaiting();
+									setHasServiceWorkerUpdate(false);
+								}}
+							/>
+						)}
 						<Suspense fallback={<LoadingFallback />}>
 							<WebApp />
 						</Suspense>

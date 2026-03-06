@@ -177,7 +177,6 @@ export interface UseMainPanelPropsDeps {
 	handleTabMarkUnread: (tabId: string) => void;
 	handleToggleTabReadOnlyMode: () => void;
 	handleSetTabExecutionMode: (mode: AgentExecutionMode) => void;
-	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
 	handleSetTabReasoningEffort: (effort: ReasoningEffort) => void;
 	toggleUnreadFilter: () => void;
@@ -377,7 +376,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onFileTabScrollPositionChange: deps.handleFileTabScrollPositionChange,
 			onFileTabSearchQueryChange: deps.handleFileTabSearchQueryChange,
 			onReloadFileTab: deps.handleReloadFileTab,
-			onToggleTabSaveToHistory: deps.handleToggleTabSaveToHistory,
 			onToggleTabShowThinking: deps.handleToggleTabShowThinking,
 			onSetTabReasoningEffort: deps.handleSetTabReasoningEffort,
 			onScrollPositionChange: deps.handleScrollPositionChange,
@@ -562,7 +560,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleTabMarkUnread,
 			deps.handleToggleTabReadOnlyMode,
 			deps.handleSetTabExecutionMode,
-			deps.handleToggleTabSaveToHistory,
 			deps.handleToggleTabShowThinking,
 			deps.handleSetTabReasoningEffort,
 			deps.toggleUnreadFilter,

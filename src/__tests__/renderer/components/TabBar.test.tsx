@@ -92,6 +92,11 @@ vi.mock('lucide-react', () => ({
 			»
 		</span>
 	),
+	Loader2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<span data-testid="loader2-icon" className={className} style={style}>
+			⟳
+		</span>
+	),
 	ExternalLink: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="external-link-icon" className={className} style={style}>
 			↗
@@ -482,9 +487,60 @@ describe('TabBar', () => {
 				/>
 			);
 
-			const busyDot = container.querySelector('.animate-pulse');
-			expect(busyDot).toBeInTheDocument();
-			expect(busyDot).toHaveStyle({ backgroundColor: mockTheme.colors.warning });
+			const busySpinner = container.querySelector('[title="Agent is working"] .animate-spin');
+			expect(busySpinner).toBeInTheDocument();
+			expect(busySpinner).toHaveStyle({ color: mockTheme.colors.warning });
+		});
+
+		it('shows generating-name indicator when tab is naming and not busy', () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1', isGeneratingName: true })];
+
+			const { container } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const generatingSpinner = container.querySelector(
+				'[title="Generating tab name..."] .animate-spin'
+			);
+			expect(generatingSpinner).toBeInTheDocument();
+			expect(generatingSpinner).toHaveStyle({ color: mockTheme.colors.textDim });
+		});
+
+		it('shows only one spinner when tab is busy and naming', () => {
+			const tabs = [
+				createTab({
+					id: 'tab-1',
+					name: 'Tab 1',
+					state: 'busy',
+					isGeneratingName: true,
+				}),
+			];
+
+			const { container } = render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			expect(container.querySelectorAll('.animate-spin')).toHaveLength(1);
+			expect(
+				container.querySelector('[title="Agent is working"] .animate-spin')
+			).toBeInTheDocument();
+			expect(
+				container.querySelector('[title="Generating tab name..."] .animate-spin')
+			).not.toBeInTheDocument();
 		});
 
 		it('shows unread indicator for inactive tab with unread messages', () => {

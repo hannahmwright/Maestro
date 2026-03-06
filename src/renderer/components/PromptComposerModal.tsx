@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, PenLine, Send, ImageIcon, History, Eye, Keyboard, Brain, Pin } from 'lucide-react';
+import { X, PenLine, Send, ImageIcon, Eye, Keyboard, Brain, Pin } from 'lucide-react';
 import type { Theme, ThinkingMode } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -26,8 +26,6 @@ interface PromptComposerModalProps {
 	onImageAttachBlocked?: () => void;
 	onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
 	// Bottom bar toggles
-	tabSaveToHistory?: boolean;
-	onToggleTabSaveToHistory?: () => void;
 	tabReadOnlyMode?: boolean;
 	onToggleTabReadOnlyMode?: () => void;
 	tabShowThinking?: ThinkingMode;
@@ -49,8 +47,6 @@ export function PromptComposerModal({
 	setStagedImages,
 	onImageAttachBlocked,
 	onOpenLightbox,
-	tabSaveToHistory = false,
-	onToggleTabSaveToHistory,
 	tabReadOnlyMode = false,
 	onToggleTabReadOnlyMode,
 	tabShowThinking = 'off',
@@ -146,13 +142,6 @@ export function PromptComposerModal({
 			if (stagedImages.length > 0 && onOpenLightbox) {
 				onOpenLightbox(stagedImages[0], stagedImages, 'staged');
 			}
-			return;
-		}
-
-		// Cmd/Ctrl + S to toggle Save to History
-		if (e.key === 's' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-			e.preventDefault();
-			onToggleTabSaveToHistory?.();
 			return;
 		}
 
@@ -388,27 +377,6 @@ export function PromptComposerModal({
 
 					{/* Right side: toggles and send button */}
 					<div className="flex items-center gap-2">
-						{/* Save to History toggle */}
-						{onToggleTabSaveToHistory && (
-							<button
-								onClick={onToggleTabSaveToHistory}
-								className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
-									tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
-								}`}
-								style={{
-									backgroundColor: tabSaveToHistory ? `${theme.colors.accent}25` : 'transparent',
-									color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim,
-									border: tabSaveToHistory
-										? `1px solid ${theme.colors.accent}50`
-										: '1px solid transparent',
-								}}
-								title={`Save to History (${formatShortcutKeys(['Meta', 's'])}) - Synopsis added after each completion`}
-							>
-								<History className="w-3 h-3" />
-								<span>History</span>
-							</button>
-						)}
-
 						{/* Read-only mode toggle */}
 						{onToggleTabReadOnlyMode && (
 							<button

@@ -2,7 +2,7 @@
  * GeneralTab - General settings tab for SettingsModal
  *
  * Contains: About Me, Shell, Log Level, GitHub CLI, Input Behavior,
- * History, Thinking Mode, Tab Naming, Auto-scroll, Power, Rendering,
+ * Thinking Mode, Tab Naming, Auto-scroll, Power, Rendering,
  * Updates, Pre-release, Privacy, Stats & WakaTime, Storage Location.
  */
 
@@ -12,7 +12,6 @@ import {
 	Key,
 	Check,
 	Terminal,
-	History,
 	Download,
 	Bug,
 	Cloud,
@@ -72,8 +71,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setEnterToSendAI,
 		enterToSendTerminal,
 		setEnterToSendTerminal,
-		defaultSaveToHistory,
-		setDefaultSaveToHistory,
 		defaultShowThinking,
 		setDefaultShowThinking,
 		autoScrollAiMode,
@@ -695,17 +692,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					</p>
 				</div>
 			</div>
-
-			{/* Default History Toggle */}
-			<SettingCheckbox
-				icon={History}
-				sectionLabel="Default History Toggle"
-				title='Enable "History" by default for new tabs'
-				description='When enabled, new AI tabs will have the "History" toggle on by default, saving a synopsis after each completion'
-				checked={defaultSaveToHistory}
-				onChange={setDefaultSaveToHistory}
-				theme={theme}
-			/>
 
 			{/* Reasoning View default - global preference for new tabs */}
 			<div>

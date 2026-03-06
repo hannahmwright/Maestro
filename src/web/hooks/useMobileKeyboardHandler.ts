@@ -2,7 +2,6 @@
  * useMobileKeyboardHandler - Mobile keyboard shortcuts handler hook
  *
  * Handles keyboard shortcuts for the mobile web interface:
- * - Cmd+J / Ctrl+J: Toggle between AI and Terminal mode
  * - Cmd+[ / Ctrl+[: Switch to previous tab
  * - Cmd+] / Ctrl+]: Switch to next tab
  *
@@ -13,7 +12,6 @@
  * useMobileKeyboardHandler({
  *   activeSessionId,
  *   activeSession,
- *   handleModeToggle,
  *   handleSelectTab,
  * });
  * ```
@@ -37,11 +35,6 @@ export type MobileKeyboardSession = {
 };
 
 /**
- * Input mode type for the handler
- */
-export type MobileInputMode = 'ai' | 'terminal';
-
-/**
  * Dependencies for useMobileKeyboardHandler
  */
 export interface UseMobileKeyboardHandlerDeps {
@@ -49,8 +42,6 @@ export interface UseMobileKeyboardHandlerDeps {
 	activeSessionId: string | null;
 	/** The currently active session object */
 	activeSession: MobileKeyboardSession | null | undefined;
-	/** Handler to toggle between AI and Terminal mode */
-	handleModeToggle: (mode: MobileInputMode) => void;
 	/** Handler to select a tab */
 	handleSelectTab: (tabId: string) => void;
 }
@@ -64,22 +55,10 @@ export interface UseMobileKeyboardHandlerDeps {
  * @param deps - Dependencies including session state and handlers
  */
 export function useMobileKeyboardHandler(deps: UseMobileKeyboardHandlerDeps): void {
-	const { activeSessionId, activeSession, handleModeToggle, handleSelectTab } = deps;
+	const { activeSessionId, activeSession, handleSelectTab } = deps;
 
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
-			// Check for Cmd+J (Mac) or Ctrl+J (Windows/Linux) to toggle AI/CLI mode
-			if ((e.metaKey || e.ctrlKey) && e.key === 'j') {
-				e.preventDefault();
-				if (!activeSessionId) return;
-
-				// Toggle mode
-				const currentMode = activeSession?.inputMode || 'ai';
-				const newMode: MobileInputMode = currentMode === 'ai' ? 'terminal' : 'ai';
-				handleModeToggle(newMode);
-				return;
-			}
-
 			// Cmd+[ or Ctrl+[ - Previous tab
 			if ((e.metaKey || e.ctrlKey) && e.key === '[') {
 				e.preventDefault();
@@ -118,7 +97,7 @@ export function useMobileKeyboardHandler(deps: UseMobileKeyboardHandlerDeps): vo
 
 		document.addEventListener('keydown', handleKeyDown);
 		return () => document.removeEventListener('keydown', handleKeyDown);
-	}, [activeSessionId, activeSession, handleModeToggle, handleSelectTab]);
+	}, [activeSessionId, activeSession, handleSelectTab]);
 }
 
 export default useMobileKeyboardHandler;

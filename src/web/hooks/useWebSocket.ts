@@ -9,6 +9,11 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type {
+	ResponseCompletedEvent,
+	WebRemoteLogEntry,
+	WebSessionLogEntryEvent,
+} from '../../shared/remote-web';
 import type { Theme } from '../../shared/theme-types';
 import { buildWebSocketUrl as buildWsUrl, getCurrentSessionId } from '../utils/config';
 import { webLogger } from '../utils/logger';
@@ -49,6 +54,7 @@ export interface AITabData {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	currentModel?: string | null;
 }
 
 /**
@@ -75,12 +81,19 @@ export interface SessionData {
 	groupId?: string | null;
 	groupName?: string | null;
 	groupEmoji?: string | null;
+	contextUsage?: number;
+	effectiveContextWindow?: number | null;
 	usageStats?: UsageStats | null;
 	lastResponse?: LastResponsePreview | null;
 	agentSessionId?: string | null;
 	thinkingStartTime?: number | null; // Timestamp when AI started thinking (for elapsed time display)
 	aiTabs?: AITabData[];
 	activeTabId?: string;
+	isGitRepo?: boolean;
+	gitFileCount?: number;
+	customModel?: string | null;
+	effectiveModelLabel?: string | null;
+	supportsModelSelection?: boolean;
 	bookmarked?: boolean; // Whether session is bookmarked (shows in Bookmarks group)
 	// Worktree subagent support
 	parentSessionId?: string | null; // If this is a worktree child, links to parent session
@@ -123,6 +136,10 @@ export type ServerMessageType =
 	| 'custom_commands'
 	| 'autorun_state'
 	| 'tabs_changed'
+	| 'new_tab_result'
+	| 'delete_session_result'
+	| 'session_log_entry'
+	| 'response_completed'
 	| 'pong'
 	| 'subscribed'
 	| 'echo'
@@ -192,6 +209,8 @@ export interface SessionStateChangeMessage extends ServerMessage {
 	toolType?: string;
 	inputMode?: string;
 	cwd?: string;
+	contextUsage?: number;
+	effectiveContextWindow?: number | null;
 }
 
 /**
@@ -297,6 +316,28 @@ export interface TabsChangedMessage extends ServerMessage {
 	activeTabId: string;
 }
 
+export interface NewTabResultMessage extends ServerMessage {
+	type: 'new_tab_result';
+	success: boolean;
+	sessionId: string;
+	tabId?: string;
+}
+
+export interface DeleteSessionResultMessage extends ServerMessage {
+	type: 'delete_session_result';
+	success: boolean;
+	sessionId: string;
+}
+
+export interface SessionLogEntryMessage extends ServerMessage, WebSessionLogEntryEvent {
+	type: 'session_log_entry';
+}
+
+export interface ResponseCompletedMessage extends ServerMessage {
+	type: 'response_completed';
+	event: ResponseCompletedEvent;
+}
+
 /**
  * Error message from server
  */
@@ -325,6 +366,10 @@ export type TypedServerMessage =
 	| CustomCommandsMessage
 	| AutoRunStateMessage
 	| TabsChangedMessage
+	| NewTabResultMessage
+	| DeleteSessionResultMessage
+	| SessionLogEntryMessage
+	| ResponseCompletedMessage
 	| ErrorMessage
 	| ServerMessage;
 
@@ -365,6 +410,19 @@ export interface WebSocketEventHandlers {
 	onAutoRunStateChange?: (sessionId: string, state: AutoRunState | null) => void;
 	/** Called when tabs change in a session */
 	onTabsChanged?: (sessionId: string, aiTabs: AITabData[], activeTabId: string) => void;
+	/** Called when a new tab request completes */
+	onNewTabResult?: (sessionId: string, success: boolean, tabId?: string) => void;
+	/** Called when a delete session request completes */
+	onDeleteSessionResult?: (sessionId: string, success: boolean) => void;
+	/** Called when a structured session log entry is upserted */
+	onSessionLogEntry?: (
+		sessionId: string,
+		tabId: string | null,
+		inputMode: 'ai' | 'terminal',
+		logEntry: WebRemoteLogEntry
+	) => void;
+	/** Called when a response completed event is received */
+	onResponseCompleted?: (event: ResponseCompletedEvent) => void;
 	/** Called when connection state changes */
 	onConnectionChange?: (state: WebSocketState) => void;
 	/** Called when an error occurs */
@@ -607,6 +665,8 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 								toolType: stateChangeMsg.toolType,
 								inputMode: stateChangeMsg.inputMode,
 								cwd: stateChangeMsg.cwd,
+								contextUsage: stateChangeMsg.contextUsage,
+								effectiveContextWindow: stateChangeMsg.effectiveContextWindow,
 							}
 						);
 						break;
@@ -704,6 +764,42 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 							tabsMsg.aiTabs,
 							tabsMsg.activeTabId
 						);
+						break;
+					}
+
+					case 'new_tab_result': {
+						const newTabMsg = message as NewTabResultMessage;
+						handlersRef.current?.onNewTabResult?.(
+							newTabMsg.sessionId,
+							newTabMsg.success,
+							newTabMsg.tabId
+						);
+						break;
+					}
+
+					case 'delete_session_result': {
+						const deleteResultMsg = message as DeleteSessionResultMessage;
+						handlersRef.current?.onDeleteSessionResult?.(
+							deleteResultMsg.sessionId,
+							deleteResultMsg.success
+						);
+						break;
+					}
+
+					case 'session_log_entry': {
+						const logEntryMsg = message as SessionLogEntryMessage;
+						handlersRef.current?.onSessionLogEntry?.(
+							logEntryMsg.sessionId,
+							logEntryMsg.tabId,
+							logEntryMsg.inputMode,
+							logEntryMsg.logEntry
+						);
+						break;
+					}
+
+					case 'response_completed': {
+						const responseCompletedMsg = message as ResponseCompletedMessage;
+						handlersRef.current?.onResponseCompleted?.(responseCompletedMsg.event);
 						break;
 					}
 

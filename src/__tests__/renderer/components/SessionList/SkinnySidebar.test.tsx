@@ -105,35 +105,35 @@ describe('SkinnySidebar', () => {
 		expect(handleContextMenu.mock.calls[0][1]).toBe('ctx-id');
 	});
 
-	it('shows active session at full opacity', () => {
+	it('shows active idle session marker at higher opacity', () => {
 		const s1 = makeSession({ id: 'active' });
 		const { container } = render(
 			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'active' })} />
 		);
 
-		const dot = container.querySelector('.rounded-full.w-3') as HTMLElement;
-		expect(dot.style.opacity).toBe('1');
+		const dot = container.querySelector('[title="Idle"]') as HTMLElement;
+		expect(dot.style.opacity).toBe('0.9');
 	});
 
-	it('shows inactive sessions at reduced opacity', () => {
+	it('shows inactive idle session marker at reduced opacity', () => {
 		const s1 = makeSession({ id: 'inactive' });
 		const { container } = render(
 			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'other' })} />
 		);
 
-		const dot = container.querySelector('.rounded-full.w-3') as HTMLElement;
-		expect(dot.style.opacity).toBe('0.25');
+		const dot = container.querySelector('[title="Idle"]') as HTMLElement;
+		expect(dot.style.opacity).toBe('0.35');
 	});
 
-	it('applies pulse animation for busy sessions', () => {
+	it('shows spinner for busy sessions', () => {
 		const s1 = makeSession({ state: 'busy' });
 		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
 
-		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
-		expect(dot.className).toContain('animate-pulse');
+		const spinner = container.querySelector('[title="Agent is working"] .animate-spin');
+		expect(spinner).toBeTruthy();
 	});
 
-	it('applies pulse animation for batch sessions', () => {
+	it('shows spinner for batch sessions', () => {
 		const s1 = makeSession({ id: 'batch-s' });
 		const { container } = render(
 			<SkinnySidebar
@@ -141,11 +141,11 @@ describe('SkinnySidebar', () => {
 			/>
 		);
 
-		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
-		expect(dot.className).toContain('animate-pulse');
+		const spinner = container.querySelector('[title="Agent is working"] .animate-spin');
+		expect(spinner).toBeTruthy();
 	});
 
-	it('shows unread badge for inactive sessions with unread tabs', () => {
+	it('shows awaiting-input dot for sessions with unread tabs', () => {
 		const s1 = makeSession({
 			id: 'unread-s',
 			aiTabs: [{ hasUnread: true } as any],
@@ -154,11 +154,11 @@ describe('SkinnySidebar', () => {
 			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'other' })} />
 		);
 
-		const badge = container.querySelector('[title="Unread messages"]');
+		const badge = container.querySelector('[title="Awaiting your input"]');
 		expect(badge).toBeTruthy();
 	});
 
-	it('hides unread badge for active session', () => {
+	it('shows awaiting-input dot for active session with unread tabs', () => {
 		const s1 = makeSession({
 			id: 'active-s',
 			aiTabs: [{ hasUnread: true } as any],
@@ -167,8 +167,8 @@ describe('SkinnySidebar', () => {
 			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'active-s' })} />
 		);
 
-		const badge = container.querySelector('[title="Unread messages"]');
-		expect(badge).toBeNull();
+		const badge = container.querySelector('[title="Awaiting your input"]');
+		expect(badge).toBeTruthy();
 	});
 
 	it('renders tooltip with session name on hover', () => {
@@ -178,15 +178,15 @@ describe('SkinnySidebar', () => {
 		expect(screen.getByText('My Special Agent')).toBeTruthy();
 	});
 
-	it('uses hollow style for claude-code sessions without agentSessionId', () => {
+	it('shows idle ring for claude-code sessions without unread activity', () => {
 		const s1 = makeSession({
 			toolType: 'claude-code',
 			agentSessionId: undefined,
 		});
 		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
 
-		const dot = container.querySelector('.w-3.h-3') as HTMLElement;
+		const dot = container.querySelector('[title="Idle"]') as HTMLElement;
 		expect(dot.style.backgroundColor).toBe('transparent');
-		expect(dot.style.border).toContain('1.5px solid');
+		expect(dot.style.border).toContain('1px solid');
 	});
 });

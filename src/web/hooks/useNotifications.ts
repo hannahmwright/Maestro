@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { buildScopedAssetUrl } from '../utils/config';
 import { webLogger } from '../utils/logger';
 
 /**
@@ -63,7 +64,7 @@ export interface UseNotificationsReturn {
 	/** Reset the prompt state (allows re-prompting) */
 	resetPromptState: () => void;
 	/** Show a notification (if permission granted) */
-	showNotification: (title: string, options?: NotificationOptions) => Notification | null;
+	showNotification: (title: string, options?: NotificationOptions) => Promise<boolean>;
 }
 
 /**
@@ -171,23 +172,38 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
 	 * Show a notification (if permission is granted)
 	 */
 	const showNotification = useCallback(
-		(title: string, options?: NotificationOptions): Notification | null => {
+		async (title: string, options?: NotificationOptions): Promise<boolean> => {
 			if (!isSupported || permission !== 'granted') {
 				webLogger.debug(`Cannot show notification, permission: ${permission}`, 'Notifications');
-				return null;
+				return false;
 			}
 
 			try {
-				const notification = new Notification(title, {
-					icon: '/maestro-icon-192.png',
-					badge: '/maestro-icon-192.png',
+				const notificationOptions: NotificationOptions = {
+					icon: buildScopedAssetUrl('/icons/icon-192x192.png'),
+					badge: buildScopedAssetUrl('/icons/icon-192x192.png'),
 					...options,
-				});
+				};
 
-				return notification;
+				if ('serviceWorker' in navigator) {
+					try {
+						const registration = await navigator.serviceWorker.ready;
+						await registration.showNotification(title, notificationOptions);
+						return true;
+					} catch (serviceWorkerError) {
+						webLogger.warn(
+							'Falling back to window notification because service worker notification failed',
+							'Notifications',
+							serviceWorkerError
+						);
+					}
+				}
+
+				new Notification(title, notificationOptions);
+				return true;
 			} catch (error) {
 				webLogger.error('Error showing notification', 'Notifications', error);
-				return null;
+				return false;
 			}
 		},
 		[isSupported, permission]

@@ -3,7 +3,7 @@
  *
  * Provides stable callbacks for the Prompt Composer modal:
  *   - Submit/send to AI or group chat
- *   - Toggle save-to-history, read-only mode, thinking mode, enter-to-send
+ *   - Toggle read-only mode, thinking mode, enter-to-send
  *
  * Reads from: sessionStore, groupChatStore, settingsStore
  */
@@ -37,8 +37,6 @@ export interface UsePromptComposerHandlersReturn {
 	handlePromptComposerSubmit: (value: string) => void;
 	/** Send content (triggers AI or group chat send) */
 	handlePromptComposerSend: (value: string) => void;
-	/** Toggle save-to-history for the active tab */
-	handlePromptToggleTabSaveToHistory: () => void;
 	/** Toggle read-only mode for active tab or group chat */
 	handlePromptToggleTabReadOnlyMode: () => void;
 	/** Cycle thinking mode for the active tab (off → on → sticky → off) */
@@ -115,23 +113,6 @@ export function usePromptComposerHandlers(
 		]
 	);
 
-	const handlePromptToggleTabSaveToHistory = useCallback(() => {
-		if (!activeSession) return;
-		const activeTab = getActiveTab(activeSession);
-		if (!activeTab) return;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSession.id) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === activeTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-					),
-				};
-			})
-		);
-	}, [activeSession]);
-
 	const handlePromptToggleTabReadOnlyMode = useCallback(() => {
 		if (activeGroupChatId) {
 			setGroupChatReadOnlyMode((prev: boolean) => !prev);
@@ -194,7 +175,6 @@ export function usePromptComposerHandlers(
 	return {
 		handlePromptComposerSubmit,
 		handlePromptComposerSend,
-		handlePromptToggleTabSaveToHistory,
 		handlePromptToggleTabReadOnlyMode,
 		handlePromptToggleTabShowThinking,
 		handlePromptToggleEnterToSend,

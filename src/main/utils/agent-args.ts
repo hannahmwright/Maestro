@@ -19,6 +19,7 @@ type AgentConfigOverrides = {
 
 type AgentConfigResolution = {
 	args: string[];
+	effectiveModel?: string;
 	effectiveCustomEnvVars?: Record<string, string>;
 	customArgsSource: 'session' | 'agent' | 'none';
 	customEnvSource: 'session' | 'agent' | 'none';
@@ -106,6 +107,7 @@ export function applyAgentConfigOverrides(
 	let finalArgs = [...baseArgs];
 	const agentConfigValues = overrides.agentConfigValues ?? {};
 	let modelSource: AgentConfigResolution['modelSource'] = 'default';
+	let effectiveModel: string | undefined;
 
 	if (agent && agent.configOptions) {
 		for (const option of agent.configOptions) {
@@ -124,6 +126,9 @@ export function applyAgentConfigOverrides(
 				} else {
 					value = option.default;
 					modelSource = 'default';
+				}
+				if (typeof value === 'string' && value.trim()) {
+					effectiveModel = value.trim();
 				}
 			} else {
 				value =
@@ -178,6 +183,7 @@ export function applyAgentConfigOverrides(
 
 	return {
 		args: finalArgs,
+		effectiveModel,
 		effectiveCustomEnvVars: hasEnvVars ? effectiveCustomEnvVars : undefined,
 		customArgsSource,
 		customEnvSource: hasEnvVars ? customEnvSource : 'none',

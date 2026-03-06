@@ -2,20 +2,14 @@
  * Tests for useVoiceInput hook
  *
  * Covers:
- * - Speech recognition support detection
- * - Start/stop listening flow
- * - Transcription updates from recognition results
- * - Cleanup on unmount
+ * - local recording support detection
+ * - record -> transcribe flow
+ * - graceful unsupported-browser handling
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import {
-	useVoiceInput,
-	isSpeechRecognitionSupported,
-	type SpeechRecognitionEvent,
-	type SpeechRecognitionResultList,
-} from '../../../web/hooks/useVoiceInput';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { useVoiceInput, isVoiceRecordingSupported } from '../../../web/hooks/useVoiceInput';
 
 vi.mock('../../../web/utils/logger', () => ({
 	webLogger: {
@@ -26,72 +20,119 @@ vi.mock('../../../web/utils/logger', () => ({
 	},
 }));
 
-let lastRecognitionInstance: MockSpeechRecognition | null = null;
+class MockMediaRecorder {
+	static isTypeSupported = vi.fn(() => true);
 
-class MockSpeechRecognition {
-	continuous = false;
-	interimResults = false;
-	lang = '';
-	maxAlternatives = 1;
-	onaudioend = null;
-	onaudiostart = null;
-	onend: ((this: MockSpeechRecognition, ev: Event) => void) | null = null;
-	onerror = null;
-	onnomatch = null;
-	onresult: ((this: MockSpeechRecognition, ev: SpeechRecognitionEvent) => void) | null = null;
-	onsoundend = null;
-	onsoundstart = null;
-	onspeechend = null;
-	onspeechstart = null;
-	onstart: ((this: MockSpeechRecognition, ev: Event) => void) | null = null;
+	state: RecordingState = 'inactive';
+	mimeType = 'audio/webm';
+	ondataavailable: ((event: BlobEvent) => void) | null = null;
+	onstart: ((event: Event) => void) | null = null;
+	onstop: ((event: Event) => void) | null = null;
+	onerror: ((event: Event) => void) | null = null;
 
-	start = vi.fn(() => {
-		this.onstart?.call(this, new Event('start'));
-	});
+	constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+		if (options?.mimeType) {
+			this.mimeType = options.mimeType;
+		}
+	}
 
-	stop = vi.fn(() => {
-		this.onend?.call(this, new Event('end'));
-	});
+	start() {
+		this.state = 'recording';
+		this.onstart?.(new Event('start'));
+	}
 
-	abort = vi.fn();
-
-	constructor() {
-		lastRecognitionInstance = this;
+	stop() {
+		this.state = 'inactive';
+		this.ondataavailable?.({
+			data: new Blob(['audio'], { type: this.mimeType }),
+		} as BlobEvent);
+		this.onstop?.(new Event('stop'));
 	}
 }
 
-function setSpeechRecognitionAvailable() {
-	Object.defineProperty(window, 'SpeechRecognition', {
-		value: MockSpeechRecognition,
-		configurable: true,
-		writable: true,
-	});
-}
+function setRecordingSupport(enabled: boolean) {
+	if (enabled) {
+		Object.defineProperty(window, 'MediaRecorder', {
+			value: MockMediaRecorder,
+			configurable: true,
+			writable: true,
+		});
+		Object.defineProperty(navigator, 'mediaDevices', {
+			value: {
+				getUserMedia: vi.fn(async () => ({
+					getTracks: () => [],
+				})),
+			},
+			configurable: true,
+		});
+		return;
+	}
 
-function clearSpeechRecognition() {
-	Object.defineProperty(window, 'SpeechRecognition', {
+	Object.defineProperty(window, 'MediaRecorder', {
 		value: undefined,
 		configurable: true,
 		writable: true,
 	});
-	lastRecognitionInstance = null;
+	Object.defineProperty(navigator, 'mediaDevices', {
+		value: undefined,
+		configurable: true,
+	});
 }
 
 describe('useVoiceInput', () => {
+	const originalFetch = global.fetch;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
-		setSpeechRecognitionAvailable();
+		setRecordingSupport(true);
+		global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.includes('/transcribe/status')) {
+				return {
+					ok: true,
+					json: async () => ({
+						available: true,
+						ready: true,
+						warming: false,
+						backend: 'local-faster-whisper',
+					}),
+				} as Response;
+			}
+
+			if (url.includes('/transcribe/prewarm')) {
+				return {
+					ok: true,
+					json: async () => ({
+						available: true,
+						ready: true,
+						warming: false,
+						backend: 'local-faster-whisper',
+					}),
+				} as Response;
+			}
+
+			return {
+				ok: true,
+				json: async () => ({
+					text: 'world',
+					language: 'en',
+					backend: 'local-faster-whisper',
+					durationMs: 120,
+				}),
+			} as Response;
+		}) as typeof fetch;
 	});
 
 	afterEach(() => {
-		clearSpeechRecognition();
+		global.fetch = originalFetch;
+		setRecordingSupport(false);
 	});
 
-	it('detects speech recognition support', () => {
-		expect(isSpeechRecognitionSupported()).toBe(true);
+	it('detects local recording support', () => {
+		expect(isVoiceRecordingSupported()).toBe(true);
 	});
 
-	it('starts listening and updates transcription', () => {
+	it('records audio and merges the transcript into the draft', async () => {
 		const onTranscriptionChange = vi.fn();
 
 		const { result } = renderHook(() =>
@@ -101,72 +142,29 @@ describe('useVoiceInput', () => {
 			})
 		);
 
-		act(() => {
+		await act(async () => {
 			result.current.startVoiceInput();
+			await Promise.resolve();
 		});
 
-		expect(result.current.isListening).toBe(true);
-		expect(lastRecognitionInstance?.start).toHaveBeenCalled();
-
-		const alt = { transcript: 'world', confidence: 0.9 };
-		const mockResult = {
-			isFinal: true,
-			length: 1,
-			0: alt,
-			item: () => alt,
-		};
-		const mockResults = [mockResult] as unknown as SpeechRecognitionResultList;
-		(mockResults as { item?: (index: number) => unknown }).item = (index: number) =>
-			mockResults[index];
-
-		act(() => {
-			lastRecognitionInstance?.onresult?.call(lastRecognitionInstance, {
-				resultIndex: 0,
-				results: mockResults,
-			} as SpeechRecognitionEvent);
+		await waitFor(() => {
+			expect(result.current.isListening).toBe(true);
+			expect(result.current.voiceState).toBe('recording');
 		});
 
-		expect(onTranscriptionChange).toHaveBeenCalledWith('hello world');
-	});
-
-	it('stops listening when toggled off', () => {
-		const onTranscriptionChange = vi.fn();
-
-		const { result } = renderHook(() =>
-			useVoiceInput({
-				currentValue: '',
-				onTranscriptionChange,
-			})
-		);
-
-		act(() => {
-			result.current.startVoiceInput();
-		});
-
-		act(() => {
+		await act(async () => {
 			result.current.stopVoiceInput();
+			await Promise.resolve();
 		});
 
-		expect(lastRecognitionInstance?.stop).toHaveBeenCalled();
-		expect(result.current.isListening).toBe(false);
+		await waitFor(() => {
+			expect(onTranscriptionChange).toHaveBeenCalledWith('hello world');
+			expect(result.current.voiceState).toBe('idle');
+		});
 	});
 
-	it('aborts recognition on unmount', () => {
-		const onTranscriptionChange = vi.fn();
-
-		const { result, unmount } = renderHook(() =>
-			useVoiceInput({
-				currentValue: '',
-				onTranscriptionChange,
-			})
-		);
-
-		act(() => {
-			result.current.startVoiceInput();
-		});
-
-		unmount();
-
-		expect(lastRecognitionInstance?.abort).toHaveBeenCalled();
+	it('reports unsupported browsers cleanly', () => {
+		setRecordingSupport(false);
+		expect(isVoiceRecordingSupported()).toBe(false);
 	});
 });

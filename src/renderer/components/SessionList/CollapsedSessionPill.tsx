@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
+import { Loader2 } from 'lucide-react';
 import type { Session, Theme } from '../../types';
-import { getStatusColor } from '../../utils/theme';
 import { SessionTooltipContent } from './SessionTooltipContent';
 
 interface CollapsedSessionPillProps {
@@ -45,6 +45,7 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 				const isFirst = idx === 0;
 				const isLast = idx === allSessions.length - 1;
 				const isInBatch = activeBatchSessionIds.includes(s.id);
+				const isWorking = s.state === 'busy' || isInBatch;
 
 				return (
 					<div
@@ -52,15 +53,10 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 						role="button"
 						tabIndex={0}
 						aria-label={`Switch to ${s.name}`}
-						className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
+						className="group/segment relative flex-1 h-full flex items-center justify-center"
 						style={{
-							...(s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch
-								? { border: `1px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
-								: {
-										backgroundColor: isInBatch
-											? theme.colors.warning
-											: getStatusColor(s.state, theme),
-									}),
+							backgroundColor: `${theme.colors.textDim}22`,
+							border: `1px solid ${theme.colors.border}`,
 							borderRadius: hasWorktrees
 								? `${isFirst ? '9999px' : '0'} ${isLast ? '9999px' : '0'} ${isLast ? '9999px' : '0'} ${isFirst ? '9999px' : '0'}`
 								: '9999px',
@@ -86,12 +82,20 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 							}
 						}}
 					>
-						{hasUnreadTabs && isLast && (
+						{isWorking ? (
+							<span title="Agent is working">
+								<Loader2
+									className="w-3 h-3 animate-spin"
+									style={{ color: isInBatch ? theme.colors.warning : theme.colors.accent }}
+								/>
+							</span>
+						) : hasUnreadTabs ? (
 							<div
-								className="absolute -right-0.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full"
-								style={{ backgroundColor: theme.colors.error }}
+								className="w-2 h-2 rounded-full"
+								style={{ backgroundColor: theme.colors.accent }}
+								title="Awaiting your input"
 							/>
-						)}
+						) : null}
 						<div
 							className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity shadow-xl"
 							style={{

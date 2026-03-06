@@ -4,7 +4,16 @@
  * Handles registration and lifecycle management of the Maestro
  * mobile web service worker for offline capability.
  */
+import {
+	WEB_APP_BASE_PATH,
+	WEB_APP_SERVICE_WORKER_PATH,
+	type ResponseCompletedEvent,
+} from '../../shared/remote-web';
 import { webLogger } from './logger';
+
+declare const __APP_VERSION__: string;
+declare const __GIT_HASH__: string;
+declare const __BUILD_ID__: string;
 
 /**
  * Configuration for service worker registration
@@ -20,12 +29,19 @@ export interface ServiceWorkerConfig {
 	onMessage?: (message: unknown) => void;
 }
 
+export type ServiceWorkerMessage =
+	| { type: 'show-local-notification'; payload: ResponseCompletedEvent }
+	| { type: 'skipWaiting' }
+	| { type: 'ping' };
+
 /**
  * Check if service workers are supported in this browser
  */
 export function isServiceWorkerSupported(): boolean {
 	return 'serviceWorker' in navigator;
 }
+
+const SERVICE_WORKER_VERSION = `${__APP_VERSION__}-${__GIT_HASH__}-${__BUILD_ID__}`;
 
 /**
  * Register the service worker for offline capability
@@ -63,14 +79,8 @@ export async function registerServiceWorker(
 	}
 
 	try {
-		// Get security token from config for absolute path
-		const config = (window as unknown as { __MAESTRO_CONFIG__?: { securityToken?: string } })
-			.__MAESTRO_CONFIG__;
-		const token = config?.securityToken;
-
-		// Use absolute path with token prefix if available
-		const swPath = token ? `/${token}/sw.js` : './sw.js';
-		const swScope = token ? `/${token}/` : './';
+		const swPath = `${WEB_APP_SERVICE_WORKER_PATH}?v=${encodeURIComponent(SERVICE_WORKER_VERSION)}`;
+		const swScope = `${WEB_APP_BASE_PATH}/`;
 
 		// Register the service worker
 		const registration = await navigator.serviceWorker.register(swPath, {
@@ -147,7 +157,7 @@ export function skipWaiting(): void {
 	if (!isServiceWorkerSupported()) return;
 
 	navigator.serviceWorker.ready.then((registration) => {
-		registration.waiting?.postMessage('skipWaiting');
+		registration.waiting?.postMessage({ type: 'skipWaiting' } satisfies ServiceWorkerMessage);
 	});
 }
 
@@ -172,9 +182,38 @@ export async function pingServiceWorker(): Promise<boolean> {
 			// Timeout after 1 second
 			setTimeout(() => resolve(false), 1000);
 
-			activeWorker.postMessage('ping', [messageChannel.port2]);
+			activeWorker.postMessage({ type: 'ping' } satisfies ServiceWorkerMessage, [
+				messageChannel.port2,
+			]);
 		});
 	} catch {
 		return false;
 	}
+}
+
+export async function postServiceWorkerMessage(message: ServiceWorkerMessage): Promise<boolean> {
+	if (!isServiceWorkerSupported()) return false;
+
+	try {
+		const registration = await navigator.serviceWorker.ready;
+		const activeWorker = registration.active || navigator.serviceWorker.controller;
+		if (!activeWorker) {
+			return false;
+		}
+
+		activeWorker.postMessage(message);
+		return true;
+	} catch (error) {
+		webLogger.error('Failed to post message to service worker', 'ServiceWorker', error);
+		return false;
+	}
+}
+
+export async function showLocalServiceWorkerNotification(
+	event: ResponseCompletedEvent
+): Promise<boolean> {
+	return postServiceWorkerMessage({
+		type: 'show-local-notification',
+		payload: event,
+	});
 }

@@ -53,6 +53,7 @@ import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
+import { useSessionStore } from '../stores/sessionStore';
 
 interface SlashCommand {
 	command: string;
@@ -135,9 +136,6 @@ interface InputAreaProps {
 	onToggleTabReadOnlyMode?: () => void;
 	tabExecutionMode?: AgentExecutionMode;
 	onSetTabExecutionMode?: (mode: AgentExecutionMode) => void;
-	// Save to History toggle (per-tab)
-	tabSaveToHistory?: boolean;
-	onToggleTabSaveToHistory?: () => void;
 	// Prompt composer modal
 	onOpenPromptComposer?: () => void;
 	// Shortcuts for displaying keyboard hints
@@ -176,6 +174,190 @@ interface InputAreaProps {
 	// Wizard thinking toggle
 	wizardShowThinking?: boolean;
 	onToggleWizardShowThinking?: () => void;
+}
+
+function normalizeModelLabel(model: string | null | undefined): string | null {
+	const normalized = model?.trim();
+	if (!normalized) return null;
+	if (normalized.toLowerCase() === 'default') return null;
+	return normalized;
+}
+
+function hasSupportedProviderIcon(toolType?: Session['toolType'] | null): boolean {
+	return (
+		toolType === 'codex' ||
+		toolType === 'claude-code' ||
+		toolType === 'opencode' ||
+		toolType === 'factory-droid' ||
+		toolType === 'terminal'
+	);
+}
+
+function ProviderModelIcon({
+	toolType,
+	color,
+}: {
+	toolType?: Session['toolType'] | null;
+	color: string;
+}) {
+	switch (toolType) {
+		case 'codex':
+			return (
+				<svg width="16" height="16" viewBox="0 0 24 24" fill={color} aria-hidden="true">
+					<path d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.459a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z" />
+				</svg>
+			);
+		case 'claude-code':
+			return (
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke={color}
+					strokeWidth="1.9"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M6 18 11.2 6h1.6L18 18" />
+					<path d="M8.6 13h6.8" />
+				</svg>
+			);
+		case 'opencode':
+			return (
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke={color}
+					strokeWidth="1.9"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					aria-hidden="true"
+				>
+					<path d="m8.5 7-4 5 4 5" />
+					<path d="m15.5 7 4 5-4 5" />
+					<path d="m13.5 5-3 14" />
+				</svg>
+			);
+		case 'factory-droid':
+			return (
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke={color}
+					strokeWidth="1.8"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					aria-hidden="true"
+				>
+					<path d="M4.5 19.5V11h6l2-3.5h7v12Z" />
+					<path d="M9 11V7.5h2.2" />
+					<circle cx="9" cy="19" r="1.5" fill={color} stroke="none" />
+					<circle cx="17" cy="19" r="1.5" fill={color} stroke="none" />
+				</svg>
+			);
+		case 'terminal':
+			return (
+				<svg
+					width="16"
+					height="16"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke={color}
+					strokeWidth="1.9"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+					aria-hidden="true"
+				>
+					<rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+					<path d="m8 10 2.5 2L8 14" />
+					<path d="M13 15h3.5" />
+				</svg>
+			);
+		default:
+			return null;
+	}
+}
+
+function ModelSelectorButton({
+	label,
+	toolType,
+	theme,
+	onClick,
+	disabled,
+	isOpen,
+}: {
+	label: string;
+	toolType?: Session['toolType'] | null;
+	theme: Theme;
+	onClick: () => void;
+	disabled: boolean;
+	isOpen: boolean;
+}) {
+	const iconColor = isOpen ? theme.colors.accent : theme.colors.textMain;
+	const showProviderIcon = hasSupportedProviderIcon(toolType);
+
+	return (
+		<button
+			type="button"
+			onClick={onClick}
+			disabled={disabled}
+			style={{
+				padding: '0 12px',
+				borderRadius: '16px',
+				cursor: disabled ? 'default' : 'pointer',
+				width: 'auto',
+				minWidth: '70px',
+				maxWidth: '120px',
+				height: '48px',
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				gap: '6px',
+				transition: 'all 150ms ease',
+				flexShrink: 0,
+				WebkitTapHighlightColor: 'transparent',
+				boxShadow: '0 8px 18px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+				backgroundColor: isOpen ? `${theme.colors.accent}20` : `${theme.colors.bgMain}c8`,
+				border: `1px solid ${isOpen ? `${theme.colors.accent}66` : theme.colors.border}`,
+				color: isOpen ? theme.colors.accent : theme.colors.textMain,
+				opacity: disabled ? 0.5 : 1,
+			}}
+			aria-label={`Choose model. Current model: ${label}`}
+			aria-expanded={isOpen}
+		>
+			{showProviderIcon && (
+				<span
+					style={{
+						display: 'inline-flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						width: '16px',
+						height: '16px',
+						flexShrink: 0,
+					}}
+				>
+					<ProviderModelIcon toolType={toolType} color={iconColor} />
+				</span>
+			)}
+			<span
+				style={{
+					fontSize: '12px',
+					fontWeight: 600,
+					overflow: 'hidden',
+					textOverflow: 'ellipsis',
+					whiteSpace: 'nowrap',
+				}}
+			>
+				{label}
+			</span>
+		</button>
+	);
 }
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
@@ -236,8 +418,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onToggleTabReadOnlyMode,
 		tabExecutionMode,
 		onSetTabExecutionMode,
-		tabSaveToHistory = false,
-		onToggleTabSaveToHistory,
 		onOpenPromptComposer,
 		shortcuts,
 		showFlashNotification,
@@ -300,6 +480,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	type InteractionMode = 'plan' | 'ask' | 'agent';
 	const supportsInteractionModes =
 		session.inputMode === 'ai' && hasCapability('supportsReadOnlyMode') && !!onSetTabExecutionMode;
+	const activeTab = useMemo(
+		() => session.aiTabs?.find((tab) => tab.id === session.activeTabId),
+		[session.aiTabs, session.activeTabId]
+	);
 	const interactionMode = useMemo<InteractionMode>(() => {
 		if (tabExecutionMode === 'ask' || tabExecutionMode === 'plan' || tabExecutionMode === 'agent') {
 			return tabExecutionMode;
@@ -316,8 +500,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	);
 	const [modeMenuOpen, setModeMenuOpen] = useState(false);
 	const [effortMenuOpen, setEffortMenuOpen] = useState(false);
+	const [modelMenuOpen, setModelMenuOpen] = useState(false);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [loadingModels, setLoadingModels] = useState(false);
 	const modeMenuRef = useRef<HTMLDivElement | null>(null);
 	const effortMenuRef = useRef<HTMLDivElement | null>(null);
+	const modelMenuRef = useRef<HTMLDivElement | null>(null);
+	const updateSession = useSessionStore((state) => state.updateSession);
 
 	const modeOptions = useMemo(
 		() => [
@@ -377,6 +566,83 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			effortOptions[2],
 		[effortOptions, effectiveReasoningEffortForDisplay]
 	);
+	const supportsModelSelection =
+		session.inputMode === 'ai' && hasCapability('supportsModelSelection');
+	const effectiveSshRemoteId = useMemo(
+		() =>
+			session.sshRemoteId ||
+			(session.sessionSshRemoteConfig?.enabled
+				? session.sessionSshRemoteConfig.remoteId || undefined
+				: undefined),
+		[
+			session.sshRemoteId,
+			session.sessionSshRemoteConfig?.enabled,
+			session.sessionSshRemoteConfig?.remoteId,
+		]
+	);
+	const effectiveModelLabel = useMemo(() => {
+		return (
+			normalizeModelLabel(activeTab?.currentModel) ||
+			normalizeModelLabel(session.customModel) ||
+			'Model'
+		);
+	}, [activeTab?.currentModel, session.customModel]);
+	const loadModels = React.useCallback(
+		async (forceRefresh = false) => {
+			if (!supportsModelSelection) return;
+			setLoadingModels(true);
+			try {
+				const models = await window.maestro.agents.getModels(
+					session.toolType,
+					forceRefresh,
+					effectiveSshRemoteId
+				);
+				setAvailableModels(models || []);
+			} catch (error) {
+				console.error('Failed to load models:', error);
+				setAvailableModels([]);
+			} finally {
+				setLoadingModels(false);
+			}
+		},
+		[effectiveSshRemoteId, session.toolType, supportsModelSelection]
+	);
+	const applyModelSelection = React.useCallback(
+		(value: string | null) => {
+			const trimmedValue = value?.trim() ?? '';
+			updateSession(session.id, { customModel: trimmedValue || undefined });
+			setModelMenuOpen(false);
+		},
+		[session.id, updateSession]
+	);
+	const selectableModels = useMemo(() => {
+		const normalizedCurrentModel = effectiveModelLabel.trim();
+		const models = [...availableModels];
+		if (
+			normalizedCurrentModel &&
+			normalizedCurrentModel !== 'Model' &&
+			!models.includes(normalizedCurrentModel)
+		) {
+			models.unshift(normalizedCurrentModel);
+		}
+		return models;
+	}, [availableModels, effectiveModelLabel]);
+	const handleModelMenuToggle = React.useCallback(async () => {
+		if (!supportsModelSelection) {
+			return;
+		}
+
+		const nextOpen = !modelMenuOpen;
+		setModelMenuOpen(nextOpen);
+		if (!nextOpen) {
+			return;
+		}
+
+		await loadModels(false);
+	}, [loadModels, modelMenuOpen, supportsModelSelection]);
+	const handleRefreshModels = React.useCallback(async () => {
+		await loadModels(true);
+	}, [loadModels]);
 
 	useEffect(() => {
 		const handleClickOutside = (event: MouseEvent) => {
@@ -387,17 +653,14 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			if (effortMenuRef.current && !effortMenuRef.current.contains(target)) {
 				setEffortMenuOpen(false);
 			}
+			if (modelMenuRef.current && !modelMenuRef.current.contains(target)) {
+				setModelMenuOpen(false);
+			}
 		};
 
 		document.addEventListener('mousedown', handleClickOutside);
 		return () => document.removeEventListener('mousedown', handleClickOutside);
 	}, []);
-
-	// PERF: Memoize activeTab lookup to avoid O(n) search on every render
-	const activeTab = useMemo(
-		() => session.aiTabs?.find((tab) => tab.id === session.activeTabId),
-		[session.aiTabs, session.activeTabId]
-	);
 
 	// Get wizardState from active tab (not session level - wizard state is per-tab)
 	const wizardState = activeTab?.wizardState;
@@ -1161,28 +1424,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							</div>
 
 							<div className="flex items-center gap-2">
-								{/* Save to History toggle - AI mode only */}
-								{session.inputMode === 'ai' && onToggleTabSaveToHistory && (
-									<button
-										onClick={onToggleTabSaveToHistory}
-										className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
-											tabSaveToHistory ? '' : 'opacity-40 hover:opacity-70'
-										}`}
-										style={{
-											backgroundColor: tabSaveToHistory
-												? `${theme.colors.accent}25`
-												: 'transparent',
-											color: tabSaveToHistory ? theme.colors.accent : theme.colors.textDim,
-											border: tabSaveToHistory
-												? `1px solid ${theme.colors.accent}50`
-												: '1px solid transparent',
-										}}
-										title={`Save to History (${formatShortcutKeys(['Meta', 's'])}) - Synopsis added after each completion`}
-									>
-										<History className="w-3 h-3" />
-										<span>History</span>
-									</button>
-								)}
 								{/* Modes selector (Cursor-style) */}
 								{supportsInteractionModes && (
 									<div className="relative" ref={modeMenuRef}>
@@ -1260,6 +1501,124 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 											<span>Read-only</span>
 										</button>
 									)}
+								{supportsModelSelection && (
+									<div className="relative" ref={modelMenuRef}>
+										<ModelSelectorButton
+											label={effectiveModelLabel}
+											toolType={session.toolType}
+											theme={theme}
+											onClick={() => void handleModelMenuToggle()}
+											disabled={false}
+											isOpen={modelMenuOpen}
+										/>
+										{modelMenuOpen && (
+											<div
+												className="absolute bottom-full right-0 mb-2 z-50 w-80"
+												style={{
+													borderRadius: '20px',
+													border: `1px solid ${theme.colors.border}`,
+													background: `linear-gradient(180deg, ${theme.colors.bgSidebar}fa 0%, ${theme.colors.bgMain}fa 100%)`,
+													backdropFilter: 'blur(22px)',
+													WebkitBackdropFilter: 'blur(22px)',
+													boxShadow: '0 18px 36px rgba(15, 23, 42, 0.22)',
+													padding: '12px',
+												}}
+											>
+												<div
+													className="flex items-center justify-between gap-3"
+													style={{ marginBottom: '10px' }}
+												>
+													<div
+														style={{
+															fontSize: '12px',
+															fontWeight: 700,
+															color: theme.colors.textMain,
+															letterSpacing: '0.04em',
+															textTransform: 'uppercase',
+														}}
+													>
+														Model
+													</div>
+													<button
+														type="button"
+														onClick={() => void handleRefreshModels()}
+														style={{
+															border: 'none',
+															background: 'transparent',
+															color: theme.colors.accent,
+															fontSize: '12px',
+															fontWeight: 600,
+															cursor: 'pointer',
+														}}
+													>
+														{loadingModels ? 'Loading...' : 'Refresh'}
+													</button>
+												</div>
+												<div
+													style={{
+														display: 'flex',
+														flexDirection: 'column',
+														gap: '6px',
+														maxHeight: '220px',
+														overflowY: 'auto',
+													}}
+												>
+													{selectableModels.length > 0 ? (
+														<div
+															style={{
+																display: 'flex',
+																flexDirection: 'column',
+																gap: '6px',
+															}}
+														>
+															{selectableModels.map((model) => {
+																const isActive = model === effectiveModelLabel;
+																return (
+																	<button
+																		key={model}
+																		type="button"
+																		onClick={() => applyModelSelection(model)}
+																		style={{
+																			padding: '12px 14px',
+																			borderRadius: '14px',
+																			border: `1px solid ${theme.colors.border}`,
+																			backgroundColor: isActive
+																				? `${theme.colors.accent}18`
+																				: `${theme.colors.bgMain}cc`,
+																			color: isActive ? theme.colors.accent : theme.colors.textMain,
+																			fontSize: '13px',
+																			fontWeight: 500,
+																			textAlign: 'left',
+																			cursor: 'pointer',
+																			overflow: 'hidden',
+																			textOverflow: 'ellipsis',
+																			whiteSpace: 'nowrap',
+																		}}
+																	>
+																		{model}
+																	</button>
+																);
+															})}
+														</div>
+													) : (
+														<div
+															style={{
+																padding: '12px 14px',
+																borderRadius: '14px',
+																border: `1px solid ${theme.colors.border}`,
+																backgroundColor: `${theme.colors.bgMain}cc`,
+																color: theme.colors.textDim,
+																fontSize: '13px',
+															}}
+														>
+															No models available
+														</div>
+													)}
+												</div>
+											</div>
+										)}
+									</div>
+								)}
 								{session.inputMode === 'ai' &&
 									supportsReasoningEffort &&
 									onSetTabReasoningEffort && (

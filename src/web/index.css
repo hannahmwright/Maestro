@@ -25,6 +25,7 @@
 	--color-error: #ef4444;
 
 	/* Typography */
+	--font-interface: var(--font-mono);
 	--font-mono: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 
 	/* Spacing */
@@ -60,7 +61,7 @@ html {
 }
 
 body {
-	font-family: var(--font-mono);
+	font-family: var(--font-interface);
 	background-color: var(--color-background);
 	color: var(--color-text-main);
 	line-height: 1.5;

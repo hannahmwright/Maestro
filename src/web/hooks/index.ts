@@ -102,21 +102,10 @@ export type { ColorSchemePreference, UseDeviceColorSchemeReturn } from './useDev
 export {
 	useVoiceInput,
 	default as useVoiceInputDefault,
-	isSpeechRecognitionSupported,
-	getSpeechRecognition,
+	isVoiceRecordingSupported,
 } from './useVoiceInput';
 
-export type {
-	SpeechRecognitionEvent,
-	SpeechRecognitionResultList,
-	SpeechRecognitionResult,
-	SpeechRecognitionAlternative,
-	SpeechRecognitionErrorEvent,
-	SpeechRecognition,
-	SpeechRecognitionConstructor,
-	UseVoiceInputOptions,
-	UseVoiceInputReturn,
-} from './useVoiceInput';
+export type { UseVoiceInputOptions, UseVoiceInputReturn } from './useVoiceInput';
 
 export {
 	useKeyboardVisibility,
@@ -146,7 +135,6 @@ export {
 
 export type {
 	MobileKeyboardSession,
-	MobileInputMode,
 	UseMobileKeyboardHandlerDeps,
 } from './useMobileKeyboardHandler';
 

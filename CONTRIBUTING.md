@@ -38,7 +38,7 @@ See [Performance Guidelines](#performance-guidelines) for specific practices.
 
 ### Prerequisites
 
-- Node.js 20+
+- Node.js 22.12+
 - npm or yarn
 - Git
 

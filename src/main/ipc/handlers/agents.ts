@@ -38,6 +38,33 @@ interface AgentConfigsData {
 	configs: Record<string, Record<string, any>>;
 }
 
+function getMergedAgentConfig(
+	agentId: string,
+	agentConfigsStore: Store<AgentConfigsData>
+): Record<string, unknown> {
+	const allConfigs = agentConfigsStore.get('configs', {});
+	const storedConfig = allConfigs[agentId] || {};
+	const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
+	const defaults: Record<string, unknown> = {};
+
+	if (agentDef?.configOptions) {
+		for (const option of agentDef.configOptions) {
+			if (option.default !== undefined) {
+				defaults[option.key] = option.default;
+			}
+		}
+	}
+
+	const mergedConfig: Record<string, unknown> = { ...defaults, ...storedConfig };
+	if (agentDef?.configOptions) {
+		for (const option of agentDef.configOptions) {
+			mergedConfig[option.key] = normalizeAgentConfigValue(option, mergedConfig[option.key]);
+		}
+	}
+
+	return mergedConfig;
+}
+
 function normalizeAgentConfigValue(option: AgentConfigOption, value: unknown): unknown {
 	switch (option.type) {
 		case 'checkbox':
@@ -572,29 +599,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	ipcMain.handle(
 		'agents:getConfig',
 		withIpcErrorLogging(handlerOpts('getConfig', CONFIG_LOG_CONTEXT), async (agentId: string) => {
-			const allConfigs = agentConfigsStore.get('configs', {});
-			const storedConfig = allConfigs[agentId] || {};
-
-			// Get defaults from agent definition's configOptions
-			const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
-			const defaults: Record<string, unknown> = {};
-			if (agentDef?.configOptions) {
-				for (const option of agentDef.configOptions) {
-					if (option.default !== undefined) {
-						defaults[option.key] = option.default;
-					}
-				}
-			}
-
-			// Merge stored values onto defaults, then normalize to known option types.
-			const mergedConfig: Record<string, unknown> = { ...defaults, ...storedConfig };
-			if (agentDef?.configOptions) {
-				for (const option of agentDef.configOptions) {
-					mergedConfig[option.key] = normalizeAgentConfigValue(option, mergedConfig[option.key]);
-				}
-			}
-
-			return mergedConfig;
+			return getMergedAgentConfig(agentId, agentConfigsStore);
 		})
 	);
 

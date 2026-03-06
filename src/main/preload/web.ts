@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { ResponseCompletedEvent, WebRemoteLogEntry } from '../../shared/remote-web';
 
 /**
  * Auto Run state for broadcasting
@@ -56,6 +57,22 @@ export function createWebApi() {
 		broadcastTabsChange: (sessionId: string, aiTabs: AiTabState[], activeTabId: string) =>
 			ipcRenderer.invoke('web:broadcastTabsChange', sessionId, aiTabs, activeTabId),
 
+		broadcastSessionAdded: (session: {
+			id: string;
+			name: string;
+			toolType: string;
+			state: string;
+			inputMode: string;
+			cwd: string;
+			groupId?: string | null;
+			groupName?: string | null;
+			groupEmoji?: string | null;
+			effectiveContextWindow?: number | null;
+			isGitRepo?: boolean;
+			parentSessionId?: string | null;
+			worktreeBranch?: string | null;
+		}) => ipcRenderer.invoke('web:broadcastSessionAdded', session),
+
 		// Broadcast session state change to web clients (for real-time busy/idle updates)
 		broadcastSessionState: (
 			sessionId: string,
@@ -65,8 +82,24 @@ export function createWebApi() {
 				toolType?: string;
 				inputMode?: string;
 				cwd?: string;
+				contextUsage?: number;
+				effectiveContextWindow?: number | null;
 			}
 		) => ipcRenderer.invoke('web:broadcastSessionState', sessionId, state, additionalData),
+
+		broadcastSessionRemoved: (sessionId: string) =>
+			ipcRenderer.invoke('web:broadcastSessionRemoved', sessionId),
+
+		broadcastSessionLogEntry: (
+			sessionId: string,
+			tabId: string | null,
+			inputMode: 'ai' | 'terminal',
+			logEntry: WebRemoteLogEntry
+		) => ipcRenderer.invoke('web:broadcastSessionLogEntry', sessionId, tabId, inputMode, logEntry),
+
+		// Broadcast a completed response event to web clients and push subscribers.
+		broadcastResponseCompleted: (event: ResponseCompletedEvent) =>
+			ipcRenderer.invoke('web:broadcastResponseCompleted', event),
 	};
 }
 
@@ -89,6 +122,7 @@ export function createLiveApi() {
 			ipcRenderer.invoke('live:toggle', sessionId, agentSessionId),
 		getStatus: (sessionId: string) => ipcRenderer.invoke('live:getStatus', sessionId),
 		getDashboardUrl: () => ipcRenderer.invoke('live:getDashboardUrl'),
+		getServerStatus: () => ipcRenderer.invoke('live:getServerStatus'),
 		getLiveSessions: () => ipcRenderer.invoke('live:getLiveSessions'),
 		broadcastActiveSession: (sessionId: string) =>
 			ipcRenderer.invoke('live:broadcastActiveSession', sessionId),

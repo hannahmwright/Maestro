@@ -214,7 +214,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 	const storeSetSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const storeSetOutputSearchOpen = useUIStore((s) => s.setOutputSearchOpen);
 	const storeSetFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
-	const storeSetHistorySearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 
 	const [search, setSearch] = useState('');
 	const [mode, setMode] = useState<'main' | 'move-to-group'>(initialMode);
@@ -972,16 +971,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			},
 		},
 		{
-			id: 'goToHistory',
-			label: 'Go to History Tab',
-			shortcut: shortcuts.goToHistory,
-			action: () => {
-				setRightPanelOpen(true);
-				setActiveRightTab('history');
-				setQuickActionOpen(false);
-			},
-		},
-		{
 			id: 'goToAutoRun',
 			label: 'Go to Auto Run Tab',
 			shortcut: shortcuts.goToAutoRun,
@@ -1136,18 +1125,6 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setActiveRightTab('files');
 				setActiveFocus('right');
 				setTimeout(() => storeSetFileTreeFilterOpen(true), 50);
-			},
-		},
-		{
-			id: 'searchHistory',
-			label: 'Search: History',
-			subtext: 'Search in the history panel',
-			action: () => {
-				setQuickActionOpen(false);
-				setRightPanelOpen(true);
-				setActiveRightTab('history');
-				setActiveFocus('right');
-				setTimeout(() => storeSetHistorySearchFilterOpen(true), 50);
 			},
 		},
 		// Publish document as GitHub Gist - only when file preview is open, gh CLI is available, and not in edit mode

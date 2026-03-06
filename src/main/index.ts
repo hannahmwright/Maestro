@@ -243,6 +243,11 @@ let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 
+const getAgentConfigForAgent = (agentId: string): Record<string, any> => {
+	const allConfigs = agentConfigsStore.get('configs', {});
+	return allConfigs[agentId] || {};
+};
+
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
 
@@ -273,6 +278,9 @@ const createWebServer = createWebServerFactory({
 	groupsStore,
 	getMainWindow: () => mainWindow,
 	getProcessManager: () => processManager,
+	getAgentDetector: () => agentDetector,
+	getAgentConfig: getAgentConfigForAgent,
+	getUserDataPath: () => app.getPath('userData'),
 });
 
 // createWindow is now handled by windowManager (Phase 4 refactoring)
@@ -400,8 +408,29 @@ app.whenReady().then(async () => {
 	// Start CLI activity watcher (Phase 4 refactoring)
 	cliWatcher.start();
 
-	// Note: Web server is not auto-started - it starts when user enables web interface
-	// via live:startServer IPC call from the renderer
+	// Auto-start the web server when a fixed custom port is configured.
+	// This is the deployment mode used for the stable Cloudflare-backed web interface.
+	if (store.get('webInterfaceUseCustomPort', false)) {
+		logger.info(
+			'Auto-starting web server because a custom web interface port is configured',
+			'WebServer'
+		);
+		setTimeout(async () => {
+			try {
+				if (!webServer) {
+					logger.info('Creating web server', 'WebServer');
+					webServer = createWebServer();
+				}
+				if (!webServer.isActive()) {
+					logger.info('Starting web server', 'WebServer');
+					const { port, url } = await webServer.start();
+					logger.info(`Web server running at ${url} (port ${port})`, 'WebServer');
+				}
+			} catch (error: any) {
+				logger.error(`Failed to auto-start web server: ${error.message}`, 'WebServer');
+			}
+		}, 0);
+	}
 
 	app.on('activate', () => {
 		if (BrowserWindow.getAllWindows().length === 0) {
@@ -533,12 +562,6 @@ function setupIpcHandlers() {
 	// Pass the shared claudeSessionOriginsStore so session names/stars are consistent
 	initializeSessionStorages({ claudeSessionOriginsStore });
 	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore });
-
-	// Helper to get agent config values (custom args/env vars, model, etc.)
-	const getAgentConfigForAgent = (agentId: string): Record<string, any> => {
-		const allConfigs = agentConfigsStore.get('configs', {});
-		return allConfigs[agentId] || {};
-	};
 
 	// Helper to get custom env vars for an agent
 	const getCustomEnvVarsForAgent = (agentId: string): Record<string, string> | undefined => {

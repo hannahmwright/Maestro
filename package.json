@@ -16,6 +16,7 @@
 		"maestro-cli": "./dist/cli/maestro-cli.js"
 	},
 	"scripts": {
+		"preinstall": "node scripts/check-node-version.mjs",
 		"dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
 		"dev:prod-data": "USE_PROD_DATA=1 concurrently \"npm run dev:main:prod-data\" \"npm run dev:renderer\"",
 		"dev:demo": "MAESTRO_DEMO_DIR=/tmp/maestro-demo npm run dev",
@@ -264,11 +265,13 @@
 		"remark-frontmatter": "^5.0.0",
 		"remark-gfm": "^4.0.1",
 		"typescript": "^5.3.3",
+		"web-push": "^3.6.7",
 		"ws": "^8.16.0",
 		"zustand": "^5.0.11"
 	},
 	"devDependencies": {
 		"@electron/notarize": "^3.1.1",
+		"@electron/rebuild": "^4.0.3",
 		"@eslint/js": "^9.39.2",
 		"@playwright/test": "^1.57.0",
 		"@testing-library/jest-dom": "^6.9.1",
@@ -297,7 +300,6 @@
 		"electron-builder": "^24.9.1",
 		"electron-devtools-installer": "^4.0.0",
 		"electron-playwright-helpers": "^2.0.1",
-		"electron-rebuild": "^3.2.9",
 		"esbuild": "^0.24.2",
 		"eslint": "^9.39.2",
 		"eslint-config-prettier": "^10.1.8",
@@ -319,7 +321,7 @@
 		"vitest": "^4.0.15"
 	},
 	"engines": {
-		"node": ">=22.0.0"
+		"node": ">=22.12.0"
 	},
 	"lint-staged": {
 		"*": [
