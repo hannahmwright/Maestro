@@ -786,6 +786,34 @@ describe('SessionList', () => {
 			expect(screen.getByTitle('Delete empty group')).toBeInTheDocument();
 		});
 
+		it('deletes a populated group from the context menu and moves agents to Ungrouped', async () => {
+			const group = createMockGroup({ id: 'g1', name: 'My Group' });
+			const session = createMockSession({ id: 's1', name: 'Grouped Agent', groupId: 'g1' });
+			const showConfirmation = vi.fn((_: string, onConfirm: () => void) => onConfirm());
+			useSessionStore.setState({
+				sessions: [session],
+				groups: [group],
+			});
+			useUIStore.setState({ leftSidebarOpen: true });
+			const props = createDefaultProps({
+				sortedSessions: [session],
+				showConfirmation,
+			});
+			render(<SessionList {...props} />);
+
+			fireEvent.contextMenu(screen.getByText('My Group'));
+			fireEvent.click(screen.getByText('Delete Group'));
+
+			await waitFor(() => {
+				expect(useSessionStore.getState().groups).toHaveLength(0);
+			});
+			expect(useSessionStore.getState().sessions[0].groupId).toBeUndefined();
+			expect(showConfirmation).toHaveBeenCalledWith(
+				'Are you sure you want to delete the group "My Group"? 1 agent will be moved to Ungrouped.',
+				expect.any(Function)
+			);
+		});
+
 		it('creates new group when button clicked', () => {
 			const createNewGroup = vi.fn();
 			const sessions = [createMockSession({ id: 's1', name: 'Test Session' })];

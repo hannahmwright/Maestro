@@ -28,6 +28,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { getModalActions } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
+import { GroupContextMenu } from './GroupContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
@@ -254,8 +255,16 @@ function SessionListInner(props: SessionListProps) {
 		y: number;
 		sessionId: string;
 	} | null>(null);
+	const [groupContextMenu, setGroupContextMenu] = useState<{
+		x: number;
+		y: number;
+		groupId: string;
+	} | null>(null);
 	const contextMenuSession = contextMenu
 		? sessions.find((s) => s.id === contextMenu.sessionId)
+		: null;
+	const contextMenuGroup = groupContextMenu
+		? groups.find((group) => group.id === groupContextMenu.groupId)
 		: null;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const ignoreNextBlurRef = useRef(false);
@@ -274,7 +283,15 @@ function SessionListInner(props: SessionListProps) {
 	const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string) => {
 		e.preventDefault();
 		e.stopPropagation();
+		setGroupContextMenu(null);
 		setContextMenu({ x: e.clientX, y: e.clientY, sessionId });
+	}, []);
+
+	const handleGroupContextMenu = useCallback((e: React.MouseEvent, groupId: string) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setContextMenu(null);
+		setGroupContextMenu({ x: e.clientX, y: e.clientY, groupId });
 	}, []);
 
 	const handleMoveToGroup = useCallback(
@@ -310,6 +327,34 @@ function SessionListInner(props: SessionListProps) {
 			}
 		);
 	};
+
+	const handleDeleteGroup = useCallback(
+		(groupId: string) => {
+			const currentGroups = useSessionStore.getState().groups;
+			const currentSessions = useSessionStore.getState().sessions;
+			const group = currentGroups.find((g) => g.id === groupId);
+			if (!group) return;
+
+			const groupSessions = currentSessions.filter((session) => session.groupId === groupId);
+			const sessionCount = groupSessions.length;
+			const message =
+				sessionCount === 0
+					? `Are you sure you want to delete the group "${group.name}"?`
+					: `Are you sure you want to delete the group "${group.name}"? ${sessionCount} agent${
+							sessionCount !== 1 ? 's will' : ' will'
+						} be moved to Ungrouped.`;
+
+			showConfirmation(message, () => {
+				setSessions((prev) =>
+					prev.map((session) =>
+						session.groupId === groupId ? { ...session, groupId: undefined } : session
+					)
+				);
+				setGroups((prev) => prev.filter((g) => g.id !== groupId));
+			});
+		},
+		[setGroups, setSessions, showConfirmation]
+	);
 
 	// Close menu when clicking outside
 	useEffect(() => {
@@ -900,6 +945,7 @@ function SessionListInner(props: SessionListProps) {
 									<div
 										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
 										style={{ color: theme.colors.textDim }}
+										onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
 									>
 										{group.collapsed ? (
 											<ChevronRight className="w-3 h-3" />
@@ -1243,6 +1289,18 @@ function SessionListInner(props: SessionListProps) {
 							? () => onCreateGroupAndMove(contextMenuSession.id)
 							: createNewGroup
 					}
+				/>
+			)}
+
+			{/* Group Context Menu */}
+			{groupContextMenu && contextMenuGroup && (
+				<GroupContextMenu
+					x={groupContextMenu.x}
+					y={groupContextMenu.y}
+					theme={theme}
+					group={contextMenuGroup}
+					onDelete={() => handleDeleteGroup(contextMenuGroup.id)}
+					onDismiss={() => setGroupContextMenu(null)}
 				/>
 			)}
 		</div>

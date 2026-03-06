@@ -346,6 +346,47 @@ describe('InputArea', () => {
 			expect(toggle).toHaveTextContent('Read-only');
 		});
 
+		it('renders the model selector before the mode button when both are available', async () => {
+			const useAgentCapabilitiesMock =
+				await import('../../../renderer/hooks/agent/useAgentCapabilities');
+			vi.mocked(useAgentCapabilitiesMock.useAgentCapabilities).mockReturnValueOnce({
+				capabilities: {
+					supportsResume: true,
+					supportsReadOnlyMode: true,
+					supportsJsonOutput: true,
+					supportsSessionId: true,
+					supportsImageInput: true,
+					supportsImageInputOnResume: true,
+					supportsSlashCommands: true,
+					supportsSessionStorage: true,
+					supportsCostTracking: true,
+					supportsUsageStats: true,
+					supportsBatchMode: true,
+					requiresPromptToStart: false,
+					supportsStreaming: true,
+					supportsResultMessages: true,
+					supportsModelSelection: true,
+					supportsStreamJsonInput: false,
+				},
+				loading: false,
+				error: null,
+				refresh: vi.fn(),
+				hasCapability: vi.fn((cap: string) => cap !== 'supportsStreamJsonInput'),
+			});
+
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'ai' }),
+				onSetTabExecutionMode: vi.fn(),
+			});
+			render(<InputArea {...props} />);
+
+			const modelButton = screen.getByTitle('Model: Model');
+			const modeButton = screen.getByTitle('Mode: Agent');
+			expect(
+				modelButton.compareDocumentPosition(modeButton) & Node.DOCUMENT_POSITION_FOLLOWING
+			).toBeTruthy();
+		});
+
 		it('hides read-only toggle when agent does not support read-only mode', async () => {
 			// Mock capabilities to return false for supportsReadOnlyMode
 			const useAgentCapabilitiesMock =

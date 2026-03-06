@@ -308,26 +308,26 @@ function ModelSelectorButton({
 			onClick={onClick}
 			disabled={disabled}
 			style={{
-				padding: '0 12px',
-				borderRadius: '16px',
+				padding: '0 10px',
+				borderRadius: '9999px',
 				cursor: disabled ? 'default' : 'pointer',
 				width: 'auto',
-				minWidth: '70px',
-				maxWidth: '120px',
-				height: '48px',
+				minWidth: '56px',
+				maxWidth: '110px',
+				height: '28px',
 				display: 'flex',
 				alignItems: 'center',
 				justifyContent: 'center',
-				gap: '6px',
+				gap: '5px',
 				transition: 'all 150ms ease',
 				flexShrink: 0,
 				WebkitTapHighlightColor: 'transparent',
-				boxShadow: '0 8px 18px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
-				backgroundColor: isOpen ? `${theme.colors.accent}20` : `${theme.colors.bgMain}c8`,
-				border: `1px solid ${isOpen ? `${theme.colors.accent}66` : theme.colors.border}`,
+				backgroundColor: isOpen ? `${theme.colors.accent}12` : 'transparent',
+				border: `1px solid ${isOpen ? `${theme.colors.accent}55` : theme.colors.border}`,
 				color: isOpen ? theme.colors.accent : theme.colors.textMain,
 				opacity: disabled ? 0.5 : 1,
 			}}
+			title={`Model: ${label}`}
 			aria-label={`Choose model. Current model: ${label}`}
 			aria-expanded={isOpen}
 		>
@@ -347,11 +347,12 @@ function ModelSelectorButton({
 			)}
 			<span
 				style={{
-					fontSize: '12px',
+					fontSize: '10px',
 					fontWeight: 600,
 					overflow: 'hidden',
 					textOverflow: 'ellipsis',
 					whiteSpace: 'nowrap',
+					lineHeight: 1,
 				}}
 			>
 				{label}
@@ -359,6 +360,15 @@ function ModelSelectorButton({
 		</button>
 	);
 }
+
+const inlineToolbarPillBaseStyle: React.CSSProperties = {
+	height: '28px',
+	padding: '0 10px',
+	borderRadius: '9999px',
+	display: 'inline-flex',
+	alignItems: 'center',
+	flexShrink: 0,
+};
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const {
@@ -1424,83 +1434,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							</div>
 
 							<div className="flex items-center gap-2">
-								{/* Modes selector (Cursor-style) */}
-								{supportsInteractionModes && (
-									<div className="relative" ref={modeMenuRef}>
-										<button
-											onClick={() => setModeMenuOpen((prev) => !prev)}
-											className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border transition-all hover:opacity-90"
-											style={{
-												borderColor: theme.colors.border,
-												color: theme.colors.accent,
-												backgroundColor: `${theme.colors.accent}12`,
-											}}
-											title={`Mode: ${selectedModeOption.label}`}
-										>
-											<selectedModeOption.icon className="w-3.5 h-3.5" />
-											<ChevronDown className="w-3 h-3 opacity-70" />
-										</button>
-										{modeMenuOpen && (
-											<div
-												className="absolute bottom-full right-0 mb-2 rounded-lg border shadow-xl p-1 z-50 min-w-[210px]"
-												style={{
-													backgroundColor: theme.colors.bgSidebar,
-													borderColor: theme.colors.border,
-												}}
-											>
-												{modeOptions.map((option) => {
-													const active = interactionMode === option.id;
-													const Icon = option.icon;
-													return (
-														<button
-															key={option.id}
-															onClick={() => {
-																setInteractionMode(option.id);
-																setModeMenuOpen(false);
-															}}
-															className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all"
-															style={{
-																backgroundColor: active
-																	? `${theme.colors.accent}25`
-																	: 'transparent',
-																color: active ? theme.colors.accent : theme.colors.textMain,
-															}}
-															title={option.description}
-														>
-															<Icon className="w-3.5 h-3.5" />
-															<span className="text-xs">{option.label}</span>
-														</button>
-													);
-												})}
-											</div>
-										)}
-									</div>
-								)}
-								{/* Read-only toggle fallback for agents without interaction modes */}
-								{session.inputMode === 'ai' &&
-									!supportsInteractionModes &&
-									onToggleTabReadOnlyMode &&
-									hasCapability('supportsReadOnlyMode') && (
-										<button
-											onClick={onToggleTabReadOnlyMode}
-											className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
-												isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
-											}`}
-											style={{
-												backgroundColor: isReadOnlyMode
-													? `${theme.colors.warning}25`
-													: 'transparent',
-												color: isReadOnlyMode ? theme.colors.warning : theme.colors.textDim,
-												border: isReadOnlyMode
-													? `1px solid ${theme.colors.warning}50`
-													: '1px solid transparent',
-											}}
-											title="Toggle read-only mode (agent won't modify files)"
-										>
-											<Eye className="w-3 h-3" />
-											<span>Read-only</span>
-										</button>
-									)}
 								{supportsModelSelection && (
 									<div className="relative" ref={modelMenuRef}>
 										<ModelSelectorButton
@@ -1619,14 +1552,94 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										)}
 									</div>
 								)}
+								{/* Modes selector (Cursor-style) */}
+								{supportsInteractionModes && (
+									<div className="relative" ref={modeMenuRef}>
+										<button
+											onClick={() => setModeMenuOpen((prev) => !prev)}
+											className="flex items-center gap-1.5 text-[10px] border transition-all hover:opacity-90"
+											style={{
+												...inlineToolbarPillBaseStyle,
+												borderColor: theme.colors.border,
+												color: theme.colors.accent,
+												backgroundColor: `${theme.colors.accent}12`,
+											}}
+											title={`Mode: ${selectedModeOption.label}`}
+										>
+											<selectedModeOption.icon className="w-3.5 h-3.5" />
+											<ChevronDown className="w-3 h-3 opacity-70" />
+										</button>
+										{modeMenuOpen && (
+											<div
+												className="absolute bottom-full right-0 mb-2 rounded-lg border shadow-xl p-1 z-50 min-w-[210px]"
+												style={{
+													backgroundColor: theme.colors.bgSidebar,
+													borderColor: theme.colors.border,
+												}}
+											>
+												{modeOptions.map((option) => {
+													const active = interactionMode === option.id;
+													const Icon = option.icon;
+													return (
+														<button
+															key={option.id}
+															onClick={() => {
+																setInteractionMode(option.id);
+																setModeMenuOpen(false);
+															}}
+															className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-all"
+															style={{
+																backgroundColor: active
+																	? `${theme.colors.accent}25`
+																	: 'transparent',
+																color: active ? theme.colors.accent : theme.colors.textMain,
+															}}
+															title={option.description}
+														>
+															<Icon className="w-3.5 h-3.5" />
+															<span className="text-xs">{option.label}</span>
+														</button>
+													);
+												})}
+											</div>
+										)}
+									</div>
+								)}
+								{/* Read-only toggle fallback for agents without interaction modes */}
+								{session.inputMode === 'ai' &&
+									!supportsInteractionModes &&
+									onToggleTabReadOnlyMode &&
+									hasCapability('supportsReadOnlyMode') && (
+										<button
+											onClick={onToggleTabReadOnlyMode}
+											className={`flex items-center gap-1.5 text-[10px] cursor-pointer transition-all ${
+												isReadOnlyMode ? '' : 'opacity-40 hover:opacity-70'
+											}`}
+											style={{
+												...inlineToolbarPillBaseStyle,
+												backgroundColor: isReadOnlyMode
+													? `${theme.colors.warning}25`
+													: 'transparent',
+												color: isReadOnlyMode ? theme.colors.warning : theme.colors.textDim,
+												border: isReadOnlyMode
+													? `1px solid ${theme.colors.warning}50`
+													: `1px solid ${theme.colors.border}`,
+											}}
+											title="Toggle read-only mode (agent won't modify files)"
+										>
+											<Eye className="w-3 h-3" />
+											<span>Read-only</span>
+										</button>
+									)}
 								{session.inputMode === 'ai' &&
 									supportsReasoningEffort &&
 									onSetTabReasoningEffort && (
 										<div className="relative" ref={effortMenuRef}>
 											<button
 												onClick={() => setEffortMenuOpen((prev) => !prev)}
-												className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full border transition-all hover:opacity-90"
+												className="flex items-center gap-1.5 text-[10px] border transition-all hover:opacity-90"
 												style={{
+													...inlineToolbarPillBaseStyle,
 													borderColor: theme.colors.border,
 													color: theme.colors.accentText,
 													backgroundColor: `${theme.colors.accentText}12`,
@@ -1673,7 +1686,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									)}
 								<button
 									onClick={() => setEnterToSend(!enterToSend)}
-									className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
+									className="flex items-center gap-1.5 text-[10px] opacity-50 hover:opacity-100 transition-all"
+									style={{
+										...inlineToolbarPillBaseStyle,
+										border: `1px solid ${theme.colors.border}`,
+										backgroundColor: 'transparent',
+									}}
 									title={formatEnterToSendTooltip(enterToSend)}
 								>
 									<Keyboard className="w-3 h-3" />

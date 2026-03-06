@@ -1,0 +1,69 @@
+import { useEffect, useRef } from 'react';
+import { Trash2 } from 'lucide-react';
+import type { Group, Theme } from '../../types';
+import { useClickOutside, useContextMenuPosition } from '../../hooks';
+
+interface GroupContextMenuProps {
+	x: number;
+	y: number;
+	theme: Theme;
+	group: Group;
+	onDelete: () => void;
+	onDismiss: () => void;
+}
+
+export function GroupContextMenu({
+	x,
+	y,
+	theme,
+	group,
+	onDelete,
+	onDismiss,
+}: GroupContextMenuProps) {
+	const menuRef = useRef<HTMLDivElement>(null);
+	const onDismissRef = useRef(onDismiss);
+	onDismissRef.current = onDismiss;
+
+	useClickOutside(menuRef, onDismiss);
+
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				onDismissRef.current();
+			}
+		};
+		document.addEventListener('keydown', handleKeyDown);
+		return () => document.removeEventListener('keydown', handleKeyDown);
+	}, []);
+
+	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+
+	return (
+		<div
+			ref={menuRef}
+			className="fixed z-50 py-1 rounded-md shadow-xl border"
+			style={{
+				left,
+				top,
+				opacity: ready ? 1 : 0,
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				minWidth: '170px',
+			}}
+		>
+			<button
+				type="button"
+				onClick={() => {
+					onDelete();
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.error }}
+				title={`Delete ${group.name}`}
+			>
+				<Trash2 className="w-3.5 h-3.5" />
+				Delete Group
+			</button>
+		</div>
+	);
+}
