@@ -34,6 +34,7 @@ interface UpdateCheckResult {
 	releases: Release[];
 	releasesUrl: string;
 	assetsReady: boolean;
+	source: { label: string; owner: string; repo: string };
 	error?: string;
 }
 
@@ -59,6 +60,7 @@ interface UpdateCheckModalProps {
 export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	const [loading, setLoading] = useState(true);
 	const [result, setResult] = useState<UpdateCheckResult | null>(null);
+	const [upstreamResult, setUpstreamResult] = useState<UpdateCheckResult | null>(null);
 	const [expandedReleases, setExpandedReleases] = useState<Set<string>>(new Set());
 
 	// Get beta updates setting
@@ -88,8 +90,12 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 		setLoading(true);
 		setDownloadError(null);
 		try {
-			const updateResult = await window.maestro.updates.check(enableBetaUpdates);
+			const [updateResult, upstreamCheckResult] = await Promise.all([
+				window.maestro.updates.check(enableBetaUpdates),
+				window.maestro.updates.checkUpstream(enableBetaUpdates).catch(() => null),
+			]);
 			setResult(updateResult);
+			setUpstreamResult(upstreamCheckResult);
 			// Auto-expand if only 1 version behind, otherwise keep all collapsed
 			if (updateResult.updateAvailable && updateResult.releases.length === 1) {
 				setExpandedReleases(new Set([updateResult.releases[0].tag_name]));
@@ -105,6 +111,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 				versionsBehind: 0,
 				releases: [],
 				releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+				source: { label: 'Configured Release Channel', owner: '', repo: '' },
 				error: error instanceof Error ? error.message : 'Failed to check for updates',
 			});
 		} finally {
@@ -160,6 +167,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 
 	const isDownloading = downloadStatus.status === 'downloading';
 	const isDownloaded = downloadStatus.status === 'downloaded';
+	const showUpstreamSection =
+		!!upstreamResult &&
+		(!result ||
+			upstreamResult.source.owner !== result.source.owner ||
+			upstreamResult.source.repo !== result.source.repo);
 
 	// Custom header with refresh button
 	const customHeader = (
@@ -244,6 +256,9 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 								<div className="flex-1">
 									<div className="text-sm font-bold mb-1" style={{ color: theme.colors.textMain }}>
 										Update Available!
+									</div>
+									<div className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+										Release channel: {result.source.label}
 									</div>
 									<div className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
 										You are{' '}
@@ -547,6 +562,9 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 							<div className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
 								Maestro v{result?.currentVersion || __APP_VERSION__}
 							</div>
+							<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
+								Release channel: {result?.source.label || 'Configured Release Channel'}
+							</div>
 						</div>
 						<button
 							onClick={() =>
@@ -560,6 +578,48 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 							View all releases
 							<ExternalLink className="w-3 h-3" />
 						</button>
+					</div>
+				)}
+
+				{showUpstreamSection && upstreamResult && (
+					<div
+						className="p-4 rounded-lg border"
+						style={{
+							backgroundColor: `${theme.colors.accent}12`,
+							borderColor: `${theme.colors.accent}55`,
+						}}
+					>
+						<div className="flex items-start gap-3">
+							<FlaskConical className="w-4 h-4 mt-0.5" style={{ color: theme.colors.accent }} />
+							<div className="flex-1">
+								<div className="text-sm font-bold mb-1" style={{ color: theme.colors.textMain }}>
+									Upstream RunMaestro
+								</div>
+								<div className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+									Latest upstream version: v{upstreamResult.latestVersion}
+								</div>
+								<div className="text-xs" style={{ color: theme.colors.textDim }}>
+									This is awareness only. Downloads and installs still follow{' '}
+									{result?.source.label || 'your configured release channel'}.
+								</div>
+								<div className="mt-3 flex items-center gap-3">
+									<button
+										onClick={() => window.maestro.shell.openExternal(upstreamResult.releasesUrl)}
+										className="flex items-center gap-2 text-xs hover:underline"
+										style={{ color: theme.colors.accent }}
+									>
+										View upstream releases
+										<ExternalLink className="w-3 h-3" />
+									</button>
+									{upstreamResult.updateAvailable && (
+										<span className="text-xs" style={{ color: theme.colors.warning }}>
+											{upstreamResult.versionsBehind} newer version
+											{upstreamResult.versionsBehind === 1 ? '' : 's'} upstream
+										</span>
+									)}
+								</div>
+							</div>
+						</div>
 					</div>
 				)}
 

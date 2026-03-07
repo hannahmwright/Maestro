@@ -17,6 +17,7 @@ import React from 'react';
 if (!(window.maestro as any).updates) {
 	(window.maestro as any).updates = {
 		check: vi.fn(),
+		checkUpstream: vi.fn(),
 		download: vi.fn(),
 		install: vi.fn(),
 		getStatus: vi.fn(),
@@ -104,6 +105,7 @@ const createMockUpdateResult = (
 	versionsBehind: 1,
 	releases: [createMockRelease()],
 	releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
+	source: { label: 'RunMaestro Releases', owner: 'RunMaestro', repo: 'Maestro' },
 	...overrides,
 });
 
@@ -113,6 +115,9 @@ describe('UpdateCheckModal', () => {
 
 		// Default mock: update available
 		(window.maestro as any).updates.check = vi.fn().mockResolvedValue(createMockUpdateResult());
+		(window.maestro as any).updates.checkUpstream = vi
+			.fn()
+			.mockResolvedValue(createMockUpdateResult());
 	});
 
 	afterEach(() => {

@@ -2120,6 +2120,24 @@ interface MaestroAPI {
 				published_at: string;
 			}>;
 			releasesUrl: string;
+			source: { label: string; owner: string; repo: string };
+			error?: string;
+		}>;
+		checkUpstream: (includePrerelease?: boolean) => Promise<{
+			currentVersion: string;
+			latestVersion: string;
+			updateAvailable: boolean;
+			assetsReady: boolean;
+			versionsBehind: number;
+			releases: Array<{
+				tag_name: string;
+				name: string;
+				body: string;
+				html_url: string;
+				published_at: string;
+			}>;
+			releasesUrl: string;
+			source: { label: string; owner: string; repo: string };
 			error?: string;
 		}>;
 		download: () => Promise<{ success: boolean; error?: string }>;

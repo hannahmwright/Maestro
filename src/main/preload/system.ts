@@ -170,8 +170,27 @@ export function createUpdatesApi() {
 				published_at: string;
 			}>;
 			releasesUrl: string;
+			source: { label: string; owner: string; repo: string };
 			error?: string;
 		}> => ipcRenderer.invoke('updates:check', includePrerelease),
+		checkUpstream: (
+			includePrerelease?: boolean
+		): Promise<{
+			currentVersion: string;
+			latestVersion: string;
+			updateAvailable: boolean;
+			versionsBehind: number;
+			releases: Array<{
+				tag_name: string;
+				name: string;
+				body: string;
+				html_url: string;
+				published_at: string;
+			}>;
+			releasesUrl: string;
+			source: { label: string; owner: string; repo: string };
+			error?: string;
+		}> => ipcRenderer.invoke('updates:checkUpstream', includePrerelease),
 		download: (): Promise<{ success: boolean; error?: string }> =>
 			ipcRenderer.invoke('updates:download'),
 		install: (): Promise<void> => ipcRenderer.invoke('updates:install'),

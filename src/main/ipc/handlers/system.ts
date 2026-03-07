@@ -24,7 +24,7 @@ import { logger } from '../../utils/logger';
 import { detectShells } from '../../utils/shellDetector';
 import { isCloudflaredInstalled } from '../../utils/cliDetection';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
-import { checkForUpdates } from '../../update-checker';
+import { checkForUpdates, checkUpstreamUpdates } from '../../update-checker';
 import { setAllowPrerelease } from '../../auto-updater';
 import { WebServer } from '../../web-server';
 import { powerManager } from '../../power-manager';
@@ -409,6 +409,11 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	ipcMain.handle('updates:check', async (_event, includePrerelease: boolean = false) => {
 		const currentVersion = app.getVersion();
 		return checkForUpdates(currentVersion, includePrerelease);
+	});
+
+	ipcMain.handle('updates:checkUpstream', async (_event, includePrerelease: boolean = false) => {
+		const currentVersion = app.getVersion();
+		return checkUpstreamUpdates(currentVersion, includePrerelease);
 	});
 
 	// Set whether to allow prerelease updates (for electron-updater)

@@ -5,11 +5,11 @@
 
 import { compareVersions } from '../shared/pathUtils';
 import { logger } from './utils/logger';
-
-// GitHub repository information
-const GITHUB_OWNER = 'RunMaestro';
-const GITHUB_REPO = 'Maestro';
-const RELEASES_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+import {
+	getCurrentReleaseSource,
+	getUpstreamReleaseSource,
+	type ReleaseSource,
+} from './release-config';
 
 export interface ReleaseAsset {
 	name: string;
@@ -37,7 +37,16 @@ export interface UpdateCheckResult {
 	releases: Release[];
 	releasesUrl: string;
 	assetsReady: boolean;
+	source: ReleaseSource;
 	error?: string;
+}
+
+function getReleaseApiUrl(source: ReleaseSource): string {
+	return `https://api.github.com/repos/${source.owner}/${source.repo}/releases`;
+}
+
+function getReleaseHtmlUrl(source: ReleaseSource): string {
+	return `https://github.com/${source.owner}/${source.repo}/releases`;
 }
 
 /**
@@ -81,13 +90,17 @@ function hasAssetsForPlatform(release: Release): boolean {
  * Fetch all releases from GitHub API
  * @param includePrerelease - If true, include beta/rc/alpha releases. Default: false (stable only)
  */
-async function fetchReleases(includePrerelease: boolean = false): Promise<Release[]> {
+async function fetchReleases(
+	source: ReleaseSource,
+	includePrerelease: boolean = false
+): Promise<Release[]> {
+	const releasesUrl = getReleaseApiUrl(source);
 	logger.info(
-		`Fetching releases from GitHub (includePrerelease: ${includePrerelease})`,
+		`Fetching releases from GitHub (source: ${source.owner}/${source.repo}, includePrerelease: ${includePrerelease})`,
 		'UpdateChecker'
 	);
 
-	const response = await fetch(RELEASES_URL, {
+	const response = await fetch(releasesUrl, {
 		headers: {
 			Accept: 'application/vnd.github.v3+json',
 			'User-Agent': 'Maestro-Update-Checker',
@@ -97,7 +110,7 @@ async function fetchReleases(includePrerelease: boolean = false): Promise<Releas
 	if (!response.ok) {
 		const errorMsg = `GitHub API error: ${response.status} ${response.statusText}`;
 		logger.error(errorMsg, 'UpdateChecker', {
-			url: RELEASES_URL,
+			url: releasesUrl,
 			status: response.status,
 			statusText: response.statusText,
 		});
@@ -162,17 +175,18 @@ function getNewerReleases(currentVersion: string, releases: Release[]): Release[
  */
 export async function checkForUpdates(
 	currentVersion: string,
-	includePrerelease: boolean = false
+	includePrerelease: boolean = false,
+	source: ReleaseSource = getCurrentReleaseSource()
 ): Promise<UpdateCheckResult> {
-	const releasesUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
+	const releasesUrl = getReleaseHtmlUrl(source);
 
 	logger.info(
-		`Checking for updates (current: ${currentVersion}, includePrerelease: ${includePrerelease}, platform: ${process.platform})`,
+		`Checking for updates (source: ${source.owner}/${source.repo}, current: ${currentVersion}, includePrerelease: ${includePrerelease}, platform: ${process.platform})`,
 		'UpdateChecker'
 	);
 
 	try {
-		const allReleases = await fetchReleases(includePrerelease);
+		const allReleases = await fetchReleases(source, includePrerelease);
 
 		if (allReleases.length === 0) {
 			logger.info('No eligible releases found on GitHub', 'UpdateChecker');
@@ -184,6 +198,7 @@ export async function checkForUpdates(
 				releases: [],
 				releasesUrl,
 				assetsReady: false,
+				source,
 			};
 		}
 
@@ -216,6 +231,7 @@ export async function checkForUpdates(
 			releases: newerReleases,
 			releasesUrl,
 			assetsReady,
+			source,
 		};
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -232,7 +248,15 @@ export async function checkForUpdates(
 			releases: [],
 			releasesUrl,
 			assetsReady: false,
+			source,
 			error: errorMessage,
 		};
 	}
+}
+
+export async function checkUpstreamUpdates(
+	currentVersion: string,
+	includePrerelease: boolean = false
+): Promise<UpdateCheckResult> {
+	return checkForUpdates(currentVersion, includePrerelease, getUpstreamReleaseSource());
 }

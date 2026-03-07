@@ -7,6 +7,25 @@
 		"name": "Pedram Amini",
 		"email": "pedram@runmaestro.ai"
 	},
+	"maestroRelease": {
+		"current": {
+			"label": "RunMaestro Releases",
+			"owner": "RunMaestro",
+			"repo": "Maestro"
+		},
+		"upstream": {
+			"label": "RunMaestro Releases",
+			"owner": "RunMaestro",
+			"repo": "Maestro"
+		},
+		"fork": {
+			"label": "Hannah Fork Releases",
+			"owner": "hannahmwright",
+			"repo": "Maestro",
+			"productName": "Maestro Fork",
+			"appId": "com.vervetechgroup.maestro.fork"
+		}
+	},
 	"license": "AGPL 3.0",
 	"repository": {
 		"type": "git",
@@ -34,8 +53,10 @@
 		"build:web": "vite build --config vite.config.web.mts",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
 		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
+		"package:mac:fork": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --config build/electron-builder.fork.json",
 		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win",
 		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
+		"publish:fork:mac": "npm run package:mac:fork && node scripts/publish-fork-release.mjs",
 		"start": "electron .",
 		"clean": "rm -rf dist release node_modules/.vite",
 		"prepare": "husky || true",
