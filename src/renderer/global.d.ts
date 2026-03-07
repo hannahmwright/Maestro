@@ -16,6 +16,34 @@ type AutoRunTreeNode = {
 	children?: AutoRunTreeNode[];
 };
 
+type UserInputRequestId = string | number;
+
+type UserInputQuestionOption = {
+	label: string;
+	description: string;
+};
+
+type UserInputQuestion = {
+	id: string;
+	header: string;
+	question: string;
+	options?: UserInputQuestionOption[] | null;
+	isOther?: boolean;
+	isSecret?: boolean;
+};
+
+type UserInputRequest = {
+	requestId: UserInputRequestId;
+	threadId: string;
+	turnId: string;
+	itemId: string;
+	questions: UserInputQuestion[];
+};
+
+type UserInputResponse = {
+	answers: Record<string, { answers: string[] }>;
+};
+
 interface ProcessConfig {
 	sessionId: string;
 	toolType: string;
@@ -209,6 +237,93 @@ type GroupChatData = {
 	archived?: boolean;
 };
 
+type ConductorData = {
+	groupId: string;
+	templateSessionId: string | null;
+	status:
+		| 'needs_setup'
+		| 'idle'
+		| 'planning'
+		| 'awaiting_approval'
+		| 'running'
+		| 'blocked'
+		| 'integrating'
+		| 'attention_required'
+		| 'completed'
+		| 'cancelled';
+	resourceProfile: 'conservative' | 'balanced' | 'aggressive';
+	validationCommand?: string;
+	publishPolicy?: 'none' | 'manual_pr';
+	deleteWorkerBranchesOnSuccess?: boolean;
+	createdAt: number;
+	updatedAt: number;
+};
+
+type ConductorTaskData = {
+	id: string;
+	groupId: string;
+	title: string;
+	description: string;
+	acceptanceCriteria: string[];
+	priority: 'low' | 'medium' | 'high' | 'critical';
+	status: 'draft' | 'ready' | 'running' | 'blocked' | 'needs_review' | 'done';
+	dependsOn: string[];
+	scopePaths: string[];
+	source: 'manual' | 'planner' | 'worker_followup';
+	createdAt: number;
+	updatedAt: number;
+};
+
+type ConductorRunData = {
+	id: string;
+	groupId: string;
+	kind?: 'planning' | 'execution' | 'integration';
+	baseBranch: string;
+	sshRemoteId?: string;
+	branchName?: string;
+	workerBranches?: string[];
+	taskBranches?: Record<string, string>;
+	integrationBranch: string;
+	worktreePath?: string;
+	worktreePaths?: string[];
+	taskWorktreePaths?: Record<string, string>;
+	status: ConductorData['status'];
+	summary?: string;
+	plannerInput?: string;
+	taskIds: string[];
+	approvedAt?: number;
+	prUrl?: string;
+	events: Array<{
+		id: string;
+		runId: string;
+		groupId: string;
+		type:
+			| 'planning_started'
+			| 'plan_generated'
+			| 'plan_approved'
+			| 'planning_failed'
+			| 'execution_started'
+			| 'task_started'
+			| 'task_completed'
+			| 'task_blocked'
+			| 'execution_completed'
+			| 'execution_failed'
+			| 'integration_started'
+			| 'branch_merged'
+			| 'integration_conflict'
+			| 'integration_completed'
+			| 'validation_started'
+			| 'validation_passed'
+			| 'validation_failed'
+			| 'cleanup_completed'
+			| 'pr_created';
+		message: string;
+		createdAt: number;
+	}>;
+	startedAt: number;
+	endedAt?: number;
+};
+
 interface MaestroAPI {
 	// Context merging API (for session context transfer and grooming)
 	context: {
@@ -233,6 +348,8 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				customModel?: string;
+				reasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions
@@ -255,9 +372,26 @@ interface MaestroAPI {
 		getAll: () => Promise<any[]>;
 		setAll: (groups: any[]) => Promise<boolean>;
 	};
+	conductors: {
+		getAll: () => Promise<{
+			conductors: ConductorData[];
+			tasks: ConductorTaskData[];
+			runs: ConductorRunData[];
+		}>;
+		setAll: (data: {
+			conductors: ConductorData[];
+			tasks: ConductorTaskData[];
+			runs: ConductorRunData[];
+		}) => Promise<boolean>;
+	};
 	process: {
 		spawn: (config: ProcessConfig) => Promise<{ pid: number; success: boolean }>;
 		write: (sessionId: string, data: string) => Promise<boolean>;
+		respondToUserInput: (
+			sessionId: string,
+			requestId: UserInputRequestId,
+			response: UserInputResponse
+		) => Promise<boolean>;
 		interrupt: (sessionId: string) => Promise<boolean>;
 		kill: (sessionId: string) => Promise<boolean>;
 		resize: (sessionId: string, cols: number, rows: number) => Promise<boolean>;
@@ -439,6 +573,9 @@ interface MaestroAPI {
 				sessionId: string,
 				toolEvent: { toolName: string; state?: unknown; timestamp: number }
 			) => void
+		) => () => void;
+		onUserInputRequest: (
+			callback: (sessionId: string, request: UserInputRequest) => void
 		) => () => void;
 		onSshRemote: (
 			callback: (
@@ -801,7 +938,10 @@ interface MaestroAPI {
 			ref: string,
 			filePath: string
 		) => Promise<{ content?: string; error?: string }>;
-		checkGhCli: (ghPath?: string) => Promise<{ installed: boolean; authenticated: boolean }>;
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{ installed: boolean; authenticated: boolean }>;
 		createGist: (
 			filename: string,
 			content: string,
@@ -857,12 +997,22 @@ interface MaestroAPI {
 			hasUncommittedChanges: boolean;
 			error?: string;
 		}>;
+		mergeBranchIntoWorktree: (
+			worktreePath: string,
+			branchName: string,
+			sshRemoteId?: string
+		) => Promise<{
+			success: boolean;
+			conflicted?: boolean;
+			error?: string;
+		}>;
 		createPR: (
 			worktreePath: string,
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			prUrl?: string;
@@ -873,7 +1023,7 @@ interface MaestroAPI {
 			branch?: string;
 			error?: string;
 		}>;
-		checkGhCli: (ghPath?: string) => Promise<{
+		checkGhCli: (ghPath?: string, sshRemoteId?: string) => Promise<{
 			installed: boolean;
 			authenticated: boolean;
 		}>;
@@ -918,11 +1068,21 @@ interface MaestroAPI {
 		}>;
 		removeWorktree: (
 			worktreePath: string,
-			force?: boolean
+			force?: boolean,
+			sshRemoteId?: string
 		) => Promise<{
 			success: boolean;
 			error?: string;
 			hasUncommittedChanges?: boolean;
+		}>;
+		deleteLocalBranch: (
+			cwd: string,
+			branchName: string,
+			force?: boolean,
+			sshRemoteId?: string
+		) => Promise<{
+			success: boolean;
+			error?: string;
 		}>;
 		onWorktreeDiscovered: (
 			callback: (data: {
@@ -1358,6 +1518,16 @@ interface MaestroAPI {
 		confirmQuit: () => void;
 		cancelQuit: () => void;
 		onSystemResume: (callback: () => void) => () => void;
+	};
+	system: {
+		getResourceSnapshot: () => Promise<{
+			cpuCount: number;
+			loadAverage: [number, number, number];
+			freeMemoryMB: number;
+			availableMemoryMB: number;
+			totalMemoryMB: number;
+			platform: string;
+		}>;
 	};
 	platform: string;
 	logger: {

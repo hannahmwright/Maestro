@@ -5,6 +5,11 @@
 
 import { createIpcMethod } from './ipcWrapper';
 import type { ProcessConfig } from '../types';
+import type {
+	UserInputRequest,
+	UserInputRequestId,
+	UserInputResponse,
+} from '../../shared/user-input-requests';
 
 export type { ProcessConfig } from '../types';
 
@@ -52,6 +57,17 @@ export const processService = {
 		createIpcMethod({
 			call: () => window.maestro.process.write(sessionId, data),
 			errorContext: 'Process write',
+			rethrow: true,
+		}),
+
+	respondToUserInput: (
+		sessionId: string,
+		requestId: UserInputRequestId,
+		response: UserInputResponse
+	): Promise<boolean> =>
+		createIpcMethod({
+			call: () => window.maestro.process.respondToUserInput(sessionId, requestId, response),
+			errorContext: 'Process respondToUserInput',
 			rethrow: true,
 		}),
 
@@ -116,5 +132,11 @@ export const processService = {
 		) => void
 	): () => void {
 		return window.maestro.process.onToolExecution(handler);
+	},
+
+	onUserInputRequest(
+		handler: (sessionId: string, request: UserInputRequest) => void
+	): () => void {
+		return window.maestro.process.onUserInputRequest(handler);
 	},
 };

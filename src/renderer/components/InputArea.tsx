@@ -686,30 +686,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	}, [isResumingSession, hasCapability]);
 
 	// PERF: Memoize mode-related derived state
-	const { isReadOnlyMode, showQueueingBorder } = useMemo(() => {
+	const isReadOnlyMode = useMemo(() => {
 		// Check if we're in read-only mode (manual toggle only - Claude will be in plan mode)
-		// NOTE: Auto Run no longer forces read-only mode. Instead:
-		// - Yellow border shows during Auto Run to indicate queuing will happen for write messages
-		// - User can freely toggle read-only mode during Auto Run
-		// - If read-only is ON: message sends immediately (parallel read-only operations allowed)
-		// - If read-only is OFF: message queues until Auto Run completes (prevents file conflicts)
-		const readOnly = tabReadOnlyMode && session.inputMode === 'ai';
-		// Check if Auto Run is active - used for yellow border indication (queuing will happen for write messages)
-		const autoRunActive = isAutoModeActive && session.inputMode === 'ai';
-		const isAskMode = supportsInteractionModes && tabExecutionMode === 'ask';
-		// Ask mode is intentionally calm (no warning border), even though it is read-only.
-		// Keep warning border for explicit read-only toggle and Auto Run queueing.
-		return {
-			isReadOnlyMode: readOnly,
-			showQueueingBorder: autoRunActive || (readOnly && !isAskMode),
-		};
-	}, [
-		tabReadOnlyMode,
-		isAutoModeActive,
-		session.inputMode,
-		supportsInteractionModes,
-		tabExecutionMode,
-	]);
+		return !!tabReadOnlyMode && session.inputMode === 'ai';
+	}, [tabReadOnlyMode, session.inputMode]);
 
 	// Filter slash commands based on input and current mode
 	const isTerminalMode = session.inputMode === 'terminal';
@@ -1260,10 +1240,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					<div
 						className="flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
 						style={{
-							borderColor: showQueueingBorder ? theme.colors.warning : theme.colors.border,
-							backgroundColor: showQueueingBorder
-								? `${theme.colors.warning}15`
-								: theme.colors.bgMain,
+							borderColor: theme.colors.border,
+							backgroundColor: theme.colors.bgMain,
 						}}
 					>
 						<div className="flex items-start">

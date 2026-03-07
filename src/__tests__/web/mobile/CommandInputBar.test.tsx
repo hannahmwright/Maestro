@@ -812,13 +812,14 @@ describe('CommandInputBar', () => {
 			expect(onInputBlur).toHaveBeenCalled();
 		});
 
-		it('adds focus ring on focus in AI mode', () => {
+		it('keeps neutral styling on focus in AI mode', () => {
 			renderComponent({ inputMode: 'ai' });
 			const textarea = screen.getByRole('textbox');
 
 			fireEvent.focus(textarea);
 
-			expect(textarea.style.borderColor).toBe('rgb(99, 102, 241)'); // accent color
+			expect(textarea.style.borderColor).toBe('rgb(68, 68, 68)');
+			expect(textarea.style.boxShadow).toBe('none');
 		});
 
 		it('adds focus ring on focus in terminal mode', () => {

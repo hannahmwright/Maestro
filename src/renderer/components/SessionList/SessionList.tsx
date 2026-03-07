@@ -26,6 +26,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useConductorStore } from '../../stores/conductorStore';
 import { getModalActions } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
 import { GroupContextMenu } from './GroupContextMenu';
@@ -90,6 +91,7 @@ interface SessionListProps {
 
 	// Tour props
 	startTour?: () => void;
+	onOpenConductor?: (groupId: string) => void;
 
 	// Group Chat handlers
 	onOpenGroupChat?: (id: string) => void;
@@ -98,6 +100,43 @@ interface SessionListProps {
 	onRenameGroupChat?: (id: string) => void;
 	onDeleteGroupChat?: (id: string) => void;
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
+}
+
+function getSidebarGlassSurface(
+	theme: Theme,
+	options?: {
+		tint?: string;
+		borderColor?: string;
+		strong?: boolean;
+	}
+): React.CSSProperties {
+	const tint = options?.tint || 'rgba(255,255,255,0.10)';
+	const borderColor = options?.borderColor || 'rgba(255,255,255,0.08)';
+	const strong = options?.strong ?? false;
+
+	return {
+		backgroundColor: tint,
+		border: `1px solid ${borderColor}`,
+		boxShadow: strong ? 'inset 0 1px 0 rgba(255,255,255,0.05)' : 'none',
+	};
+}
+
+function getSidebarHeaderButtonStyle(
+	theme: Theme,
+	options?: {
+		active?: boolean;
+		tint?: string;
+	}
+): React.CSSProperties {
+	const active = options?.active ?? false;
+	const tint = options?.tint || theme.colors.accent;
+
+	return {
+		backgroundColor: active ? `${tint}10` : 'transparent',
+		border: `1px solid ${active ? `${tint}30` : 'transparent'}`,
+		color: active ? theme.colors.textMain : theme.colors.textDim,
+		boxShadow: active ? 'inset 0 1px 0 rgba(255,255,255,0.04)' : 'none',
+	};
 }
 
 function SessionListInner(props: SessionListProps) {
@@ -132,6 +171,8 @@ function SessionListInner(props: SessionListProps) {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const conductors = useConductorStore((s) => s.conductors);
+	const activeConductorGroupId = useConductorStore((s) => s.activeConductorGroupId);
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
@@ -140,12 +181,14 @@ function SessionListInner(props: SessionListProps) {
 	const setGroupChatsExpanded = useUIStore.getState().setGroupChatsExpanded;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
 	const setActiveGroupChatId = useGroupChatStore.getState().setActiveGroupChatId;
+	const setActiveConductorGroupId = useConductorStore.getState().setActiveConductorGroupId;
 	const setActiveSessionId = useCallback(
 		(id: string) => {
 			setActiveGroupChatId(null);
+			setActiveConductorGroupId(null);
 			setActiveSessionIdRaw(id);
 		},
-		[setActiveSessionIdRaw, setActiveGroupChatId]
+		[setActiveSessionIdRaw, setActiveGroupChatId, setActiveConductorGroupId]
 	);
 	const setSessions = useSessionStore.getState().setSessions;
 	const setGroups = useSessionStore.getState().setGroups;
@@ -182,7 +225,6 @@ function SessionListInner(props: SessionListProps) {
 		showConfirmation,
 		createNewGroup,
 		onCreateGroupAndMove,
-		addNewSession,
 		onDeleteSession,
 		onDeleteWorktreeGroup,
 		onEditAgent,
@@ -196,6 +238,7 @@ function SessionListInner(props: SessionListProps) {
 		visibleSessions = [],
 		openWizard,
 		startTour,
+		onOpenConductor,
 		sidebarContainerRef,
 		onOpenGroupChat,
 		onNewGroupChat,
@@ -301,6 +344,13 @@ function SessionListInner(props: SessionListProps) {
 			);
 		},
 		[setSessions]
+	);
+
+	const handleOpenConductorForGroup = useCallback(
+		(groupId: string) => {
+			onOpenConductor?.(groupId);
+		},
+		[onOpenConductor]
 	);
 
 	const handleDeleteSession = (sessionId: string) => {
@@ -865,12 +915,16 @@ function SessionListInner(props: SessionListProps) {
 						<div className="mb-1">
 							<button
 								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
 								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
 								aria-expanded={!bookmarksCollapsed}
+								style={getSidebarHeaderButtonStyle(theme, {
+									active: !bookmarksCollapsed,
+									tint: theme.colors.accent,
+								})}
 							>
 								<div
-									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+									className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
 									style={{ color: theme.colors.accent }}
 								>
 									{bookmarksCollapsed ? (
@@ -885,8 +939,8 @@ function SessionListInner(props: SessionListProps) {
 
 							{!bookmarksCollapsed ? (
 								<div
-									className="flex flex-col border-l ml-4"
-									style={{ borderColor: theme.colors.accent }}
+									className="flex flex-col border-l ml-4 mt-1"
+									style={{ borderColor: `${theme.colors.accent}28` }}
 								>
 									{sortedBookmarkedSessions.map((session) => {
 										const group = groups.find((g) => g.id === session.groupId);
@@ -925,6 +979,8 @@ function SessionListInner(props: SessionListProps) {
 					{/* GROUPS */}
 					{sortedGroups.map((group) => {
 						const groupSessions = sortedGroupSessionsById.get(group.id) || [];
+						const conductor = conductors.find((candidate) => candidate.groupId === group.id);
+						const isConductorActive = activeConductorGroupId === group.id;
 						return (
 							<div key={group.id} className="mb-1">
 								<div
@@ -937,14 +993,18 @@ function SessionListInner(props: SessionListProps) {
 											toggleGroup(group.id);
 										}
 									}}
-									className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
 									onClick={() => toggleGroup(group.id)}
 									onDragOver={handleDragOver}
 									onDrop={() => handleDropOnGroup(group.id)}
+									style={getSidebarHeaderButtonStyle(theme, {
+										active: !group.collapsed,
+										tint: theme.colors.textDim,
+									})}
 								>
 									<div
-										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-										style={{ color: theme.colors.textDim }}
+										className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
+										style={{ color: !group.collapsed ? theme.colors.textMain : theme.colors.textDim }}
 										onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
 									>
 										{group.collapsed ? (
@@ -1015,9 +1075,43 @@ function SessionListInner(props: SessionListProps) {
 
 								{!group.collapsed ? (
 									<div
-										className="flex flex-col border-l ml-4"
-										style={{ borderColor: theme.colors.border }}
+										className="flex flex-col border-l ml-4 mt-1"
+										style={{ borderColor: 'rgba(255,255,255,0.06)' }}
 									>
+										<button
+											onClick={(e) => {
+												e.stopPropagation();
+												handleOpenConductorForGroup(group.id);
+											}}
+											className="mx-3 mt-1.5 mb-1 px-3 py-2 rounded-lg border text-left transition-colors"
+											style={{
+												backgroundColor: isConductorActive ? `${theme.colors.accent}12` : 'transparent',
+												borderColor: isConductorActive ? `${theme.colors.accent}26` : 'rgba(255,255,255,0.06)',
+												color: isConductorActive ? theme.colors.textMain : theme.colors.textDim,
+											}}
+											title={`Open Conductor for ${group.name}`}
+										>
+											<div className="flex items-center justify-between gap-3">
+												<div className="flex items-center gap-2 min-w-0">
+													<Radio className="w-3.5 h-3.5 shrink-0" />
+														<span className="text-[11px] font-semibold uppercase tracking-[0.16em]">
+														Conductor
+													</span>
+												</div>
+												{conductor && (
+													<span
+														className="text-[10px] uppercase"
+														style={{
+															color: isConductorActive
+																? theme.colors.accent
+																: theme.colors.textDim,
+														}}
+													>
+														{conductor.status.replace(/_/g, ' ')}
+													</span>
+												)}
+											</div>
+										</button>
 										{groupSessions.map((session) =>
 											renderSessionWithWorktrees(session, 'group', {
 												keyPrefix: `group-${group.id}`,
@@ -1069,9 +1163,9 @@ function SessionListInner(props: SessionListProps) {
 									onClick={createNewGroup}
 									className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
 									style={{
-										backgroundColor: theme.colors.accent + '20',
+										backgroundColor: theme.colors.accent + '14',
 										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
+										border: `1px solid ${theme.colors.accent}28`,
 									}}
 									title="Create new group"
 								>
@@ -1084,13 +1178,17 @@ function SessionListInner(props: SessionListProps) {
 						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
 						<div className="mb-1 mt-4">
 							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+									className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
 								onClick={() => setUngroupedCollapsed(!ungroupedCollapsed)}
 								onDragOver={handleDragOver}
 								onDrop={handleDropOnUngrouped}
+								style={getSidebarHeaderButtonStyle(theme, {
+									active: !ungroupedCollapsed,
+									tint: theme.colors.textDim,
+								})}
 							>
 								<div
-									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
+										className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
 									style={{ color: theme.colors.textDim }}
 								>
 									{ungroupedCollapsed ? (
@@ -1106,12 +1204,12 @@ function SessionListInner(props: SessionListProps) {
 										e.stopPropagation();
 										createNewGroup();
 									}}
-									className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
-									style={{
-										backgroundColor: theme.colors.accent + '20',
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
+										className="px-2 py-0.5 rounded-full text-[10px] font-medium transition-opacity flex items-center gap-1"
+										style={{
+											backgroundColor: `${theme.colors.accent}14`,
+											border: `1px solid ${theme.colors.accent}28`,
+											color: theme.colors.accent,
+										}}
 									title="Create new group"
 								>
 									<Plus className="w-3 h-3" />
@@ -1121,8 +1219,8 @@ function SessionListInner(props: SessionListProps) {
 
 							{!ungroupedCollapsed ? (
 								<div
-									className="flex flex-col border-l ml-4"
-									style={{ borderColor: theme.colors.border }}
+									className="flex flex-col border-l ml-4 mt-1"
+									style={{ borderColor: 'rgba(255,255,255,0.06)' }}
 								>
 									{sortedUngroupedSessions.map((session) =>
 										renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
@@ -1131,7 +1229,7 @@ function SessionListInner(props: SessionListProps) {
 							) : (
 								/* Collapsed Ungrouped Palette - uses subdivided pills for worktrees */
 								<div
-									className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
+									className="ml-8 mr-3 mt-2 mb-2 flex gap-1 h-1.5 cursor-pointer"
 									onClick={() => setUngroupedCollapsed(false)}
 								>
 									{sortedUngroupedParentSessions.map((s) => (
@@ -1170,11 +1268,13 @@ function SessionListInner(props: SessionListProps) {
 							)}
 							<button
 								onClick={createNewGroup}
-								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
+								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium transition-opacity flex items-center justify-center gap-1"
 								style={{
-									backgroundColor: theme.colors.accent + '20',
+									...getSidebarGlassSurface(theme, {
+										tint: `${theme.colors.accent}18`,
+										borderColor: `${theme.colors.accent}38`,
+									}),
 									color: theme.colors.accent,
-									border: `1px solid ${theme.colors.accent}40`,
 								}}
 								title="Create new group"
 							>
@@ -1235,7 +1335,6 @@ function SessionListInner(props: SessionListProps) {
 				leftSidebarOpen={leftSidebarOpen}
 				hasNoSessions={sessions.length === 0}
 				shortcuts={shortcuts}
-				addNewSession={addNewSession}
 				openWizard={openWizard}
 				setLeftSidebarOpen={setLeftSidebarOpen}
 			/>

@@ -245,7 +245,7 @@ export function createGitApi() {
 			success: boolean;
 			hasUncommittedChanges: boolean;
 			error?: string;
-		}> =>
+			}> =>
 			ipcRenderer.invoke(
 				'git:worktreeCheckout',
 				worktreePath,
@@ -255,6 +255,19 @@ export function createGitApi() {
 			),
 
 		/**
+		 * Merge a branch into a worktree
+		 */
+		mergeBranchIntoWorktree: (
+			worktreePath: string,
+			branchName: string,
+			sshRemoteId?: string
+		): Promise<{
+			success: boolean;
+			conflicted?: boolean;
+			error?: string;
+		}> => ipcRenderer.invoke('git:mergeBranchIntoWorktree', worktreePath, branchName, sshRemoteId),
+
+		/**
 		 * Create a GitHub PR
 		 */
 		createPR: (
@@ -262,12 +275,36 @@ export function createGitApi() {
 			baseBranch: string,
 			title: string,
 			body: string,
-			ghPath?: string
+			ghPath?: string,
+			sshRemoteId?: string
 		): Promise<{
 			success: boolean;
 			prUrl?: string;
 			error?: string;
-		}> => ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body, ghPath),
+		}> => {
+			if (sshRemoteId !== undefined) {
+				return ipcRenderer.invoke(
+					'git:createPR',
+					worktreePath,
+					baseBranch,
+					title,
+					body,
+					ghPath,
+					sshRemoteId
+				);
+			}
+			if (ghPath !== undefined) {
+				return ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body, ghPath);
+			}
+			return ipcRenderer.invoke(
+				'git:createPR',
+				worktreePath,
+				baseBranch,
+				title,
+				body,
+				undefined
+			);
+		},
 
 		/**
 		 * Get the default branch of a repository
@@ -280,8 +317,18 @@ export function createGitApi() {
 		/**
 		 * Check if GitHub CLI is installed and authenticated
 		 */
-		checkGhCli: (ghPath?: string): Promise<{ installed: boolean; authenticated: boolean }> =>
-			ipcRenderer.invoke('git:checkGhCli', ghPath),
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		): Promise<{ installed: boolean; authenticated: boolean }> => {
+			if (sshRemoteId !== undefined) {
+				return ipcRenderer.invoke('git:checkGhCli', ghPath, sshRemoteId);
+			}
+			if (ghPath !== undefined) {
+				return ipcRenderer.invoke('git:checkGhCli', ghPath);
+			}
+			return ipcRenderer.invoke('git:checkGhCli', undefined);
+		},
 
 		/**
 		 * Create a GitHub Gist from file content
@@ -342,12 +389,23 @@ export function createGitApi() {
 		 */
 		removeWorktree: (
 			worktreePath: string,
-			force?: boolean
+			force?: boolean,
+			sshRemoteId?: string
 		): Promise<{
 			success: boolean;
 			error?: string;
 			hasUncommittedChanges?: boolean;
-		}> => ipcRenderer.invoke('git:removeWorktree', worktreePath, force),
+		}> => ipcRenderer.invoke('git:removeWorktree', worktreePath, force, sshRemoteId),
+
+		deleteLocalBranch: (
+			cwd: string,
+			branchName: string,
+			force?: boolean,
+			sshRemoteId?: string
+		): Promise<{
+			success: boolean;
+			error?: string;
+		}> => ipcRenderer.invoke('git:deleteLocalBranch', cwd, branchName, force, sshRemoteId),
 
 		/**
 		 * Subscribe to discovered worktrees

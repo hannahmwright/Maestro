@@ -45,25 +45,32 @@ import {
 import type { CommandHistoryEntry } from '../hooks/useCommandHistory';
 
 /** Default minimum height for the text input area */
-const MIN_INPUT_HEIGHT = 48;
+const MIN_INPUT_HEIGHT = 56;
 
 /** Line height for text calculations */
-const LINE_HEIGHT = 22;
+const LINE_HEIGHT = 24;
 
 /** Maximum number of lines before scrolling */
-const MAX_LINES = 4;
+const MAX_LINES = 6;
+
+/** Maximum number of lines for the compact mobile composer */
+const COMPACT_MOBILE_MAX_LINES = 3;
 
 /** Vertical padding inside textarea (top + bottom) */
-const TEXTAREA_VERTICAL_PADDING = 28; // 14px top + 14px bottom
+const TEXTAREA_VERTICAL_PADDING = 32; // 16px top + 16px bottom
 
 /** Maximum height for textarea based on max lines */
 const MAX_TEXTAREA_HEIGHT = LINE_HEIGHT * MAX_LINES + TEXTAREA_VERTICAL_PADDING;
+
+/** Maximum compact composer height on phones */
+const COMPACT_MOBILE_MAX_TEXTAREA_HEIGHT =
+	LINE_HEIGHT * COMPACT_MOBILE_MAX_LINES + TEXTAREA_VERTICAL_PADDING;
 
 /** Mobile breakpoint - phones only, not tablets */
 const MOBILE_MAX_WIDTH = 480;
 
 /** Height of expanded input on mobile (50% of viewport) */
-const MOBILE_EXPANDED_HEIGHT_VH = 50;
+const MOBILE_EXPANDED_HEIGHT_VH = 58;
 
 /**
  * Detect if the device is a mobile phone (not tablet/desktop)
@@ -180,6 +187,7 @@ export function CommandInputBar({
 
 	// Mobile expanded input state (AI mode only)
 	const [isExpanded, setIsExpanded] = useState(false);
+	const [isInputFocused, setIsInputFocused] = useState(false);
 
 	// Swipe up gesture detection for opening history drawer
 	const { handlers: swipeUpHandlers } = useSwipeUp({
@@ -211,7 +219,6 @@ export function CommandInputBar({
 		isOpen: slashCommandOpen,
 		selectedIndex: selectedSlashCommandIndex,
 		setSelectedIndex: setSelectedSlashCommandIndex,
-		openAutocomplete: openSlashCommandAutocomplete,
 		handleInputChange: handleSlashCommandInputChange,
 		handleSelectCommand: handleSelectSlashCommand,
 		handleClose: handleCloseSlashCommand,
@@ -256,6 +263,11 @@ export function CommandInputBar({
 	// Separate flag for whether send is blocked (AI thinking)
 	// When true, shows X button instead of send button
 	const isSendBlocked = inputMode === 'ai' && isSessionBusy;
+	const smartTypingEnabled = inputMode === 'ai';
+	const compactMaxTextareaHeight =
+		isMobilePhone && inputMode === 'ai' && !isExpanded
+			? COMPACT_MOBILE_MAX_TEXTAREA_HEIGHT
+			: MAX_TEXTAREA_HEIGHT;
 	const composerSurfaceStyle: React.CSSProperties = {
 		background: `linear-gradient(180deg, ${colors.bgSidebar}f2 0%, ${colors.bgMain}f4 100%)`,
 		backdropFilter: 'blur(22px)',
@@ -298,11 +310,11 @@ export function CommandInputBar({
 		const scrollHeight = textarea.scrollHeight;
 
 		// Clamp height between minimum and maximum
-		const newHeight = Math.min(Math.max(scrollHeight, MIN_INPUT_HEIGHT), MAX_TEXTAREA_HEIGHT);
+		const newHeight = Math.min(Math.max(scrollHeight, MIN_INPUT_HEIGHT), compactMaxTextareaHeight);
 
 		setTextareaHeight(newHeight);
 		textarea.style.height = `${newHeight}px`;
-	}, [value]);
+	}, [compactMaxTextareaHeight, value]);
 
 	/**
 	 * Handle textarea change
@@ -348,17 +360,20 @@ export function CommandInputBar({
 
 	/**
 	 * Handle key press events
-	 * Plain Enter submits in the compact mobile composer.
-	 * Shift+Enter still inserts a newline for longer prompts.
+	 * Plain Enter submits in the compact composer.
+	 * In expanded AI mode, Enter inserts a newline and the send button submits.
 	 */
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 			if (e.key === 'Enter' && !e.shiftKey) {
+				if (inputMode === 'ai' && isExpanded) {
+					return;
+				}
 				e.preventDefault();
 				handleSubmit(e);
 			}
 		},
-		[handleSubmit]
+		[handleSubmit, inputMode, isExpanded]
 	);
 
 	/**
@@ -376,6 +391,7 @@ export function CommandInputBar({
 
 		const handleClickOutside = (e: MouseEvent | TouchEvent) => {
 			if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+				setIsInputFocused(false);
 				setIsExpanded(false);
 				textareaRef.current?.blur();
 			}
@@ -505,6 +521,7 @@ export function CommandInputBar({
 			if (controlledValue === undefined) {
 				setInternalValue('');
 			}
+			setIsInputFocused(false);
 
 			// Collapse on mobile after submit
 			if (isMobilePhone && inputMode === 'ai') {
@@ -734,35 +751,43 @@ export function CommandInputBar({
 						placeholder={getPlaceholder()}
 						disabled={isDisabled}
 						autoComplete="off"
-						autoCorrect="off"
-						autoCapitalize="off"
-						spellCheck={false}
+						autoCorrect={smartTypingEnabled ? 'on' : 'off'}
+						autoCapitalize={smartTypingEnabled ? 'sentences' : 'off'}
+						spellCheck={smartTypingEnabled}
 						enterKeyHint="enter"
 						rows={1}
 						style={{
 							flex: 1,
 							width: '100%',
-							padding: '14px 18px',
-							borderRadius: '20px',
-							backgroundColor: `${colors.bgMain}d9`,
-							border: `1px solid ${colors.border}`,
-							boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.04)',
+							padding: '16px 18px',
+							borderRadius: '22px',
+							backgroundColor: `${colors.bgMain}f0`,
+							border: `1px solid ${colors.accent}33`,
+							boxShadow: `0 0 0 3px ${colors.accent}12, inset 0 1px 0 rgba(255, 255, 255, 0.05)`,
 							color: colors.textMain,
-							fontSize: '16px',
+							fontSize: '17px',
 							fontFamily: 'inherit',
 							lineHeight: `${LINE_HEIGHT}px`,
 							outline: 'none',
-							minHeight: '150px',
+							minHeight: '200px',
 							WebkitAppearance: 'none',
 							appearance: 'none',
 							resize: 'none',
 							WebkitFontSmoothing: 'antialiased',
 							MozOsxFontSmoothing: 'grayscale',
+							WebkitTouchCallout: 'default',
+							WebkitUserSelect: 'text',
+							userSelect: 'text',
+							caretColor: colors.accent,
 							overflowY: 'auto',
 							overflowX: 'hidden',
 							wordWrap: 'break-word',
 						}}
+						onFocus={() => {
+							setIsInputFocused(true);
+						}}
 						onBlur={(_e) => {
+							setIsInputFocused(false);
 							// Delay collapse to allow click on send button
 							setTimeout(() => {
 								if (!containerRef.current?.contains(document.activeElement)) {
@@ -774,6 +799,16 @@ export function CommandInputBar({
 						aria-label="AI message input. Press the send button to submit."
 						aria-multiline="true"
 					/>
+
+					<div
+						style={{
+							fontSize: '12px',
+							color: colors.textDim,
+							padding: '0 4px',
+						}}
+					>
+						Enter adds a new line here. Use Send when you are ready.
+					</div>
 
 					{/* Full-width send button below textarea */}
 					<ExpandedModeSendInterruptButton
@@ -868,64 +903,80 @@ export function CommandInputBar({
 							/>
 						)}
 
-						<textarea
-							ref={textareaRef}
-							value={value}
-							onChange={handleChange}
-							onKeyDown={handleKeyDown}
-							placeholder={getPlaceholder()}
-							disabled={isDisabled || isTranscribing}
-							autoComplete="off"
-							autoCorrect="off"
-							autoCapitalize="off"
-							spellCheck={false}
-							enterKeyHint="send"
-							rows={1}
+						<div
 							style={{
 								flex: 1,
 								minWidth: 0,
-								padding: isMobilePhone ? '12px 14px' : '14px 18px',
-								borderRadius: '18px',
-								backgroundColor: `${colors.bgMain}c4`,
-								border: '1px solid transparent',
-								color: colors.textMain,
-								fontSize: '16px',
-								fontFamily: 'inherit',
-								lineHeight: `${LINE_HEIGHT}px`,
-								outline: 'none',
-								height: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${textareaHeight}px`,
-								minHeight: `${MIN_INPUT_HEIGHT}px`,
-								maxHeight: isMobilePhone ? `${MIN_INPUT_HEIGHT}px` : `${MAX_TEXTAREA_HEIGHT}px`,
-								WebkitAppearance: 'none',
-								appearance: 'none',
-								resize: 'none',
 								transition:
-									'height 100ms ease-out, border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease',
-								WebkitFontSmoothing: 'antialiased',
-								MozOsxFontSmoothing: 'grayscale',
-								overflowY: isMobilePhone
-									? 'hidden'
-									: textareaHeight >= MAX_TEXTAREA_HEIGHT
-										? 'auto'
-										: 'hidden',
-								overflowX: 'hidden',
-								wordWrap: 'break-word',
+									'border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease',
+								padding: '4px',
+								borderRadius: '22px',
+								border: `1px solid ${
+									isInputFocused ? `${colors.accent}66` : `${colors.border}cc`
+								}`,
+								background: isInputFocused
+									? `linear-gradient(180deg, ${colors.bgMain}fa 0%, ${colors.bgSidebar}f0 100%)`
+									: `linear-gradient(180deg, ${colors.bgMain}e8 0%, ${colors.bgSidebar}d8 100%)`,
+								boxShadow: isInputFocused
+									? `0 0 0 3px ${colors.accent}1f, 0 14px 26px rgba(15, 23, 42, 0.16)`
+									: '0 10px 24px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
 							}}
-							onFocus={(e) => {
-								e.currentTarget.style.borderColor = `${colors.accent}55`;
-								e.currentTarget.style.backgroundColor = `${colors.bgMain}ee`;
-								e.currentTarget.style.boxShadow = `0 0 0 3px ${colors.accent}22`;
-								handleMobileAIFocus();
-							}}
-							onBlur={(e) => {
-								e.currentTarget.style.borderColor = 'transparent';
-								e.currentTarget.style.backgroundColor = `${colors.bgMain}c4`;
-								e.currentTarget.style.boxShadow = 'none';
-								onInputBlur?.();
-							}}
-							aria-label="Message input. Type slash commands directly if needed."
-							aria-multiline="true"
-						/>
+						>
+							<textarea
+								ref={textareaRef}
+								value={value}
+								onChange={handleChange}
+								onKeyDown={handleKeyDown}
+								placeholder={getPlaceholder()}
+								disabled={isDisabled || isTranscribing}
+								autoComplete="off"
+								autoCorrect={smartTypingEnabled ? 'on' : 'off'}
+								autoCapitalize={smartTypingEnabled ? 'sentences' : 'off'}
+								spellCheck={smartTypingEnabled}
+								enterKeyHint="send"
+								rows={1}
+								style={{
+									flex: 1,
+									width: '100%',
+									padding: isMobilePhone ? '14px 16px' : '14px 18px',
+									borderRadius: '18px',
+									backgroundColor: 'transparent',
+									border: 'none',
+									color: colors.textMain,
+									fontSize: isMobilePhone ? '17px' : '16px',
+									fontFamily: 'inherit',
+									lineHeight: `${LINE_HEIGHT}px`,
+									outline: 'none',
+									height: `${textareaHeight}px`,
+									minHeight: `${MIN_INPUT_HEIGHT}px`,
+									maxHeight: `${compactMaxTextareaHeight}px`,
+									WebkitAppearance: 'none',
+									appearance: 'none',
+									resize: 'none',
+									transition: 'height 100ms ease-out',
+									WebkitFontSmoothing: 'antialiased',
+									MozOsxFontSmoothing: 'grayscale',
+									WebkitTouchCallout: 'default',
+									WebkitUserSelect: 'text',
+									userSelect: 'text',
+									caretColor: colors.accent,
+									overflowY:
+										textareaHeight >= compactMaxTextareaHeight ? 'auto' : 'hidden',
+									overflowX: 'hidden',
+									wordWrap: 'break-word',
+								}}
+								onFocus={() => {
+									setIsInputFocused(true);
+									handleMobileAIFocus();
+								}}
+								onBlur={() => {
+									setIsInputFocused(false);
+									onInputBlur?.();
+								}}
+								aria-label="Message input. Type slash commands directly if needed."
+								aria-multiline="true"
+							/>
+						</div>
 
 						<SendInterruptButton
 							isInterruptMode={inputMode === 'ai' && isSessionBusy}

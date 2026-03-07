@@ -5,6 +5,7 @@
  * - Settings: get/set/getAll
  * - Sessions: getAll/setAll
  * - Groups: getAll/setAll
+ * - Conductors: getAll/setAll
  * - CLI activity: getActivity
  *
  * Extracted from main/index.ts to improve code organization.
@@ -19,9 +20,15 @@ import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 
 // Re-export types from canonical source so existing imports from './persistence' still work
-export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/types';
-import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '../../stores/types';
-import type { Group } from '../../../shared/types';
+export type { MaestroSettings, SessionsData, GroupsData, ConductorsData } from '../../stores/types';
+import type {
+	MaestroSettings,
+	SessionsData,
+	GroupsData,
+	ConductorsData,
+	StoredSession,
+} from '../../stores/types';
+import type { Group, Conductor, ConductorTask, ConductorRun } from '../../../shared/types';
 
 /**
  * Dependencies required for persistence handlers
@@ -30,6 +37,7 @@ export interface PersistenceHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
+	conductorsStore: Store<ConductorsData>;
 	getWebServer: () => WebServer | null;
 }
 
@@ -37,7 +45,7 @@ export interface PersistenceHandlerDependencies {
  * Register all persistence-related IPC handlers.
  */
 export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies): void {
-	const { settingsStore, sessionsStore, groupsStore, getWebServer } = deps;
+	const { settingsStore, sessionsStore, groupsStore, conductorsStore, getWebServer } = deps;
 
 	// Settings management
 	ipcMain.handle('settings:get', async (_, key: string) => {
@@ -203,6 +211,38 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		}
 		return true;
 	});
+
+	// Conductors persistence
+	ipcMain.handle('conductors:getAll', async () => {
+		return {
+			conductors: conductorsStore.get('conductors', []),
+			tasks: conductorsStore.get('tasks', []),
+			runs: conductorsStore.get('runs', []),
+		};
+	});
+
+	ipcMain.handle(
+		'conductors:setAll',
+		async (
+			_,
+			data: {
+				conductors: Conductor[];
+				tasks: ConductorTask[];
+				runs: ConductorRun[];
+			}
+		) => {
+			try {
+				conductorsStore.set('conductors', data.conductors);
+				conductorsStore.set('tasks', data.tasks);
+				conductorsStore.set('runs', data.runs);
+			} catch (err) {
+				const code = (err as NodeJS.ErrnoException).code;
+				logger.warn(`Failed to persist conductors: ${code || (err as Error).message}`, 'Conductors');
+				return false;
+			}
+			return true;
+		}
+	);
 
 	// CLI activity (for detecting when CLI is running playbooks)
 	ipcMain.handle('cli:getActivity', async () => {

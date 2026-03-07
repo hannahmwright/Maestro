@@ -33,6 +33,15 @@ export interface UpdateStatus {
 	error?: string;
 }
 
+export interface SystemResourceSnapshot {
+	cpuCount: number;
+	loadAverage: [number, number, number];
+	freeMemoryMB: number;
+	availableMemoryMB: number;
+	totalMemoryMB: number;
+	platform: NodeJS.Platform;
+}
+
 /**
  * Creates the dialog API object for preload exposure
  */
@@ -205,6 +214,13 @@ export function createAppApi() {
 	};
 }
 
+export function createSystemApi() {
+	return {
+		getResourceSnapshot: (): Promise<SystemResourceSnapshot> =>
+			ipcRenderer.invoke('system:getResourceSnapshot'),
+	};
+}
+
 export type DialogApi = ReturnType<typeof createDialogApi>;
 export type FontsApi = ReturnType<typeof createFontsApi>;
 export type ShellsApi = ReturnType<typeof createShellsApi>;
@@ -215,3 +231,4 @@ export type DevtoolsApi = ReturnType<typeof createDevtoolsApi>;
 export type PowerApi = ReturnType<typeof createPowerApi>;
 export type UpdatesApi = ReturnType<typeof createUpdatesApi>;
 export type AppApi = ReturnType<typeof createAppApi>;
+export type SystemApi = ReturnType<typeof createSystemApi>;

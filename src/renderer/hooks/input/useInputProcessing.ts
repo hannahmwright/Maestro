@@ -920,11 +920,20 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						const hasNoText = !capturedInputValue.trim();
 						let effectivePrompt =
 							hasImages && hasNoText ? DEFAULT_IMAGE_ONLY_PROMPT : capturedInputValue;
+						const useCodexPlanBridge =
+							isReadOnly &&
+							freshSession.toolType === 'codex' &&
+							!(freshSession.sshRemoteId || freshSession.sessionSshRemoteConfig?.enabled);
+						const codexQuestionToolInstruction =
+							'IMPORTANT: If you need input from the user before proceeding, do not ask questions in chat. Use the request_user_input tool with concise multiple-choice questions instead.';
 
 						// For read-only mode, append instruction to return plan in response instead of writing files
-						if (isReadOnly) {
+						if (isReadOnly && !useCodexPlanBridge) {
 							effectivePrompt +=
 								'\n\n---\n\nIMPORTANT: You are in read-only/plan mode. Do NOT write a plan file. Instead, return your plan directly to the user in beautiful markdown formatting.';
+						}
+						if (useCodexPlanBridge) {
+							effectivePrompt += `\n\n---\n\n${codexQuestionToolInstruction}`;
 						}
 
 						// Check for pending merged context that needs to be injected
@@ -1002,8 +1011,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								conductorProfile,
 							});
 
+							const questionHandlingOverride = useCodexPlanBridge
+								? `\n\n---\n\nIMPORTANT FOR THIS SESSION: ${codexQuestionToolInstruction}`
+								: '';
+
 							// Prepend system prompt to user's message
-							effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
+							effectivePrompt = `${substitutedSystemPrompt}${questionHandlingOverride}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 						}
 
 						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({

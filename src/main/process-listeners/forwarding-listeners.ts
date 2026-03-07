@@ -33,6 +33,10 @@ export function setupForwardingListeners(
 		safeSend('process:tool-execution', sessionId, toolEvent);
 	});
 
+	processManager.on('user-input-request', (sessionId: string, request) => {
+		safeSend('process:user-input-request', sessionId, request);
+	});
+
 	processManager.on('model', (sessionId: string, model: string) => {
 		safeSend('process:model', sessionId, model);
 	});

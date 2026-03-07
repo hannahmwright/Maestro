@@ -34,6 +34,7 @@ import type {
 } from '../../types/contextMerge';
 import type { FileNode } from '../../types/fileTree';
 import type { DocumentGenerationCallbacks } from '../../services/inlineWizardDocumentGeneration';
+import type { UserInputRequest, UserInputResponse } from '../../../shared/user-input-requests';
 
 /**
  * Dependencies for computing MainPanel props.
@@ -207,6 +208,10 @@ export interface UseMainPanelPropsDeps {
 	handleMainPanelInputBlur: () => void;
 	handleOpenPromptComposer: () => void;
 	handleReplayMessage: (text: string, images?: string[]) => void;
+	handleSubmitUserInputRequest: (
+		request: UserInputRequest,
+		response: UserInputResponse
+	) => Promise<void>;
 	handleMainPanelFileClick: (relativePath: string) => void;
 	handleNavigateBack: () => void;
 	handleNavigateForward: () => void;
@@ -383,6 +388,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onInputBlur: deps.handleMainPanelInputBlur,
 			onOpenPromptComposer: deps.handleOpenPromptComposer,
 			onReplayMessage: deps.handleReplayMessage,
+			onSubmitUserInputRequest: deps.handleSubmitUserInputRequest,
 			fileTree: deps.fileTree,
 			onFileClick: deps.handleMainPanelFileClick,
 			canGoBack: deps.canGoBack,
@@ -584,6 +590,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleMainPanelInputBlur,
 			deps.handleOpenPromptComposer,
 			deps.handleReplayMessage,
+			deps.handleSubmitUserInputRequest,
 			deps.handleMainPanelFileClick,
 			deps.handleNavigateBack,
 			deps.handleNavigateForward,

@@ -1,0 +1,168 @@
+import type { ConductorTaskPriority, Session } from '../types';
+
+export interface ConductorPlannerInput {
+	groupName: string;
+	templateSession: Session;
+	manualTasks: Array<{
+		title: string;
+		description: string;
+		priority: ConductorTaskPriority;
+		status: string;
+	}>;
+	operatorNotes: string;
+}
+
+export interface ConductorPlannerTaskDraft {
+	title: string;
+	description: string;
+	priority: ConductorTaskPriority;
+	acceptanceCriteria: string[];
+	dependsOn: string[];
+	scopePaths: string[];
+}
+
+export interface ConductorPlanDraft {
+	summary: string;
+	tasks: ConductorPlannerTaskDraft[];
+}
+
+interface RawPlannerResponse {
+	summary?: unknown;
+	tasks?: unknown;
+}
+
+interface RawPlannerTask {
+	title?: unknown;
+	description?: unknown;
+	priority?: unknown;
+	acceptanceCriteria?: unknown;
+	dependsOn?: unknown;
+	scopePaths?: unknown;
+}
+
+const PRIORITY_ORDER: ConductorTaskPriority[] = ['low', 'medium', 'high', 'critical'];
+
+function normalizePriority(value: unknown): ConductorTaskPriority {
+	if (typeof value !== 'string') {
+		return 'medium';
+	}
+
+	const normalized = value.trim().toLowerCase();
+	return PRIORITY_ORDER.includes(normalized as ConductorTaskPriority)
+		? (normalized as ConductorTaskPriority)
+		: 'medium';
+}
+
+function normalizeStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	return value
+		.filter((item): item is string => typeof item === 'string')
+		.map((item) => item.trim())
+		.filter(Boolean);
+}
+
+function extractJsonBlock(text: string): string {
+	const fencedMatch = text.match(/```json\s*([\s\S]*?)```/i);
+	if (fencedMatch?.[1]) {
+		return fencedMatch[1].trim();
+	}
+
+	const firstBrace = text.indexOf('{');
+	const lastBrace = text.lastIndexOf('}');
+	if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+		throw new Error('Planner did not return a JSON object.');
+	}
+
+	return text.slice(firstBrace, lastBrace + 1).trim();
+}
+
+export function buildConductorPlannerPrompt(input: ConductorPlannerInput): string {
+	const taskLines =
+		input.manualTasks.length > 0
+			? input.manualTasks
+					.map(
+						(task, index) =>
+							`${index + 1}. ${task.title}\nstatus: ${task.status}\npriority: ${task.priority}\ndescription: ${task.description || 'No description provided.'}`
+					)
+					.join('\n\n')
+			: 'No manual backlog items provided.';
+
+	const operatorNotes = input.operatorNotes.trim() || 'No additional operator notes.';
+
+	return `You are Conductor, the planning layer for the Maestro group "${input.groupName}".
+
+Your job is to convert the operator backlog into a short, execution-ready plan for AI workers.
+
+Project context:
+- Template agent name: ${input.templateSession.name}
+- Tool type: ${input.templateSession.toolType}
+- Working directory: ${input.templateSession.cwd}
+
+Operator backlog:
+${taskLines}
+
+Operator notes:
+${operatorNotes}
+
+Return ONLY valid JSON with this exact shape:
+{
+  "summary": "short paragraph",
+  "tasks": [
+    {
+      "title": "clear action title",
+      "description": "short task description",
+      "priority": "low | medium | high | critical",
+      "acceptanceCriteria": ["specific outcome"],
+      "dependsOn": ["title of prerequisite task"],
+      "scopePaths": ["src/path-or-subsystem"]
+    }
+  ]
+}
+
+Rules:
+- Break work into 2-8 concrete tasks when possible.
+- Use task titles in dependsOn, not numeric IDs.
+- Keep scopePaths narrow and file/system oriented when you can infer them.
+- If a task has unknown scope, return an empty scopePaths array.
+- Do not include markdown, commentary, or code fences outside the JSON object.
+- Preserve important operator priorities and note blockers or sequencing in the summary.`;
+}
+
+export function parseConductorPlannerResponse(text: string): ConductorPlanDraft {
+	const parsed = JSON.parse(extractJsonBlock(text)) as RawPlannerResponse;
+	const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+
+	const tasks = rawTasks
+		.map((rawTask): ConductorPlannerTaskDraft | null => {
+			const task = rawTask as RawPlannerTask;
+			const title = typeof task.title === 'string' ? task.title.trim() : '';
+			if (!title) {
+				return null;
+			}
+
+			return {
+				title,
+				description: typeof task.description === 'string' ? task.description.trim() : '',
+				priority: normalizePriority(task.priority),
+				acceptanceCriteria: normalizeStringArray(task.acceptanceCriteria),
+				dependsOn: normalizeStringArray(task.dependsOn),
+				scopePaths: normalizeStringArray(task.scopePaths),
+			};
+		})
+		.filter((task): task is ConductorPlannerTaskDraft => Boolean(task));
+
+	if (tasks.length === 0) {
+		throw new Error('Planner returned no usable tasks.');
+	}
+
+	return {
+		summary:
+			typeof parsed.summary === 'string' && parsed.summary.trim()
+				? parsed.summary.trim()
+				: 'Execution-ready plan generated from the current backlog.',
+		tasks,
+	};
+}

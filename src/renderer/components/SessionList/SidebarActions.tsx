@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { PanelLeftClose, PanelLeftOpen, Bot, Wand2 } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Wand2 } from 'lucide-react';
 import type { Theme, Shortcut } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 
@@ -8,7 +8,6 @@ interface SidebarActionsProps {
 	leftSidebarOpen: boolean;
 	hasNoSessions: boolean;
 	shortcuts: Record<string, Shortcut>;
-	addNewSession: () => void;
 	openWizard?: () => void;
 	setLeftSidebarOpen: (open: boolean) => void;
 }
@@ -18,7 +17,6 @@ export const SidebarActions = memo(function SidebarActions({
 	leftSidebarOpen,
 	hasNoSessions,
 	shortcuts,
-	addNewSession,
 	openWizard,
 	setLeftSidebarOpen,
 }: SidebarActionsProps) {
@@ -45,26 +43,15 @@ export const SidebarActions = memo(function SidebarActions({
 				)}
 			</button>
 
-			{leftSidebarOpen && (
-				<button
-					type="button"
-					onClick={addNewSession}
-					className="flex-1 flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-				>
-					<Bot className="w-3 h-3" /> New Agent
-				</button>
-			)}
-
 			{leftSidebarOpen && openWizard && (
 				<button
 					type="button"
 					onClick={openWizard}
 					className="flex-1 flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
 					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-					title="Get started with AI wizard"
+					title={`New Agent (${formatShortcutKeys(shortcuts.openWizard.keys)})`}
 				>
-					<Wand2 className="w-3 h-3" /> Wizard
+					<Wand2 className="w-3 h-3" /> New Agent
 				</button>
 			)}
 		</div>

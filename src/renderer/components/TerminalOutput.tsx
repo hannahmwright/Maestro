@@ -32,6 +32,8 @@ import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { parseMultipleChoiceQuestions } from '../utils/multipleChoiceQuestions';
+import type { UserInputRequest, UserInputResponse } from '../../shared/user-input-requests';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -785,6 +787,7 @@ interface LogItemProps {
 	log: LogEntry;
 	index: number;
 	previousLogTimestamp?: number;
+	hasLaterUserResponse: boolean;
 	isTerminal: boolean;
 	isAIMode: boolean;
 	theme: Theme;
@@ -846,6 +849,7 @@ const LogItemComponent = memo(
 		log,
 		index,
 		previousLogTimestamp,
+		hasLaterUserResponse,
 		isTerminal,
 		isAIMode,
 		theme,
@@ -883,6 +887,10 @@ const LogItemComponent = memo(
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
 		const previousToolStatusRef = useRef<'running' | 'completed' | 'error' | null>(null);
+		const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+		const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+		const [manualAnswer, setManualAnswer] = useState('');
+		const [isSubmittingQuestionnaire, setIsSubmittingQuestionnaire] = useState(false);
 
 		// Handle expand toggle with scroll adjustment
 		const handleExpandToggle = useCallback(() => {
@@ -1120,6 +1128,22 @@ const LogItemComponent = memo(
 				: userMessageAlignment === 'right';
 		const isToolLog = log.source === 'tool';
 		const isThinkingLog = log.source === 'thinking';
+		const multipleChoiceQuestions =
+			isAIMode &&
+			!isTerminal &&
+			!isUserMessage &&
+			!isToolLog &&
+			!isThinkingLog &&
+			log.source !== 'error'
+				? parseMultipleChoiceQuestions(effectiveFilteredText)
+				: [];
+		const activeQuestion = multipleChoiceQuestions[currentQuestionIndex];
+		const questionnaireQuestionCount = multipleChoiceQuestions.length;
+		const showQuestionnaire =
+			questionnaireQuestionCount > 0 &&
+			!!onReplayMessage &&
+			!hasLaterUserResponse &&
+			currentQuestionIndex < questionnaireQuestionCount;
 		const isModelResponseMessage =
 			isAIMode &&
 			!isUserMessage &&
@@ -1164,6 +1188,61 @@ const LogItemComponent = memo(
 		const actionBarClass = isDeleteConfirming
 			? 'opacity-100 pointer-events-auto'
 			: 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto';
+		useEffect(() => {
+			setCurrentQuestionIndex(0);
+			setQuestionAnswers({});
+			setManualAnswer('');
+			setIsSubmittingQuestionnaire(false);
+		}, [log.id, questionnaireQuestionCount]);
+
+		const submitQuestionnaire = useCallback(
+			async (answers: Record<string, string>) => {
+				if (!onReplayMessage || isSubmittingQuestionnaire) return;
+				const compiledAnswer = multipleChoiceQuestions
+					.map((question, idx) => {
+						const answer = answers[question.id];
+						if (!answer) return null;
+						return `${question.label || `Q${idx + 1}`}: ${answer}`;
+					})
+					.filter((value): value is string => !!value)
+					.join('\n');
+				if (!compiledAnswer) return;
+				setIsSubmittingQuestionnaire(true);
+				try {
+					await Promise.resolve(onReplayMessage(compiledAnswer));
+					setCurrentQuestionIndex(questionnaireQuestionCount);
+				} finally {
+					setIsSubmittingQuestionnaire(false);
+				}
+			},
+			[isSubmittingQuestionnaire, multipleChoiceQuestions, onReplayMessage, questionnaireQuestionCount]
+		);
+
+		const handleQuestionAnswer = useCallback(
+			async (answer: string) => {
+				if (!activeQuestion || isSubmittingQuestionnaire) return;
+				const nextAnswers = {
+					...questionAnswers,
+					[activeQuestion.id]: answer.trim(),
+				};
+				setQuestionAnswers(nextAnswers);
+				setManualAnswer('');
+				const isLastQuestion = currentQuestionIndex >= questionnaireQuestionCount - 1;
+				if (isLastQuestion) {
+					await submitQuestionnaire(nextAnswers);
+					return;
+				}
+				setCurrentQuestionIndex((prev) => prev + 1);
+			},
+			[
+				activeQuestion,
+				currentQuestionIndex,
+				isSubmittingQuestionnaire,
+				questionAnswers,
+				questionnaireQuestionCount,
+				submitQuestionnaire,
+			]
+		);
 
 		return (
 			<>
@@ -1908,6 +1987,111 @@ const LogItemComponent = memo(
 										)}
 									</>
 								))}
+							{showQuestionnaire && activeQuestion && (
+								<div
+									className="mt-4 space-y-3 rounded-lg border p-3"
+									style={{
+										borderColor: `${theme.colors.accent}35`,
+										backgroundColor: `${theme.colors.accent}10`,
+									}}
+								>
+									<div
+										className="text-[11px] font-semibold uppercase tracking-wide"
+										style={{ color: theme.colors.accent }}
+									>
+										Quick reply
+									</div>
+									<div
+										className="text-[11px] uppercase tracking-wide"
+										style={{ color: theme.colors.textDim }}
+									>
+										Question {currentQuestionIndex + 1} of {questionnaireQuestionCount}
+									</div>
+									{activeQuestion.prompt && (
+										<div className="text-sm" style={{ color: theme.colors.textMain }}>
+											{activeQuestion.prompt}
+										</div>
+									)}
+									<div className="flex flex-wrap gap-2">
+										{activeQuestion.options.map((option) => (
+											<button
+												key={`${activeQuestion.id}-${option.replyValue}`}
+												type="button"
+												className="rounded-md border px-3 py-2 text-left transition-opacity hover:opacity-85 disabled:cursor-wait disabled:opacity-60"
+												style={{
+													borderColor: option.isRecommended
+														? `${theme.colors.accent}80`
+														: `${theme.colors.border}cc`,
+													backgroundColor: option.isRecommended
+														? `${theme.colors.accent}18`
+														: `${theme.colors.bgMain}b3`,
+													color: theme.colors.textMain,
+												}}
+												onClick={() => {
+													void handleQuestionAnswer(option.replyValue);
+												}}
+												disabled={isSubmittingQuestionnaire}
+												title={option.description || `Reply with ${option.replyValue}`}
+											>
+												<span className="block text-sm font-semibold">
+													Option {option.label}
+													{option.isRecommended ? ' (Recommended)' : ''}
+												</span>
+												{option.description && (
+													<span
+														className="mt-1 block text-xs"
+														style={{ color: theme.colors.textDim }}
+													>
+														{option.description}
+													</span>
+												)}
+											</button>
+										))}
+									</div>
+									{activeQuestion.manualAnswerOption && (
+										<div className="space-y-2">
+											<div className="text-xs" style={{ color: theme.colors.textDim }}>
+												{activeQuestion.manualAnswerOption.label}: answer in your own words.
+											</div>
+											<div className="flex flex-col gap-2 sm:flex-row">
+												<input
+													type="text"
+													value={manualAnswer}
+													onChange={(e) => setManualAnswer(e.target.value)}
+													placeholder={activeQuestion.manualAnswerOption.description || 'Type your answer'}
+													className="min-w-0 flex-1 rounded-md border px-3 py-2 text-sm outline-none"
+													style={{
+														borderColor: `${theme.colors.border}cc`,
+														backgroundColor: `${theme.colors.bgMain}cc`,
+														color: theme.colors.textMain,
+													}}
+													disabled={isSubmittingQuestionnaire}
+												/>
+												<button
+													type="button"
+													className="rounded-md border px-3 py-2 text-sm font-semibold transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-60"
+													style={{
+														borderColor: `${theme.colors.accent}60`,
+														backgroundColor: `${theme.colors.accent}18`,
+														color: theme.colors.accent,
+													}}
+													onClick={() => {
+														void handleQuestionAnswer(manualAnswer);
+													}}
+													disabled={!manualAnswer.trim() || isSubmittingQuestionnaire}
+												>
+													Use custom answer
+												</button>
+											</div>
+										</div>
+									)}
+									{isSubmittingQuestionnaire && (
+										<div className="text-[10px] uppercase tracking-wide" style={{ color: theme.colors.accent }}>
+											Sending answers...
+										</div>
+									)}
+								</div>
+							)}
 							{extractedSources.length > 0 && (
 								<details
 									className="mt-3 rounded-lg border px-3 py-2"
@@ -2200,6 +2384,10 @@ interface TerminalOutputProps {
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
+	onSubmitUserInputRequest?: (
+		request: UserInputRequest,
+		response: UserInputResponse
+	) => Promise<void>; // Respond to a live Codex request_user_input prompt
 	fileTree?: FileNode[]; // File tree for linking file references
 	cwd?: string; // Current working directory for proximity-based matching
 	projectRoot?: string; // Project root absolute path for converting absolute paths to relative
@@ -2245,6 +2433,7 @@ export const TerminalOutput = memo(
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
+			onSubmitUserInputRequest,
 			fileTree,
 			cwd,
 			projectRoot,
@@ -2329,6 +2518,13 @@ export const TerminalOutput = memo(
 
 		// Get active tab ID for resetting state on tab switch
 		const activeTabId = session.inputMode === 'ai' ? session.activeTabId : null;
+		const [pendingQuestionIndex, setPendingQuestionIndex] = useState(0);
+		const [pendingQuestionAnswers, setPendingQuestionAnswers] = useState<Record<string, string[]>>(
+			{}
+		);
+		const [pendingManualAnswer, setPendingManualAnswer] = useState('');
+		const [pendingUsingOtherInput, setPendingUsingOtherInput] = useState(false);
+		const [isSubmittingPendingRequest, setIsSubmittingPendingRequest] = useState(false);
 
 		// Copy text to clipboard with notification
 		const copyToClipboard = useCallback(async (text: string) => {
@@ -2487,11 +2683,84 @@ export const TerminalOutput = memo(
 			() => (session.inputMode === 'ai' ? getActiveTab(session) : undefined),
 			[session.inputMode, session.aiTabs, session.activeTabId]
 		);
+		const pendingUserInputRequest = activeTab?.pendingUserInputRequest ?? null;
+		const activePendingQuestion =
+			pendingUserInputRequest?.questions[pendingQuestionIndex] ?? null;
+		const showPendingUserInputRequest =
+			!!pendingUserInputRequest &&
+			pendingQuestionIndex < pendingUserInputRequest.questions.length &&
+			!!onSubmitUserInputRequest;
 
 		// PERF: Memoize activeLogs to provide stable reference for collapsedLogs dependency
 		const activeLogs = useMemo(
 			(): LogEntry[] => (session.inputMode === 'ai' ? (activeTab?.logs ?? []) : session.shellLogs),
 			[session.inputMode, activeTab?.logs, session.shellLogs]
+		);
+
+		useEffect(() => {
+			setPendingQuestionIndex(0);
+			setPendingQuestionAnswers({});
+			setPendingManualAnswer('');
+			setPendingUsingOtherInput(false);
+			setIsSubmittingPendingRequest(false);
+		}, [pendingUserInputRequest?.requestId]);
+
+		const submitPendingRequestAnswers = useCallback(
+			async (answers: Record<string, string[]>) => {
+				if (!pendingUserInputRequest || !onSubmitUserInputRequest || isSubmittingPendingRequest) {
+					return;
+				}
+				setIsSubmittingPendingRequest(true);
+				try {
+					await Promise.resolve(
+						onSubmitUserInputRequest(pendingUserInputRequest, {
+							answers: Object.fromEntries(
+								Object.entries(answers).map(([questionId, values]) => [
+									questionId,
+									{ answers: values },
+								])
+							),
+						})
+					);
+					setPendingQuestionIndex(pendingUserInputRequest.questions.length);
+				} finally {
+					setIsSubmittingPendingRequest(false);
+				}
+			},
+			[isSubmittingPendingRequest, onSubmitUserInputRequest, pendingUserInputRequest]
+		);
+
+		const handlePendingQuestionAnswer = useCallback(
+			async (answers: string[]) => {
+				if (!activePendingQuestion || isSubmittingPendingRequest) return;
+				const normalizedAnswers = answers.map((answer) => answer.trim()).filter(Boolean);
+				if (normalizedAnswers.length === 0) return;
+				const nextAnswers = {
+					...pendingQuestionAnswers,
+					[activePendingQuestion.id]: normalizedAnswers,
+				};
+				setPendingQuestionAnswers(nextAnswers);
+				setPendingManualAnswer('');
+				setPendingUsingOtherInput(false);
+
+				const isLastQuestion =
+					!!pendingUserInputRequest &&
+					pendingQuestionIndex >= pendingUserInputRequest.questions.length - 1;
+				if (isLastQuestion) {
+					await submitPendingRequestAnswers(nextAnswers);
+					return;
+				}
+
+				setPendingQuestionIndex((prev) => prev + 1);
+			},
+			[
+				activePendingQuestion,
+				isSubmittingPendingRequest,
+				pendingQuestionAnswers,
+				pendingQuestionIndex,
+				pendingUserInputRequest,
+				submitPendingRequestAnswers,
+			]
 		);
 
 		// In AI mode, collapse consecutive non-user entries into single response blocks
@@ -2915,6 +3184,7 @@ export const TerminalOutput = memo(
 							log={log}
 							index={index}
 							previousLogTimestamp={index > 0 ? filteredLogs[index - 1].timestamp : undefined}
+							hasLaterUserResponse={filteredLogs.slice(index + 1).some((entry) => entry.source === 'user')}
 							isTerminal={isTerminal}
 							isAIMode={isAIMode}
 							theme={theme}
@@ -2993,6 +3263,121 @@ export const TerminalOutput = memo(
 								activeTabId={activeTabId || undefined}
 							/>
 						)}
+
+					{showPendingUserInputRequest && activePendingQuestion && (
+						<div className="px-6 py-3">
+							<div
+								className="rounded-xl border p-4"
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									borderColor: theme.colors.accent,
+								}}
+							>
+								<div
+									className="text-[11px] uppercase tracking-[0.16em]"
+									style={{ color: theme.colors.accent }}
+								>
+									{activePendingQuestion.header} • Question {pendingQuestionIndex + 1} of{' '}
+									{pendingUserInputRequest.questions.length}
+								</div>
+								<div
+									className="mt-2 text-sm font-medium"
+									style={{ color: theme.colors.textMain }}
+								>
+									{activePendingQuestion.question}
+								</div>
+								<div className="mt-3 flex flex-col gap-2">
+									{(activePendingQuestion.options || []).map((option) => (
+										<button
+											key={option.label}
+											type="button"
+											className="w-full rounded-lg border px-3 py-2 text-left transition-colors"
+											style={{
+												borderColor: theme.colors.border,
+												backgroundColor: theme.colors.bgSidebar,
+												color: theme.colors.textMain,
+											}}
+											onClick={() => void handlePendingQuestionAnswer([option.label])}
+											disabled={isSubmittingPendingRequest}
+										>
+											<div className="text-sm font-medium">{option.label}</div>
+											<div
+												className="mt-1 text-xs"
+												style={{ color: theme.colors.textDim }}
+											>
+												{option.description}
+											</div>
+										</button>
+									))}
+								</div>
+								{activePendingQuestion.isOther && (
+									<div className="mt-3">
+										{!pendingUsingOtherInput ? (
+											<button
+												type="button"
+												className="rounded-lg border px-3 py-2 text-sm"
+												style={{
+													borderColor: theme.colors.border,
+													color: theme.colors.textDim,
+												}}
+												onClick={() => setPendingUsingOtherInput(true)}
+												disabled={isSubmittingPendingRequest}
+											>
+												Type another answer
+											</button>
+										) : (
+											<div className="flex flex-col gap-2">
+												<textarea
+													value={pendingManualAnswer}
+													onChange={(e) => setPendingManualAnswer(e.target.value)}
+													placeholder="Type your answer"
+													className="min-h-[88px] rounded-lg border px-3 py-2 text-sm outline-none"
+													style={{
+														borderColor: theme.colors.border,
+														backgroundColor: theme.colors.bgSidebar,
+														color: theme.colors.textMain,
+													}}
+												/>
+												<div className="flex gap-2">
+													<button
+														type="button"
+														className="rounded-lg px-3 py-2 text-sm"
+														style={{
+															backgroundColor: theme.colors.accent,
+															color: theme.colors.accentForeground,
+														}}
+														onClick={() =>
+															void handlePendingQuestionAnswer([pendingManualAnswer])
+														}
+														disabled={
+															isSubmittingPendingRequest || !pendingManualAnswer.trim()
+														}
+													>
+														Continue
+													</button>
+													<button
+														type="button"
+														className="rounded-lg border px-3 py-2 text-sm"
+														style={{
+															borderColor: theme.colors.border,
+															color: theme.colors.textDim,
+														}}
+														onClick={() => {
+															setPendingUsingOtherInput(false);
+															setPendingManualAnswer('');
+														}}
+														disabled={isSubmittingPendingRequest}
+													>
+														Cancel
+													</button>
+												</div>
+											</div>
+										)}
+									</div>
+								)}
+							</div>
+						</div>
+					)}
 
 					{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy */}
 					<div ref={logsEndRef} />

@@ -1,7 +1,9 @@
 import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
+import type { WebSocket } from 'ws';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+import type { UserInputRequest, UserInputResponse } from '../../shared/user-input-requests';
 import type {
 	TaskContract,
 	TaskContractInput,
@@ -18,6 +20,7 @@ export interface ProcessConfig {
 	cwd: string;
 	command: string;
 	args: string[];
+	agentSessionId?: string;
 	requiresPty?: boolean;
 	prompt?: string;
 	shell?: string;
@@ -48,6 +51,24 @@ export interface ProcessConfig {
 	taskContract?: TaskContract;
 	/** Resolved model seed for runtime UI state. */
 	resolvedModel?: string;
+	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+}
+
+export interface CodexAppServerState {
+	wsUrl?: string;
+	ws?: WebSocket;
+	nextClientRequestId: number;
+	threadId?: string;
+	turnId?: string;
+	pendingUserInputRequest?: UserInputRequest;
+	pendingUserInputResponse?: UserInputResponse;
+	agentMessagePhases: Map<string, string>;
+	currentTurnHadUserInputRequest?: boolean;
+	currentTurnCorrectionCount?: number;
+	pendingCorrectionPrompt?: string;
+	suppressedFinalAnswerText?: string;
+	startupTimeout?: NodeJS.Timeout;
+	turnCompleted?: boolean;
 }
 
 /**
@@ -88,6 +109,7 @@ export interface ManagedProcess {
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
 	taskContract?: TaskContract;
+	codexAppServerState?: CodexAppServerState;
 }
 
 export interface UsageTotals {
@@ -138,6 +160,7 @@ export interface ProcessManagerEvents {
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;
 	'task-lifecycle': (sessionId: string, event: TaskLifecycleEvent) => void;
 	'task-status': (sessionId: string, status: TaskDiagnosticsSummary) => void;
+	'user-input-request': (sessionId: string, request: UserInputRequest) => void;
 }
 
 export interface ToolExecution {

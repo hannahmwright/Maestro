@@ -2,6 +2,39 @@ import React, { memo } from 'react';
 import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Loader2 } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 
+function getSidebarRowStyle(
+	theme: Theme,
+	options?: {
+		active?: boolean;
+		keyboard?: boolean;
+	}
+): React.CSSProperties {
+	const active = options?.active ?? false;
+	const keyboard = options?.keyboard ?? false;
+
+	return {
+		borderColor: active ? `${theme.colors.accent}48` : keyboard ? `${theme.colors.accent}24` : 'transparent',
+		backgroundColor: active
+			? `${theme.colors.accent}12`
+			: keyboard
+				? `${theme.colors.bgActivity}55`
+				: 'transparent',
+		boxShadow: active ? `inset 0 1px 0 rgba(255,255,255,0.05)` : undefined,
+	};
+}
+
+function getSidebarPillStyle(
+	theme: Theme,
+	background: string,
+	color: string
+): React.CSSProperties {
+	return {
+		background,
+		color,
+		border: 'none',
+	};
+}
+
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
 // ============================================================================
@@ -114,14 +147,7 @@ export const SessionItem = memo(function SessionItem({
 			onClick={onSelect}
 			onContextMenu={onContextMenu}
 			className={getContainerClassName()}
-			style={{
-				borderColor: isActive || isKeyboardSelected ? theme.colors.accent : 'transparent',
-				backgroundColor: isActive
-					? theme.colors.bgActivity
-					: isKeyboardSelected
-						? theme.colors.bgActivity + '40'
-						: 'transparent',
-			}}
+			style={getSidebarRowStyle(theme, { active: isActive, keyboard: isKeyboardSelected })}
 		>
 			{/* Left side: Session name and metadata */}
 			<div className="min-w-0 flex-1">
@@ -182,7 +208,11 @@ export const SessionItem = memo(function SessionItem({
 						{variant === 'bookmark' && group && (
 							<span
 								className="text-[9px] px-1 py-0.5 rounded"
-								style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+								style={getSidebarPillStyle(
+									theme,
+									'rgba(255,255,255,0.12)',
+									theme.colors.textDim
+								)}
 							>
 								{group.name}
 							</span>
@@ -212,10 +242,7 @@ export const SessionItem = memo(function SessionItem({
 							{session.sessionSshRemoteConfig?.enabled && (
 								<div
 									className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center"
-									style={{
-										backgroundColor: theme.colors.warning + '30',
-										color: theme.colors.warning,
-									}}
+									style={getSidebarPillStyle(theme, `${theme.colors.warning}30`, theme.colors.warning)}
 									title="Running on remote host via SSH"
 								>
 									<Server className="w-3 h-3" />
@@ -223,10 +250,7 @@ export const SessionItem = memo(function SessionItem({
 							)}
 							<div
 								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-								style={{
-									backgroundColor: theme.colors.accent + '30',
-									color: theme.colors.accent,
-								}}
+								style={getSidebarPillStyle(theme, `${theme.colors.accent}30`, theme.colors.accent)}
 								title="Git repository"
 							>
 								GIT
@@ -236,14 +260,13 @@ export const SessionItem = memo(function SessionItem({
 						/* Plain directory: Show REMOTE or LOCAL (not both) */
 						<div
 							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-							style={{
-								backgroundColor: session.sessionSshRemoteConfig?.enabled
-									? theme.colors.warning + '30'
-									: theme.colors.textDim + '20',
-								color: session.sessionSshRemoteConfig?.enabled
-									? theme.colors.warning
-									: theme.colors.textDim,
-							}}
+							style={getSidebarPillStyle(
+								theme,
+								session.sessionSshRemoteConfig?.enabled
+									? `${theme.colors.warning}30`
+									: `${theme.colors.textDim}20`,
+								session.sessionSshRemoteConfig?.enabled ? theme.colors.warning : theme.colors.textDim
+							)}
 							title={
 								session.sessionSshRemoteConfig?.enabled
 									? 'Running on remote host via SSH'
@@ -258,10 +281,7 @@ export const SessionItem = memo(function SessionItem({
 				{isInBatch && (
 					<div
 						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase animate-pulse"
-						style={{
-							backgroundColor: theme.colors.warning + '30',
-							color: theme.colors.warning,
-						}}
+						style={getSidebarPillStyle(theme, `${theme.colors.warning}30`, theme.colors.warning)}
 						title="Auto Run active"
 					>
 						<Bot className="w-2.5 h-2.5" />
@@ -273,7 +293,7 @@ export const SessionItem = memo(function SessionItem({
 				{session.agentError && (
 					<div
 						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-						style={{ backgroundColor: theme.colors.error + '30', color: theme.colors.error }}
+						style={getSidebarPillStyle(theme, `${theme.colors.error}30`, theme.colors.error)}
 						title={`Error: ${session.agentError.message}`}
 					>
 						<AlertCircle className="w-2.5 h-2.5" />

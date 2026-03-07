@@ -17,6 +17,7 @@ import {
 	getSettingsStore,
 	getSessionsStore,
 	getGroupsStore,
+	getConductorsStore,
 	getAgentConfigsStore,
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
@@ -229,6 +230,7 @@ if (crashReportingEnabled && !isDevelopment) {
 // These are convenience variables - the actual stores are managed by ./stores module
 const sessionsStore = getSessionsStore();
 const groupsStore = getGroupsStore();
+const conductorsStore = getConductorsStore();
 const agentConfigsStore = getAgentConfigsStore();
 const windowStateStore = getWindowStateStore();
 const claudeSessionOriginsStore = getClaudeSessionOriginsStore();
@@ -534,6 +536,7 @@ function setupIpcHandlers() {
 		settingsStore: store,
 		sessionsStore,
 		groupsStore,
+		conductorsStore,
 		getWebServer: () => webServer,
 	});
 

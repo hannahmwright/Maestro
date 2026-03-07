@@ -542,7 +542,7 @@ describe('InputArea', () => {
 	});
 
 	describe('Read-only Mode', () => {
-		it('applies warning styling when tabReadOnlyMode is true in AI mode', () => {
+		it('keeps neutral input styling when tabReadOnlyMode is true in AI mode', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
 				tabReadOnlyMode: true,
@@ -550,12 +550,14 @@ describe('InputArea', () => {
 			});
 			const { container } = render(<InputArea {...props} />);
 
-			// Check border color is warning color
 			const inputContainer = container.querySelector('.flex-1.relative.border');
-			expect(inputContainer).toHaveStyle({ borderColor: mockTheme.colors.warning });
+			expect(inputContainer).toHaveStyle({
+				borderColor: mockTheme.colors.border,
+				backgroundColor: mockTheme.colors.bgMain,
+			});
 		});
 
-		it('applies warning styling when isAutoModeActive is true in AI mode', () => {
+		it('keeps neutral input styling when Auto Run is active in AI mode', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
 				isAutoModeActive: true,
@@ -563,22 +565,27 @@ describe('InputArea', () => {
 			const { container } = render(<InputArea {...props} />);
 
 			const inputContainer = container.querySelector('.flex-1.relative.border');
-			expect(inputContainer).toHaveStyle({ borderColor: mockTheme.colors.warning });
+			expect(inputContainer).toHaveStyle({
+				borderColor: mockTheme.colors.border,
+				backgroundColor: mockTheme.colors.bgMain,
+			});
 		});
 
-		it('does NOT apply warning styling in terminal mode even with tabReadOnlyMode', () => {
+		it('keeps neutral input styling in terminal mode even with tabReadOnlyMode', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'terminal' }),
 				tabReadOnlyMode: true,
 			});
 			const { container } = render(<InputArea {...props} />);
 
-			// Read-only mode only applies to AI mode
 			const inputContainer = container.querySelector('.flex-1.relative.border');
-			expect(inputContainer).not.toHaveStyle({ borderColor: mockTheme.colors.warning });
+			expect(inputContainer).toHaveStyle({
+				borderColor: mockTheme.colors.border,
+				backgroundColor: mockTheme.colors.bgMain,
+			});
 		});
 
-		it('does NOT apply warning styling in Ask mode when interaction modes are enabled', () => {
+		it('keeps neutral input styling in Ask mode when interaction modes are enabled', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
 				tabReadOnlyMode: true,
@@ -589,7 +596,10 @@ describe('InputArea', () => {
 			const { container } = render(<InputArea {...props} />);
 
 			const inputContainer = container.querySelector('.flex-1.relative.border');
-			expect(inputContainer).not.toHaveStyle({ borderColor: mockTheme.colors.warning });
+			expect(inputContainer).toHaveStyle({
+				borderColor: mockTheme.colors.border,
+				backgroundColor: mockTheme.colors.bgMain,
+			});
 		});
 
 		it('keeps read-only toggle enabled when AutoRun is active', () => {

@@ -500,7 +500,16 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 		const deleteWtSession = useModalStore.getState().getData('deleteWorktree')?.session ?? null;
 		if (!deleteWtSession) return;
 		// Remove the session AND delete the worktree from disk
-		const result = await window.maestro.git.removeWorktree(deleteWtSession.cwd, true);
+		const sshRemoteId =
+			deleteWtSession.sessionSshRemoteConfig?.enabled &&
+			deleteWtSession.sessionSshRemoteConfig.remoteId
+				? deleteWtSession.sessionSshRemoteConfig.remoteId
+				: undefined;
+		const result = await window.maestro.git.removeWorktree(
+			deleteWtSession.cwd,
+			true,
+			sshRemoteId
+		);
 		if (!result.success) {
 			throw new Error(result.error || 'Failed to remove worktree');
 		}

@@ -17,6 +17,7 @@
 import { ipcMain, dialog, shell, BrowserWindow, App } from 'electron';
 import * as path from 'path';
 import * as fsSync from 'fs';
+import * as os from 'os';
 import Store from 'electron-store';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
@@ -50,6 +51,71 @@ export interface SystemHandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	getWebServer: () => WebServer | null;
 	bootstrapStore?: Store<BootstrapSettings>;
+}
+
+interface SystemResourceSnapshot {
+	cpuCount: number;
+	loadAverage: [number, number, number];
+	freeMemoryMB: number;
+	availableMemoryMB: number;
+	totalMemoryMB: number;
+	platform: NodeJS.Platform;
+}
+
+function parseVmStatPageCount(stdout: string, label: string): number {
+	const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	const match = stdout.match(new RegExp(`${escapedLabel}:\\s+([\\d.]+)`, 'i'));
+	if (!match?.[1]) {
+		return 0;
+	}
+
+	return Number(match[1].replace(/\./g, '')) || 0;
+}
+
+async function getSystemResourceSnapshot(): Promise<SystemResourceSnapshot> {
+	const freeMemoryMB = Math.round(os.freemem() / 1024 / 1024);
+	const totalMemoryMB = Math.round(os.totalmem() / 1024 / 1024);
+
+	if (process.platform !== 'darwin') {
+		return {
+			cpuCount: os.cpus().length,
+			loadAverage: os.loadavg() as [number, number, number],
+			freeMemoryMB,
+			availableMemoryMB: freeMemoryMB,
+			totalMemoryMB,
+			platform: process.platform,
+		};
+	}
+
+	const vmStatResult = await execFileNoThrow('vm_stat', []);
+	if (vmStatResult.exitCode !== 0 || !vmStatResult.stdout) {
+		return {
+			cpuCount: os.cpus().length,
+			loadAverage: os.loadavg() as [number, number, number],
+			freeMemoryMB,
+			availableMemoryMB: freeMemoryMB,
+			totalMemoryMB,
+			platform: process.platform,
+		};
+	}
+
+	const pageSizeMatch = vmStatResult.stdout.match(/page size of (\d+) bytes/i);
+	const pageSizeBytes = pageSizeMatch?.[1] ? Number(pageSizeMatch[1]) : 16384;
+	const reusablePages =
+		parseVmStatPageCount(vmStatResult.stdout, 'Pages free') +
+		parseVmStatPageCount(vmStatResult.stdout, 'Pages inactive') +
+		parseVmStatPageCount(vmStatResult.stdout, 'Pages speculative') +
+		parseVmStatPageCount(vmStatResult.stdout, 'Pages purgeable');
+	const availableMemoryMB = Math.round((reusablePages * pageSizeBytes) / 1024 / 1024);
+
+	return {
+		cpuCount: os.cpus().length,
+		loadAverage: os.loadavg() as [number, number, number],
+		freeMemoryMB,
+		availableMemoryMB: Math.max(freeMemoryMB, availableMemoryMB),
+		totalMemoryMB,
+		platform: process.platform,
+	};
 }
 
 /**
@@ -416,6 +482,10 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 
 	ipcMain.handle('logger:getLogLevel', async () => {
 		return logger.getLogLevel();
+	});
+
+	ipcMain.handle('system:getResourceSnapshot', async () => {
+		return getSystemResourceSnapshot();
 	});
 
 	ipcMain.handle('logger:setMaxLogBuffer', async (_event, max: number) => {

@@ -145,6 +145,15 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					customPath?: string;
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
+					customModel?: string;
+					reasoningEffort?:
+						| 'default'
+						| 'none'
+						| 'minimal'
+						| 'low'
+						| 'medium'
+						| 'high'
+						| 'xhigh';
 				}
 			): Promise<string> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
@@ -161,6 +170,8 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						sessionCustomPath: options?.customPath,
 						sessionCustomArgs: options?.customArgs,
 						sessionCustomEnvVars: options?.customEnvVars,
+						sessionCustomModel: options?.customModel,
+						sessionReasoningEffort: options?.reasoningEffort,
 					},
 					processManager,
 					agentDetector

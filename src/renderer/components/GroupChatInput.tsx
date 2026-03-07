@@ -539,8 +539,8 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				<div
 					className="flex-1 relative border rounded-lg bg-opacity-50 flex flex-col"
 					style={{
-						borderColor: readOnlyMode ? theme.colors.warning : theme.colors.border,
-						backgroundColor: readOnlyMode ? `${theme.colors.warning}15` : theme.colors.bgMain,
+						borderColor: theme.colors.border,
+						backgroundColor: theme.colors.bgMain,
 					}}
 				>
 					<textarea

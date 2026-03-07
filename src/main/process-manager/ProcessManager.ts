@@ -14,8 +14,10 @@ import { ChildProcessSpawner } from './spawners/ChildProcessSpawner';
 import { DataBufferManager } from './handlers/DataBufferManager';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
+import { CodexAppServerBridge } from './CodexAppServerBridge';
 import { logger } from '../utils/logger';
 import type { SshRemoteConfig } from '../../shared/types';
+import type { UserInputRequestId, UserInputResponse } from '../../shared/user-input-requests';
 
 /**
  * ProcessManager orchestrates spawning and managing processes for sessions.
@@ -33,6 +35,7 @@ export class ProcessManager extends EventEmitter {
 	private childProcessSpawner: ChildProcessSpawner;
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
+	private codexAppServerBridge: CodexAppServerBridge;
 
 	constructor() {
 		super();
@@ -41,6 +44,7 @@ export class ProcessManager extends EventEmitter {
 		this.childProcessSpawner = new ChildProcessSpawner(this.processes, this, this.bufferManager);
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
+		this.codexAppServerBridge = new CodexAppServerBridge(this.processes, this);
 	}
 
 	/**
@@ -54,6 +58,10 @@ export class ProcessManager extends EventEmitter {
 		} else {
 			return this.childProcessSpawner.spawn(config);
 		}
+	}
+
+	spawnCodexAppServer(config: ProcessConfig): SpawnResult {
+		return this.codexAppServerBridge.spawn(config);
 	}
 
 	private shouldUsePty(config: ProcessConfig): boolean {
@@ -93,6 +101,10 @@ export class ProcessManager extends EventEmitter {
 			});
 			return false;
 		}
+	}
+
+	respondToUserInput(sessionId: string, requestId: UserInputRequestId, response: UserInputResponse) {
+		return this.codexAppServerBridge.respondToUserInput(sessionId, requestId, response);
 	}
 
 	/**
@@ -174,6 +186,7 @@ export class ProcessManager extends EventEmitter {
 				clearTimeout(process.dataBufferTimeout);
 			}
 			this.bufferManager.flushDataBuffer(sessionId);
+			process.codexAppServerState?.ws?.close();
 
 			if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.kill();

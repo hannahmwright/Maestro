@@ -14,6 +14,7 @@ import {
 	createSettingsApi,
 	createSessionsApi,
 	createGroupsApi,
+	createConductorsApi,
 	createAgentErrorApi,
 } from './settings';
 import { createContextApi } from './context';
@@ -29,6 +30,7 @@ import {
 	createPowerApi,
 	createUpdatesApi,
 	createAppApi,
+	createSystemApi,
 } from './system';
 import { createSshRemoteApi } from './sshRemote';
 import { createLoggerApi } from './logger';
@@ -63,6 +65,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Groups persistence API
 	groups: createGroupsApi(),
+
+	// Conductors persistence API
+	conductors: createConductorsApi(),
 
 	// Process/Session API
 	process: createProcessApi(),
@@ -175,6 +180,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// App lifecycle API
 	app: createAppApi(),
 
+	// System telemetry API
+	system: createSystemApi(),
+
 	// Synchronous platform string — process.platform never changes at runtime
 	platform: process.platform,
 
@@ -203,6 +211,7 @@ export {
 	createSettingsApi,
 	createSessionsApi,
 	createGroupsApi,
+	createConductorsApi,
 	createAgentErrorApi,
 	// Context
 	createContextApi,

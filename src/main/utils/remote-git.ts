@@ -114,6 +114,25 @@ export async function execGit(
 }
 
 /**
+ * Execute an arbitrary command on a remote host via SSH.
+ */
+export async function execRemoteCommand(
+	command: string,
+	args: string[],
+	sshRemote: SshRemoteConfig,
+	remoteCwd?: string
+): Promise<ExecResult> {
+	const sshCommand = await buildSshCommand(sshRemote, {
+		command,
+		args,
+		cwd: remoteCwd,
+		env: sshRemote.remoteEnv,
+	});
+
+	return execFileNoThrow(sshCommand.command, sshCommand.args);
+}
+
+/**
  * Execute a shell command on a remote host via SSH.
  *
  * @param shellCommand The shell command to execute on the remote
@@ -132,6 +151,69 @@ async function execRemoteShellCommand(
 
 	const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
 	return execFileNoThrow(sshCommand.command, sshCommand.args);
+}
+
+/**
+ * Remove a worktree directory on a remote host.
+ *
+ * Tries `git worktree remove` first and falls back to `rm -rf` when forced.
+ */
+export async function removeWorktreeRemote(
+	worktreePath: string,
+	force: boolean,
+	sshRemote: SshRemoteConfig
+): Promise<RemoteGitResult<{ hasUncommittedChanges?: boolean }>> {
+	const existsResult = await execRemoteShellCommand(
+		`test -d '${worktreePath}' && echo "EXISTS" || echo "NOT_EXISTS"`,
+		sshRemote
+	);
+
+	if (existsResult.exitCode !== 0) {
+		return {
+			success: false,
+			error: existsResult.stderr || 'Failed to check worktree existence',
+		};
+	}
+
+	if (existsResult.stdout.trim() === 'NOT_EXISTS') {
+		return { success: true, data: {} };
+	}
+
+	const removeArgs = force
+		? ['worktree', 'remove', '--force', worktreePath]
+		: ['worktree', 'remove', worktreePath];
+	const removeResult = await execGitRemote(removeArgs, {
+		sshRemote,
+		remoteCwd: worktreePath,
+	});
+
+	if (removeResult.exitCode === 0) {
+		return { success: true, data: {} };
+	}
+
+	if (!force) {
+		const statusResult = await execGitRemote(['status', '--porcelain'], {
+			sshRemote,
+			remoteCwd: worktreePath,
+		});
+		if (statusResult.exitCode === 0 && statusResult.stdout.trim().length > 0) {
+			return {
+				success: false,
+				error: 'Worktree has uncommitted changes. Use force option to delete anyway.',
+				data: { hasUncommittedChanges: true },
+			};
+		}
+	}
+
+	const rmResult = await execRemoteShellCommand(`rm -rf '${worktreePath}'`, sshRemote);
+	if (rmResult.exitCode !== 0) {
+		return {
+			success: false,
+			error: rmResult.stderr || removeResult.stderr || 'Failed to remove remote worktree',
+		};
+	}
+
+	return { success: true, data: {} };
 }
 
 /**

@@ -21,6 +21,7 @@ import {
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
+	ConductorsData,
 } from './persistence';
 import {
 	registerSystemHandlers,
@@ -150,6 +151,7 @@ export interface HandlerDependencies {
 	// Persistence-specific dependencies
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
+	conductorsStore: Store<ConductorsData>;
 	getWebServer: () => WebServer | null;
 	// System-specific dependencies
 	tunnelManager: TunnelManagerType;
@@ -190,6 +192,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
+		conductorsStore: deps.conductorsStore,
 		getWebServer: deps.getWebServer,
 	});
 	registerSystemHandlers({

@@ -14,6 +14,14 @@ export type {
 	AgentErrorRecovery,
 	ToolType,
 	Group,
+	Conductor,
+	ConductorTask,
+	ConductorRun,
+	ConductorRunEvent,
+	ConductorStatus,
+	ConductorResourceProfile,
+	ConductorTaskStatus,
+	ConductorTaskPriority,
 	UsageStats,
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
@@ -37,7 +45,16 @@ import type {
 	ToolType,
 	ThinkingMode,
 	ReasoningEffort,
+	Conductor,
+	ConductorTask,
+	ConductorRun,
+	ConductorRunEvent,
+	ConductorStatus,
+	ConductorResourceProfile,
+	ConductorTaskStatus,
+	ConductorTaskPriority,
 } from '../../shared/types';
+import type { UserInputRequest } from '../../shared/user-input-requests';
 
 // Re-export group chat types from shared location
 export type {
@@ -435,6 +452,7 @@ export interface AITab {
 	autoSendOnActivate?: boolean; // When true, automatically send inputValue when tab becomes active
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
+	pendingUserInputRequest?: UserInputRequest | null; // Active Codex request_user_input questionnaire for this tab
 }
 
 // A single "thinking item" — one busy tab within a session.

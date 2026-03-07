@@ -43,6 +43,15 @@ export interface GroomingProcessManager {
 		sessionCustomPath?: string;
 		sessionCustomArgs?: string;
 		sessionCustomEnvVars?: Record<string, string>;
+		sessionCustomModel?: string;
+		sessionReasoningEffort?:
+			| 'default'
+			| 'none'
+			| 'minimal'
+			| 'low'
+			| 'medium'
+			| 'high'
+			| 'xhigh';
 	}): { pid: number; success?: boolean } | null;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
@@ -129,6 +138,17 @@ export interface GroomContextOptions {
 	sessionCustomArgs?: string;
 	/** Custom environment variables for the agent */
 	sessionCustomEnvVars?: Record<string, string>;
+	/** Custom model for the agent */
+	sessionCustomModel?: string;
+	/** Reasoning effort override */
+	sessionReasoningEffort?:
+		| 'default'
+		| 'none'
+		| 'minimal'
+		| 'low'
+		| 'medium'
+		| 'high'
+		| 'xhigh';
 }
 
 /**
@@ -170,6 +190,8 @@ export async function groomContext(
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		sessionCustomModel,
+		sessionReasoningEffort,
 	} = options;
 
 	const groomerSessionId = `groomer-${uuidv4()}`;
@@ -332,6 +354,8 @@ export async function groomContext(
 			sessionCustomPath,
 			sessionCustomArgs,
 			sessionCustomEnvVars,
+			sessionCustomModel,
+			sessionReasoningEffort,
 		});
 
 		if (!spawnResult || spawnResult.pid <= 0) {

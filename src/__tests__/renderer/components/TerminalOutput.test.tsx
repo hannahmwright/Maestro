@@ -12,7 +12,6 @@
 
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TerminalOutput } from '../../../renderer/components/TerminalOutput';
 import type { Session, Theme, LogEntry } from '../../../renderer/types';
@@ -322,6 +321,126 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('Sources (2)')).toBeInTheDocument();
 			expect(screen.getByText(/Top updates:/)).toBeInTheDocument();
 			expect(screen.queryByText(/Source: https:\/\/apnews\.com\/world/)).not.toBeInTheDocument();
+		});
+
+		it('walks through multiple-choice questions and sends the combined answers at the end', async () => {
+			const onReplayMessage = vi.fn();
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Help me decide', source: 'user' }),
+				createLogEntry({
+					id: 'resp-1',
+					source: 'stdout',
+					text: [
+						'Q1: Which runtime should we use?',
+						'',
+						'**Recommended:** Option B - Better ecosystem fit.',
+						'',
+						'| Option | Description |',
+						'| ------ | ----------- |',
+						'| A | Bun |',
+						'| B | Node.js |',
+						'',
+						'Q2: Which database should we use?',
+						'',
+						'| Option | Description |',
+						'| ------ | ----------- |',
+						'| A | SQLite |',
+						'| B | Postgres |',
+						'| Custom | Type your own answer |',
+					].join('\n'),
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, onReplayMessage })} />);
+
+			const button = screen.getByRole('button', { name: /Option B \(Recommended\)/i });
+			expect(button).toBeInTheDocument();
+			expect(screen.getByText('Question 1 of 2')).toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(button);
+			});
+
+			expect(onReplayMessage).not.toHaveBeenCalled();
+			expect(screen.getByText('Question 2 of 2')).toBeInTheDocument();
+
+			const secondButton = screen.getByRole('button', { name: /Option B.*Postgres/i });
+			await act(async () => {
+				fireEvent.click(secondButton);
+			});
+
+			expect(onReplayMessage).toHaveBeenCalledWith('Q1: B\nQ2: B');
+		});
+
+		it('walks through a live Codex questionnaire and submits structured answers at the end', async () => {
+			const onSubmitUserInputRequest = vi.fn().mockResolvedValue(undefined);
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'codex-123',
+						logs: [createLogEntry({ id: 'user-1', text: 'Help me decide', source: 'user' })],
+						isUnread: false,
+						pendingUserInputRequest: {
+							requestId: 'request-1',
+							threadId: 'thread-1',
+							turnId: 'turn-1',
+							itemId: 'item-1',
+							questions: [
+								{
+									id: 'runtime',
+									header: 'Runtime',
+									question: 'Which runtime should we use?',
+									options: [
+										{ label: 'Node.js', description: 'Best ecosystem fit' },
+										{ label: 'Bun', description: 'Faster startup' },
+									],
+								},
+								{
+									id: 'database',
+									header: 'Database',
+									question: 'Which database should we use?',
+									options: [
+										{ label: 'Postgres', description: 'Scales cleanly' },
+										{ label: 'SQLite', description: 'Simpler local setup' },
+									],
+								},
+							],
+						},
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session, onSubmitUserInputRequest })} />);
+
+			expect(screen.getByText('Runtime • Question 1 of 2')).toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /Node\.js/i }));
+			});
+
+			expect(onSubmitUserInputRequest).not.toHaveBeenCalled();
+			expect(screen.getByText('Database • Question 2 of 2')).toBeInTheDocument();
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /Postgres/i }));
+			});
+
+			expect(onSubmitUserInputRequest).toHaveBeenCalledWith(
+				expect.objectContaining({ requestId: 'request-1' }),
+				{
+					answers: {
+						runtime: { answers: ['Node.js'] },
+						database: { answers: ['Postgres'] },
+					},
+				}
+			);
 		});
 	});
 

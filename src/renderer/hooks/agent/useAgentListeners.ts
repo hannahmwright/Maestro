@@ -49,6 +49,7 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { autorunSynopsisPrompt } from '../../../prompts';
 import type { WebRemoteLogEntry } from '../../../shared/remote-web';
+import type { UserInputRequest } from '../../../shared/user-input-requests';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 
@@ -884,6 +885,25 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				} | null = null;
 
 				if (isFromAi) {
+					if (tabIdFromSession) {
+						setSessions((prev) =>
+							prev.map((session) => {
+								if (session.id !== actualSessionId) return session;
+								return {
+									...session,
+									aiTabs: session.aiTabs.map((tab) =>
+										tab.id === tabIdFromSession
+											? {
+													...tab,
+													pendingUserInputRequest: null,
+												}
+											: tab
+									),
+								};
+							})
+						);
+					}
+
 					const currentSession = getSessions().find((s) => s.id === actualSessionId);
 					if (currentSession) {
 						if (
@@ -2357,6 +2377,33 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			}
 		);
 
+		const unsubscribeUserInputRequest = window.maestro.process.onUserInputRequest?.(
+			(sessionId: string, request: UserInputRequest) => {
+				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+				if (!aiTabMatch) return;
+
+				const actualSessionId = aiTabMatch[1];
+				const tabId = aiTabMatch[2];
+
+				setSessions((prev) =>
+					prev.map((session) => {
+						if (session.id !== actualSessionId) return session;
+						return {
+							...session,
+							aiTabs: session.aiTabs.map((tab) =>
+								tab.id === tabId
+									? {
+											...tab,
+											pendingUserInputRequest: request,
+										}
+									: tab
+							),
+						};
+					})
+				);
+			}
+		);
+
 		// ================================================================
 		// Cleanup — unsubscribe all listeners on unmount
 		// ================================================================
@@ -2379,6 +2426,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeThinkingChunk?.();
 			unsubscribeSshRemote?.();
 			unsubscribeToolExecution?.();
+			unsubscribeUserInputRequest?.();
 			// Cancel any pending thinking chunk RAF and clear buffer
 			if (thinkingChunkRafIdRef.current !== null) {
 				cancelAnimationFrame(thinkingChunkRafIdRef.current);

@@ -55,6 +55,7 @@ import type {
 	ReasoningEffort,
 	AgentExecutionMode,
 } from '../types';
+import type { UserInputRequest, UserInputResponse } from '../../shared/user-input-requests';
 
 interface SlashCommand {
 	command: string;
@@ -223,6 +224,10 @@ interface MainPanelProps {
 	onOpenPromptComposer?: () => void;
 	// Replay a user message (AI mode)
 	onReplayMessage?: (text: string, images?: string[]) => void;
+	onSubmitUserInputRequest?: (
+		request: UserInputRequest,
+		response: UserInputResponse
+	) => Promise<void>;
 	// File tree for linking file references in AI responses
 	fileTree?: import('../types/fileTree').FileNode[];
 	// Callback when a file link is clicked in AI response
@@ -1758,6 +1763,7 @@ export const MainPanel = React.memo(
 											markdownEditMode={chatRawTextMode}
 											setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 											onReplayMessage={props.onReplayMessage}
+											onSubmitUserInputRequest={props.onSubmitUserInputRequest}
 											fileTree={props.fileTree}
 											cwd={
 												activeSession.cwd.startsWith(activeSession.fullPath)

@@ -24,6 +24,7 @@ import { getWindowsShellForAgentExecution } from '../../process-manager/utils/sh
 import { readLocalCodexModel, readRemoteCodexModel } from '../../utils/codex-config';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
+import type { UserInputRequestId, UserInputResponse } from '../../../shared/user-input-requests';
 import {
 	isCoreUpgradesEnabled,
 	coreUpgradeOrchestrator,
@@ -604,7 +605,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
 
-				const result = processManager.spawn({
+				const spawnConfig = {
 					...config,
 					command: commandToSpawn,
 					args: argsToSpawn,
@@ -637,7 +638,13 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sshRemoteHost: sshRemoteUsed?.host,
 					// SSH stdin script - the entire command is sent via stdin to /bin/bash on remote
 					sshStdinScript,
-				});
+				};
+
+				const useCodexAppServerBridge =
+					config.toolType === 'codex' && config.readOnlyMode === true && !sshRemoteUsed;
+				const result = useCodexAppServerBridge
+					? processManager.spawnCodexAppServer(spawnConfig)
+					: processManager.spawn(spawnConfig);
 
 				logger.info(`Process spawned successfully`, LOG_CONTEXT, {
 					sessionId: config.sessionId,
@@ -694,6 +701,17 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			});
 			return processManager.write(sessionId, data);
 		})
+	);
+
+	ipcMain.handle(
+		'process:respond-user-input',
+		withIpcErrorLogging(
+			handlerOpts('respond-user-input'),
+			async (sessionId: string, requestId: UserInputRequestId, response: UserInputResponse) => {
+				const processManager = requireProcessManager(getProcessManager);
+				return processManager.respondToUserInput(sessionId, requestId, response);
+			}
+		)
 	);
 
 	// Send SIGINT to a process

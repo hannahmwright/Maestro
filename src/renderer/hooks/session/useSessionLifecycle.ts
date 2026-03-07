@@ -21,6 +21,7 @@ import type { ToolType } from '../../../shared/types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useConductorStore } from '../../stores/conductorStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
@@ -87,6 +88,9 @@ const selectGroups = (s: ReturnType<typeof useSessionStore.getState>) => s.group
 const selectInitialLoadComplete = (s: ReturnType<typeof useSessionStore.getState>) =>
 	s.initialLoadComplete;
 const selectActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) => s.activeSessionId;
+const selectConductors = (s: ReturnType<typeof useConductorStore.getState>) => s.conductors;
+const selectConductorTasks = (s: ReturnType<typeof useConductorStore.getState>) => s.tasks;
+const selectConductorRuns = (s: ReturnType<typeof useConductorStore.getState>) => s.runs;
 
 // ============================================================================
 // Hook
@@ -101,6 +105,9 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const groups = useSessionStore(selectGroups);
 	const initialLoadComplete = useSessionStore(selectInitialLoadComplete);
 	const activeSessionId = useSessionStore(selectActiveSessionId);
+	const conductors = useConductorStore(selectConductors);
+	const conductorTasks = useConductorStore(selectConductorTasks);
+	const conductorRuns = useConductorStore(selectConductorRuns);
 
 	// ====================================================================
 	// Callbacks
@@ -455,6 +462,16 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			window.maestro.groups.setAll(groups);
 		}
 	}, [groups, initialLoadComplete]);
+
+	useEffect(() => {
+		if (initialLoadComplete && window.maestro.conductors) {
+			window.maestro.conductors.setAll({
+				conductors,
+				tasks: conductorTasks,
+				runs: conductorRuns,
+			});
+		}
+	}, [conductors, conductorTasks, conductorRuns, initialLoadComplete]);
 
 	// Track navigation history when session or AI tab changes
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);

@@ -123,6 +123,20 @@ function typeInTextarea(textarea: HTMLTextAreaElement, value: string) {
 // =============================================================================
 
 describe('GroupChatInput', () => {
+	describe('input styling', () => {
+		it('keeps the chat input neutral in read-only mode', () => {
+			const { container } = render(
+				<GroupChatInput {...createDefaultProps({ readOnlyMode: true, setReadOnlyMode: vi.fn() })} />
+			);
+
+			const inputContainer = container.querySelector('.flex-1.relative.border');
+			expect(inputContainer).toHaveStyle({
+				borderColor: createMockTheme().colors.border,
+				backgroundColor: createMockTheme().colors.bgMain,
+			});
+		});
+	});
+
 	describe('@mention autocomplete', () => {
 		it('shows mention dropdown when typing @', () => {
 			const sessions = [

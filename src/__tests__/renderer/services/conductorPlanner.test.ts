@@ -1,0 +1,98 @@
+import { describe, expect, it } from 'vitest';
+import {
+	buildConductorPlannerPrompt,
+	parseConductorPlannerResponse,
+} from '../../../renderer/services/conductorPlanner';
+import type { Session } from '../../../renderer/types';
+
+function createTemplateSession(): Session {
+	return {
+		id: 'session-1',
+		groupId: 'group-1',
+		name: 'Template Agent',
+		toolType: 'codex',
+		state: 'idle',
+		cwd: '/tmp/project',
+		fullPath: '/tmp/project',
+		projectRoot: '/tmp/project',
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		aiTabs: [],
+		activeTabId: '',
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: [],
+		unifiedClosedTabHistory: [],
+	};
+}
+
+describe('conductorPlanner', () => {
+	it('builds a planner prompt with backlog and operator notes', () => {
+		const prompt = buildConductorPlannerPrompt({
+			groupName: 'Maestro',
+			templateSession: createTemplateSession(),
+			manualTasks: [
+				{
+					title: 'Polish conductor board',
+					description: 'Improve planning UX',
+					priority: 'high',
+					status: 'ready',
+				},
+			],
+			operatorNotes: 'Keep the plan incremental.',
+		});
+
+		expect(prompt).toContain('Maestro');
+		expect(prompt).toContain('Polish conductor board');
+		expect(prompt).toContain('Keep the plan incremental.');
+	});
+
+	it('parses JSON fenced planner output', () => {
+		const parsed = parseConductorPlannerResponse(`
+\`\`\`json
+{
+	"summary": "Plan ready for review.",
+	"tasks": [
+		{
+			"title": "Add planner composer",
+			"description": "Create the notes entry UI.",
+			"priority": "high",
+			"acceptanceCriteria": ["Notes can be entered before generation."],
+			"dependsOn": [],
+			"scopePaths": ["src/renderer/components/ConductorPanel.tsx"]
+		}
+	]
+}
+\`\`\`
+`);
+
+		expect(parsed.summary).toBe('Plan ready for review.');
+		expect(parsed.tasks).toHaveLength(1);
+		expect(parsed.tasks[0]).toMatchObject({
+			title: 'Add planner composer',
+			priority: 'high',
+			scopePaths: ['src/renderer/components/ConductorPanel.tsx'],
+		});
+	});
+
+	it('throws when planner returns no usable tasks', () => {
+		expect(() =>
+			parseConductorPlannerResponse(JSON.stringify({ summary: 'Nothing', tasks: [] }))
+		).toThrow('Planner returned no usable tasks.');
+	});
+});

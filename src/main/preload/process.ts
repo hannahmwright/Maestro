@@ -22,6 +22,11 @@ import type {
 	TaskDiagnosticsSummary,
 	DebugFixLoopResult,
 } from '../core-upgrades/types';
+import type {
+	UserInputRequest,
+	UserInputRequestId,
+	UserInputResponse,
+} from '../../shared/user-input-requests';
 
 /**
  * Helper to log via the main process logger.
@@ -179,6 +184,13 @@ export function createProcessApi() {
 		write: (sessionId: string, data: string): Promise<boolean> =>
 			ipcRenderer.invoke('process:write', sessionId, data),
 
+		respondToUserInput: (
+			sessionId: string,
+			requestId: UserInputRequestId,
+			response: UserInputResponse
+		): Promise<boolean> =>
+			ipcRenderer.invoke('process:respond-user-input', sessionId, requestId, response),
+
 		/**
 		 * Send interrupt signal (Ctrl+C) to a process
 		 */
@@ -291,6 +303,15 @@ export function createProcessApi() {
 				callback(sessionId, toolEvent);
 			ipcRenderer.on('process:tool-execution', handler);
 			return () => ipcRenderer.removeListener('process:tool-execution', handler);
+		},
+
+		onUserInputRequest: (
+			callback: (sessionId: string, request: UserInputRequest) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, request: UserInputRequest) =>
+				callback(sessionId, request);
+			ipcRenderer.on('process:user-input-request', handler);
+			return () => ipcRenderer.removeListener('process:user-input-request', handler);
 		},
 
 		/**

@@ -47,6 +47,7 @@ const DirectorNotesModal = lazy(() =>
 // Group Chat Components
 import { GroupChatPanel } from './components/GroupChatPanel';
 import { GroupChatRightPanel } from './components/GroupChatRightPanel';
+import { ConductorPanel } from './components/ConductorPanel';
 
 // Import custom hooks
 import {
@@ -143,6 +144,7 @@ import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
+import { useConductorStore } from './stores/conductorStore';
 import { useBatchStore } from './stores/batchStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import { useSessionStore, selectActiveSession } from './stores/sessionStore';
@@ -181,6 +183,7 @@ import {
 import { useUIStore } from './stores/uiStore';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
+import type { UserInputRequest, UserInputResponse } from '../shared/user-input-requests';
 
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
@@ -428,6 +431,7 @@ function MaestroConsoleInner() {
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// sessionsLoaded moved to useQueueProcessing hook
 	const activeSession = useSessionStore(selectActiveSession);
+	const activeConductorGroupId = useConductorStore((s) => s.activeConductorGroupId);
 
 	// Actions — stable references from store, never trigger re-renders
 	const {
@@ -556,6 +560,7 @@ function MaestroConsoleInner() {
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
 	} = useGroupChatStore.getState();
+	const { setActiveConductorGroupId, syncWithGroups } = useConductorStore.getState();
 
 	// --- APP INITIALIZATION (extracted hook, Phase 2G) ---
 	const { ghCliAvailable, sshRemoteConfigs, speckitCommands, openspecCommands, saveFileGistUrl } =
@@ -565,10 +570,15 @@ function MaestroConsoleInner() {
 	const setActiveSessionId = useCallback(
 		(id: string) => {
 			setActiveGroupChatId(null); // Dismiss group chat when selecting an agent
+			setActiveConductorGroupId(null); // Dismiss conductor when selecting an agent
 			setActiveSessionIdFromContext(id);
 		},
-		[setActiveSessionIdFromContext, setActiveGroupChatId]
+		[setActiveSessionIdFromContext, setActiveGroupChatId, setActiveConductorGroupId]
 	);
+
+	useEffect(() => {
+		syncWithGroups(groups);
+	}, [groups, syncWithGroups]);
 
 	// Completion states from InputContext (these change infrequently)
 	const {
@@ -825,6 +835,14 @@ function MaestroConsoleInner() {
 		handleCloseEditGroupChatModal,
 		handleCloseGroupChatInfo,
 	} = useGroupChatHandlers();
+
+	const handleOpenConductor = useCallback(
+		(groupId: string) => {
+			setActiveGroupChatId(null);
+			setActiveConductorGroupId(groupId);
+		},
+		[setActiveGroupChatId, setActiveConductorGroupId]
+	);
 
 	// --- MODAL HANDLERS (open/close, error recovery, lightbox, celebrations) ---
 	const {
@@ -1339,6 +1357,63 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	const handleSubmitUserInputRequest = useCallback(
+		async (request: UserInputRequest, response: UserInputResponse) => {
+			if (!activeSession?.id || !activeSession.activeTabId) {
+				return;
+			}
+
+			const processSessionId = `${activeSession.id}-ai-${activeSession.activeTabId}`;
+			const success = await window.maestro.process.respondToUserInput(
+				processSessionId,
+				request.requestId,
+				response
+			);
+			if (!success) {
+				throw new Error('Failed to submit Codex questionnaire response.');
+			}
+
+			const submittedAnswerText = request.questions
+				.map((question, index) => {
+					const answers = response.answers[question.id]?.answers ?? [];
+					if (answers.length === 0) return null;
+					const label = question.header?.trim() || `Question ${index + 1}`;
+					return `${label}: ${answers.join(', ')}`;
+				})
+				.filter((line): line is string => !!line)
+				.join('\n');
+
+			setSessions((prev) =>
+				prev.map((session) => {
+					if (session.id !== activeSession.id) return session;
+					return {
+						...session,
+						aiTabs: session.aiTabs.map((tab) =>
+							tab.id === activeSession.activeTabId
+								? {
+										...tab,
+										logs: submittedAnswerText
+											? [
+													...tab.logs,
+													{
+														id: generateId(),
+														timestamp: Date.now(),
+														source: 'user',
+														text: submittedAnswerText,
+													},
+												]
+											: tab.logs,
+										pendingUserInputRequest: null,
+									}
+								: tab
+						),
+					};
+				})
+			);
+		},
+		[activeSession?.activeTabId, activeSession?.id, setSessions]
+	);
 
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
@@ -2193,6 +2268,7 @@ function MaestroConsoleInner() {
 		handleMainPanelInputBlur,
 		handleOpenPromptComposer,
 		handleReplayMessage,
+		handleSubmitUserInputRequest,
 		handleMainPanelFileClick,
 		handleNavigateBack: handleFileTabNavigateBack,
 		handleNavigateForward: handleFileTabNavigateForward,
@@ -2287,6 +2363,7 @@ function MaestroConsoleInner() {
 		handleToggleWorktreeExpanded,
 		openWizardModal,
 		handleStartTour,
+		handleOpenConductor,
 
 		// Group Chat handlers
 		handleOpenGroupChat,
@@ -2412,7 +2489,14 @@ function MaestroConsoleInner() {
 							} as React.CSSProperties
 						}
 					>
-						{activeGroupChatId ? (
+						{activeConductorGroupId ? (
+							<span
+								className="text-xs select-none opacity-50"
+								style={{ color: theme.colors.textDim }}
+							>
+								Conductor: {groups.find((g) => g.id === activeConductorGroupId)?.name || 'Unknown'}
+							</span>
+						) : activeGroupChatId ? (
 							<span
 								className="text-xs select-none opacity-50"
 								style={{ color: theme.colors.textDim }}
@@ -2960,7 +3044,7 @@ function MaestroConsoleInner() {
 				)}
 
 				{/* --- EMPTY STATE VIEW (when no sessions) --- */}
-				{sessions.length === 0 && !isMobileLandscape ? (
+				{sessions.length === 0 && groups.length === 0 && !isMobileLandscape ? (
 					<EmptyStateView
 						theme={theme}
 						shortcuts={shortcuts}
@@ -2978,7 +3062,7 @@ function MaestroConsoleInner() {
 				) : null}
 
 				{/* --- LEFT SIDEBAR (hidden in mobile landscape and when no sessions) --- */}
-				{!isMobileLandscape && sessions.length > 0 && (
+				{!isMobileLandscape && (sessions.length > 0 || groups.length > 0) && (
 					<ErrorBoundary>
 						<SessionList {...sessionListProps} />
 					</ErrorBoundary>
@@ -3117,13 +3201,27 @@ function MaestroConsoleInner() {
 						</>
 					)}
 
+				{/* --- CONDUCTOR VIEW (group-owned orchestration workspace) --- */}
+				{!logViewerOpen &&
+					!activeGroupChatId &&
+					activeConductorGroupId &&
+					groups.find((g) => g.id === activeConductorGroupId) && (
+						<div className="flex-1 flex flex-col min-w-0">
+							<ConductorPanel theme={theme} groupId={activeConductorGroupId} />
+						</div>
+					)}
+
 				{/* --- CENTER WORKSPACE (hidden when no sessions, group chat is active, or log viewer is open) --- */}
-				{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+				{sessions.length > 0 && !activeGroupChatId && !activeConductorGroupId && !logViewerOpen && (
 					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 				)}
 
 				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
-				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+				{!isMobileLandscape &&
+					sessions.length > 0 &&
+					!activeGroupChatId &&
+					!activeConductorGroupId &&
+					!logViewerOpen && (
 					<ErrorBoundary>
 						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
 					</ErrorBoundary>

@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useConductorStore } from '../../stores/conductorStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
@@ -53,6 +54,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		[]
 	);
 	const { setGroupChats } = useMemo(() => useGroupChatStore.getState(), []);
+	const { setConductors, setTasks, setRuns, syncWithGroups } = useMemo(
+		() => useConductorStore.getState(),
+		[]
+	);
 
 	// --- initialLoadComplete proxy ref ---
 	// Bridges ref API (.current = true) to store boolean so both ref-style
@@ -341,6 +346,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			try {
 				const savedSessions = await window.maestro.sessions.getAll();
 				const savedGroups = await window.maestro.groups.getAll();
+				const savedConductors = window.maestro.conductors
+					? await window.maestro.conductors.getAll()
+					: { conductors: [], tasks: [], runs: [] };
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
@@ -378,6 +386,11 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					setGroups([]);
 				}
 
+				setConductors(savedConductors?.conductors || []);
+				setTasks(savedConductors?.tasks || []);
+				setRuns(savedConductors?.runs || []);
+				syncWithGroups(savedGroups || []);
+
 				// Load group chats
 				try {
 					const savedGroupChats = await window.maestro.groupChat.list();
@@ -390,6 +403,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				console.error('Failed to load sessions/groups:', e);
 				setSessions([]);
 				setGroups([]);
+				setConductors([]);
+				setTasks([]);
+				setRuns([]);
+				syncWithGroups([]);
 			} finally {
 				// Mark initial load as complete to enable persistence
 				initialLoadComplete.current = true;

@@ -124,6 +124,114 @@ export interface WorktreeRunTarget {
 	createPROnCompletion: boolean;
 }
 
+// ============================================================================
+// Conductor
+// ============================================================================
+
+export type ConductorStatus =
+	| 'needs_setup'
+	| 'idle'
+	| 'planning'
+	| 'awaiting_approval'
+	| 'running'
+	| 'blocked'
+	| 'integrating'
+	| 'attention_required'
+	| 'completed'
+	| 'cancelled';
+
+export type ConductorResourceProfile = 'conservative' | 'balanced' | 'aggressive';
+
+export type ConductorTaskStatus =
+	| 'draft'
+	| 'ready'
+	| 'running'
+	| 'blocked'
+	| 'needs_review'
+	| 'done';
+
+export type ConductorTaskPriority = 'low' | 'medium' | 'high' | 'critical';
+
+export interface Conductor {
+	groupId: string;
+	templateSessionId: string | null;
+	status: ConductorStatus;
+	resourceProfile: ConductorResourceProfile;
+	autoExecuteOnPlanCreation?: boolean;
+	validationCommand?: string;
+	publishPolicy?: 'none' | 'manual_pr';
+	deleteWorkerBranchesOnSuccess?: boolean;
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface ConductorTask {
+	id: string;
+	groupId: string;
+	title: string;
+	description: string;
+	acceptanceCriteria: string[];
+	priority: ConductorTaskPriority;
+	status: ConductorTaskStatus;
+	dependsOn: string[];
+	scopePaths: string[];
+	source: 'manual' | 'planner' | 'worker_followup';
+	createdAt: number;
+	updatedAt: number;
+}
+
+export interface ConductorRunEvent {
+	id: string;
+	runId: string;
+	groupId: string;
+	type:
+		| 'planning_started'
+		| 'plan_generated'
+		| 'plan_approved'
+		| 'planning_failed'
+		| 'execution_started'
+		| 'task_started'
+		| 'task_completed'
+		| 'task_blocked'
+		| 'execution_completed'
+		| 'execution_failed'
+		| 'integration_started'
+		| 'branch_merged'
+		| 'integration_conflict'
+		| 'integration_completed'
+		| 'validation_started'
+		| 'validation_passed'
+		| 'validation_failed'
+		| 'cleanup_completed'
+		| 'pr_created';
+	message: string;
+	createdAt: number;
+}
+
+export interface ConductorRun {
+	id: string;
+	groupId: string;
+	kind?: 'planning' | 'execution' | 'integration';
+	baseBranch: string;
+	sshRemoteId?: string;
+	branchName?: string;
+	workerBranches?: string[];
+	taskBranches?: Record<string, string>;
+	integrationBranch: string;
+	worktreePath?: string;
+	worktreePaths?: string[];
+	taskWorktreePaths?: Record<string, string>;
+	status: ConductorStatus;
+	summary?: string;
+	plannerInput?: string;
+	taskIds: string[];
+	approvedAt?: number;
+	prUrl?: string;
+	events: ConductorRunEvent[];
+	startedAt: number;
+	endedAt?: number;
+}
+
 // Configuration for starting a batch run
 export interface BatchRunConfig {
 	documents: BatchDocumentEntry[];

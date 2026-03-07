@@ -217,12 +217,18 @@ body,
 /* Prevent touch callout (long-press menu) on interactive elements */
 button,
 a,
-input,
-select,
-textarea {
+select {
 	-webkit-touch-callout: none;
 	-webkit-user-select: none;
 	user-select: none;
+}
+
+/* Preserve native text editing affordances inside form fields */
+input,
+textarea {
+	-webkit-touch-callout: default;
+	-webkit-user-select: text;
+	user-select: text;
 }
 
 /* Allow text selection in content areas */

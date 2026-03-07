@@ -27,6 +27,8 @@ import {
 	worktreeCheckoutRemote,
 	listWorktreesRemote,
 	getRepoRootRemote,
+	removeWorktreeRemote,
+	execRemoteCommand,
 } from '../../utils/remote-git';
 import { readDirRemote } from '../../utils/remote-fs';
 
@@ -803,6 +805,48 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		)
 	);
 
+	// Merge a branch into a worktree
+	// Supports SSH remote execution via optional sshRemoteId parameter
+	ipcMain.handle(
+		'git:mergeBranchIntoWorktree',
+		withIpcErrorLogging(
+			handlerOpts('mergeBranchIntoWorktree'),
+			async (worktreePath: string, branchName: string, sshRemoteId?: string) => {
+				if (sshRemoteId) {
+					const sshRemote = getSshRemoteById(sshRemoteId);
+					if (!sshRemote) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+
+					const result = await execGit(
+						['merge', '--no-edit', branchName],
+						worktreePath,
+						sshRemote,
+						worktreePath
+					);
+					const output = `${result.stdout}\n${result.stderr}`;
+					const conflicted = /CONFLICT/i.test(output);
+
+					return {
+						success: result.exitCode === 0,
+						conflicted,
+						error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Merge failed',
+					};
+				}
+
+				const result = await execFileNoThrow('git', ['merge', '--no-edit', branchName], worktreePath);
+				const output = `${result.stdout}\n${result.stderr}`;
+				const conflicted = /CONFLICT/i.test(output);
+
+				return {
+					success: result.exitCode === 0,
+					conflicted,
+					error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Merge failed',
+				};
+			}
+		)
+	);
+
 	// Create a PR from the worktree branch to a base branch
 	// ghPath parameter allows specifying custom path to gh binary
 	ipcMain.handle(
@@ -814,8 +858,50 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				baseBranch: string,
 				title: string,
 				body: string,
-				ghPath?: string
+				ghPath?: string,
+				sshRemoteId?: string
 			) => {
+				const sshRemote = getSshRemoteById(sshRemoteId);
+				if (sshRemote) {
+					const remoteGhCommand = ghPath || 'gh';
+					const pushResult = await execGit(
+						['push', '-u', 'origin', 'HEAD'],
+						worktreePath,
+						sshRemote,
+						worktreePath
+					);
+					if (pushResult.exitCode !== 0) {
+						return {
+							success: false,
+							error: `Failed to push branch: ${pushResult.stderr || pushResult.stdout}`,
+						};
+					}
+
+					const prResult = await execRemoteCommand(
+						remoteGhCommand,
+						['pr', 'create', '--base', baseBranch, '--title', title, '--body', body],
+						sshRemote,
+						worktreePath
+					);
+					if (prResult.exitCode !== 0) {
+						if (
+							prResult.stderr.includes('command not found') ||
+							prResult.stderr.includes('not recognized')
+						) {
+							return {
+								success: false,
+								error: 'GitHub CLI (gh) is not installed on the remote host.',
+							};
+						}
+						return {
+							success: false,
+							error: prResult.stderr || prResult.stdout || 'Failed to create PR',
+						};
+					}
+
+					return { success: true, prUrl: prResult.stdout.trim() };
+				}
+
 				// Resolve gh CLI path (uses cached detection or custom path)
 				const ghCommand = await resolveGhPath(ghPath);
 				logger.debug(`Using gh CLI at: ${ghCommand}`, LOG_CONTEXT);
@@ -863,7 +949,22 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	// Results are cached for 1 minute to avoid repeated subprocess calls
 	ipcMain.handle(
 		'git:checkGhCli',
-		withIpcErrorLogging(handlerOpts('checkGhCli'), async (ghPath?: string) => {
+		withIpcErrorLogging(handlerOpts('checkGhCli'), async (ghPath?: string, sshRemoteId?: string) => {
+			const sshRemote = getSshRemoteById(sshRemoteId);
+			if (sshRemote) {
+				const remoteGhCommand = ghPath || 'gh';
+				const versionResult = await execRemoteCommand(remoteGhCommand, ['--version'], sshRemote);
+				if (versionResult.exitCode !== 0) {
+					return { installed: false, authenticated: false };
+				}
+
+				const authResult = await execRemoteCommand(remoteGhCommand, ['auth', 'status'], sshRemote);
+				return {
+					installed: true,
+					authenticated: authResult.exitCode === 0,
+				};
+			}
+
 			// Check cache first (skip if custom path provided)
 			if (!ghPath) {
 				const cached = getCachedGhStatus();
@@ -1329,8 +1430,29 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		'git:removeWorktree',
 		withIpcErrorLogging(
 			handlerOpts('removeWorktree'),
-			async (worktreePath: string, force: boolean = false) => {
+			async (worktreePath: string, force: boolean = false, sshRemoteId?: string) => {
 				try {
+					if (sshRemoteId) {
+						const sshRemote = getSshRemoteById(sshRemoteId);
+						if (!sshRemote) {
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
+						}
+
+						const remoteResult = await removeWorktreeRemote(worktreePath, force, sshRemote);
+						if (!remoteResult.success) {
+							return {
+								success: false,
+								error: remoteResult.error,
+								hasUncommittedChanges: remoteResult.data?.hasUncommittedChanges,
+							};
+						}
+
+						logger.info(
+							`${LOG_CONTEXT} Removed remote worktree: ${worktreePath} (remote: ${sshRemoteId})`
+						);
+						return { success: true };
+					}
+
 					// First check if the directory exists
 					await fs.access(worktreePath);
 
@@ -1371,6 +1493,34 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					logger.error(`${LOG_CONTEXT} Failed to remove worktree ${worktreePath}: ${errorMessage}`);
 					return { success: false, error: errorMessage };
 				}
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'git:deleteLocalBranch',
+		withIpcErrorLogging(
+			handlerOpts('deleteLocalBranch'),
+			async (cwd: string, branchName: string, force: boolean = false, sshRemoteId?: string) => {
+				const args = force ? ['branch', '-D', branchName] : ['branch', '-d', branchName];
+
+				if (sshRemoteId) {
+					const sshRemote = getSshRemoteById(sshRemoteId);
+					if (!sshRemote) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					const result = await execGit(args, cwd, sshRemote, cwd);
+					return {
+						success: result.exitCode === 0,
+						error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Branch delete failed',
+					};
+				}
+
+				const result = await execFileNoThrow('git', args, cwd);
+				return {
+					success: result.exitCode === 0,
+					error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Branch delete failed',
+				};
 			}
 		)
 	);
