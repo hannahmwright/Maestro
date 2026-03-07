@@ -725,8 +725,22 @@ describe('useOfflineQueue', () => {
 			// With auto-processing, sendCommand may be called twice (once by auto, once by manual)
 			// Just verify we've processed the queue successfully
 			expect(sendCommand).toHaveBeenCalled();
-			expect(sendCommand).toHaveBeenCalledWith('s1', 'first');
-			expect(sendCommand).toHaveBeenCalledWith('s2', 'second');
+			expect(sendCommand).toHaveBeenCalledWith(
+				's1',
+				'first',
+				'ai',
+				undefined,
+				undefined,
+				undefined
+			);
+			expect(sendCommand).toHaveBeenCalledWith(
+				's2',
+				'second',
+				'terminal',
+				undefined,
+				undefined,
+				undefined
+			);
 			expect(result.current.queue).toHaveLength(0);
 		});
 
@@ -1777,9 +1791,30 @@ describe('useOfflineQueue', () => {
 				await processPromise;
 			});
 
-			expect(sendCommand).toHaveBeenCalledWith('s1', 'for s1');
-			expect(sendCommand).toHaveBeenCalledWith('s2', 'for s2');
-			expect(sendCommand).toHaveBeenCalledWith('s3', 'for s3');
+			expect(sendCommand).toHaveBeenCalledWith(
+				's1',
+				'for s1',
+				'ai',
+				undefined,
+				undefined,
+				undefined
+			);
+			expect(sendCommand).toHaveBeenCalledWith(
+				's2',
+				'for s2',
+				'terminal',
+				undefined,
+				undefined,
+				undefined
+			);
+			expect(sendCommand).toHaveBeenCalledWith(
+				's3',
+				'for s3',
+				'ai',
+				undefined,
+				undefined,
+				undefined
+			);
 		});
 	});
 });

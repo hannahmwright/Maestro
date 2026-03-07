@@ -143,10 +143,32 @@ export class CallbackRegistry {
 	async executeCommand(
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		images?: string[],
+		textAttachments?: Array<{
+			id?: string;
+			name: string;
+			content: string;
+			mimeType?: string;
+			size?: number;
+		}>,
+		attachments?: Array<{
+			id?: string;
+			kind: 'image' | 'file';
+			name: string;
+			mimeType?: string;
+			size?: number;
+		}>
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
-		return this.callbacks.executeCommand(sessionId, command, inputMode);
+		return this.callbacks.executeCommand(
+			sessionId,
+			command,
+			inputMode,
+			images,
+			textAttachments,
+			attachments
+		);
 	}
 
 	async interruptSession(sessionId: string): Promise<boolean> {

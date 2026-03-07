@@ -54,6 +54,7 @@ import type {
 	ConductorTaskStatus,
 	ConductorTaskPriority,
 } from '../../shared/types';
+import type { WebAttachmentSummary } from '../../shared/remote-web';
 import type { UserInputRequest } from '../../shared/user-input-requests';
 
 // Re-export group chat types from shared location
@@ -203,6 +204,7 @@ export interface LogEntry {
 	interactive?: boolean;
 	options?: string[];
 	images?: string[];
+	attachments?: WebAttachmentSummary[];
 	// For custom AI commands - stores the command metadata for display
 	aiCommand?: {
 		command: string; // e.g., '/commit'

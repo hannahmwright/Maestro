@@ -81,7 +81,24 @@ function formatRecordingDuration(durationMs: number): string {
 }
 
 async function blobToBase64(blob: Blob): Promise<string> {
-	const buffer = new Uint8Array(await blob.arrayBuffer());
+	const blobArrayBuffer =
+		typeof blob.arrayBuffer === 'function'
+			? await blob.arrayBuffer()
+			: await new Promise<ArrayBuffer>((resolve, reject) => {
+					const reader = new FileReader();
+					reader.onload = () => {
+						if (reader.result instanceof ArrayBuffer) {
+							resolve(reader.result);
+							return;
+						}
+						reject(new Error('Unable to read recorded audio.'));
+					};
+					reader.onerror = () => {
+						reject(reader.error || new Error('Unable to read recorded audio.'));
+					};
+					reader.readAsArrayBuffer(blob);
+				});
+	const buffer = new Uint8Array(blobArrayBuffer);
 	let binary = '';
 	const chunkSize = 0x8000;
 	for (let index = 0; index < buffer.length; index += chunkSize) {
@@ -131,6 +148,7 @@ export interface UseVoiceInputOptions {
 	currentValue: string;
 	disabled?: boolean;
 	onTranscriptionChange: (newValue: string) => void;
+	onTranscriptionSubmit?: (newValue: string) => void;
 	focusRef?: React.RefObject<HTMLTextAreaElement | HTMLInputElement>;
 }
 
@@ -143,6 +161,7 @@ export interface UseVoiceInputReturn {
 	voiceError: string | null;
 	startVoiceInput: () => void;
 	stopVoiceInput: () => void;
+	stopVoiceInputAndSubmit: () => void;
 	toggleVoiceInput: () => void;
 }
 
@@ -150,6 +169,7 @@ export function useVoiceInput({
 	currentValue,
 	disabled = false,
 	onTranscriptionChange,
+	onTranscriptionSubmit,
 	focusRef,
 }: UseVoiceInputOptions): UseVoiceInputReturn {
 	const [voiceState, setVoiceState] = useState<VoiceInputState>('idle');
@@ -162,6 +182,7 @@ export function useVoiceInput({
 	const recordingDurationIntervalRef = useRef<number | null>(null);
 	const microphoneRequestTokenRef = useRef(0);
 	const selectionRef = useRef<{ start: number; end: number } | null>(null);
+	const pendingStopActionRef = useRef<'review' | 'submit'>('review');
 	const [recordingDurationMs, setRecordingDurationMs] = useState(0);
 	const [backendState, setBackendState] = useState<VoiceBackendState>('unknown');
 	const [, setBackendError] = useState<string | null>(null);
@@ -346,22 +367,29 @@ export function useVoiceInput({
 				payload.text,
 				selectionRef.current
 			);
-			onTranscriptionChange(merged.value);
+			if (pendingStopActionRef.current === 'submit' && onTranscriptionSubmit) {
+				onTranscriptionSubmit(merged.value);
+			} else {
+				onTranscriptionChange(merged.value);
+			}
 			triggerHapticFeedback('medium');
 
-			requestAnimationFrame(() => {
-				const input = focusRef?.current;
-				if (!input) {
-					return;
-				}
-				input.focus();
-				if ('setSelectionRange' in input) {
-					input.setSelectionRange(merged.caretPosition, merged.caretPosition);
-				}
-			});
+			if (pendingStopActionRef.current !== 'submit') {
+				requestAnimationFrame(() => {
+					const input = focusRef?.current;
+					if (!input) {
+						return;
+					}
+					input.focus();
+					if ('setSelectionRange' in input) {
+						input.setSelectionRange(merged.caretPosition, merged.caretPosition);
+					}
+				});
+			}
 
 			setVoiceState('idle');
 			setRecordingDurationMs(0);
+			pendingStopActionRef.current = 'review';
 		} catch (error) {
 			webLogger.error('Voice transcription request failed', 'VoiceInput', error);
 			if (error instanceof Error && /unavailable|not configured/i.test(error.message)) {
@@ -370,9 +398,10 @@ export function useVoiceInput({
 			}
 			setVoiceState('error');
 			setVoiceError(error instanceof Error ? error.message : 'Voice transcription failed.');
+			pendingStopActionRef.current = 'review';
 			triggerHapticFeedback('strong');
 		}
-	}, [focusRef, onTranscriptionChange]);
+	}, [focusRef, onTranscriptionChange, onTranscriptionSubmit]);
 
 	const cancelPendingMicrophoneRequest = useCallback(() => {
 		microphoneRequestTokenRef.current += 1;
@@ -382,6 +411,7 @@ export function useVoiceInput({
 	}, []);
 
 	const stopVoiceInput = useCallback(() => {
+		pendingStopActionRef.current = 'review';
 		if (voiceState === 'requesting') {
 			cancelPendingMicrophoneRequest();
 			return;
@@ -389,6 +419,24 @@ export function useVoiceInput({
 
 		const recorder = mediaRecorderRef.current;
 		if (!recorder || recorder.state === 'inactive') {
+			return;
+		}
+
+		clearRecordingTimer();
+		recorder.stop();
+	}, [cancelPendingMicrophoneRequest, clearRecordingTimer, voiceState]);
+
+	const stopVoiceInputAndSubmit = useCallback(() => {
+		pendingStopActionRef.current = 'submit';
+		if (voiceState === 'requesting') {
+			cancelPendingMicrophoneRequest();
+			pendingStopActionRef.current = 'review';
+			return;
+		}
+
+		const recorder = mediaRecorderRef.current;
+		if (!recorder || recorder.state === 'inactive') {
+			pendingStopActionRef.current = 'review';
 			return;
 		}
 
@@ -466,6 +514,7 @@ export function useVoiceInput({
 			};
 
 			recorder.onstart = () => {
+				pendingStopActionRef.current = 'review';
 				setVoiceState('recording');
 				setRecordingDurationMs(0);
 				const recordingStartedAt = Date.now();
@@ -502,6 +551,7 @@ export function useVoiceInput({
 			}
 			setVoiceState('error');
 			setVoiceError(error instanceof Error ? error.message : 'Microphone access failed.');
+			pendingStopActionRef.current = 'review';
 			triggerHapticFeedback('strong');
 		}
 	}, [
@@ -556,6 +606,7 @@ export function useVoiceInput({
 			void startVoiceInput();
 		},
 		stopVoiceInput,
+		stopVoiceInputAndSubmit,
 		toggleVoiceInput,
 	};
 }

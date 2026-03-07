@@ -333,22 +333,58 @@ export function createProcessApi() {
 		 * inputMode is optional - if provided, renderer should use it instead of session state
 		 */
 		onRemoteCommand: (
-			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
+			callback: (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				images?: string[],
+				textAttachments?: Array<{
+					id?: string;
+					name: string;
+					content: string;
+					mimeType?: string;
+					size?: number;
+				}>,
+				attachments?: Array<{
+					id?: string;
+					kind: 'image' | 'file';
+					name: string;
+					mimeType?: string;
+					size?: number;
+				}>
+			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				command: string,
-				inputMode?: 'ai' | 'terminal'
+				inputMode?: 'ai' | 'terminal',
+				images?: string[],
+				textAttachments?: Array<{
+					id?: string;
+					name: string;
+					content: string;
+					mimeType?: string;
+					size?: number;
+				}>,
+				attachments?: Array<{
+					id?: string;
+					kind: 'image' | 'file';
+					name: string;
+					mimeType?: string;
+					size?: number;
+				}>
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
 					commandPreview: command?.substring(0, 50),
 					inputMode,
+					imageCount: images?.length ?? 0,
+					textAttachmentCount: textAttachments?.length ?? 0,
 				});
 				try {
-					callback(sessionId, command, inputMode);
+					callback(sessionId, command, inputMode, images, textAttachments, attachments);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',

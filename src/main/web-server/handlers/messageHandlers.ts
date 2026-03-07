@@ -32,6 +32,21 @@ export interface WebClientMessage {
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
+	images?: string[];
+	textAttachments?: Array<{
+		id?: string;
+		name: string;
+		content: string;
+		mimeType?: string;
+		size?: number;
+	}>;
+	attachments?: Array<{
+		id?: string;
+		kind: 'image' | 'file';
+		name: string;
+		mimeType?: string;
+		size?: number;
+	}>;
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
@@ -74,7 +89,22 @@ export interface MessageHandlerCallbacks {
 	executeCommand: (
 		sessionId: string,
 		command: string,
-		inputMode?: 'ai' | 'terminal'
+		inputMode?: 'ai' | 'terminal',
+		images?: string[],
+		textAttachments?: Array<{
+			id?: string;
+			name: string;
+			content: string;
+			mimeType?: string;
+			size?: number;
+		}>,
+		attachments?: Array<{
+			id?: string;
+			kind: 'image' | 'file';
+			name: string;
+			mimeType?: string;
+			size?: number;
+		}>
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string) => Promise<boolean>;
@@ -238,7 +268,12 @@ export class WebSocketMessageHandler {
 	 */
 	private handleSendCommand(client: WebClient, message: WebClientMessage): void {
 		const sessionId = message.sessionId as string;
-		const command = message.command as string;
+		const command = typeof message.command === 'string' ? message.command : '';
+		const images = Array.isArray(message.images) ? message.images : undefined;
+		const textAttachments = Array.isArray(message.textAttachments)
+			? message.textAttachments
+			: undefined;
+		const attachments = Array.isArray(message.attachments) ? message.attachments : undefined;
 		// inputMode from web client - use this instead of server state to avoid sync issues
 		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
 
@@ -247,12 +282,12 @@ export class WebSocketMessageHandler {
 			LOG_CONTEXT
 		);
 
-		if (!sessionId || !command) {
+		if (!sessionId || (!command.trim() && !images?.length && !textAttachments?.length)) {
 			logger.warn(
-				`[Web Command] Missing sessionId or command: sessionId=${sessionId}, commandLen=${command?.length}`,
+				`[Web Command] Missing sessionId or message content: sessionId=${sessionId}, commandLen=${command?.length}, imageCount=${images?.length ?? 0}, textAttachmentCount=${textAttachments?.length ?? 0}`,
 				LOG_CONTEXT
 			);
-			this.sendError(client, 'Missing sessionId or command');
+			this.sendError(client, 'Missing sessionId or message content');
 			return;
 		}
 
@@ -293,7 +328,7 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode)
+				.executeCommand(sessionId, command, clientInputMode, images, textAttachments, attachments)
 				.then((success) => {
 					this.send(client, { type: 'command_result', success, sessionId });
 					if (!success) {

@@ -111,11 +111,32 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 	useEffect(() => {
 		console.log('[useRemoteIntegration] Setting up onRemoteCommand listener');
 		const unsubscribeRemote = window.maestro.process.onRemoteCommand(
-			(sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
+			(
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				images?: string[],
+				textAttachments?: Array<{
+					id?: string;
+					name: string;
+					content: string;
+					mimeType?: string;
+					size?: number;
+				}>,
+				attachments?: Array<{
+					id?: string;
+					kind: 'image' | 'file';
+					name: string;
+					mimeType?: string;
+					size?: number;
+				}>
+			) => {
 				console.log('[useRemoteIntegration] onRemoteCommand callback invoked:', {
 					sessionId,
 					command: command?.substring(0, 50),
 					inputMode,
+					imageCount: images?.length ?? 0,
+					textAttachmentCount: textAttachments?.length ?? 0,
 				});
 
 				// Verify the session exists
@@ -171,7 +192,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				});
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode },
+						detail: { sessionId, command, inputMode, images, textAttachments, attachments },
 					})
 				);
 				console.log('[useRemoteIntegration] Event dispatched successfully');
@@ -585,7 +606,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const tabsHash = session.aiTabs
 					.map(
 						(t) =>
-							`${t.id}:${t.name || ''}:${t.starred}:${t.state}:${t.currentModel || ''}:${t.usageStats?.inputTokens || 0}:${t.usageStats?.outputTokens || 0}:${t.usageStats?.cacheReadInputTokens || 0}:${t.usageStats?.cacheCreationInputTokens || 0}:${t.usageStats?.contextWindow || 0}:${t.usageStats?.reasoningTokens || 0}`
+							`${t.id}:${t.name || ''}:${t.starred}:${t.hasUnread ? 1 : 0}:${t.state}:${t.currentModel || ''}:${t.usageStats?.inputTokens || 0}:${t.usageStats?.outputTokens || 0}:${t.usageStats?.cacheReadInputTokens || 0}:${t.usageStats?.cacheCreationInputTokens || 0}:${t.usageStats?.contextWindow || 0}:${t.usageStats?.reasoningTokens || 0}`
 					)
 					.join('|');
 
@@ -608,6 +629,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						agentSessionId: tab.agentSessionId,
 						name: tab.name,
 						starred: tab.starred,
+						hasUnread: tab.hasUnread,
 						inputValue: tab.inputValue,
 						usageStats: tab.usageStats,
 						createdAt: tab.createdAt,

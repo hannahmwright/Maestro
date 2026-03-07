@@ -490,8 +490,34 @@ export class WebServer {
 	private setupMessageHandlerCallbacks(): void {
 		this.messageHandler.setCallbacks({
 			getSessionDetail: (sessionId: string) => this.callbackRegistry.getSessionDetail(sessionId),
-			executeCommand: async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') =>
-				this.callbackRegistry.executeCommand(sessionId, command, inputMode),
+			executeCommand: async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				images?: string[],
+				textAttachments?: Array<{
+					id?: string;
+					name: string;
+					content: string;
+					mimeType?: string;
+					size?: number;
+				}>,
+				attachments?: Array<{
+					id?: string;
+					kind: 'image' | 'file';
+					name: string;
+					mimeType?: string;
+					size?: number;
+				}>
+			) =>
+				this.callbackRegistry.executeCommand(
+					sessionId,
+					command,
+					inputMode,
+					images,
+					textAttachments,
+					attachments
+				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),
 			selectSession: async (sessionId: string, tabId?: string) =>
@@ -595,8 +621,20 @@ export class WebServer {
 		this.liveSessionManager.setAutoRunState(sessionId, state);
 	}
 
-	broadcastUserInput(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): void {
-		this.broadcastService.broadcastUserInput(sessionId, command, inputMode);
+	broadcastUserInput(
+		sessionId: string,
+		command: string,
+		inputMode: 'ai' | 'terminal',
+		images?: string[],
+		attachments?: Array<{
+			id?: string;
+			kind: 'image' | 'file';
+			name: string;
+			mimeType?: string;
+			size?: number;
+		}>
+	): void {
+		this.broadcastService.broadcastUserInput(sessionId, command, inputMode, images, attachments);
 	}
 
 	broadcastSessionLogEntry(

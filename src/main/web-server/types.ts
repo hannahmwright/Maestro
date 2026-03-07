@@ -56,6 +56,7 @@ export interface AITabData {
 	agentSessionId: string | null;
 	name: string | null;
 	starred: boolean;
+	hasUnread?: boolean;
 	inputValue: string;
 	usageStats?: SessionUsageStats | null;
 	createdAt: number;
@@ -296,7 +297,22 @@ export type WriteToSessionCallback = (sessionId: string, data: string) => boolea
 export type ExecuteCommandCallback = (
 	sessionId: string,
 	command: string,
-	inputMode?: 'ai' | 'terminal'
+	inputMode?: 'ai' | 'terminal',
+	images?: string[],
+	textAttachments?: Array<{
+		id?: string;
+		name: string;
+		content: string;
+		mimeType?: string;
+		size?: number;
+	}>,
+	attachments?: Array<{
+		id?: string;
+		kind: 'image' | 'file';
+		name: string;
+		mimeType?: string;
+		size?: number;
+	}>
 ) => Promise<boolean>;
 
 /**

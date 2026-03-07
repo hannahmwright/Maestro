@@ -584,7 +584,26 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 		onRemoteCommand: (
-			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
+			callback: (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				images?: string[],
+				textAttachments?: Array<{
+					id?: string;
+					name: string;
+					content: string;
+					mimeType?: string;
+					size?: number;
+				}>,
+				attachments?: Array<{
+					id?: string;
+					kind: 'image' | 'file';
+					name: string;
+					mimeType?: string;
+					size?: number;
+				}>
+			) => void
 		) => () => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
@@ -755,7 +774,15 @@ interface MaestroAPI {
 		broadcastUserInput: (
 			sessionId: string,
 			command: string,
-			inputMode: 'ai' | 'terminal'
+			inputMode: 'ai' | 'terminal',
+			images?: string[],
+			attachments?: Array<{
+				id?: string;
+				kind: 'image' | 'file';
+				name: string;
+				mimeType?: string;
+				size?: number;
+			}>
 		) => Promise<void>;
 		broadcastAutoRunState: (
 			sessionId: string,
@@ -1023,7 +1050,10 @@ interface MaestroAPI {
 			branch?: string;
 			error?: string;
 		}>;
-		checkGhCli: (ghPath?: string, sshRemoteId?: string) => Promise<{
+		checkGhCli: (
+			ghPath?: string,
+			sshRemoteId?: string
+		) => Promise<{
 			installed: boolean;
 			authenticated: boolean;
 		}>;

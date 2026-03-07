@@ -903,7 +903,13 @@ describe('useWebSocket', () => {
 				} as UserInputMessage);
 			});
 
-			expect(onUserInput).toHaveBeenCalledWith('session-1', 'npm install', 'terminal');
+			expect(onUserInput).toHaveBeenCalledWith(
+				'session-1',
+				'npm install',
+				'terminal',
+				undefined,
+				undefined
+			);
 		});
 
 		it('handles theme message', () => {

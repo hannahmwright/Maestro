@@ -19,12 +19,64 @@ const baseDeps: UseMobileSessionManagementDeps = {
 	hapticTapPattern: 10,
 };
 
+function createSession(overrides: Partial<Session> = {}): Session {
+	return {
+		id: 'session-1',
+		name: 'Session 1',
+		toolType: 'claude-code',
+		state: 'idle',
+		inputMode: 'ai',
+		cwd: '/tmp',
+		aiTabs: [
+			{
+				id: 'tab-1',
+				agentSessionId: null,
+				name: 'Tab 1',
+				starred: false,
+				inputValue: '',
+				createdAt: Date.now(),
+				state: 'idle',
+			},
+		],
+		activeTabId: 'tab-1',
+		...overrides,
+	} as Session;
+}
+
+function createFetchResponse(sessionOverrides: Record<string, unknown> = {}) {
+	return {
+		ok: true,
+		json: vi.fn().mockResolvedValue({
+			session: {
+				aiLogs: [],
+				shellLogs: [],
+				...sessionOverrides,
+			},
+		}),
+	};
+}
+
 describe('useMobileSessionManagement', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: vi.fn().mockResolvedValue({
+					session: {
+						aiLogs: [],
+						shellLogs: [],
+					},
+					sessions: [],
+				}),
+			} as any)
+		);
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
 		vi.restoreAllMocks();
 	});
 
@@ -100,5 +152,137 @@ describe('useMobileSessionManagement', () => {
 
 		expect(result.current.sessionLogs.aiLogs).toHaveLength(1);
 		expect(result.current.sessionLogs.aiLogs[0].text).toBe('hello');
+	});
+
+	it('keeps background log refreshes non-blocking after the initial load', async () => {
+		vi.useFakeTimers();
+		const fetchMock = vi.mocked(fetch);
+		const backgroundResponse = Promise.withResolvers<any>();
+
+		fetchMock
+			.mockResolvedValueOnce(
+				createFetchResponse({
+					aiLogs: [{ id: 'log-1', timestamp: 1, text: 'hello', source: 'stdout' }],
+				}) as any
+			)
+			.mockImplementationOnce(() => backgroundResponse.promise);
+
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				isOffline: false,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([createSession({ state: 'busy' })]);
+		});
+
+		expect(result.current.isLoadingLogs).toBe(true);
+
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(result.current.isLoadingLogs).toBe(false);
+		expect(result.current.sessionLogs.aiLogs).toHaveLength(1);
+
+		await act(async () => {
+			vi.advanceTimersByTime(20000);
+			await Promise.resolve();
+		});
+
+		expect(
+			fetchMock.mock.calls.filter(([url]) => String(url).includes('/session/session-1')).length
+		).toBe(2);
+		expect(result.current.isLoadingLogs).toBe(false);
+		expect(result.current.sessionLogs.aiLogs[0].text).toBe('hello');
+
+		await act(async () => {
+			backgroundResponse.resolve(
+				createFetchResponse({
+					aiLogs: [{ id: 'log-2', timestamp: 2, text: 'hello again', source: 'stdout' }],
+				}) as any
+			);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(result.current.isLoadingLogs).toBe(false);
+		expect(result.current.sessionLogs.aiLogs[0].text).toBe('hello again');
+	});
+
+	it('ignores stale log responses after switching sessions', async () => {
+		const fetchMock = vi.mocked(fetch);
+		const firstResponse = Promise.withResolvers<any>();
+		const secondResponse = Promise.withResolvers<any>();
+
+		fetchMock
+			.mockImplementationOnce(() => firstResponse.promise)
+			.mockImplementationOnce(() => secondResponse.promise);
+
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				isOffline: false,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([
+				createSession(),
+				createSession({
+					id: 'session-2',
+					name: 'Session 2',
+					activeTabId: 'tab-2',
+					aiTabs: [
+						{
+							id: 'tab-2',
+							agentSessionId: null,
+							name: 'Tab 2',
+							starred: false,
+							inputValue: '',
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+				}),
+			]);
+		});
+
+		act(() => {
+			result.current.handleSelectSession('session-2');
+		});
+
+		await act(async () => {
+			secondResponse.resolve(
+				createFetchResponse({
+					aiLogs: [{ id: 'session-2-log', timestamp: 2, text: 'session two', source: 'stdout' }],
+				}) as any
+			);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(result.current.activeSessionId).toBe('session-2');
+		expect(result.current.sessionLogs.aiLogs[0].text).toBe('session two');
+
+		await act(async () => {
+			firstResponse.resolve(
+				createFetchResponse({
+					aiLogs: [{ id: 'session-1-log', timestamp: 1, text: 'session one', source: 'stdout' }],
+				}) as any
+			);
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(result.current.activeSessionId).toBe('session-2');
+		expect(result.current.sessionLogs.aiLogs[0].text).toBe('session two');
 	});
 });

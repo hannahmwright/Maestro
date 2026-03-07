@@ -21,7 +21,11 @@
  */
 
 import { ipcMain } from 'electron';
-import type { ResponseCompletedEvent, WebRemoteLogEntry } from '../../../shared/remote-web';
+import type {
+	ResponseCompletedEvent,
+	WebAttachmentSummary,
+	WebRemoteLogEntry,
+} from '../../../shared/remote-web';
 
 import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
@@ -55,7 +59,14 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 	// Broadcast user input to web clients (called when desktop sends a message)
 	ipcMain.handle(
 		'web:broadcastUserInput',
-		async (_, sessionId: string, command: string, inputMode: 'ai' | 'terminal') => {
+		async (
+			_,
+			sessionId: string,
+			command: string,
+			inputMode: 'ai' | 'terminal',
+			images?: string[],
+			attachments?: WebAttachmentSummary[]
+		) => {
 			const webServer = getWebServer();
 			const clientCount = webServer?.getWebClientCount() ?? 0;
 			logger.debug(
@@ -63,7 +74,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				'WebBroadcast'
 			);
 			if (webServer && clientCount > 0) {
-				webServer.broadcastUserInput(sessionId, command, inputMode);
+				webServer.broadcastUserInput(sessionId, command, inputMode, images, attachments);
 				return true;
 			}
 			return false;

@@ -41,7 +41,11 @@ export function isServiceWorkerSupported(): boolean {
 	return 'serviceWorker' in navigator;
 }
 
-const SERVICE_WORKER_VERSION = `${__APP_VERSION__}-${__GIT_HASH__}-${__BUILD_ID__}`;
+const SERVICE_WORKER_VERSION = [
+	typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev',
+	typeof __GIT_HASH__ === 'string' ? __GIT_HASH__ : 'local',
+	typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'test',
+].join('-');
 
 /**
  * Register the service worker for offline capability

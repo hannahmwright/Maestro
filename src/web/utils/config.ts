@@ -48,8 +48,8 @@ export function getMaestroConfig(): MaestroConfig {
 		basePath: basePath || WEB_APP_BASE_PATH,
 		sessionId,
 		tabId,
-		apiBase: basePath ? WEB_APP_API_BASE_PATH : '/api',
-		wsUrl: basePath ? WEB_APP_WS_PATH : '/ws',
+		apiBase: WEB_APP_API_BASE_PATH,
+		wsUrl: WEB_APP_WS_PATH,
 		authMode: 'cloudflare-access',
 		clientInstanceId: 'dev-client',
 		webPush: {

@@ -16,10 +16,13 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { maybeStartAutomaticTabNaming } from '../../utils/autoTabNaming';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
+import { imageOnlyDefaultPrompt } from '../../../prompts';
+import type { WebAttachmentSummary, WebTextAttachmentInput } from '../../../shared/remote-web';
 
 // ============================================================================
 // Dependencies interface
@@ -58,6 +61,64 @@ export interface UseRemoteHandlersReturn {
 // ============================================================================
 
 const selectSessions = (s: ReturnType<typeof useSessionStore.getState>) => s.sessions;
+
+function inferAttachmentLanguage(filename: string): string {
+	const extension = filename.split('.').pop()?.toLowerCase();
+	switch (extension) {
+		case 'ts':
+		case 'tsx':
+			return 'ts';
+		case 'js':
+		case 'jsx':
+		case 'mjs':
+		case 'cjs':
+			return 'js';
+		case 'json':
+			return 'json';
+		case 'md':
+		case 'mdx':
+			return 'md';
+		case 'html':
+		case 'htm':
+			return 'html';
+		case 'css':
+		case 'scss':
+			return 'css';
+		case 'yml':
+		case 'yaml':
+			return 'yaml';
+		case 'xml':
+			return 'xml';
+		case 'sh':
+		case 'bash':
+		case 'zsh':
+			return 'sh';
+		case 'py':
+			return 'python';
+		case 'rb':
+			return 'ruby';
+		case 'go':
+			return 'go';
+		case 'java':
+			return 'java';
+		case 'sql':
+			return 'sql';
+		case 'toml':
+			return 'toml';
+		default:
+			return '';
+	}
+}
+
+function buildTextAttachmentPrompt(textAttachments: WebTextAttachmentInput[]): string {
+	return textAttachments
+		.map((attachment) => {
+			const language = inferAttachmentLanguage(attachment.name);
+			const fence = language ? `\`\`\`${language}` : '```';
+			return `File: ${attachment.name}\n${fence}\n${attachment.content}\n\`\`\``;
+		})
+		.join('\n\n');
+}
 
 // ============================================================================
 // Hook
@@ -112,13 +173,25 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				sessionId: string;
 				command: string;
 				inputMode?: 'ai' | 'terminal';
+				images?: string[];
+				textAttachments?: WebTextAttachmentInput[];
+				attachments?: WebAttachmentSummary[];
 			}>;
-			const { sessionId, command, inputMode: webInputMode } = customEvent.detail;
+			const {
+				sessionId,
+				command,
+				inputMode: webInputMode,
+				images = [],
+				textAttachments = [],
+				attachments = [],
+			} = customEvent.detail;
 
 			console.log('[Remote] Processing remote command via event:', {
 				sessionId,
 				command: command.substring(0, 50),
 				webInputMode,
+				imageCount: images.length,
+				textAttachmentCount: textAttachments.length,
 			});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
@@ -214,7 +287,12 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 			}
 
 			// Handle AI mode for batch-mode agents (Claude Code, Codex, OpenCode)
-			const supportedBatchAgents: ToolType[] = ['claude-code', 'codex', 'opencode'];
+			const supportedBatchAgents: ToolType[] = [
+				'claude-code',
+				'codex',
+				'opencode',
+				'factory-droid',
+			];
 			if (!supportedBatchAgents.includes(session.toolType)) {
 				console.log('[Remote] Not a batch-mode agent, skipping');
 				return;
@@ -318,6 +396,25 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const activeTab = getActiveTab(session);
 				const tabAgentSessionId = activeTab?.agentSessionId;
 				const isReadOnly = activeTab?.readOnlyMode;
+				const hasImages = images.length > 0;
+				const hasTextAttachments = textAttachments.length > 0;
+				const userVisibleText = command.trim();
+
+				if (!promptToSend.trim()) {
+					if (hasImages && !hasTextAttachments) {
+						promptToSend = imageOnlyDefaultPrompt;
+					} else if (hasTextAttachments) {
+						promptToSend =
+							textAttachments.length === 1
+								? `Please review the attached file "${textAttachments[0].name}" and help me with it.`
+								: `Please review the ${textAttachments.length} attached files and help me with them.`;
+					}
+				}
+
+				if (hasTextAttachments) {
+					const attachmentPrompt = buildTextAttachmentPrompt(textAttachments);
+					promptToSend = `${promptToSend.trim()}\n\n---\n\nAttached files for context:\n\n${attachmentPrompt}`;
+				}
 
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];
@@ -349,7 +446,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					id: generateId(),
 					timestamp: Date.now(),
 					source: 'user',
-					text: promptToSend,
+					text: userVisibleText,
+					images: hasImages ? images : undefined,
+					attachments,
 					...(commandMetadata && { aiCommand: commandMetadata }),
 				};
 
@@ -395,6 +494,24 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					})
 				);
 
+				const automaticTabNamingEnabled = useSettingsStore.getState().automaticTabNamingEnabled;
+				if (
+					automaticTabNamingEnabled &&
+					activeTab &&
+					!tabAgentSessionId &&
+					!activeTab.name &&
+					userVisibleText
+				) {
+					maybeStartAutomaticTabNaming({
+						session,
+						tabId: activeTab.id,
+						userMessage: userVisibleText,
+						setSessions,
+						getSessions: () => useSessionStore.getState().sessions,
+						automaticTabNamingEnabled,
+					});
+				}
+
 				// Spawn agent with the prompt
 				await window.maestro.process.spawn({
 					sessionId: targetSessionId,
@@ -403,6 +520,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend,
+					images: hasImages ? images : undefined,
 					agentSessionId: tabAgentSessionId ?? undefined,
 					readOnlyMode: isReadOnly,
 					sessionCustomPath: session.customPath,

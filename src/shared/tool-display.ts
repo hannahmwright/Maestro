@@ -11,6 +11,12 @@ export interface ToolDisplayData {
 	outputDetail: string | null;
 }
 
+export interface ToolActivityCopy {
+	title: string;
+	subtitle: string | null;
+	rawCommand: string | null;
+}
+
 export interface WebSearchTimelineItem {
 	id: string;
 	query: string;
@@ -149,6 +155,510 @@ export const normalizeToolName = (toolName: string): string =>
 
 export const isWebSearchTool = (toolName: string): boolean =>
 	normalizeToolName(toolName) === 'web:search';
+
+const formatPathLabel = (value: string | null): string | null => {
+	if (!value) return null;
+	const normalized = value.replace(/\\/g, '/');
+	const parts = normalized.split('/').filter(Boolean);
+	return parts[parts.length - 1] || normalized;
+};
+
+const matchesShellCommand = (command: string, pattern: RegExp): boolean => pattern.test(command);
+
+const tokenizeShellCommand = (command: string): string[] => {
+	const tokens: string[] = [];
+	let current = '';
+	let quote: '"' | "'" | null = null;
+	let escaping = false;
+
+	for (const char of command) {
+		if (escaping) {
+			current += char;
+			escaping = false;
+			continue;
+		}
+
+		if (char === '\\') {
+			escaping = true;
+			continue;
+		}
+
+		if (quote) {
+			if (char === quote) {
+				quote = null;
+			} else {
+				current += char;
+			}
+			continue;
+		}
+
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+
+		if (/\s/.test(char)) {
+			if (current) {
+				tokens.push(current);
+				current = '';
+			}
+			continue;
+		}
+
+		current += char;
+	}
+
+	if (current) {
+		tokens.push(current);
+	}
+
+	return tokens;
+};
+
+const isLikelyPathToken = (token: string): boolean => {
+	if (!token || token.startsWith('-')) return false;
+	if (token.includes('/') || token.startsWith('./') || token.startsWith('../')) return true;
+	if (
+		/^[\w.-]+\.(ts|tsx|js|jsx|mjs|cjs|json|md|css|scss|html|yml|yaml|toml|sh|zsh|py|rb|go|rs|txt)$/i.test(
+			token
+		)
+	) {
+		return true;
+	}
+	if (/^(src|app|test|tests|spec|specs|docs|packages|scripts|dist|build)$/i.test(token)) {
+		return true;
+	}
+	return false;
+};
+
+const findShellPathTokens = (tokens: string[]): string[] =>
+	tokens.filter((token) => isLikelyPathToken(token) && token !== '--');
+
+const quoteLabel = (value: string | null): string | null => (value ? `"${value}"` : null);
+
+const getCommandTargetLabel = (value: string | null, fallback: string): string =>
+	formatPathLabel(value) || value || fallback;
+
+const extractDomainLabel = (value: string | null): string | null => {
+	if (!value) return null;
+	try {
+		return new URL(value).hostname.replace(/^www\./, '');
+	} catch {
+		return null;
+	}
+};
+
+const firstNonFlagToken = (tokens: string[], startIndex = 1): string | null => {
+	for (let index = startIndex; index < tokens.length; index += 1) {
+		const token = tokens[index];
+		if (!token.startsWith('-')) {
+			return token;
+		}
+	}
+	return null;
+};
+
+const firstPathAfterDoubleDash = (tokens: string[]): string | null => {
+	const doubleDashIndex = tokens.indexOf('--');
+	if (doubleDashIndex < 0) return null;
+	for (let index = doubleDashIndex + 1; index < tokens.length; index += 1) {
+		if (isLikelyPathToken(tokens[index])) {
+			return tokens[index];
+		}
+	}
+	return null;
+};
+
+const unwrapShellWrapper = (command: string): string => {
+	const compact = command.trim();
+	const shellWrapperMatch = compact.match(
+		/^(?:\/bin\/)?(?:zsh|bash|sh)\s+-lc\s+["']([\s\S]*)["']$/
+	);
+	if (shellWrapperMatch?.[1]) {
+		return shellWrapperMatch[1].trim();
+	}
+	return compact;
+};
+
+const splitShellSegments = (command: string): string[] =>
+	command
+		.split(/\s*(?:&&|\|\||;|\|)\s*/g)
+		.map((segment) => segment.trim())
+		.filter(Boolean);
+
+const describeShellCommand = (command: string): ToolActivityCopy => {
+	const unwrappedCommand = unwrapShellWrapper(command);
+	const segments = splitShellSegments(unwrappedCommand);
+	const primarySegment =
+		segments.find(
+			(segment) =>
+				!/^(export|cd|pwd|true|false|test|\[)/i.test(segment) && !/^[A-Z_][A-Z0-9_]*=/.test(segment)
+		) ||
+		segments[0] ||
+		unwrappedCommand;
+	const compactCommand = primarySegment.replace(/\s+/g, ' ').trim();
+	const lowerCommand = compactCommand.toLowerCase();
+	const tokens = tokenizeShellCommand(compactCommand);
+	const firstToken = tokens[0]?.toLowerCase() || '';
+	const pathTokens = findShellPathTokens(tokens);
+	const lastPath = pathTokens[pathTokens.length - 1] || null;
+	const firstPath = pathTokens[0] || null;
+	const runTarget = (() => {
+		const runIndex = tokens.findIndex((token) => token === '--run');
+		if (runIndex >= 0 && tokens[runIndex + 1]) {
+			return tokens[runIndex + 1];
+		}
+		const watchIndex = tokens.findIndex((token) => token === '--testPathPattern');
+		if (watchIndex >= 0 && tokens[watchIndex + 1]) {
+			return tokens[watchIndex + 1];
+		}
+		return firstPathAfterDoubleDash(tokens) || lastPath;
+	})();
+	const searchPattern =
+		firstToken === 'rg' || firstToken === 'grep'
+			? firstNonFlagToken(tokens)
+			: firstToken === 'find'
+				? (() => {
+						const nameIndex = tokens.findIndex((token) => token === '-name' || token === '-iname');
+						return nameIndex >= 0 ? tokens[nameIndex + 1] || null : null;
+					})()
+				: null;
+
+	if (
+		unwrappedCommand !== compactCommand &&
+		segments.some(
+			(segment) => /\$PWCLI\b/i.test(segment) || /\bplaywright_cli\.sh\b/i.test(segment)
+		)
+	) {
+		return {
+			title: 'Running a browser workflow',
+			subtitle: 'Opening the app in a browser and collecting interactive diagnostics',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (segments.some((segment) => /\bcommand\s+-v\b/i.test(segment))) {
+		const probeSegment =
+			segments.find((segment) => /\bcommand\s+-v\b/i.test(segment)) || compactCommand;
+		const probeTokens = tokenizeShellCommand(probeSegment);
+		const binaryName = probeTokens[2] || 'a required tool';
+		return {
+			title: `Checking for ${binaryName}`,
+			subtitle: `Verifying whether ${binaryName} is available in the shell`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (
+		matchesShellCommand(lowerCommand, /^git\s+push\b/) ||
+		matchesShellCommand(lowerCommand, /\bgh\s+repo\s+sync\b/)
+	) {
+		return {
+			title: 'Pushing to GitHub',
+			subtitle: 'Syncing the latest commits to the remote repository',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (
+		matchesShellCommand(lowerCommand, /\bgh\s+(pr|issue|repo|run)\b/) ||
+		matchesShellCommand(lowerCommand, /^git\s+(status|diff|log|show|branch)\b/)
+	) {
+		return {
+			title: 'Checking GitHub or git state',
+			subtitle: 'Inspecting repository status, history, or pull request state',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (
+		matchesShellCommand(lowerCommand, /\bvercel\b.*\b(deploy|promote|rollback)\b/) ||
+		matchesShellCommand(lowerCommand, /\bvercel\s+deploy\b/)
+	) {
+		return {
+			title: 'Deploying to Vercel',
+			subtitle: 'Creating or updating a Vercel deployment',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (matchesShellCommand(lowerCommand, /\bvercel\b/)) {
+		return {
+			title: 'Checking Vercel',
+			subtitle: 'Inspecting deployment status or project configuration',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (
+		matchesShellCommand(lowerCommand, /\b(npm|pnpm|yarn)\s+(test|run\s+test)\b/) ||
+		matchesShellCommand(lowerCommand, /\b(vitest|jest|playwright|pytest|rspec)\b/) ||
+		matchesShellCommand(lowerCommand, /\b(go|cargo)\s+test\b/)
+	) {
+		const targetLabel = getCommandTargetLabel(runTarget, 'the relevant test files');
+		return {
+			title: runTarget ? `Running tests for ${targetLabel}` : 'Running tests',
+			subtitle: runTarget
+				? `Checking whether changes around ${targetLabel} still behave correctly`
+				: 'Checking whether the current changes behave correctly',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (
+		matchesShellCommand(lowerCommand, /\b(npm|pnpm|yarn)\s+(run\s+)?build\b/) ||
+		matchesShellCommand(lowerCommand, /\b(vite|next|turbo|webpack)\s+build\b/)
+	) {
+		return {
+			title: 'Building the app',
+			subtitle: 'Compiling the current code into a runnable build',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'rg' || firstToken === 'grep') {
+		const targetLabel = getCommandTargetLabel(lastPath, 'the codebase');
+		return {
+			title: searchPattern
+				? `Searching ${targetLabel} for ${quoteLabel(searchPattern)}`
+				: `Searching ${targetLabel}`,
+			subtitle: searchPattern
+				? `Looking through ${targetLabel} for matching code or text`
+				: `Scanning ${targetLabel} for relevant matches`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'nl' && tokens[1] === '-ba') {
+		const targetLabel = getCommandTargetLabel(lastPath, 'a project file');
+		return {
+			title: `Reading ${targetLabel}`,
+			subtitle: `Viewing numbered lines from ${targetLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'sed') {
+		const targetLabel = getCommandTargetLabel(lastPath, 'a project file');
+		return {
+			title: `Reading ${targetLabel}`,
+			subtitle: `Viewing selected lines from ${targetLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'cat' || firstToken === 'head' || firstToken === 'tail') {
+		const targetLabel = getCommandTargetLabel(lastPath, 'a project file');
+		return {
+			title: `Reading ${targetLabel}`,
+			subtitle:
+				firstToken === 'tail'
+					? `Checking the latest output from ${targetLabel}`
+					: `Opening ${targetLabel} in the shell`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'ls') {
+		const targetLabel = getCommandTargetLabel(lastPath, 'the current folder');
+		return {
+			title: `Listing files in ${targetLabel}`,
+			subtitle: `Inspecting what is available inside ${targetLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'find') {
+		const targetLabel = getCommandTargetLabel(firstPath, 'the project');
+		return {
+			title: searchPattern
+				? `Finding ${quoteLabel(formatPathLabel(searchPattern) || searchPattern)} in ${targetLabel}`
+				: `Finding files in ${targetLabel}`,
+			subtitle: `Scanning ${targetLabel} for matching files or folders`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'wc' || firstToken === 'stat' || firstToken === 'readlink') {
+		const targetLabel = getCommandTargetLabel(lastPath, 'a project file');
+		return {
+			title: `Checking details for ${targetLabel}`,
+			subtitle: `Inspecting metadata or size information for ${targetLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (
+		matchesShellCommand(lowerCommand, /(^|\s)(rg|grep|find|sed|cat|head|tail|wc|ls)\b/) ||
+		matchesShellCommand(lowerCommand, /\b(readlink|stat)\b/)
+	) {
+		const targetLabel = getCommandTargetLabel(lastPath || firstPath, 'the codebase');
+		return {
+			title: `Inspecting ${targetLabel}`,
+			subtitle: `Searching files and reading project context in ${targetLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (matchesShellCommand(lowerCommand, /\b(curl|wget)\b/)) {
+		const domain = extractDomainLabel(firstNonFlagToken(tokens) || null);
+		return {
+			title: domain ? `Fetching data from ${domain}` : 'Fetching remote data',
+			subtitle: domain
+				? `Requesting information from ${domain}`
+				: 'Requesting information from an external service',
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'mkdir') {
+		const targetLabel = getCommandTargetLabel(lastPath || firstNonFlagToken(tokens), 'a folder');
+		return {
+			title: `Creating ${targetLabel}`,
+			subtitle: `Making a new folder or directory for ${targetLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'rm') {
+		const targetLabel = getCommandTargetLabel(lastPath || firstNonFlagToken(tokens), 'a file');
+		return {
+			title: `Removing ${targetLabel}`,
+			subtitle: `Deleting ${targetLabel} from the project`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'mv') {
+		const sourceLabel = getCommandTargetLabel(firstPath, 'a file');
+		const destinationLabel = getCommandTargetLabel(pathTokens[1] || null, 'a new location');
+		return {
+			title: `Moving ${sourceLabel}`,
+			subtitle: `Relocating ${sourceLabel} to ${destinationLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'cp') {
+		const sourceLabel = getCommandTargetLabel(firstPath, 'a file');
+		const destinationLabel = getCommandTargetLabel(pathTokens[1] || null, 'a new location');
+		return {
+			title: `Copying ${sourceLabel}`,
+			subtitle: `Duplicating ${sourceLabel} into ${destinationLabel}`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	if (firstToken === 'touch') {
+		const targetLabel = getCommandTargetLabel(lastPath || firstNonFlagToken(tokens), 'a file');
+		return {
+			title: `Creating ${targetLabel}`,
+			subtitle: `Creating or updating ${targetLabel} from the shell`,
+			rawCommand: unwrappedCommand,
+		};
+	}
+
+	return {
+		title: 'Running shell command',
+		subtitle: 'Using the shell to inspect or modify the project',
+		rawCommand: unwrappedCommand,
+	};
+};
+
+export const describeToolActivity = (
+	toolName: string,
+	toolState: WebRemoteToolState | undefined
+): ToolActivityCopy => {
+	const normalizedToolName = normalizeToolName(toolName || 'tool');
+	const detail = buildToolDisplayData(toolState);
+	const input = toolState?.input as Record<string, unknown> | undefined;
+	const command = safeCommand(input?.command) || safeCommand(input?.cmd);
+	const query = safeStr(input?.query) || safeStr(input?.pattern);
+	const pathValue = safeStr(input?.path) || safeStr(input?.file_path) || safeStr(input?.filePath);
+	const pathLabel = formatPathLabel(pathValue);
+
+	if (command) {
+		return describeShellCommand(command);
+	}
+
+	if (isWebSearchTool(toolName) || normalizedToolName.includes('search')) {
+		return {
+			title: 'Searching the web',
+			subtitle: query || detail.summary || null,
+			rawCommand: null,
+		};
+	}
+
+	if (
+		normalizedToolName.includes('apply_patch') ||
+		normalizedToolName.includes('write') ||
+		normalizedToolName.includes('edit')
+	) {
+		return {
+			title: pathLabel ? `Editing ${pathLabel}` : 'Editing files',
+			subtitle: detail.summary,
+			rawCommand: null,
+		};
+	}
+
+	if (
+		normalizedToolName.includes('read') ||
+		normalizedToolName.includes('open') ||
+		normalizedToolName.includes('view')
+	) {
+		return {
+			title: pathLabel ? `Reading ${pathLabel}` : 'Reading project files',
+			subtitle: detail.summary,
+			rawCommand: null,
+		};
+	}
+
+	if (normalizedToolName.includes('browser') || normalizedToolName.includes('playwright')) {
+		return {
+			title: 'Using the browser',
+			subtitle: detail.summary,
+			rawCommand: null,
+		};
+	}
+
+	if (normalizedToolName.includes('todo')) {
+		return {
+			title: 'Updating the task list',
+			subtitle: detail.summary,
+			rawCommand: null,
+		};
+	}
+
+	if (normalizedToolName.includes('github') || normalizedToolName.includes('git')) {
+		return {
+			title: 'Working with GitHub',
+			subtitle: detail.summary,
+			rawCommand: null,
+		};
+	}
+
+	if (normalizedToolName.includes('vercel')) {
+		return {
+			title: 'Working with Vercel',
+			subtitle: detail.summary,
+			rawCommand: null,
+		};
+	}
+
+	if (normalizedToolName.includes('fetch')) {
+		return {
+			title: 'Fetching remote data',
+			subtitle: detail.summary,
+			rawCommand: null,
+		};
+	}
+
+	return {
+		title: 'Using a tool',
+		subtitle: detail.summary || normalizeToolName(toolName).replace(/:/g, ' '),
+		rawCommand: null,
+	};
+};
 
 export const buildToolDisplayData = (
 	toolState: WebRemoteToolState | undefined

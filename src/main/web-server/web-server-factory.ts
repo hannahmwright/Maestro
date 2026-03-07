@@ -344,6 +344,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 							agentSessionId: tab.agentSessionId || null,
 							name: tab.name || null,
 							starred: tab.starred || false,
+							hasUnread: !!tab.hasUnread,
 							inputValue: tab.inputValue || '',
 							usageStats: tab.usageStats || null,
 							createdAt: tab.createdAt,
@@ -550,7 +551,26 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// This forwards AI commands to the renderer, ensuring single source of truth
 		// The renderer handles all spawn logic, state management, and broadcasts
 		server.setExecuteCommandCallback(
-			async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
+			async (
+				sessionId: string,
+				command: string,
+				inputMode?: 'ai' | 'terminal',
+				images?: string[],
+				textAttachments?: Array<{
+					id?: string;
+					name: string;
+					content: string;
+					mimeType?: string;
+					size?: number;
+				}>,
+				attachments?: Array<{
+					id?: string;
+					kind: 'image' | 'file';
+					name: string;
+					mimeType?: string;
+					size?: number;
+				}>
+			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
 					logger.warn('mainWindow is null for executeCommand', 'WebServer');
@@ -573,7 +593,15 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					logger.warn('webContents is not available for executeCommand', 'WebServer');
 					return false;
 				}
-				mainWindow.webContents.send('remote:executeCommand', sessionId, command, inputMode);
+				mainWindow.webContents.send(
+					'remote:executeCommand',
+					sessionId,
+					command,
+					inputMode,
+					images,
+					textAttachments,
+					attachments
+				);
 				return true;
 			}
 		);

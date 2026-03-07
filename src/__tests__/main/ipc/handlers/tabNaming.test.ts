@@ -328,6 +328,62 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBe('Dark Mode Toggle');
 		});
 
+		it('strips leading date prefixes from filename-style tab names', async () => {
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'What do you see in this screenshot?',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', '2026-03-07 websocket reconnect issue.png');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			const result = await resultPromise;
+			expect(result).toBe('websocket reconnect issue');
+		});
+
+		it('returns null when the generated name is only a date-like filename', async () => {
+			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Name this tab',
+				agentType: 'claude-code',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalled();
+			});
+
+			onDataCallback?.('tab-naming-mock-uuid-1234', '2026-03-07 3.43.21 PM.png');
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			const result = await resultPromise;
+			expect(result).toBeNull();
+		});
+
 		it('returns null for empty output', async () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;

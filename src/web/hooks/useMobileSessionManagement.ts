@@ -34,7 +34,11 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import type { ResponseCompletedEvent, WebRemoteLogEntry } from '../../shared/remote-web';
+import type {
+	ResponseCompletedEvent,
+	WebAttachmentSummary,
+	WebRemoteLogEntry,
+} from '../../shared/remote-web';
 import type { Session } from './useSessions';
 import type { WebSocketState, AITabData, AutoRunState, CustomCommand } from './useWebSocket';
 import { buildApiUrl, getMaestroConfig, updateUrlForSessionTab } from '../utils/config';
@@ -107,7 +111,13 @@ export interface MobileSessionHandlers {
 		tabId?: string
 	) => void;
 	onSessionExit: (sessionId: string, exitCode: number) => void;
-	onUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') => void;
+	onUserInput: (
+		sessionId: string,
+		command: string,
+		inputMode: 'ai' | 'terminal',
+		images?: string[],
+		attachments?: WebAttachmentSummary[]
+	) => void;
 	onThemeUpdate: (theme: Theme) => void;
 	onCustomCommands: (commands: CustomCommand[]) => void;
 	onAutoRunStateChange: (sessionId: string, state: AutoRunState | null) => void;
@@ -145,10 +155,14 @@ export interface UseMobileSessionManagementReturn {
 	sessionLogs: SessionLogsState;
 	/** Whether logs are currently loading */
 	isLoadingLogs: boolean;
+	/** Whether logs are refreshing in the background */
+	isSyncingLogs: boolean;
 	/** Ref tracking active session ID for callbacks */
 	activeSessionIdRef: React.RefObject<string | null>;
 	/** Handler to select a session (also notifies desktop) */
 	handleSelectSession: (sessionId: string) => void;
+	/** Handler to select an exact session/tab target */
+	handleSelectSessionTab: (sessionId: string, tabId: string | null) => void;
 	/** Handler to select a tab within the active session */
 	handleSelectTab: (tabId: string) => void;
 	/** Handler to create a new tab in the active session */
@@ -166,9 +180,18 @@ export interface UseMobileSessionManagementReturn {
 	/** Handler to toggle bookmark on a session */
 	handleToggleBookmark: (sessionId: string) => void;
 	/** Add a user input log entry to session logs */
-	addUserLogEntry: (text: string, inputMode: 'ai' | 'terminal') => void;
+	addUserLogEntry: (
+		text: string,
+		inputMode: 'ai' | 'terminal',
+		images?: string[],
+		attachments?: WebAttachmentSummary[]
+	) => void;
 	/** WebSocket handlers for session state updates */
 	sessionsHandlers: MobileSessionHandlers;
+}
+
+function getLogsTargetKey(sessionId: string, tabId: string | null): string {
+	return `${sessionId}::${tabId || ''}`;
 }
 
 /**
@@ -220,6 +243,7 @@ export function useMobileSessionManagement(
 		shellLogs: [],
 	});
 	const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+	const [isSyncingLogs, setIsSyncingLogs] = useState(false);
 
 	// Track previous session states for detecting busy -> idle transitions
 	const previousSessionStatesRef = useRef<Map<string, string>>(new Map());
@@ -237,6 +261,42 @@ export function useMobileSessionManagement(
 	const activeTabIdRef = useRef<string | null>(urlTabId || savedActiveTabId);
 	// Track recent websocket/user activity so polling only fills realtime gaps
 	const lastRealtimeActivityAtRef = useRef(0);
+	const loadedLogsTargetKeyRef = useRef<string | null>(null);
+	const latestLogsRequestIdRef = useRef(0);
+	const backgroundLogsRequestCountRef = useRef(0);
+
+	const resetDisplayedLogs = useCallback(() => {
+		lastRealtimeActivityAtRef.current = 0;
+		loadedLogsTargetKeyRef.current = null;
+		latestLogsRequestIdRef.current += 1;
+		backgroundLogsRequestCountRef.current = 0;
+		setIsLoadingLogs(false);
+		setIsSyncingLogs(false);
+		setSessionLogs({ aiLogs: [], shellLogs: [] });
+	}, []);
+
+	const switchActiveTarget = useCallback(
+		(
+			sessionId: string | null,
+			tabId: string | null,
+			options?: {
+				resetLogs?: boolean;
+			}
+		) => {
+			const targetChanged =
+				activeSessionIdRef.current !== sessionId || activeTabIdRef.current !== tabId;
+
+			if (options?.resetLogs && targetChanged) {
+				resetDisplayedLogs();
+			}
+
+			activeSessionIdRef.current = sessionId;
+			activeTabIdRef.current = tabId;
+			setActiveSessionId(sessionId);
+			setActiveTabId(tabId);
+		},
+		[resetDisplayedLogs]
+	);
 
 	// Keep activeSessionIdRef in sync with state
 	useEffect(() => {
@@ -265,33 +325,97 @@ export function useMobileSessionManagement(
 		return sessions.find((s) => s.id === activeSessionId);
 	}, [sessions, activeSessionId]);
 
-	const fetchSessionLogs = useCallback(async (sessionId: string, tabId: string | null) => {
-		setIsLoadingLogs(true);
-		try {
-			const tabParam = tabId ? `?tabId=${tabId}` : '';
-			const apiUrl = buildApiUrl(`/session/${sessionId}${tabParam}`);
-			const response = await fetch(apiUrl, { cache: 'no-store' });
-			if (response.ok) {
-				const data = await response.json();
-				const session = data.session;
-				setSessionLogs({
-					aiLogs: session?.aiLogs || [],
-					shellLogs: session?.shellLogs || [],
-				});
-				lastRealtimeActivityAtRef.current = Date.now();
-				webLogger.debug('Fetched session logs:', 'Mobile', {
-					aiLogs: session?.aiLogs?.length || 0,
-					shellLogs: session?.shellLogs?.length || 0,
-					requestedTabId: tabId,
-					returnedTabId: session?.activeTabId,
-				});
-			}
-		} catch (err) {
-			webLogger.error('Failed to fetch session logs', 'Mobile', err);
-		} finally {
-			setIsLoadingLogs(false);
+	const displayedSessionLogs = useMemo(() => {
+		if (!activeSessionId) {
+			return { aiLogs: [], shellLogs: [] };
 		}
-	}, []);
+
+		const activeTargetKey = getLogsTargetKey(activeSessionId, activeTabId);
+		if (loadedLogsTargetKeyRef.current !== activeTargetKey) {
+			return { aiLogs: [], shellLogs: [] };
+		}
+
+		return sessionLogs;
+	}, [activeSessionId, activeTabId, sessionLogs]);
+
+	const fetchSessionLogs = useCallback(
+		async (
+			sessionId: string,
+			tabId: string | null,
+			options?: {
+				background?: boolean;
+			}
+		) => {
+			const targetKey = getLogsTargetKey(sessionId, tabId);
+			const requestId = ++latestLogsRequestIdRef.current;
+			const shouldBlock = !options?.background && loadedLogsTargetKeyRef.current !== targetKey;
+
+			if (shouldBlock) {
+				setIsLoadingLogs(true);
+			}
+			if (options?.background) {
+				backgroundLogsRequestCountRef.current += 1;
+				setIsSyncingLogs(true);
+			}
+
+			try {
+				const tabParam = tabId ? `?tabId=${tabId}` : '';
+				const apiUrl = buildApiUrl(`/session/${sessionId}${tabParam}`);
+				const response = await fetch(apiUrl, { cache: 'no-store' });
+				if (response.ok) {
+					const data = await response.json();
+					const session = data.session;
+
+					// Ignore stale responses when the user changed session/tab mid-request.
+					if (latestLogsRequestIdRef.current !== requestId) {
+						return;
+					}
+
+					const activeTargetKey = activeSessionIdRef.current
+						? getLogsTargetKey(activeSessionIdRef.current, activeTabIdRef.current)
+						: null;
+					if (activeTargetKey !== targetKey) {
+						webLogger.debug('Ignoring stale session logs response', 'Mobile', {
+							sessionId,
+							tabId,
+							targetKey,
+							activeTargetKey,
+						});
+						return;
+					}
+
+					setSessionLogs({
+						aiLogs: session?.aiLogs || [],
+						shellLogs: session?.shellLogs || [],
+					});
+					loadedLogsTargetKeyRef.current = targetKey;
+					lastRealtimeActivityAtRef.current = Date.now();
+					webLogger.debug('Fetched session logs:', 'Mobile', {
+						aiLogs: session?.aiLogs?.length || 0,
+						shellLogs: session?.shellLogs?.length || 0,
+						requestedTabId: tabId,
+						returnedTabId: session?.activeTabId,
+					});
+				}
+			} catch (err) {
+				webLogger.error('Failed to fetch session logs', 'Mobile', err);
+			} finally {
+				if (options?.background) {
+					backgroundLogsRequestCountRef.current = Math.max(
+						0,
+						backgroundLogsRequestCountRef.current - 1
+					);
+					if (backgroundLogsRequestCountRef.current === 0) {
+						setIsSyncingLogs(false);
+					}
+				}
+				if (shouldBlock && latestLogsRequestIdRef.current === requestId) {
+					setIsLoadingLogs(false);
+				}
+			}
+		},
+		[]
+	);
 
 	const applySessionsSnapshot = useCallback((newSessions: Session[]) => {
 		const currentSessions = sessionsRef.current;
@@ -457,6 +581,11 @@ export function useMobileSessionManagement(
 	useEffect(() => {
 		if (!activeSessionId || isOffline) {
 			lastRealtimeActivityAtRef.current = 0;
+			loadedLogsTargetKeyRef.current = null;
+			latestLogsRequestIdRef.current += 1;
+			backgroundLogsRequestCountRef.current = 0;
+			setIsLoadingLogs(false);
+			setIsSyncingLogs(false);
 			setSessionLogs({ aiLogs: [], shellLogs: [] });
 			return;
 		}
@@ -478,12 +607,14 @@ export function useMobileSessionManagement(
 
 		const interval = window.setInterval(() => {
 			const now = Date.now();
-			if (now - lastRealtimeActivityAtRef.current < 4000) {
+			if (now - lastRealtimeActivityAtRef.current < 12000) {
 				return;
 			}
 
-			void fetchSessionLogs(activeSessionIdRef.current || activeSessionId, activeTabIdRef.current);
-		}, 3000);
+			void fetchSessionLogs(activeSessionIdRef.current || activeSessionId, activeTabIdRef.current, {
+				background: true,
+			});
+		}, 10000);
 
 		return () => window.clearInterval(interval);
 	}, [activeSession, activeSessionId, fetchSessionLogs, isOffline]);
@@ -493,12 +624,7 @@ export function useMobileSessionManagement(
 		(sessionId: string) => {
 			// Find the session to get its activeTabId
 			const session = sessions.find((s) => s.id === sessionId);
-			// Update refs synchronously BEFORE state updates to avoid race conditions
-			// with WebSocket messages arriving during the render cycle
-			activeSessionIdRef.current = sessionId;
-			activeTabIdRef.current = session?.activeTabId || null;
-			setActiveSessionId(sessionId);
-			setActiveTabId(session?.activeTabId || null);
+			switchActiveTarget(sessionId, session?.activeTabId || null, { resetLogs: true });
 			triggerHaptic(hapticTapPattern);
 			// Notify desktop to switch to this session (include activeTabId if available)
 			sendRef.current?.({
@@ -510,6 +636,32 @@ export function useMobileSessionManagement(
 		[sessions, sendRef, triggerHaptic, hapticTapPattern]
 	);
 
+	const handleSelectSessionTab = useCallback(
+		(sessionId: string, tabId: string | null) => {
+			const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+			const resolvedTabId = tabId || session?.activeTabId || null;
+
+			switchActiveTarget(sessionId, resolvedTabId, { resetLogs: true });
+			triggerHaptic(hapticTapPattern);
+			sendRef.current?.({
+				type: 'select_session',
+				sessionId,
+				tabId: resolvedTabId || undefined,
+			});
+			setSessions((prev) =>
+				prev.map((candidate) =>
+					candidate.id === sessionId
+						? {
+								...candidate,
+								activeTabId: resolvedTabId || candidate.activeTabId,
+							}
+						: candidate
+				)
+			);
+		},
+		[sendRef, switchActiveTarget, triggerHaptic, hapticTapPattern]
+	);
+
 	// Handle selecting a tab within a session
 	const handleSelectTab = useCallback(
 		(tabId: string) => {
@@ -518,15 +670,13 @@ export function useMobileSessionManagement(
 			// Notify desktop to switch to this tab
 			sendRef.current?.({ type: 'select_tab', sessionId: activeSessionId, tabId });
 			// Update ref synchronously to avoid race conditions with WebSocket messages
-			activeTabIdRef.current = tabId;
-			// Update local activeTabId state directly (triggers log fetch)
-			setActiveTabId(tabId);
+			switchActiveTarget(activeSessionId, tabId, { resetLogs: true });
 			// Also update sessions state for UI consistency
 			setSessions((prev) =>
 				prev.map((s) => (s.id === activeSessionId ? { ...s, activeTabId: tabId } : s))
 			);
 		},
-		[activeSessionId, sendRef, triggerHaptic, hapticTapPattern]
+		[activeSessionId, sendRef, switchActiveTarget, triggerHaptic, hapticTapPattern]
 	);
 
 	// Handle creating a new tab
@@ -588,12 +738,11 @@ export function useMobileSessionManagement(
 			setSessions(nextSessions);
 
 			if (activeSessionIdRef.current === sessionId) {
-				activeSessionIdRef.current = fallbackSession?.id || null;
-				activeTabIdRef.current = fallbackSession?.activeTabId || null;
-				setActiveSessionId(fallbackSession?.id || null);
-				setActiveTabId(fallbackSession?.activeTabId || null);
+				switchActiveTarget(fallbackSession?.id || null, fallbackSession?.activeTabId || null, {
+					resetLogs: true,
+				});
 				if (!fallbackSession) {
-					setSessionLogs({ aiLogs: [], shellLogs: [] });
+					resetDisplayedLogs();
 				}
 			}
 
@@ -601,7 +750,7 @@ export function useMobileSessionManagement(
 
 			scheduleSessionRefresh(fallbackSession?.id, fallbackSession?.activeTabId || null);
 		},
-		[scheduleSessionRefresh, sendRef]
+		[resetDisplayedLogs, scheduleSessionRefresh, sendRef, switchActiveTarget]
 	);
 
 	// Handle closing a tab
@@ -631,8 +780,7 @@ export function useMobileSessionManagement(
 				})
 			);
 			if (activeTabIdRef.current === tabId) {
-				activeTabIdRef.current = nextActiveTabId;
-				setActiveTabId(nextActiveTabId);
+				switchActiveTarget(activeSessionId, nextActiveTabId, { resetLogs: true });
 				void fetchSessionLogs(activeSessionId, nextActiveTabId);
 			}
 			const sessionPendingClosedTabs = new Map(
@@ -643,7 +791,14 @@ export function useMobileSessionManagement(
 			// Notify desktop to close this tab
 			sendRef.current?.({ type: 'close_tab', sessionId: activeSessionId, tabId });
 		},
-		[activeSessionId, sendRef, triggerHaptic, hapticTapPattern]
+		[
+			activeSessionId,
+			fetchSessionLogs,
+			sendRef,
+			switchActiveTarget,
+			triggerHaptic,
+			hapticTapPattern,
+		]
 	);
 
 	// Handle renaming a tab
@@ -709,18 +864,28 @@ export function useMobileSessionManagement(
 	);
 
 	// Add a user input log entry to session logs
-	const addUserLogEntry = useCallback((text: string, inputMode: 'ai' | 'terminal') => {
-		const userLogEntry: LogEntry = {
-			id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-			timestamp: Date.now(),
-			text,
-			source: 'user',
-		};
-		setSessionLogs((prev) => {
-			const logKey = inputMode === 'ai' ? 'aiLogs' : 'shellLogs';
-			return { ...prev, [logKey]: [...prev[logKey], userLogEntry] };
-		});
-	}, []);
+	const addUserLogEntry = useCallback(
+		(
+			text: string,
+			inputMode: 'ai' | 'terminal',
+			images?: string[],
+			attachments?: WebAttachmentSummary[]
+		) => {
+			const userLogEntry: LogEntry = {
+				id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+				timestamp: Date.now(),
+				text,
+				source: 'user',
+				images,
+				attachments,
+			};
+			setSessionLogs((prev) => {
+				const logKey = inputMode === 'ai' ? 'aiLogs' : 'shellLogs';
+				return { ...prev, [logKey]: [...prev[logKey], userLogEntry] };
+			});
+		},
+		[]
+	);
 
 	const upsertSessionLogEntry = useCallback(
 		(sessionId: string, tabId: string | null, inputMode: 'ai' | 'terminal', logEntry: LogEntry) => {
@@ -736,6 +901,10 @@ export function useMobileSessionManagement(
 			}
 
 			lastRealtimeActivityAtRef.current = Date.now();
+			loadedLogsTargetKeyRef.current = getLogsTargetKey(
+				currentActiveId,
+				inputMode === 'ai' ? currentActiveTabId : null
+			);
 			setSessionLogs((prev) => {
 				const logKey = inputMode === 'terminal' ? 'shellLogs' : 'aiLogs';
 				const existingLogs = prev[logKey];
@@ -763,6 +932,19 @@ export function useMobileSessionManagement(
 		(): MobileSessionHandlers => ({
 			onConnectionChange: (newState: WebSocketState) => {
 				webLogger.debug(`Connection state: ${newState}`, 'Mobile');
+				if (isOffline) {
+					return;
+				}
+				if (newState === 'connected' || newState === 'authenticated') {
+					void refreshSessionsList(activeSessionIdRef.current || undefined, activeTabIdRef.current);
+					if (activeSessionIdRef.current) {
+						void fetchSessionLogs(activeSessionIdRef.current, activeTabIdRef.current, {
+							background:
+								loadedLogsTargetKeyRef.current ===
+								getLogsTargetKey(activeSessionIdRef.current, activeTabIdRef.current),
+						});
+					}
+				}
 			},
 			onError: (err: string) => {
 				webLogger.error(`WebSocket error: ${err}`, 'Mobile');
@@ -812,6 +994,13 @@ export function useMobileSessionManagement(
 					if (prev.some((s) => s.id === session.id)) return prev;
 					return [...prev, session];
 				});
+
+				if (activeSessionIdRef.current === session.id) {
+					switchActiveTarget(session.id, session.activeTabId || null, { resetLogs: true });
+					if (session.activeTabId) {
+						void fetchSessionLogs(session.id, session.activeTabId);
+					}
+				}
 			},
 			onSessionRemoved: (sessionId: string) => {
 				// Clean up state tracking
@@ -829,12 +1018,11 @@ export function useMobileSessionManagement(
 				setSessions((prev) => prev.filter((s) => s.id !== sessionId));
 				// Update refs synchronously if the removed session was active
 				if (activeSessionIdRef.current === sessionId) {
-					activeSessionIdRef.current = fallbackSession?.id || null;
-					activeTabIdRef.current = fallbackSession?.activeTabId || null;
-					setActiveSessionId(fallbackSession?.id || null);
-					setActiveTabId(fallbackSession?.activeTabId || null);
+					switchActiveTarget(fallbackSession?.id || null, fallbackSession?.activeTabId || null, {
+						resetLogs: true,
+					});
 					if (!fallbackSession) {
-						setSessionLogs({ aiLogs: [], shellLogs: [] });
+						resetDisplayedLogs();
 					}
 				}
 
@@ -845,15 +1033,11 @@ export function useMobileSessionManagement(
 			onActiveSessionChanged: (sessionId: string) => {
 				// Desktop app switched to a different session - sync with web
 				webLogger.debug(`Desktop active session changed: ${sessionId}`, 'Mobile');
+				switchActiveTarget(sessionId, null, { resetLogs: true });
 				if (!sessionsRef.current.some((session) => session.id === sessionId)) {
 					void refreshSessionsList(sessionId);
 					return;
 				}
-				// Update refs synchronously BEFORE state updates to avoid race conditions
-				activeSessionIdRef.current = sessionId;
-				activeTabIdRef.current = null;
-				setActiveSessionId(sessionId);
-				setActiveTabId(null);
 			},
 			onSessionOutput: (
 				sessionId: string,
@@ -895,6 +1079,7 @@ export function useMobileSessionManagement(
 				}
 
 				lastRealtimeActivityAtRef.current = Date.now();
+				loadedLogsTargetKeyRef.current = getLogsTargetKey(currentActiveId, currentActiveTabId);
 				setSessionLogs((prev) => {
 					const logKey = source === 'ai' ? 'aiLogs' : 'shellLogs';
 					const existingLogs = prev[logKey] || [];
@@ -939,7 +1124,13 @@ export function useMobileSessionManagement(
 				// Update session state to idle when process exits
 				setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, state: 'idle' } : s)));
 			},
-			onUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') => {
+			onUserInput: (
+				sessionId: string,
+				command: string,
+				inputMode: 'ai' | 'terminal',
+				images?: string[],
+				attachments?: WebAttachmentSummary[]
+			) => {
 				// User input from desktop app - add to session logs so web interface stays in sync
 				const currentActiveId = activeSessionIdRef.current;
 				webLogger.debug(
@@ -969,6 +1160,8 @@ export function useMobileSessionManagement(
 					timestamp: Date.now(),
 					text: command,
 					source: 'user',
+					images,
+					attachments,
 				};
 				setSessionLogs((prev) => {
 					const logKey = inputMode === 'ai' ? 'aiLogs' : 'shellLogs';
@@ -1044,8 +1237,11 @@ export function useMobileSessionManagement(
 				// Also update activeTabId ref and state if this is the current session
 				const currentSessionId = activeSessionIdRef.current;
 				if (currentSessionId === sessionId) {
-					activeTabIdRef.current = resolvedActiveTabId || null;
-					setActiveTabId(resolvedActiveTabId || null);
+					switchActiveTarget(sessionId, resolvedActiveTabId || null, {
+						resetLogs:
+							getLogsTargetKey(sessionId, activeTabIdRef.current) !==
+							getLogsTargetKey(sessionId, resolvedActiveTabId || null),
+					});
 				}
 			},
 			onNewTabResult: (sessionId: string, success: boolean, tabId?: string) => {
@@ -1110,8 +1306,7 @@ export function useMobileSessionManagement(
 				);
 
 				if (activeSessionIdRef.current === sessionId) {
-					activeTabIdRef.current = tabId;
-					setActiveTabId(tabId);
+					switchActiveTarget(sessionId, tabId, { resetLogs: true });
 					setSessions((prev) =>
 						prev.map((session) =>
 							session.id === sessionId ? { ...session, activeTabId: tabId } : session
@@ -1151,6 +1346,9 @@ export function useMobileSessionManagement(
 			upsertSessionLogEntry,
 			fetchSessionLogs,
 			refreshSessionsList,
+			isOffline,
+			resetDisplayedLogs,
+			switchActiveTarget,
 		]
 	);
 
@@ -1163,11 +1361,13 @@ export function useMobileSessionManagement(
 		activeTabId,
 		setActiveTabId,
 		activeSession,
-		sessionLogs,
+		sessionLogs: displayedSessionLogs,
 		isLoadingLogs,
+		isSyncingLogs,
 		activeSessionIdRef,
 		// Handlers
 		handleSelectSession,
+		handleSelectSessionTab,
 		handleSelectTab,
 		handleNewTab,
 		handleDeleteSession,

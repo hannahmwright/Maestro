@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
+import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import type { Session } from '../hooks/useSessions';
 
 interface MobileNavigationDrawerProps {
@@ -22,8 +23,255 @@ interface SessionGroupSection {
 	sessions: Session[];
 }
 
+interface SwipeableAgentRowProps {
+	session: Session;
+	isActive: boolean;
+	activeBadgeShadow: string;
+	onSelect: (sessionId: string) => void;
+	onDelete?: (session: Session) => void;
+	isDeleteActionVisible: boolean;
+	onToggleDeleteAction: (sessionId: string | null) => void;
+}
+
+const DELETE_ACTION_WIDTH = 84;
+const DELETE_SWIPE_THRESHOLD = 60;
+
 function normalizeSearchText(value: string): string {
 	return value.trim().toLowerCase();
+}
+
+function SwipeableAgentRow({
+	session,
+	isActive,
+	activeBadgeShadow,
+	onSelect,
+	onDelete,
+	isDeleteActionVisible,
+	onToggleDeleteAction,
+}: SwipeableAgentRowProps) {
+	const colors = useThemeColors();
+	const tabCount = session.aiTabs?.length || 0;
+	const showTabCount = tabCount > 1;
+	const gitFileCount = session.gitFileCount || 0;
+	const showGitIndicator = session.isGitRepo && gitFileCount > 0;
+	const {
+		handlers: swipeHandlers,
+		offsetX,
+		isSwiping,
+		resetOffset,
+	} = useSwipeGestures({
+		onSwipeLeft: onDelete
+			? () => {
+					onToggleDeleteAction(session.id);
+				}
+			: undefined,
+		onSwipeRight: onDelete
+			? () => {
+					onToggleDeleteAction(null);
+				}
+			: undefined,
+		trackOffset: true,
+		threshold: DELETE_SWIPE_THRESHOLD,
+		maxOffset: DELETE_ACTION_WIDTH + 20,
+		enabled: !!onDelete,
+	});
+
+	useEffect(() => {
+		if (isDeleteActionVisible) {
+			return;
+		}
+
+		resetOffset();
+	}, [isDeleteActionVisible, resetOffset]);
+
+	const isDeleteActionRevealed = isDeleteActionVisible || offsetX < -20;
+	const translateX = isDeleteActionVisible ? -DELETE_ACTION_WIDTH : Math.min(0, offsetX);
+
+	const handleSelect = useCallback(() => {
+		if (isDeleteActionVisible) {
+			onToggleDeleteAction(null);
+			resetOffset();
+			return;
+		}
+
+		onSelect(session.id);
+	}, [isDeleteActionVisible, onSelect, onToggleDeleteAction, resetOffset, session.id]);
+
+	const handleDelete = useCallback(
+		(event: React.MouseEvent<HTMLButtonElement>) => {
+			event.stopPropagation();
+			onToggleDeleteAction(null);
+			resetOffset();
+			onDelete?.(session);
+		},
+		[onDelete, onToggleDeleteAction, resetOffset, session]
+	);
+
+	return (
+		<div
+			style={{
+				padding: '4px',
+				borderRadius: '14px',
+				marginBottom: '2px',
+			}}
+		>
+			<div
+				style={{
+					position: 'relative',
+					overflow: 'hidden',
+					borderRadius: '14px',
+				}}
+			>
+				{onDelete && (
+					<button
+						type="button"
+						onClick={handleDelete}
+						aria-label={`Delete ${session.name}`}
+						aria-hidden={!isDeleteActionRevealed}
+						title={`Delete ${session.name}`}
+						tabIndex={isDeleteActionRevealed ? 0 : -1}
+						style={{
+							position: 'absolute',
+							top: 0,
+							right: 0,
+							bottom: 0,
+							width: `${DELETE_ACTION_WIDTH}px`,
+							border: 'none',
+							background: 'linear-gradient(180deg, #ef4444 0%, #dc2626 100%)',
+							color: '#ffffff',
+							display: 'flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							gap: '6px',
+							fontSize: '11px',
+							fontWeight: 700,
+							letterSpacing: '0.02em',
+							cursor: 'pointer',
+							opacity: isDeleteActionRevealed ? 1 : 0,
+							pointerEvents: isDeleteActionRevealed ? 'auto' : 'none',
+							transition: 'opacity 140ms ease',
+						}}
+					>
+						<svg
+							width="15"
+							height="15"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+						>
+							<path d="M3 6h18" />
+							<path d="M8 6V4h8v2" />
+							<path d="M19 6l-1 14H6L5 6" />
+							<path d="M10 11v6" />
+							<path d="M14 11v6" />
+						</svg>
+						Delete
+					</button>
+				)}
+				<button
+					type="button"
+					{...swipeHandlers}
+					onClick={handleSelect}
+					style={{
+						padding: '12px 14px',
+						borderRadius: '14px',
+						border: 'none',
+						width: '100%',
+						boxShadow: isActive
+							? `0 14px 28px ${colors.accent}18, 0 6px 16px rgba(15, 23, 42, 0.10), inset 2px 0 0 ${colors.accent}, inset 0 1px 0 rgba(255, 255, 255, 0.10)`
+							: '0 4px 12px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
+						background: isActive
+							? `linear-gradient(180deg, ${colors.accent}18 0%, rgba(255,255,255,0.08) 100%)`
+							: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)',
+						display: 'flex',
+						alignItems: 'center',
+						gap: '10px',
+						textAlign: 'left',
+						cursor: 'pointer',
+						transition: isSwiping
+							? 'none'
+							: 'background-color 160ms ease, box-shadow 160ms ease, transform 180ms ease',
+						transform: `translateX(${translateX}px)`,
+						touchAction: 'pan-y',
+					}}
+				>
+					<span
+						style={{
+							fontSize: '13px',
+							fontWeight: isActive ? 600 : 500,
+							color: colors.textMain,
+							minWidth: 0,
+							flex: 1,
+							letterSpacing: isActive ? '-0.01em' : undefined,
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+							whiteSpace: 'nowrap',
+						}}
+					>
+						{session.name}
+					</span>
+					<div
+						style={{
+							display: 'flex',
+							alignItems: 'center',
+							gap: '7px',
+							flexShrink: 0,
+							color: colors.textDim,
+							justifyContent: 'flex-end',
+						}}
+					>
+						{showGitIndicator && (
+							<span
+								title={`${gitFileCount} changed file${gitFileCount === 1 ? '' : 's'}`}
+								style={{
+									display: 'inline-flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									gap: '4px',
+									minWidth: '38px',
+									fontSize: '10px',
+									fontWeight: 600,
+									color: colors.warning,
+									padding: '4px 7px',
+									borderRadius: '999px',
+									background: `${colors.warning}${isActive ? '14' : '12'}`,
+									boxShadow: isActive ? activeBadgeShadow : 'none',
+								}}
+							>
+								<GitBranch size={12} />
+								<span>{gitFileCount}</span>
+							</span>
+						)}
+						{showTabCount && (
+							<span
+								title={`${tabCount} tabs`}
+								style={{
+									minWidth: '22px',
+									height: '22px',
+									padding: '0 7px',
+									borderRadius: '999px',
+									border: '1px solid rgba(255, 255, 255, 0.06)',
+									backgroundColor: isActive ? `${colors.accent}10` : 'rgba(255, 255, 255, 0.06)',
+									display: 'inline-flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									fontSize: '10px',
+									fontWeight: 600,
+									color: isActive ? colors.accent : colors.textDim,
+									boxShadow: isActive ? activeBadgeShadow : 'none',
+								}}
+							>
+								{tabCount}
+							</span>
+						)}
+					</div>
+				</button>
+			</div>
+		</div>
+	);
 }
 
 export function MobileNavigationDrawer({
@@ -39,6 +287,7 @@ export function MobileNavigationDrawer({
 }: MobileNavigationDrawerProps) {
 	const colors = useThemeColors();
 	const [searchQuery, setSearchQuery] = useState('');
+	const [deleteActionSessionId, setDeleteActionSessionId] = useState<string | null>(null);
 	const searchInputRef = useRef<HTMLInputElement | null>(null);
 	const glassSurface = {
 		border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -62,11 +311,13 @@ export function MobileNavigationDrawer({
 	const closeDrawer = () => {
 		searchInputRef.current?.blur();
 		setSearchQuery('');
+		setDeleteActionSessionId(null);
 		onClose();
 	};
 	const confirmDeleteSession = useCallback(
 		(session: Session) => {
 			if (!onDeleteSession) return;
+			setDeleteActionSessionId(null);
 			const shouldDelete = window.confirm(`Remove agent "${session.name}"?`);
 			if (!shouldDelete) return;
 			searchInputRef.current?.blur();
@@ -139,6 +390,10 @@ export function MobileNavigationDrawer({
 			document.body.style.overflow = previousOverflow;
 		};
 	}, [isOpen]);
+
+	useEffect(() => {
+		setDeleteActionSessionId(null);
+	}, [activeSessionId, normalizedSearchQuery]);
 
 	if (!isOpen) {
 		return null;
@@ -522,170 +777,22 @@ export function MobileNavigationDrawer({
 									>
 										{group.sessions.map((session) => {
 											const isActive = session.id === activeSessionId;
-											const tabCount = session.aiTabs?.length || 0;
-											const showTabCount = tabCount > 1;
-											const gitFileCount = session.gitFileCount || 0;
-											const showGitIndicator = session.isGitRepo && gitFileCount > 0;
 											return (
-												<div
+												<SwipeableAgentRow
 													key={session.id}
-													style={{
-														padding: '4px',
-														borderRadius: '14px',
-														display: 'flex',
-														alignItems: 'center',
-														gap: '8px',
-														marginBottom:
-															group.sessions[group.sessions.length - 1]?.id === session.id
-																? 0
-																: '2px',
+													session={session}
+													isActive={isActive}
+													activeBadgeShadow={activeBadgeShadow}
+													onSelect={(sessionId) => {
+														searchInputRef.current?.blur();
+														setSearchQuery('');
+														setDeleteActionSessionId(null);
+														onSelectSession(sessionId);
 													}}
-												>
-													<button
-														type="button"
-														onClick={() => {
-															searchInputRef.current?.blur();
-															setSearchQuery('');
-															onSelectSession(session.id);
-														}}
-														style={{
-															padding: '12px 14px',
-															borderRadius: '14px',
-															border: 'none',
-															flex: 1,
-															boxShadow: isActive
-																? `0 14px 28px ${colors.accent}18, 0 6px 16px rgba(15, 23, 42, 0.10), inset 2px 0 0 ${colors.accent}, inset 0 1px 0 rgba(255, 255, 255, 0.10)`
-																: '0 4px 12px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.03)',
-															background: isActive
-																? `linear-gradient(180deg, ${colors.accent}18 0%, rgba(255,255,255,0.08) 100%)`
-																: 'linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%)',
-															display: 'flex',
-															alignItems: 'center',
-															gap: '10px',
-															textAlign: 'left',
-															cursor: 'pointer',
-															transition:
-																'background-color 160ms ease, box-shadow 160ms ease, transform 160ms ease',
-														}}
-													>
-														<span
-															style={{
-																fontSize: '13px',
-																fontWeight: isActive ? 600 : 500,
-																color: colors.textMain,
-																minWidth: 0,
-																flex: 1,
-																letterSpacing: isActive ? '-0.01em' : undefined,
-																overflow: 'hidden',
-																textOverflow: 'ellipsis',
-																whiteSpace: 'nowrap',
-															}}
-														>
-															{session.name}
-														</span>
-														<div
-															style={{
-																display: 'flex',
-																alignItems: 'center',
-																gap: '7px',
-																flexShrink: 0,
-																color: colors.textDim,
-																justifyContent: 'flex-end',
-															}}
-														>
-															{showGitIndicator && (
-																<span
-																	title={`${gitFileCount} changed file${gitFileCount === 1 ? '' : 's'}`}
-																	style={{
-																		display: 'inline-flex',
-																		alignItems: 'center',
-																		justifyContent: 'center',
-																		gap: '4px',
-																		minWidth: '38px',
-																		fontSize: '10px',
-																		fontWeight: 600,
-																		color: colors.warning,
-																		padding: '4px 7px',
-																		borderRadius: '999px',
-																		background: `${colors.warning}${isActive ? '14' : '12'}`,
-																		boxShadow: isActive ? activeBadgeShadow : 'none',
-																	}}
-																>
-																	<GitBranch size={12} />
-																	<span>{gitFileCount}</span>
-																</span>
-															)}
-															{showTabCount && (
-																<span
-																	title={`${tabCount} tabs`}
-																	style={{
-																		minWidth: '22px',
-																		height: '22px',
-																		padding: '0 7px',
-																		borderRadius: '999px',
-																		border: '1px solid rgba(255, 255, 255, 0.06)',
-																		backgroundColor: isActive
-																			? `${colors.accent}10`
-																			: 'rgba(255, 255, 255, 0.06)',
-																		display: 'inline-flex',
-																		alignItems: 'center',
-																		justifyContent: 'center',
-																		fontSize: '10px',
-																		fontWeight: 600,
-																		color: isActive ? colors.accent : colors.textDim,
-																		boxShadow: isActive ? activeBadgeShadow : 'none',
-																	}}
-																>
-																	{tabCount}
-																</span>
-															)}
-														</div>
-													</button>
-													{onDeleteSession && isActive && (
-														<button
-															type="button"
-															onClick={(event) => {
-																event.stopPropagation();
-																confirmDeleteSession(session);
-															}}
-															aria-label={`Remove ${session.name}`}
-															title={`Remove ${session.name}`}
-															style={{
-																width: '36px',
-																height: '36px',
-																borderRadius: '12px',
-																border: '1px solid rgba(255, 255, 255, 0.08)',
-																background:
-																	'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.05) 100%)',
-																boxShadow:
-																	'0 10px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
-																color: colors.error,
-																display: 'inline-flex',
-																alignItems: 'center',
-																justifyContent: 'center',
-																cursor: 'pointer',
-																flexShrink: 0,
-															}}
-														>
-															<svg
-																width="15"
-																height="15"
-																viewBox="0 0 24 24"
-																fill="none"
-																stroke="currentColor"
-																strokeWidth="2"
-																strokeLinecap="round"
-																strokeLinejoin="round"
-															>
-																<path d="M3 6h18" />
-																<path d="M8 6V4h8v2" />
-																<path d="M19 6l-1 14H6L5 6" />
-																<path d="M10 11v6" />
-																<path d="M14 11v6" />
-															</svg>
-														</button>
-													)}
-												</div>
+													onDelete={onDeleteSession ? confirmDeleteSession : undefined}
+													isDeleteActionVisible={deleteActionSessionId === session.id}
+													onToggleDeleteAction={setDeleteActionSessionId}
+												/>
 											);
 										})}
 									</div>

@@ -7,7 +7,11 @@
 
 import React, { lazy, Suspense, useEffect, useCallback, useState, useMemo, useRef } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
-import type { ResponseCompletedEvent } from '../../shared/remote-web';
+import type {
+	ResponseCompletedEvent,
+	WebAttachmentSummary,
+	WebTextAttachmentInput,
+} from '../../shared/remote-web';
 import {
 	useWebSocket,
 	type CustomCommand,
@@ -24,6 +28,11 @@ import { usePushSubscription } from '../hooks/usePushSubscription';
 import { useOfflineStatus, useDesktopTheme } from '../main';
 import { showLocalServiceWorkerNotification } from '../utils/serviceWorker';
 import { buildApiUrl } from '../utils/config';
+import {
+	loadRecentSessionTargets,
+	recordRecentSessionTarget,
+	saveRecentSessionTargets,
+} from '../utils/viewState';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
 import { CommandInputBar, type InputMode } from './CommandInputBar';
@@ -39,8 +48,8 @@ import type { Session, LastResponsePreview } from '../hooks/useSessions';
 // Keeping import for TypeScript types only if needed
 import { useMobileKeyboardHandler } from '../hooks/useMobileKeyboardHandler';
 import { useMobileViewState } from '../hooks/useMobileViewState';
-import { useMobileAutoReconnect } from '../hooks/useMobileAutoReconnect';
 import { MobileNavigationDrawer } from './MobileNavigationDrawer';
+import { ConnectionStatusIndicator } from './ConnectionStatusIndicator';
 import { calculateContextDisplay } from '../../renderer/utils/contextUsage';
 
 const MobileHistoryPanel = lazy(() =>
@@ -74,6 +83,13 @@ function normalizeModelLabel(model: string | null | undefined): string | null {
 	if (!normalized) return null;
 	if (normalized.toLowerCase() === 'default') return null;
 	return normalized;
+}
+
+function createAttachmentId(): string {
+	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+		return crypto.randomUUID();
+	}
+	return `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 interface MobileHeaderProps {
@@ -148,10 +164,10 @@ function MobileHeader({
 	};
 	const titleSurfaceStyle: React.CSSProperties = {
 		display: 'flex',
-		flexDirection: 'column',
-		gap: '7px',
+		alignItems: 'center',
+		gap: '10px',
 		minWidth: 0,
-		padding: '8px 10px 8px 12px',
+		padding: '10px 12px',
 		borderRadius: '18px',
 		border: '1px solid rgba(255, 255, 255, 0.08)',
 		background:
@@ -228,6 +244,7 @@ function MobileHeader({
 							display: 'flex',
 							alignItems: 'center',
 							gap: '8px',
+							flex: 1,
 							minWidth: 0,
 						}}
 					>
@@ -241,6 +258,7 @@ function MobileHeader({
 								textOverflow: 'ellipsis',
 								whiteSpace: 'nowrap',
 								letterSpacing: '-0.02em',
+								flexShrink: 1,
 							}}
 						>
 							{activeSession?.name || 'Select an agent'}
@@ -279,18 +297,21 @@ function MobileHeader({
 							style={{
 								display: 'flex',
 								alignItems: 'center',
-								gap: '8px',
-								minWidth: 0,
+								gap: '6px',
+								flexShrink: 0,
+								minWidth: '76px',
 							}}
 						>
 							<div
 								style={{
-									flex: 1,
-									height: '5px',
+									width: '42px',
+									height: '7px',
 									borderRadius: '999px',
-									background: 'rgba(255, 255, 255, 0.10)',
+									background: 'rgba(15, 23, 42, 0.14)',
+									border: '1px solid rgba(255, 255, 255, 0.10)',
 									overflow: 'hidden',
-									minWidth: 0,
+									flexShrink: 0,
+									boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.12)',
 								}}
 							>
 								<div
@@ -310,7 +331,7 @@ function MobileHeader({
 									fontWeight: 600,
 									color: colors.textDim,
 									flexShrink: 0,
-									minWidth: '34px',
+									minWidth: '28px',
 									textAlign: 'right',
 								}}
 							>
@@ -822,9 +843,13 @@ export default function MobileApp() {
 	const [showHistoryPanel, setShowHistoryPanel] = useState(savedState.showHistoryPanel);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
 	const [commandInput, setCommandInput] = useState('');
+	const [stagedImages, setStagedImages] = useState<string[]>([]);
+	const [stagedTextAttachments, setStagedTextAttachments] = useState<WebTextAttachmentInput[]>([]);
+	const [composerHeight, setComposerHeight] = useState(0);
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
 	const [responseIndex, setResponseIndex] = useState(0);
+	const [recentTargets, setRecentTargets] = useState(() => loadRecentSessionTargets());
 
 	// Custom slash commands from desktop
 	const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
@@ -839,14 +864,13 @@ export default function MobileApp() {
 	const [historySearchQuery, setHistorySearchQuery] = useState(savedState.historySearchQuery);
 	const [historySearchOpen, setHistorySearchOpen] = useState(savedState.historySearchOpen);
 
-	// Notification permission hook - requests permission on first visit
+	// Notification permission hook - prompt only from explicit user actions
 	const {
 		permission: notificationPermission,
 		showNotification,
 		requestPermission: requestNotificationPermission,
 	} = useNotifications({
-		autoRequest: true,
-		requestDelay: 3000, // Wait 3 seconds before prompting
+		autoRequest: false,
 		onGranted: () => {
 			webLogger.debug('Notification permission granted', 'Mobile');
 			triggerHaptic(HAPTIC_PATTERNS.success);
@@ -882,7 +906,17 @@ export default function MobileApp() {
 	});
 
 	// Reference to send function for offline queue (will be set after useWebSocket)
-	const sendRef = useRef<((sessionId: string, command: string) => boolean) | null>(null);
+	const sendRef = useRef<
+		| ((
+				sessionId: string,
+				command: string,
+				inputMode: InputMode,
+				images?: string[],
+				textAttachments?: WebTextAttachmentInput[],
+				attachments?: WebAttachmentSummary[]
+		  ) => boolean)
+		| null
+	>(null);
 	const handledResponseEventIdsRef = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
@@ -978,7 +1012,9 @@ export default function MobileApp() {
 		activeSession,
 		sessionLogs,
 		isLoadingLogs,
+		isSyncingLogs,
 		handleSelectSession,
+		handleSelectSessionTab,
 		handleSelectTab,
 		handleNewTab,
 		handleDeleteSession,
@@ -1026,6 +1062,18 @@ export default function MobileApp() {
 		persistSessionSelection({ activeSessionId, activeTabId });
 	}, [activeSessionId, activeTabId, persistSessionSelection]);
 
+	useEffect(() => {
+		if (!activeSessionId || !activeTabId || activeTabId.startsWith('pending-tab-')) {
+			return;
+		}
+
+		setRecentTargets((previous) => {
+			const next = recordRecentSessionTarget(previous, activeSessionId, activeTabId);
+			saveRecentSessionTargets(next);
+			return next;
+		});
+	}, [activeSessionId, activeTabId]);
+
 	const {
 		state: connectionState,
 		connect,
@@ -1033,7 +1081,9 @@ export default function MobileApp() {
 		error,
 		reconnectAttempts,
 	} = useWebSocket({
-		autoReconnect: false, // Only retry manually via the retry button
+		autoReconnect: true,
+		maxReconnectAttempts: 6,
+		reconnectDelay: 1500,
 		handlers: sessionsHandlers,
 	});
 
@@ -1066,11 +1116,22 @@ export default function MobileApp() {
 
 	// Update sendRef after WebSocket is initialized (for offline queue)
 	useEffect(() => {
-		sendRef.current = (sessionId: string, command: string) => {
+		sendRef.current = (
+			sessionId: string,
+			command: string,
+			inputMode: InputMode,
+			images?: string[],
+			textAttachments?: WebTextAttachmentInput[],
+			attachments?: WebAttachmentSummary[]
+		) => {
 			return send({
 				type: 'send_command',
 				sessionId,
 				command,
+				inputMode,
+				images,
+				textAttachments,
+				attachments,
 			});
 		};
 	}, [send]);
@@ -1078,6 +1139,13 @@ export default function MobileApp() {
 	// Determine if we're actually connected
 	const isActuallyConnected =
 		!isOffline && (connectionState === 'connected' || connectionState === 'authenticated');
+
+	useEffect(() => {
+		if (activeSession?.inputMode !== 'ai') {
+			setStagedImages([]);
+			setStagedTextAttachments([]);
+		}
+	}, [activeSession?.id, activeSession?.inputMode]);
 
 	// Offline queue hook - stores commands typed while offline and sends when reconnected
 	const {
@@ -1091,9 +1159,9 @@ export default function MobileApp() {
 	} = useOfflineQueue({
 		isOnline: !isOffline,
 		isConnected: isActuallyConnected,
-		sendCommand: (sessionId, command) => {
+		sendCommand: (sessionId, command, inputMode, images, textAttachments, attachments) => {
 			if (sendRef.current) {
-				return sendRef.current(sessionId, command);
+				return sendRef.current(sessionId, command, inputMode, images, textAttachments, attachments);
 			}
 			return false;
 		},
@@ -1156,13 +1224,6 @@ export default function MobileApp() {
 	const handleSendTestNotification = useCallback(() => {
 		void sendTestNotification();
 	}, [sendTestNotification]);
-
-	// Auto-reconnect with countdown timer (extracted to hook)
-	const { reconnectCountdown } = useMobileAutoReconnect({
-		connectionState,
-		isOffline,
-		connect,
-	});
 
 	const isBootstrappingConnection =
 		!isOffline &&
@@ -1268,25 +1329,109 @@ export default function MobileApp() {
 		[activeSessionId, setSessions]
 	);
 
+	const attachmentSummaries = useMemo(
+		(): WebAttachmentSummary[] =>
+			stagedTextAttachments.map((attachment) => ({
+				id: attachment.id,
+				kind: 'file' as const,
+				name: attachment.name,
+				mimeType: attachment.mimeType,
+				size: attachment.size,
+			})),
+		[stagedTextAttachments]
+	);
+
+	const handleAddAttachments = useCallback(
+		(payload: { images?: string[]; textAttachments?: WebTextAttachmentInput[] }) => {
+			if (payload.images?.length) {
+				setStagedImages((prev) => {
+					const seen = new Set(prev);
+					const next = [...prev];
+					for (const image of payload.images || []) {
+						if (seen.has(image)) {
+							continue;
+						}
+						seen.add(image);
+						next.push(image);
+					}
+					return next;
+				});
+			}
+
+			if (payload.textAttachments?.length) {
+				setStagedTextAttachments((prev) => {
+					const existingKeys = new Set(
+						prev.map((attachment) => `${attachment.name}::${attachment.content}`)
+					);
+					const next = [...prev];
+					for (const attachment of payload.textAttachments || []) {
+						const dedupeKey = `${attachment.name}::${attachment.content}`;
+						if (existingKeys.has(dedupeKey)) {
+							continue;
+						}
+						existingKeys.add(dedupeKey);
+						next.push({
+							...attachment,
+							id: attachment.id || createAttachmentId(),
+						});
+					}
+					return next;
+				});
+			}
+		},
+		[]
+	);
+
+	const handleRemoveStagedImage = useCallback((index: number) => {
+		setStagedImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+	}, []);
+
+	const handleRemoveStagedTextAttachment = useCallback((attachmentId: string) => {
+		setStagedTextAttachments((prev) =>
+			prev.filter((attachment) => (attachment.id || attachment.name) !== attachmentId)
+		);
+	}, []);
+
 	// Handle command submission
 	const handleCommandSubmit = useCallback(
 		(command: string) => {
 			if (!activeSessionId) return;
+			if (
+				command.trim().length === 0 &&
+				stagedImages.length === 0 &&
+				stagedTextAttachments.length === 0
+			) {
+				return;
+			}
 
 			// Find the active session to get input mode
 			const currentMode = (activeSession?.inputMode as InputMode) || 'ai';
+			const hasAttachments = stagedImages.length > 0 || stagedTextAttachments.length > 0;
+			const commandText = command.trim();
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
 
 			// Add user message to session logs immediately for display
-			addUserLogEntry(command, currentMode);
+			addUserLogEntry(
+				commandText,
+				currentMode,
+				stagedImages.length > 0 ? stagedImages : undefined,
+				attachmentSummaries.length > 0 ? attachmentSummaries : undefined
+			);
 
 			// If offline or not connected, queue the command for later
 			if (isOffline || !isActuallyConnected) {
-				const queued = queueCommand(activeSessionId, command, currentMode);
+				const queued = queueCommand(
+					activeSessionId,
+					commandText,
+					currentMode,
+					stagedImages.length > 0 ? stagedImages : undefined,
+					stagedTextAttachments.length > 0 ? stagedTextAttachments : undefined,
+					attachmentSummaries.length > 0 ? attachmentSummaries : undefined
+				);
 				if (queued) {
-					webLogger.debug(`Command queued for later: ${command.substring(0, 50)}`, 'Mobile');
+					webLogger.debug(`Command queued for later: ${commandText.substring(0, 50)}`, 'Mobile');
 					// Provide different haptic feedback for queued commands
 					triggerHaptic(HAPTIC_PATTERNS.tap);
 				} else {
@@ -1298,17 +1443,28 @@ export default function MobileApp() {
 				const sendResult = send({
 					type: 'send_command',
 					sessionId: activeSessionId,
-					command,
+					command: commandText,
 					inputMode: currentMode,
+					images: stagedImages.length > 0 ? stagedImages : undefined,
+					textAttachments:
+						currentMode === 'ai' && stagedTextAttachments.length > 0
+							? stagedTextAttachments
+							: undefined,
+					attachments:
+						currentMode === 'ai' && attachmentSummaries.length > 0
+							? attachmentSummaries
+							: undefined,
 				});
 				webLogger.info(
-					`[Web->Server] Command send result: ${sendResult}, command="${command.substring(0, 50)}" mode=${currentMode} session=${activeSessionId}`,
+					`[Web->Server] Command send result: ${sendResult}, command="${commandText.substring(0, 50)}" mode=${currentMode} session=${activeSessionId} attachments=${hasAttachments}`,
 					'Mobile'
 				);
 			}
 
 			// Clear the input
 			setCommandInput('');
+			setStagedImages([]);
+			setStagedTextAttachments([]);
 		},
 		[
 			activeSessionId,
@@ -1318,6 +1474,9 @@ export default function MobileApp() {
 			isActuallyConnected,
 			queueCommand,
 			addUserLogEntry,
+			attachmentSummaries,
+			stagedImages,
+			stagedTextAttachments,
 		]
 	);
 
@@ -1629,6 +1788,27 @@ export default function MobileApp() {
 
 		const currentLogs =
 			activeSession.inputMode === 'ai' ? sessionLogs.aiLogs : sessionLogs.shellLogs;
+		const latestUserLogIndex =
+			activeSession.inputMode === 'ai'
+				? (() => {
+						for (let index = currentLogs.length - 1; index >= 0; index -= 1) {
+							if (currentLogs[index]?.source === 'user') {
+								return index;
+							}
+						}
+						return -1;
+					})()
+				: -1;
+		const toolLogs =
+			activeSession.inputMode === 'ai'
+				? currentLogs
+						.slice(latestUserLogIndex >= 0 ? latestUserLogIndex + 1 : 0)
+						.filter((log) => log.source === 'tool')
+				: [];
+		const chatLogs =
+			activeSession.inputMode === 'ai'
+				? currentLogs.filter((log) => log.source !== 'tool')
+				: currentLogs;
 		const hasTabBar =
 			activeSession.inputMode === 'ai' &&
 			!!activeSession.aiTabs &&
@@ -1686,6 +1866,34 @@ export default function MobileApp() {
 							isConnected={isActuallyConnected}
 						/>
 					)}
+					{isSyncingLogs && currentLogs.length > 0 && (
+						<div
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								gap: '8px',
+								alignSelf: 'flex-start',
+								padding: '7px 10px',
+								borderRadius: '999px',
+								border: `1px solid ${colors.border}`,
+								background: `linear-gradient(180deg, ${colors.bgSidebar} 0%, ${colors.bgMain} 100%)`,
+								color: colors.textDim,
+								fontSize: '12px',
+								fontWeight: 600,
+							}}
+						>
+							<span
+								style={{
+									width: '8px',
+									height: '8px',
+									borderRadius: '999px',
+									backgroundColor: colors.accent,
+									animation: 'maestro-mobile-sync-pulse 1.2s ease-in-out infinite',
+								}}
+							/>
+							Syncing latest output
+						</div>
+					)}
 				</div>
 
 				{isLoadingLogs ? (
@@ -1699,7 +1907,7 @@ export default function MobileApp() {
 					>
 						Loading conversation...
 					</div>
-				) : currentLogs.length === 0 ? (
+				) : chatLogs.length === 0 ? (
 					<div
 						style={{
 							flex: 1,
@@ -1718,8 +1926,10 @@ export default function MobileApp() {
 					</div>
 				) : (
 					<MessageHistory
-						logs={currentLogs}
+						logs={chatLogs}
 						inputMode={activeSession.inputMode as 'ai' | 'terminal'}
+						toolLogs={toolLogs}
+						isSessionBusy={activeSession.state === 'busy'}
 						autoScroll={true}
 						maxHeight="none"
 					/>
@@ -1739,8 +1949,13 @@ export default function MobileApp() {
 		backgroundColor: colors.bgMain,
 		color: colors.textMain,
 	};
-	const canOpenTabSearch =
-		activeSession?.inputMode === 'ai' && !!activeSession?.aiTabs && !!activeSession.activeTabId;
+	const composerReserveHeight =
+		composerHeight > 0 ? Math.max(68, Math.round(composerHeight * 0.53)) : null;
+	const searchableSessions = useMemo(
+		() => sessions.filter((session) => (session.aiTabs?.length || 0) > 0),
+		[sessions]
+	);
+	const canOpenTabSearch = searchableSessions.length > 0;
 
 	return (
 		<div style={containerStyle}>
@@ -1763,6 +1978,24 @@ export default function MobileApp() {
 				onOpenTabSearch={handleOpenTabSearch}
 				canOpenTabSearch={!!canOpenTabSearch}
 			/>
+
+			{!isOffline && !isBootstrappingConnection && (
+				<ConnectionStatusIndicator
+					connectionState={connectionState}
+					isOffline={isOffline}
+					reconnectAttempts={reconnectAttempts}
+					error={error}
+					onRetry={connect}
+					style={{
+						margin: '8px 12px 0',
+						alignSelf: 'stretch',
+						position: 'relative',
+						top: 'auto',
+						left: 'auto',
+						right: 'auto',
+					}}
+				/>
+			)}
 
 			{showAppControlsSheet && (
 				<div
@@ -1890,12 +2123,14 @@ export default function MobileApp() {
 			)}
 
 			{/* Tab search modal - full-screen modal for searching tabs */}
-			{showTabSearch && activeSession?.aiTabs && activeSession.activeTabId && (
+			{showTabSearch && searchableSessions.length > 0 && (
 				<Suspense fallback={null}>
 					<TabSearchModal
-						tabs={activeSession.aiTabs}
-						activeTabId={activeSession.activeTabId}
-						onSelectTab={handleSelectTab}
+						sessions={searchableSessions}
+						activeSessionId={activeSessionId}
+						activeTabId={activeTabId}
+						recentTargets={recentTargets}
+						onSelectTarget={handleSelectSessionTab}
 						onClose={handleCloseTabSearch}
 					/>
 				</Suspense>
@@ -1907,7 +2142,10 @@ export default function MobileApp() {
 					flex: 1,
 					display: 'flex',
 					flexDirection: 'column',
-					paddingBottom: 'calc(80px + env(safe-area-inset-bottom))',
+					paddingBottom:
+						composerReserveHeight !== null
+							? `${composerReserveHeight}px`
+							: 'calc(96px + env(safe-area-inset-bottom))',
 					overflow: 'hidden',
 					minHeight: 0,
 				}}
@@ -1928,12 +2166,6 @@ export default function MobileApp() {
 					}}
 				>
 					{renderContent()}
-					{/* Show help text only when disconnected/connecting */}
-					{connectionState !== 'connected' && connectionState !== 'authenticated' && (
-						<p style={{ fontSize: '12px', color: colors.textDim }}>
-							Make sure Maestro desktop app is running
-						</p>
-					)}
 				</div>
 			</main>
 
@@ -1944,12 +2176,13 @@ export default function MobileApp() {
 				value={commandInput}
 				onChange={handleCommandChange}
 				onSubmit={handleCommandSubmit}
+				stagedImages={stagedImages}
+				stagedTextAttachments={stagedTextAttachments}
+				onAddAttachments={handleAddAttachments}
+				onRemoveImage={handleRemoveStagedImage}
+				onRemoveTextAttachment={handleRemoveStagedTextAttachment}
 				placeholder={
-					!activeSessionId
-						? 'Select a session first...'
-						: isSmallScreen
-							? 'Message agent...'
-							: 'Message agent...'
+					!activeSessionId ? 'Select a session first...' : isSmallScreen ? 'Message' : 'Message'
 				}
 				disabled={!activeSessionId}
 				inputMode={(activeSession?.inputMode as InputMode) || 'ai'}
@@ -1963,6 +2196,7 @@ export default function MobileApp() {
 				onSelectModel={handleSelectSessionModel}
 				slashCommands={allSlashCommands}
 				showRecentCommands={false}
+				onHeightChange={setComposerHeight}
 			/>
 
 			{/* Full-screen response viewer modal */}
@@ -1979,6 +2213,13 @@ export default function MobileApp() {
 					/>
 				</Suspense>
 			)}
+
+			<style>{`
+				@keyframes maestro-mobile-sync-pulse {
+					0%, 100% { opacity: 0.45; transform: scale(0.9); }
+					50% { opacity: 1; transform: scale(1); }
+				}
+			`}</style>
 		</div>
 	);
 }

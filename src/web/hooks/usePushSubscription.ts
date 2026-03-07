@@ -3,6 +3,8 @@ import { buildApiUrl, getMaestroConfig } from '../utils/config';
 import { webLogger } from '../utils/logger';
 import type { PushStatusResponse, WebPushSubscriptionInput } from '../../shared/remote-web';
 
+const SERVICE_WORKER_READY_TIMEOUT_MS = 8000;
+
 function isPushSupported(): boolean {
 	return (
 		typeof window !== 'undefined' &&
@@ -19,19 +21,66 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
 	return new Uint8Array([...rawData].map((char) => char.charCodeAt(0)));
 }
 
+function uint8ArrayToBase64Url(value: Uint8Array): string {
+	let binary = '';
+	value.forEach((byte) => {
+		binary += String.fromCharCode(byte);
+	});
+	return window.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function getSubscriptionKey(subscription: PushSubscription, keyName: 'p256dh' | 'auth'): string {
+	const keyValue = subscription.getKey(keyName);
+	return keyValue ? uint8ArrayToBase64Url(new Uint8Array(keyValue)) : '';
+}
+
 function serializeSubscription(subscription: PushSubscription): WebPushSubscriptionInput {
 	const json = subscription.toJSON();
 	if (!json.endpoint) {
 		throw new Error('Push subscription endpoint is missing');
 	}
+
+	const p256dh = json.keys?.p256dh || getSubscriptionKey(subscription, 'p256dh');
+	const auth = json.keys?.auth || getSubscriptionKey(subscription, 'auth');
+	if (!p256dh || !auth) {
+		throw new Error('Push subscription keys are missing');
+	}
+
 	return {
 		endpoint: json.endpoint,
 		expirationTime: json.expirationTime,
 		keys: {
-			p256dh: json.keys?.p256dh || '',
-			auth: json.keys?.auth || '',
+			p256dh,
+			auth,
 		},
 	};
+}
+
+function isStandaloneDisplayMode(): boolean {
+	if (typeof window === 'undefined') {
+		return false;
+	}
+
+	return (
+		window.matchMedia('(display-mode: standalone)').matches ||
+		(window.navigator as Navigator & { standalone?: boolean }).standalone === true
+	);
+}
+
+function isAppleMobileDevice(): boolean {
+	if (typeof navigator === 'undefined') {
+		return false;
+	}
+
+	const userAgent = navigator.userAgent || '';
+	const platform = navigator.platform || '';
+	return (
+		/iPhone|iPad|iPod/i.test(userAgent) || (/Mac/i.test(platform) && navigator.maxTouchPoints > 1)
+	);
+}
+
+function requiresInstalledPwaForPush(): boolean {
+	return isAppleMobileDevice() && !isStandaloneDisplayMode();
 }
 
 export interface UsePushSubscriptionOptions {
@@ -57,10 +106,52 @@ export function usePushSubscription(
 	const { notificationPermission, requestNotificationPermission } = options;
 	const config = useMemo(() => getMaestroConfig(), []);
 	const supported = isPushSupported();
-	const publicKey = config.webPush.publicKey;
+	const publicKey = config.webPush?.publicKey ?? null;
 	const [isSubscribed, setIsSubscribed] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+
+	const waitForServiceWorkerRegistration =
+		useCallback(async (): Promise<ServiceWorkerRegistration> => {
+			const existingRegistration = await navigator.serviceWorker.getRegistration?.();
+			if (existingRegistration?.active) {
+				return existingRegistration;
+			}
+
+			return await new Promise<ServiceWorkerRegistration>((resolve, reject) => {
+				const timeoutId = window.setTimeout(() => {
+					reject(new Error('Service worker is still starting. Reload the app and try again.'));
+				}, SERVICE_WORKER_READY_TIMEOUT_MS);
+
+				navigator.serviceWorker.ready.then(
+					(registration) => {
+						window.clearTimeout(timeoutId);
+						resolve(registration);
+					},
+					(waitError) => {
+						window.clearTimeout(timeoutId);
+						reject(waitError);
+					}
+				);
+			});
+		}, []);
+
+	const persistSubscription = useCallback(async (subscription: PushSubscription): Promise<void> => {
+		const response = await fetch(buildApiUrl('/push/subscribe'), {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			body: JSON.stringify({
+				subscription: serializeSubscription(subscription),
+				deviceLabel: 'PWA',
+			}),
+		});
+
+		if (!response.ok) {
+			throw new Error(`Push subscribe failed with status ${response.status}`);
+		}
+	}, []);
 
 	const refresh = useCallback(async () => {
 		if (!supported) {
@@ -69,22 +160,28 @@ export function usePushSubscription(
 		}
 
 		try {
-			const registration = await navigator.serviceWorker.ready;
+			const registration = await waitForServiceWorkerRegistration();
 			const subscription = await registration.pushManager.getSubscription();
 			if (!subscription) {
 				setIsSubscribed(false);
 				return;
 			}
 
+			setIsSubscribed(true);
 			const statusUrl = `${buildApiUrl('/push/status')}?endpoint=${encodeURIComponent(subscription.endpoint)}`;
 			const response = await fetch(statusUrl);
 			if (!response.ok) {
-				setIsSubscribed(false);
+				await persistSubscription(subscription);
 				return;
 			}
 
 			const status = (await response.json()) as PushStatusResponse & { timestamp?: number };
-			setIsSubscribed(Boolean(status.subscribed));
+			if (!status.subscribed) {
+				await persistSubscription(subscription);
+			}
+
+			setIsSubscribed(true);
+			setError(null);
 		} catch (refreshError) {
 			webLogger.error(
 				'Failed to refresh push subscription state',
@@ -93,7 +190,7 @@ export function usePushSubscription(
 			);
 			setIsSubscribed(false);
 		}
-	}, [supported]);
+	}, [persistSubscription, supported, waitForServiceWorkerRegistration]);
 
 	useEffect(() => {
 		refresh().catch((refreshError) => {
@@ -104,6 +201,11 @@ export function usePushSubscription(
 	const subscribe = useCallback(async (): Promise<boolean> => {
 		if (!supported || !publicKey) {
 			setError('Push notifications are not available in this browser.');
+			return false;
+		}
+
+		if (requiresInstalledPwaForPush()) {
+			setError('Install Maestro to your home screen before enabling push on iPhone or iPad.');
 			return false;
 		}
 
@@ -120,7 +222,7 @@ export function usePushSubscription(
 				return false;
 			}
 
-			const registration = await navigator.serviceWorker.ready;
+			const registration = await waitForServiceWorkerRegistration();
 			let subscription = await registration.pushManager.getSubscription();
 			if (!subscription) {
 				subscription = await registration.pushManager.subscribe({
@@ -129,21 +231,7 @@ export function usePushSubscription(
 				});
 			}
 
-			const response = await fetch(buildApiUrl('/push/subscribe'), {
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
-				body: JSON.stringify({
-					subscription: serializeSubscription(subscription),
-					deviceLabel: 'PWA',
-				}),
-			});
-
-			if (!response.ok) {
-				throw new Error(`Push subscribe failed with status ${response.status}`);
-			}
-
+			await persistSubscription(subscription);
 			setIsSubscribed(true);
 			return true;
 		} catch (subscribeError) {
@@ -170,7 +258,7 @@ export function usePushSubscription(
 		setError(null);
 
 		try {
-			const registration = await navigator.serviceWorker.ready;
+			const registration = await waitForServiceWorkerRegistration();
 			const subscription = await registration.pushManager.getSubscription();
 			if (!subscription) {
 				setIsSubscribed(false);
@@ -202,7 +290,7 @@ export function usePushSubscription(
 		} finally {
 			setIsLoading(false);
 		}
-	}, [supported]);
+	}, [supported, waitForServiceWorkerRegistration]);
 
 	const sendTestNotification = useCallback(async (): Promise<boolean> => {
 		if (!supported) {
@@ -213,8 +301,13 @@ export function usePushSubscription(
 		setError(null);
 
 		try {
-			const registration = await navigator.serviceWorker.ready;
+			const registration = await waitForServiceWorkerRegistration();
 			const subscription = await registration.pushManager.getSubscription();
+			if (!subscription) {
+				setError('Enable push notifications first.');
+				return false;
+			}
+
 			const response = await fetch(buildApiUrl('/push/test'), {
 				method: 'POST',
 				headers: {
@@ -238,11 +331,11 @@ export function usePushSubscription(
 		} finally {
 			setIsLoading(false);
 		}
-	}, [supported]);
+	}, [supported, waitForServiceWorkerRegistration]);
 
 	return {
 		isSupported: supported,
-		isConfigured: Boolean(config.webPush.enabled && publicKey),
+		isConfigured: Boolean(config.webPush?.enabled && publicKey),
 		isSubscribed,
 		isLoading,
 		error,

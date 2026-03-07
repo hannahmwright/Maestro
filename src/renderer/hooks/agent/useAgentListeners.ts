@@ -52,6 +52,7 @@ import type { WebRemoteLogEntry } from '../../../shared/remote-web';
 import type { UserInputRequest } from '../../../shared/user-input-requests';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { persistTabNameMetadata } from '../../utils/tabNamePersistence';
 
 // ============================================================================
 // Types
@@ -1474,6 +1475,16 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							return s;
 						}
 
+						if (targetTab.name && targetTab.name !== 'New Session') {
+							persistTabNameMetadata({
+								agentSessionId,
+								name: targetTab.name,
+								projectRoot: s.projectRoot,
+								toolType: s.toolType,
+								source: 'session-id-capture',
+							});
+						}
+
 						const updatedAiTabs = s.aiTabs.map((tab) => {
 							if (tab.id !== targetTab.id) return tab;
 							const newName = tab.name && tab.name !== 'New Session' ? tab.name : null;
@@ -2025,10 +2036,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 												tab.id === chunkTabId
 													? {
 															...tab,
-															logs: [
-																...tab.logs.slice(0, -1),
-																updatedThinkingLog,
-															],
+															logs: [...tab.logs.slice(0, -1), updatedThinkingLog],
 														}
 													: tab
 											);
@@ -2046,10 +2054,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 												tab.id === chunkTabId
 													? {
 															...tab,
-															logs: [
-																...tab.logs.slice(0, -1),
-																updatedThinkingLog,
-															],
+															logs: [...tab.logs.slice(0, -1), updatedThinkingLog],
 														}
 													: tab
 											);
@@ -2066,21 +2071,21 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 											source: 'thinking',
 											text: bufferedContent,
 										};
-											updatedTabs = updatedTabs.map((tab) =>
-												tab.id === chunkTabId
-													? {
-															...tab,
-															logs: [...tab.logs, newLog],
-														}
-													: tab
-											);
-											logEntriesToBroadcast.push({
-												sessionId: s.id,
-												tabId: chunkTabId,
-												logEntry: newLog,
-											});
-										}
+										updatedTabs = updatedTabs.map((tab) =>
+											tab.id === chunkTabId
+												? {
+														...tab,
+														logs: [...tab.logs, newLog],
+													}
+												: tab
+										);
+										logEntriesToBroadcast.push({
+											sessionId: s.id,
+											tabId: chunkTabId,
+											logEntry: newLog,
+										});
 									}
+								}
 
 								return updatedTabs === s.aiTabs ? s : { ...s, aiTabs: updatedTabs };
 							})

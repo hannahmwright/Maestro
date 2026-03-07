@@ -58,11 +58,12 @@ function persistThemeSnapshot(theme: Theme | null): void {
 }
 
 interface BuildToastProps {
-	variant: 'update-ready';
+	variant: 'update-ready' | 'update-applied';
 	onAction?: () => void;
 }
 
 function BuildToast({ variant, onAction }: BuildToastProps) {
+	const isApplied = variant === 'update-applied';
 	return (
 		<div
 			style={{
@@ -131,7 +132,7 @@ function BuildToast({ variant, onAction }: BuildToastProps) {
 						letterSpacing: '-0.01em',
 					}}
 				>
-					New web build available
+					{isApplied ? 'Update installed in background' : 'New web build available'}
 				</div>
 				<div
 					style={{
@@ -139,7 +140,9 @@ function BuildToast({ variant, onAction }: BuildToastProps) {
 						color: 'var(--color-text-muted, var(--color-text-dim))',
 					}}
 				>
-					Reload to apply the latest changes.
+					{isApplied
+						? 'Refresh whenever convenient to start using it.'
+						: 'Install the latest remote UI without interrupting your session.'}
 				</div>
 			</div>
 
@@ -160,7 +163,7 @@ function BuildToast({ variant, onAction }: BuildToastProps) {
 						flexShrink: 0,
 					}}
 				>
-					Reload
+					{isApplied ? 'Refresh' : 'Install'}
 				</button>
 			)}
 		</div>
@@ -475,8 +478,9 @@ export function App() {
 	const [offline, setOffline] = useState(isOffline());
 	const [desktopTheme, setDesktopTheme] = useState<Theme | null>(() => readStoredThemeSnapshot());
 	const [hasServiceWorkerUpdate, setHasServiceWorkerUpdate] = useState(false);
+	const [hasInstalledServiceWorkerUpdate, setHasInstalledServiceWorkerUpdate] = useState(false);
 	const config = useMemo(() => getMaestroConfig(), []);
-	const hasReloadedForServiceWorkerRef = useRef(false);
+	const shouldReloadAfterServiceWorkerRef = useRef(false);
 
 	const modeContextValue = useMemo(
 		() => createMaestroModeContextValue(config),
@@ -520,13 +524,13 @@ export function App() {
 		}
 
 		const handleControllerChange = () => {
-			if (hasReloadedForServiceWorkerRef.current) {
+			if (shouldReloadAfterServiceWorkerRef.current && document.visibilityState !== 'visible') {
+				window.location.reload();
 				return;
 			}
-			hasReloadedForServiceWorkerRef.current = true;
-			window.requestAnimationFrame(() => {
-				window.location.reload();
-			});
+
+			setHasServiceWorkerUpdate(false);
+			setHasInstalledServiceWorkerUpdate(true);
 		};
 
 		navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
@@ -557,8 +561,18 @@ export function App() {
 							<BuildToast
 								variant="update-ready"
 								onAction={() => {
+									shouldReloadAfterServiceWorkerRef.current = false;
 									skipWaiting();
 									setHasServiceWorkerUpdate(false);
+								}}
+							/>
+						)}
+						{!hasServiceWorkerUpdate && hasInstalledServiceWorkerUpdate && (
+							<BuildToast
+								variant="update-applied"
+								onAction={() => {
+									shouldReloadAfterServiceWorkerRef.current = true;
+									window.location.reload();
 								}}
 							/>
 						)}

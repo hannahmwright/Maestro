@@ -36,6 +36,22 @@ export interface ResponseCompletedEvent {
 	deepLinkUrl: string;
 }
 
+export interface WebAttachmentSummary {
+	id?: string;
+	kind: 'image' | 'file';
+	name: string;
+	mimeType?: string;
+	size?: number;
+}
+
+export interface WebTextAttachmentInput {
+	id?: string;
+	name: string;
+	content: string;
+	mimeType?: string;
+	size?: number;
+}
+
 export interface WebRemoteToolState {
 	id?: string;
 	status?: 'running' | 'completed' | 'error' | 'success' | 'failed' | string;
@@ -51,6 +67,8 @@ export interface WebRemoteLogEntry {
 	content?: string;
 	source?: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error' | 'thinking' | 'tool';
 	type?: string;
+	images?: string[];
+	attachments?: WebAttachmentSummary[];
 	metadata?: {
 		toolState?: WebRemoteToolState;
 	};

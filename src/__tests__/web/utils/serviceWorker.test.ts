@@ -195,9 +195,12 @@ describe('serviceWorker', () => {
 		it('should register service worker with default path', async () => {
 			const result = await registerServiceWorker();
 
-			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith('./sw.js', {
-				scope: './',
-			});
+			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith(
+				'/app/sw.js?v=dev-local-test',
+				{
+					scope: '/app/',
+				}
+			);
 			expect(result).toBe(mockRegistration);
 			expect(mockWebLogger.debug).toHaveBeenCalledWith(
 				'Service worker registered',
@@ -214,9 +217,12 @@ describe('serviceWorker', () => {
 
 			await registerServiceWorker();
 
-			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith('/abc123/sw.js', {
-				scope: '/abc123/',
-			});
+			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith(
+				'/app/sw.js?v=dev-local-test',
+				{
+					scope: '/app/',
+				}
+			);
 		});
 
 		it('should call onSuccess when already active', async () => {
@@ -552,7 +558,7 @@ describe('serviceWorker', () => {
 			// Wait for the promise to resolve
 			await new Promise((resolve) => setTimeout(resolve, 0));
 
-			expect(mockWaitingWorker.postMessage).toHaveBeenCalledWith('skipWaiting');
+			expect(mockWaitingWorker.postMessage).toHaveBeenCalledWith({ type: 'skipWaiting' });
 		});
 
 		it('should handle null waiting worker gracefully', async () => {
@@ -646,7 +652,7 @@ describe('serviceWorker', () => {
 			const result = await resultPromise;
 
 			expect(result).toBe(true);
-			expect(mockActiveWorker.postMessage).toHaveBeenCalledWith('ping', [mockPort2]);
+			expect(mockActiveWorker.postMessage).toHaveBeenCalledWith({ type: 'ping' }, [mockPort2]);
 		});
 
 		it('should return false when service worker responds with non-pong', async () => {
@@ -793,9 +799,12 @@ describe('serviceWorker', () => {
 
 			await registerServiceWorker();
 
-			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith('./sw.js', {
-				scope: './',
-			});
+			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith(
+				'/app/sw.js?v=dev-local-test',
+				{
+					scope: '/app/',
+				}
+			);
 		});
 
 		it('should handle __MAESTRO_CONFIG__ with empty securityToken', async () => {
@@ -827,9 +836,12 @@ describe('serviceWorker', () => {
 			await registerServiceWorker();
 
 			// Empty string is falsy, so should use default path
-			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith('./sw.js', {
-				scope: './',
-			});
+			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith(
+				'/app/sw.js?v=dev-local-test',
+				{
+					scope: '/app/',
+				}
+			);
 		});
 
 		it('should handle state changes for non-installed states', async () => {
@@ -1025,7 +1037,7 @@ describe('serviceWorker', () => {
 
 			await new Promise((resolve) => setTimeout(resolve, 0));
 
-			expect(mockWaitingWorker.postMessage).toHaveBeenCalledWith('skipWaiting');
+			expect(mockWaitingWorker.postMessage).toHaveBeenCalledWith({ type: 'skipWaiting' });
 		});
 
 		it('should handle offline/online transitions', async () => {

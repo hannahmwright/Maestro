@@ -8,7 +8,11 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { ResponseCompletedEvent, WebRemoteLogEntry } from '../../shared/remote-web';
+import type {
+	ResponseCompletedEvent,
+	WebAttachmentSummary,
+	WebRemoteLogEntry,
+} from '../../shared/remote-web';
 
 /**
  * Auto Run state for broadcasting
@@ -46,8 +50,21 @@ export interface AiTabState {
 export function createWebApi() {
 	return {
 		// Broadcast user input to web clients (for keeping web interface in sync)
-		broadcastUserInput: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') =>
-			ipcRenderer.invoke('web:broadcastUserInput', sessionId, command, inputMode),
+		broadcastUserInput: (
+			sessionId: string,
+			command: string,
+			inputMode: 'ai' | 'terminal',
+			images?: string[],
+			attachments?: WebAttachmentSummary[]
+		) =>
+			ipcRenderer.invoke(
+				'web:broadcastUserInput',
+				sessionId,
+				command,
+				inputMode,
+				images,
+				attachments
+			),
 
 		// Broadcast AutoRun state to web clients (for showing task progress on mobile)
 		broadcastAutoRunState: (sessionId: string, state: AutoRunState | null) =>

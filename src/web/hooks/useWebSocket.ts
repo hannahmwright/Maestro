@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
 	ResponseCompletedEvent,
+	WebAttachmentSummary,
 	WebRemoteLogEntry,
 	WebSessionLogEntryEvent,
 } from '../../shared/remote-web';
@@ -49,6 +50,7 @@ export interface AITabData {
 	agentSessionId: string | null;
 	name: string | null;
 	starred: boolean;
+	hasUnread?: boolean;
 	inputValue: string;
 	usageStats?: UsageStats | null;
 	createdAt: number;
@@ -267,6 +269,8 @@ export interface UserInputMessage extends ServerMessage {
 	sessionId: string;
 	command: string;
 	inputMode: 'ai' | 'terminal';
+	images?: string[];
+	attachments?: WebAttachmentSummary[];
 }
 
 /**
@@ -401,7 +405,13 @@ export interface WebSocketEventHandlers {
 	/** Called when a session process exits */
 	onSessionExit?: (sessionId: string, exitCode: number) => void;
 	/** Called when user input is received (message sent from desktop app) */
-	onUserInput?: (sessionId: string, command: string, inputMode: 'ai' | 'terminal') => void;
+	onUserInput?: (
+		sessionId: string,
+		command: string,
+		inputMode: 'ai' | 'terminal',
+		images?: string[],
+		attachments?: WebAttachmentSummary[]
+	) => void;
 	/** Called when theme is received or updated */
 	onThemeUpdate?: (theme: Theme) => void;
 	/** Called when custom commands are received */
@@ -730,7 +740,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 						handlersRef.current?.onUserInput?.(
 							inputMsg.sessionId,
 							inputMsg.command,
-							inputMsg.inputMode
+							inputMsg.inputMode,
+							inputMsg.images,
+							inputMsg.attachments
 						);
 						break;
 					}

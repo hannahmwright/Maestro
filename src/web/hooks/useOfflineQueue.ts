@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type { WebAttachmentSummary, WebTextAttachmentInput } from '../../shared/remote-web';
 import { webLogger } from '../utils/logger';
 
 /** Storage key for persisting offline queue */
@@ -38,6 +39,12 @@ export interface QueuedCommand {
 	timestamp: number;
 	/** Input mode (ai or terminal) */
 	inputMode: 'ai' | 'terminal';
+	/** Attached images for AI mode */
+	images?: string[];
+	/** Attached text/code files for AI mode */
+	textAttachments?: WebTextAttachmentInput[];
+	/** Attachment summary for UI rendering */
+	attachments?: WebAttachmentSummary[];
 	/** Number of send attempts */
 	attempts: number;
 	/** Last error message if send failed */
@@ -58,7 +65,14 @@ export interface UseOfflineQueueOptions {
 	/** Whether connected to the WebSocket server */
 	isConnected: boolean;
 	/** Function to send a command to the server */
-	sendCommand: (sessionId: string, command: string) => boolean;
+	sendCommand: (
+		sessionId: string,
+		command: string,
+		inputMode: 'ai' | 'terminal',
+		images?: string[],
+		textAttachments?: WebTextAttachmentInput[],
+		attachments?: WebAttachmentSummary[]
+	) => boolean;
 	/** Maximum retry attempts per command (default: 3) */
 	maxRetries?: number;
 	/** Callback when a queued command is successfully sent */
@@ -85,7 +99,10 @@ export interface UseOfflineQueueReturn {
 	queueCommand: (
 		sessionId: string,
 		command: string,
-		inputMode: 'ai' | 'terminal'
+		inputMode: 'ai' | 'terminal',
+		images?: string[],
+		textAttachments?: WebTextAttachmentInput[],
+		attachments?: WebAttachmentSummary[]
 	) => QueuedCommand | null;
 	/** Remove a specific command from the queue */
 	removeCommand: (commandId: string) => void;
@@ -211,7 +228,14 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 	 * Queue a command for later sending
 	 */
 	const queueCommand = useCallback(
-		(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): QueuedCommand | null => {
+		(
+			sessionId: string,
+			command: string,
+			inputMode: 'ai' | 'terminal',
+			images?: string[],
+			textAttachments?: WebTextAttachmentInput[],
+			attachments?: WebAttachmentSummary[]
+		): QueuedCommand | null => {
 			// Check if we're at capacity
 			if (queue.length >= MAX_QUEUE_SIZE) {
 				webLogger.warn('Queue at maximum capacity, cannot add more commands', 'OfflineQueue');
@@ -224,6 +248,9 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 				sessionId,
 				timestamp: Date.now(),
 				inputMode,
+				images,
+				textAttachments,
+				attachments,
 				attempts: 0,
 			};
 
@@ -301,7 +328,14 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 			const updatedCmd = { ...cmd, attempts: cmd.attempts + 1 };
 
 			try {
-				const success = sendCommandRef.current(cmd.sessionId, cmd.command);
+				const success = sendCommandRef.current(
+					cmd.sessionId,
+					cmd.command,
+					cmd.inputMode,
+					cmd.images,
+					cmd.textAttachments,
+					cmd.attachments
+				);
 
 				if (success) {
 					successCount++;

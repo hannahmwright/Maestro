@@ -297,6 +297,12 @@ function extractTabName(output: string): string | null {
 
 	// Remove any newlines and extra whitespace
 	cleaned = cleaned.replace(/[\n\r]+/g, ' ').trim();
+	const normalizedCleaned = normalizeTabName(cleaned);
+	if (normalizedCleaned) {
+		cleaned = normalizedCleaned;
+	} else if (looksLikeFilenameStyleTitle(cleaned)) {
+		return null;
+	}
 
 	// Split by newlines, periods, or arrow symbols and take meaningful lines
 	const lines = cleaned.split(/[.\n→]/).filter((line) => {
@@ -324,6 +330,7 @@ function extractTabName(output: string): string | null {
 
 	// Remove trailing punctuation (periods, colons, etc.)
 	tabName = tabName.replace(/[.:;,!?]+$/, '');
+	tabName = normalizeTabName(tabName) ?? '';
 
 	// Ensure reasonable length (max 40 chars for tab names)
 	if (tabName.length > 40) {
@@ -336,4 +343,25 @@ function extractTabName(output: string): string | null {
 	}
 
 	return tabName;
+}
+
+function normalizeTabName(tabName: string): string | null {
+	const normalized = tabName
+		.replace(/\.(png|jpe?g|gif|webp|heic|pdf|txt|md|json|csv)$/i, '')
+		.replace(/^(screenshot|screen shot|image|photo)[\s._-]*/i, '')
+		.replace(/^\d{4}-\d{2}-\d{2}(?:[ T._-]+\d{1,2}(?:[:._-]\d{2}){1,2}(?:\s?[AP]M)?)?[\s._-]*/i, '')
+		.replace(/^(?:at[\s._-]*)?\d{1,2}(?:[:._-]\d{2}){1,2}(?:\s?[AP]M)?[\s._-]*/i, '')
+		.replace(/^[\s._-]+|[\s._-]+$/g, '')
+		.replace(/\s{2,}/g, ' ')
+		.trim();
+
+	return normalized.length >= 2 ? normalized : null;
+}
+
+function looksLikeFilenameStyleTitle(tabName: string): boolean {
+	return (
+		/\.(png|jpe?g|gif|webp|heic|pdf|txt|md|json|csv)$/i.test(tabName) ||
+		/^(screenshot|screen shot|image|photo)[\s._-]*/i.test(tabName) ||
+		/^\d{4}-\d{2}-\d{2}/.test(tabName)
+	);
 }

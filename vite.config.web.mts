@@ -30,6 +30,8 @@ function getGitHash() {
 }
 const gitHash = getGitHash();
 const buildId = process.env.VITE_BUILD_ID || new Date().toISOString();
+const webProxyTarget = process.env.VITE_WEB_API_TARGET || 'http://localhost:45678';
+const webProxyWsTarget = webProxyTarget.replace(/^http/i, 'ws');
 
 export default defineConfig(({ mode }) => ({
 	plugins: [react()],
@@ -166,11 +168,11 @@ export default defineConfig(({ mode }) => ({
 		// Proxy API calls to the running Maestro app during development
 		proxy: {
 			'/app/api': {
-				target: 'http://localhost:45678',
+				target: webProxyTarget,
 				changeOrigin: true,
 			},
 			'/app/ws': {
-				target: 'ws://localhost:45678',
+				target: webProxyWsTarget,
 				ws: true,
 			},
 		},

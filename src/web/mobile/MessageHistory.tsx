@@ -5,12 +5,13 @@
  * Shows messages in a scrollable container with user/AI differentiation.
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { ArrowDown } from 'lucide-react';
+import { Fragment, memo, useEffect, useRef, useState, useCallback } from 'react';
+import { ArrowDown, FileText } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
 import { ToolActivityBlock } from './ToolActivityBlock';
+import { ToolActivityPanel } from './ToolActivityPanel';
 import type { LogEntry } from '../hooks/useMobileSessionManagement';
 
 /** Threshold for character-based truncation */
@@ -23,6 +24,10 @@ export interface MessageHistoryProps {
 	logs: LogEntry[];
 	/** Input mode to determine which logs to show */
 	inputMode: 'ai' | 'terminal';
+	/** Tool activity entries for the latest assistant turn */
+	toolLogs?: LogEntry[];
+	/** Whether the active session is currently busy */
+	isSessionBusy?: boolean;
 	/** Whether to auto-scroll to bottom on new messages */
 	autoScroll?: boolean;
 	/** Max height of the container */
@@ -54,9 +59,11 @@ function formatTime(timestamp: number): string {
 /**
  * MessageHistory component
  */
-export function MessageHistory({
+export const MessageHistory = memo(function MessageHistory({
 	logs,
 	inputMode,
+	toolLogs = [],
+	isSessionBusy = false,
 	autoScroll = true,
 	maxHeight = '300px',
 	onMessageTap,
@@ -73,6 +80,50 @@ export function MessageHistory({
 	const [isAtBottom, setIsAtBottom] = useState(true);
 	const [hasNewMessages, setHasNewMessages] = useState(false);
 	const [newMessageCount, setNewMessageCount] = useState(0);
+	const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+	const [lightboxIndex, setLightboxIndex] = useState(0);
+	const latestUserLogIndex =
+		inputMode === 'ai'
+			? (() => {
+					for (let index = logs.length - 1; index >= 0; index -= 1) {
+						const entry = logs[index];
+						const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+						if (source === 'user') {
+							return index;
+						}
+					}
+					return -1;
+				})()
+			: -1;
+	const toolPanelInsertIndex =
+		toolLogs.length > 0 && latestUserLogIndex >= 0
+			? (() => {
+					for (let index = latestUserLogIndex + 1; index < logs.length; index += 1) {
+						const entry = logs[index];
+						const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+						if (source !== 'user') {
+							return index;
+						}
+					}
+					return logs.length;
+				})()
+			: -1;
+
+	const showPendingAssistantIndicator =
+		inputMode === 'ai' &&
+		toolLogs.length === 0 &&
+		isSessionBusy &&
+		(() => {
+			for (let index = logs.length - 1; index >= 0; index -= 1) {
+				const entry = logs[index];
+				const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+				if (source === 'system') {
+					continue;
+				}
+				return source === 'user';
+			}
+			return false;
+		})();
 
 	/**
 	 * Check if a message should be truncated
@@ -135,6 +186,12 @@ export function MessageHistory({
 		}
 	}, [logs, autoScroll, hasInitiallyScrolled]);
 
+	useEffect(() => {
+		if (showPendingAssistantIndicator && autoScroll && isAtBottom && bottomRef.current) {
+			bottomRef.current.scrollIntoView({ behavior: hasInitiallyScrolled ? 'smooth' : 'instant' });
+		}
+	}, [autoScroll, hasInitiallyScrolled, isAtBottom, showPendingAssistantIndicator]);
+
 	// Reset scroll state when logs are cleared (e.g., session change)
 	useEffect(() => {
 		if (logs.length === 0) {
@@ -192,6 +249,24 @@ export function MessageHistory({
 		}
 	}, []);
 
+	const openImageLightbox = useCallback((images: string[], index: number) => {
+		setLightboxImages(images);
+		setLightboxIndex(index);
+	}, []);
+
+	const closeImageLightbox = useCallback(() => {
+		setLightboxImages([]);
+		setLightboxIndex(0);
+	}, []);
+
+	const showPrevLightboxImage = useCallback(() => {
+		setLightboxIndex((prev) => (prev > 0 ? prev - 1 : prev));
+	}, []);
+
+	const showNextLightboxImage = useCallback(() => {
+		setLightboxIndex((prev) => (prev < lightboxImages.length - 1 ? prev + 1 : prev));
+	}, [lightboxImages.length]);
+
 	if (!logs || logs.length === 0) {
 		return (
 			<div
@@ -218,18 +293,25 @@ export function MessageHistory({
 		>
 			<div
 				ref={containerRef}
+				className="maestro-message-history-scroll"
 				onScroll={handleScroll}
 				style={{
 					display: 'flex',
 					flexDirection: 'column',
-					gap: '18px',
-					padding: '18px 16px 28px',
+					gap: '14px',
+					padding: '18px 16px 12px',
 					...(maxHeight === 'none' ? { flex: 1, minHeight: 0 } : { maxHeight }),
 					overflowY: 'auto',
 					overflowX: 'hidden',
+					scrollbarWidth: 'none',
+					msOverflowStyle: 'none',
+					WebkitOverflowScrolling: 'touch',
+					overscrollBehavior: 'contain',
 				}}
 			>
 				{logs.map((entry, index) => {
+					const shouldRenderToolPanelBeforeRow =
+						toolPanelInsertIndex >= 0 && index === toolPanelInsertIndex;
 					const rawText = entry.text || entry.content || '';
 					const text = stripAnsiCodes(rawText);
 					const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
@@ -244,6 +326,8 @@ export function MessageHistory({
 					const isExpanded = expandedMessages.has(messageKey);
 					const isTruncatable = !isAssistantResponse && !isTool && shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
+					const attachments = entry.attachments || [];
+					const showInlineMeta = !isUser;
 					const messageLabel = isUser
 						? 'You'
 						: isError
@@ -259,148 +343,416 @@ export function MessageHistory({
 										: 'Output';
 
 					return (
-						<div
-							key={messageKey}
-							onClick={() => {
-								if (isTruncatable) {
-									toggleExpanded(messageKey);
-								}
-								onMessageTap?.(entry);
-							}}
-							style={{
-								display: 'flex',
-								flexDirection: 'column',
-								gap: isAssistantResponse ? '6px' : '8px',
-								padding: isAssistantResponse ? 0 : '12px 14px',
-								borderRadius: isAssistantResponse ? 0 : '14px',
-								backgroundColor: isUser
-									? `${colors.accent}14`
-									: isError
-										? `${colors.error}10`
-										: isThinking
-											? 'transparent'
-											: isSystem
-												? `${colors.textDim}10`
-												: 'transparent',
-								border:
-									isAssistantResponse || isThinking || isTool
-										? 'none'
-										: `1px solid ${
-												isUser
-													? `${colors.accent}30`
-													: isError
-														? `${colors.error}28`
-														: colors.border
-											}`,
-								cursor: isTruncatable ? 'pointer' : 'default',
-								alignSelf: isUser ? 'flex-end' : 'stretch',
-								maxWidth: isAssistantResponse ? '100%' : '88%',
-							}}
-						>
+						<Fragment key={messageKey}>
+							{shouldRenderToolPanelBeforeRow && (
+								<ToolActivityPanel logs={toolLogs} isSessionBusy={isSessionBusy} />
+							)}
 							<div
 								style={{
 									display: 'flex',
-									alignItems: 'center',
-									justifyContent: isAssistantResponse ? 'flex-end' : 'flex-start',
-									gap: '8px',
-									fontSize: '10px',
-									color: colors.textDim,
+									flexDirection: 'column',
+									gap: isUser ? '2px' : '0',
 								}}
 							>
-								{!isAssistantResponse && (
-									<span
-										style={{
-											fontWeight: 600,
-											textTransform: 'uppercase',
-											letterSpacing: '0.08em',
-											color: isUser ? colors.accent : isError ? colors.error : colors.textDim,
-										}}
-									>
-										{messageLabel}
-									</span>
-								)}
-								<span style={{ opacity: 0.7 }}>{formatTime(entry.timestamp)}</span>
-								{isTruncatable && (
-									<span
-										style={{
-											marginLeft: 'auto',
-											color: colors.accent,
-											fontSize: '10px',
-										}}
-									>
-										{isExpanded ? '▼ collapse' : '▶ expand'}
-									</span>
-								)}
-							</div>
-
-							{/* Message content */}
-							<div
-								style={{
-									color: isError ? colors.error : colors.textMain,
-									textAlign: 'left',
-									paddingTop: isAssistantResponse ? '2px' : 0,
-								}}
-							>
-								{isTool ? (
-									<ToolActivityBlock
-										log={entry}
-										expanded={isExpanded}
-										onToggleExpanded={() => toggleExpanded(messageKey)}
-									/>
-								) : isThinking ? (
+								{isUser && (
 									<div
 										style={{
-											paddingLeft: '12px',
-											borderLeft: `2px solid ${colors.accent}`,
-											fontSize: '13px',
-											lineHeight: 1.65,
-											color: colors.textMain,
+											fontSize: '10px',
+											color: colors.textDim,
+											opacity: 0.72,
+											paddingRight: '2px',
+											alignSelf: 'flex-end',
 										}}
 									>
+										{formatTime(entry.timestamp)}
+									</div>
+								)}
+								<div
+									onClick={() => {
+										if (isTruncatable) {
+											toggleExpanded(messageKey);
+										}
+										onMessageTap?.(entry);
+									}}
+									style={{
+										display: 'flex',
+										flexDirection: 'column',
+										gap: isAssistantResponse ? '2px' : '8px',
+										padding: isAssistantResponse ? 0 : '12px 14px',
+										borderRadius: isAssistantResponse ? 0 : '14px',
+										backgroundColor: isUser
+											? `${colors.accent}14`
+											: isError
+												? `${colors.error}10`
+												: isThinking
+													? 'transparent'
+													: isSystem
+														? `${colors.textDim}10`
+														: 'transparent',
+										border:
+											isAssistantResponse || isThinking || isTool
+												? 'none'
+												: `1px solid ${
+														isUser
+															? `${colors.accent}30`
+															: isError
+																? `${colors.error}28`
+																: colors.border
+													}`,
+										cursor: isTruncatable ? 'pointer' : 'default',
+										alignSelf: isUser ? 'flex-end' : 'stretch',
+										maxWidth: isAssistantResponse ? '100%' : '88%',
+									}}
+								>
+									{showInlineMeta && (
 										<div
 											style={{
+												display: 'flex',
+												alignItems: 'center',
+												justifyContent: 'flex-start',
+												gap: '8px',
 												fontSize: '10px',
-												fontWeight: 700,
-												letterSpacing: '0.08em',
-												textTransform: 'uppercase',
-												color: colors.accent,
-												marginBottom: '6px',
+												color: colors.textDim,
 											}}
 										>
-											thinking
+											{!isAssistantResponse && (
+												<span
+													style={{
+														fontWeight: 600,
+														textTransform: 'uppercase',
+														letterSpacing: '0.08em',
+														color: isError ? colors.error : colors.textDim,
+													}}
+												>
+													{messageLabel}
+												</span>
+											)}
+											<span style={{ opacity: 0.7 }}>{formatTime(entry.timestamp)}</span>
+											{isTruncatable && (
+												<span
+													style={{
+														marginLeft: 'auto',
+														color: colors.accent,
+														fontSize: '10px',
+													}}
+												>
+													{isExpanded ? '▼ collapse' : '▶ expand'}
+												</span>
+											)}
 										</div>
-										<MobileMarkdownRenderer content={displayText} fontSize={13} />
-									</div>
-								) : inputMode === 'terminal' || isUser ? (
+									)}
+
+									{/* Message content */}
 									<div
 										style={{
-											fontSize: '13px',
-											lineHeight: 1.65,
-											fontFamily: 'ui-monospace, monospace',
-											whiteSpace: 'pre-wrap',
-											wordBreak: 'break-word',
+											color: isError ? colors.error : colors.textMain,
+											textAlign: 'left',
+											paddingTop: 0,
 										}}
 									>
-										{displayText}
+										{entry.images && entry.images.length > 0 && (
+											<div
+												style={{
+													display: 'flex',
+													flexWrap: 'wrap',
+													gap: '8px',
+													marginBottom: text ? '10px' : 0,
+												}}
+											>
+												{entry.images.map((image, imageIndex) => (
+													<img
+														key={`${messageKey}-image-${imageIndex}`}
+														src={image}
+														alt={`Attachment ${imageIndex + 1}`}
+														onClick={(event) => {
+															event.stopPropagation();
+															openImageLightbox(entry.images || [], imageIndex);
+														}}
+														style={{
+															width: '96px',
+															height: '96px',
+															borderRadius: '16px',
+															objectFit: 'cover',
+															border: `1px solid ${colors.border}`,
+															boxShadow: '0 10px 18px rgba(15, 23, 42, 0.08)',
+															cursor: 'zoom-in',
+														}}
+													/>
+												))}
+											</div>
+										)}
+
+										{attachments.length > 0 && (
+											<div
+												style={{
+													display: 'flex',
+													flexWrap: 'wrap',
+													gap: '8px',
+													marginBottom: text ? '10px' : 0,
+												}}
+											>
+												{attachments.map((attachment, attachmentIndex) => (
+													<div
+														key={attachment.id || `${messageKey}-attachment-${attachmentIndex}`}
+														style={{
+															display: 'inline-flex',
+															alignItems: 'center',
+															gap: '8px',
+															padding: '8px 10px',
+															borderRadius: '14px',
+															border: `1px solid ${colors.border}`,
+															background: `${colors.bgSidebar}cc`,
+															maxWidth: '100%',
+														}}
+													>
+														<FileText size={14} color={colors.accent} />
+														<span
+															style={{
+																fontSize: '12px',
+																fontWeight: 600,
+																color: colors.textMain,
+																overflow: 'hidden',
+																textOverflow: 'ellipsis',
+																whiteSpace: 'nowrap',
+															}}
+														>
+															{attachment.name}
+														</span>
+													</div>
+												))}
+											</div>
+										)}
+
+										{isTool ? (
+											<ToolActivityBlock
+												log={entry}
+												expanded={isExpanded}
+												onToggleExpanded={() => toggleExpanded(messageKey)}
+											/>
+										) : isThinking ? (
+											<div
+												style={{
+													paddingLeft: '12px',
+													borderLeft: `2px solid ${colors.accent}`,
+													fontSize: '13px',
+													lineHeight: 1.65,
+													color: colors.textMain,
+												}}
+											>
+												<div
+													style={{
+														fontSize: '10px',
+														fontWeight: 700,
+														letterSpacing: '0.08em',
+														textTransform: 'uppercase',
+														color: colors.accent,
+														marginBottom: '6px',
+													}}
+												>
+													thinking
+												</div>
+												<MobileMarkdownRenderer content={displayText} fontSize={13} />
+											</div>
+										) : inputMode === 'terminal' || isUser ? (
+											<div
+												style={{
+													fontSize: '13px',
+													lineHeight: 1.65,
+													fontFamily: 'ui-monospace, monospace',
+													whiteSpace: 'pre-wrap',
+													wordBreak: 'break-word',
+												}}
+											>
+												{displayText}
+											</div>
+										) : (
+											<MobileMarkdownRenderer
+												content={displayText}
+												fontSize={isAssistantResponse ? 14 : 13}
+											/>
+										)}
+										{isTruncatable && !isExpanded && (
+											<span
+												style={{ color: colors.textDim, fontStyle: 'italic', fontSize: '13px' }}
+											>
+												{'\n'}... (tap to expand)
+											</span>
+										)}
 									</div>
-								) : (
-									<MobileMarkdownRenderer
-										content={displayText}
-										fontSize={isAssistantResponse ? 14 : 13}
-									/>
-								)}
-								{isTruncatable && !isExpanded && (
-									<span style={{ color: colors.textDim, fontStyle: 'italic', fontSize: '13px' }}>
-										{'\n'}... (tap to expand)
-									</span>
-								)}
+								</div>
 							</div>
-						</div>
+						</Fragment>
 					);
 				})}
+				{toolLogs.length > 0 && toolPanelInsertIndex === logs.length && (
+					<ToolActivityPanel logs={toolLogs} isSessionBusy={isSessionBusy} />
+				)}
+				{showPendingAssistantIndicator && (
+					<div
+						style={{
+							display: 'flex',
+							alignSelf: 'flex-start',
+							maxWidth: '88%',
+						}}
+						aria-live="polite"
+						aria-label="Assistant is thinking"
+					>
+						<div
+							style={{
+								display: 'inline-flex',
+								alignItems: 'center',
+								gap: '10px',
+								padding: '12px 14px',
+								borderRadius: '18px',
+								background: `linear-gradient(180deg, ${colors.bgSidebar} 0%, ${colors.bgMain} 100%)`,
+								border: `1px solid ${colors.border}`,
+								boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
+							}}
+						>
+							<span
+								style={{
+									display: 'inline-flex',
+									alignItems: 'center',
+									gap: '5px',
+								}}
+							>
+								{[0, 1, 2].map((dotIndex) => (
+									<span
+										key={dotIndex}
+										style={{
+											width: '6px',
+											height: '6px',
+											borderRadius: '999px',
+											backgroundColor: colors.textDim,
+											opacity: 0.85,
+											animation: 'maestro-mobile-thinking-bounce 1.25s infinite ease-in-out',
+											animationDelay: `${dotIndex * 0.14}s`,
+										}}
+									/>
+								))}
+							</span>
+							<span
+								style={{
+									fontSize: '12px',
+									fontWeight: 600,
+									color: colors.textDim,
+									letterSpacing: '0.01em',
+								}}
+							>
+								Thinking
+							</span>
+						</div>
+					</div>
+				)}
 				{/* Bottom ref with padding to ensure last message is fully visible */}
 				<div ref={bottomRef} style={{ minHeight: '8px' }} />
 			</div>
+
+			{lightboxImages.length > 0 && (
+				<div
+					style={{
+						position: 'fixed',
+						inset: 0,
+						zIndex: 220,
+						background: 'rgba(2, 6, 23, 0.88)',
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						padding: '20px',
+					}}
+					onClick={closeImageLightbox}
+				>
+					<button
+						type="button"
+						onClick={closeImageLightbox}
+						aria-label="Close image preview"
+						style={{
+							position: 'absolute',
+							top: '18px',
+							right: '18px',
+							width: '40px',
+							height: '40px',
+							borderRadius: '999px',
+							border: '1px solid rgba(255, 255, 255, 0.16)',
+							background: 'rgba(15, 23, 42, 0.55)',
+							color: '#fff',
+							fontSize: '24px',
+							lineHeight: 1,
+							cursor: 'pointer',
+						}}
+					>
+						×
+					</button>
+					{lightboxImages.length > 1 && (
+						<>
+							<button
+								type="button"
+								onClick={(event) => {
+									event.stopPropagation();
+									showPrevLightboxImage();
+								}}
+								disabled={lightboxIndex === 0}
+								aria-label="Previous image"
+								style={{
+									position: 'absolute',
+									left: '14px',
+									top: '50%',
+									transform: 'translateY(-50%)',
+									width: '40px',
+									height: '40px',
+									borderRadius: '999px',
+									border: '1px solid rgba(255, 255, 255, 0.16)',
+									background: 'rgba(15, 23, 42, 0.55)',
+									color: '#fff',
+									fontSize: '22px',
+									cursor: lightboxIndex === 0 ? 'default' : 'pointer',
+									opacity: lightboxIndex === 0 ? 0.45 : 1,
+								}}
+							>
+								‹
+							</button>
+							<button
+								type="button"
+								onClick={(event) => {
+									event.stopPropagation();
+									showNextLightboxImage();
+								}}
+								disabled={lightboxIndex >= lightboxImages.length - 1}
+								aria-label="Next image"
+								style={{
+									position: 'absolute',
+									right: '14px',
+									top: '50%',
+									transform: 'translateY(-50%)',
+									width: '40px',
+									height: '40px',
+									borderRadius: '999px',
+									border: '1px solid rgba(255, 255, 255, 0.16)',
+									background: 'rgba(15, 23, 42, 0.55)',
+									color: '#fff',
+									fontSize: '22px',
+									cursor: lightboxIndex >= lightboxImages.length - 1 ? 'default' : 'pointer',
+									opacity: lightboxIndex >= lightboxImages.length - 1 ? 0.45 : 1,
+								}}
+							>
+								›
+							</button>
+						</>
+					)}
+					<img
+						src={lightboxImages[lightboxIndex]}
+						alt="Expanded attachment preview"
+						onClick={(event) => event.stopPropagation()}
+						style={{
+							maxWidth: '100%',
+							maxHeight: '82vh',
+							borderRadius: '24px',
+							objectFit: 'contain',
+							boxShadow: '0 24px 64px rgba(0, 0, 0, 0.38)',
+						}}
+					/>
+				</div>
+			)}
 
 			{/* New Message Indicator - floating arrow button */}
 			{hasNewMessages && !isAtBottom && (
@@ -433,8 +785,28 @@ export function MessageHistory({
 					)}
 				</button>
 			)}
+			<style>
+				{`
+					.maestro-message-history-scroll::-webkit-scrollbar {
+						width: 0;
+						height: 0;
+						display: none;
+					}
+
+					@keyframes maestro-mobile-thinking-bounce {
+						0%, 80%, 100% {
+							transform: translateY(0) scale(0.82);
+							opacity: 0.4;
+						}
+						40% {
+							transform: translateY(-2px) scale(1);
+							opacity: 1;
+						}
+					}
+				`}
+			</style>
 		</div>
 	);
-}
+});
 
 export default MessageHistory;

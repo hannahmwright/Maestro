@@ -9,6 +9,8 @@ import { webLogger } from './logger';
 
 const STORAGE_KEY = 'maestro-web-view-state';
 const SCROLL_STORAGE_KEY = 'maestro-web-scroll-state';
+const RECENT_TARGETS_STORAGE_KEY = 'maestro-web-recent-targets';
+const MAX_RECENT_TARGETS = 5;
 
 /**
  * View state that gets persisted
@@ -42,6 +44,12 @@ export interface ScrollState {
 	messageHistory: number;
 	allSessions: number;
 	historyPanel: number;
+}
+
+export interface RecentSessionTarget {
+	sessionId: string;
+	tabId: string;
+	viewedAt: number;
 }
 
 /**
@@ -195,4 +203,62 @@ export function debouncedSaveScrollPosition(
 		saveScrollPosition(view, position);
 		scrollSaveTimeout = null;
 	}, delay);
+}
+
+export function loadRecentSessionTargets(): RecentSessionTarget[] {
+	try {
+		const stored = localStorage.getItem(RECENT_TARGETS_STORAGE_KEY);
+		if (!stored) {
+			return [];
+		}
+
+		const parsed = JSON.parse(stored);
+		if (!Array.isArray(parsed)) {
+			return [];
+		}
+
+		return parsed
+			.filter(
+				(value): value is RecentSessionTarget =>
+					!!value &&
+					typeof value.sessionId === 'string' &&
+					typeof value.tabId === 'string' &&
+					typeof value.viewedAt === 'number'
+			)
+			.sort((left, right) => right.viewedAt - left.viewedAt)
+			.slice(0, MAX_RECENT_TARGETS);
+	} catch (error) {
+		webLogger.error('Failed to load recent session targets', 'ViewState', error);
+		return [];
+	}
+}
+
+export function saveRecentSessionTargets(targets: RecentSessionTarget[]): void {
+	try {
+		localStorage.setItem(
+			RECENT_TARGETS_STORAGE_KEY,
+			JSON.stringify(
+				targets
+					.slice()
+					.sort((left, right) => right.viewedAt - left.viewedAt)
+					.slice(0, MAX_RECENT_TARGETS)
+			)
+		);
+	} catch (error) {
+		webLogger.error('Failed to save recent session targets', 'ViewState', error);
+	}
+}
+
+export function recordRecentSessionTarget(
+	targets: RecentSessionTarget[],
+	sessionId: string,
+	tabId: string
+): RecentSessionTarget[] {
+	const nextTargets = [
+		{ sessionId, tabId, viewedAt: Date.now() },
+		...targets.filter((target) => !(target.sessionId === sessionId && target.tabId === tabId)),
+	].slice(0, MAX_RECENT_TARGETS);
+
+	saveRecentSessionTargets(nextTargets);
+	return nextTargets;
 }

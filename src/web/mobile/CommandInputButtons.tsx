@@ -161,6 +161,8 @@ export interface VoiceInputButtonProps {
 	onToggle: () => void;
 	/** Whether the button is disabled */
 	disabled: boolean;
+	/** Visual density for the button */
+	variant?: 'default' | 'inline';
 }
 
 /**
@@ -176,10 +178,12 @@ export function VoiceInputButton({
 	statusText,
 	onToggle,
 	disabled,
+	variant = 'default',
 }: VoiceInputButtonProps) {
 	const colors = useThemeColors();
 	const isActive = isListening || isRequesting || isTranscribing;
 	const showSpinner = isRequesting || isTranscribing;
+	const isInline = variant === 'inline';
 
 	return (
 		<button
@@ -188,6 +192,15 @@ export function VoiceInputButton({
 			disabled={disabled}
 			style={{
 				...buttonBaseStyles,
+				width: isInline ? '34px' : buttonBaseStyles.width,
+				height: isInline ? '34px' : buttonBaseStyles.height,
+				minWidth: isInline ? '34px' : undefined,
+				minHeight: isInline ? '34px' : undefined,
+				maxWidth: isInline ? '34px' : undefined,
+				maxHeight: isInline ? '34px' : undefined,
+				padding: isInline ? '0' : buttonBaseStyles.padding,
+				borderRadius: isInline ? '999px' : buttonBaseStyles.borderRadius,
+				aspectRatio: isInline ? '1 / 1' : undefined,
 				backgroundColor: isListening
 					? '#ef444426'
 					: isRequesting
@@ -205,6 +218,12 @@ export function VoiceInputButton({
 				cursor: disabled ? 'default' : 'pointer',
 				opacity: disabled ? 0.5 : 1,
 				animation: isListening ? 'pulse 1.5s ease-in-out infinite' : 'none',
+				boxShadow: isInline
+					? '0 6px 14px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.08)'
+					: buttonBaseStyles.boxShadow,
+				boxSizing: 'border-box',
+				appearance: 'none',
+				WebkitAppearance: 'none',
 			}}
 			onTouchStart={(e) => {
 				if (!disabled) {
@@ -229,8 +248,8 @@ export function VoiceInputButton({
 			{showSpinner ? (
 				<span
 					style={{
-						width: '18px',
-						height: '18px',
+						width: isInline ? '14px' : '18px',
+						height: isInline ? '14px' : '18px',
 						borderRadius: '999px',
 						border: `2px solid ${isRequesting || isTranscribing ? `${colors.accent}33` : `${colors.textDim}33`}`,
 						borderTopColor: colors.accent,
@@ -239,8 +258,8 @@ export function VoiceInputButton({
 				/>
 			) : (
 				<svg
-					width="20"
-					height="20"
+					width={isInline ? 15 : 20}
+					height={isInline ? 15 : 20}
 					viewBox="0 0 24 24"
 					fill={isListening ? '#ef4444' : 'none'}
 					stroke={isListening ? '#ef4444' : colors.textDim}
@@ -263,6 +282,7 @@ export interface ModelSelectorButtonProps {
 	onClick: () => void;
 	disabled: boolean;
 	isOpen: boolean;
+	iconOnly?: boolean;
 }
 
 function hasSupportedProviderIcon(toolType?: string | null): boolean {
@@ -360,12 +380,33 @@ function ProviderModelIcon({ toolType, color }: { toolType?: string | null; colo
 	}
 }
 
+function GenericModelIcon({ color }: { color: string }) {
+	return (
+		<svg
+			width="16"
+			height="16"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke={color}
+			strokeWidth="1.9"
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			<path d="M8 7h8" />
+			<path d="M6 12h12" />
+			<path d="M10 17h4" />
+		</svg>
+	);
+}
+
 export function ModelSelectorButton({
 	label,
 	toolType,
 	onClick,
 	disabled,
 	isOpen,
+	iconOnly = false,
 }: ModelSelectorButtonProps) {
 	const colors = useThemeColors();
 	const iconColor = isOpen ? colors.accent : colors.textMain;
@@ -378,15 +419,24 @@ export function ModelSelectorButton({
 			disabled={disabled}
 			style={{
 				...buttonBaseStyles,
-				width: 'auto',
-				minWidth: '70px',
-				maxWidth: '120px',
-				padding: '0 12px',
-				gap: '6px',
+				width: iconOnly ? '34px' : 'auto',
+				height: iconOnly ? '34px' : buttonBaseStyles.height,
+				minWidth: iconOnly ? '34px' : '70px',
+				maxWidth: iconOnly ? '34px' : '120px',
+				padding: iconOnly ? '0' : '0 12px',
+				borderRadius: iconOnly ? '999px' : buttonBaseStyles.borderRadius,
+				aspectRatio: iconOnly ? '1 / 1' : undefined,
+				gap: iconOnly ? '0' : '6px',
 				backgroundColor: isOpen ? `${colors.accent}20` : `${colors.bgMain}c8`,
 				border: `1px solid ${isOpen ? `${colors.accent}66` : colors.border}`,
 				color: isOpen ? colors.accent : colors.textMain,
 				opacity: disabled ? 0.5 : 1,
+				boxShadow: iconOnly
+					? '0 8px 18px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)'
+					: buttonBaseStyles.boxShadow,
+				boxSizing: 'border-box',
+				appearance: 'none',
+				WebkitAppearance: 'none',
 			}}
 			onTouchStart={(e) => {
 				if (!disabled) {
@@ -398,6 +448,7 @@ export function ModelSelectorButton({
 			}}
 			aria-label={`Choose model. Current model: ${label}`}
 			aria-expanded={isOpen}
+			title={label}
 		>
 			{showProviderIcon ? (
 				<span
@@ -405,25 +456,29 @@ export function ModelSelectorButton({
 						display: 'inline-flex',
 						alignItems: 'center',
 						justifyContent: 'center',
-						width: '16px',
-						height: '16px',
+						width: iconOnly ? '15px' : '16px',
+						height: iconOnly ? '15px' : '16px',
 						flexShrink: 0,
 					}}
 				>
 					<ProviderModelIcon toolType={toolType} color={iconColor} />
 				</span>
-			) : null}
-			<span
-				style={{
-					fontSize: '12px',
-					fontWeight: 600,
-					overflow: 'hidden',
-					textOverflow: 'ellipsis',
-					whiteSpace: 'nowrap',
-				}}
-			>
-				{label}
-			</span>
+			) : (
+				<GenericModelIcon color={iconColor} />
+			)}
+			{!iconOnly && (
+				<span
+					style={{
+						fontSize: '12px',
+						fontWeight: 600,
+						overflow: 'hidden',
+						textOverflow: 'ellipsis',
+						whiteSpace: 'nowrap',
+					}}
+				>
+					{label}
+				</span>
+			)}
 		</button>
 	);
 }
@@ -506,6 +561,14 @@ export interface SendInterruptButtonProps {
 	onTouchEnd?: React.TouchEventHandler<HTMLButtonElement>;
 	/** Touch move handler for long-press cancellation */
 	onTouchMove?: React.TouchEventHandler<HTMLButtonElement>;
+	/** Visual density for the button */
+	variant?: 'default' | 'inline';
+	/** Optional click handler for send mode instead of form submit */
+	onSend?: () => void;
+	/** Optional custom aria-label for interrupt mode */
+	interruptAriaLabel?: string;
+	/** Optional custom aria-label for send mode */
+	sendAriaLabel?: string;
 }
 
 /**
@@ -522,8 +585,13 @@ export function SendInterruptButton({
 	onTouchStart,
 	onTouchEnd,
 	onTouchMove,
+	variant = 'default',
+	onSend,
+	interruptAriaLabel,
+	sendAriaLabel,
 }: SendInterruptButtonProps) {
 	const colors = useThemeColors();
+	const isInline = variant === 'inline';
 
 	const handleInterrupt = () => {
 		triggerHaptic(50);
@@ -537,11 +605,25 @@ export function SendInterruptButton({
 				onClick={handleInterrupt}
 				style={{
 					...buttonBaseStyles,
-					padding: '14px',
+					width: isInline ? '34px' : buttonBaseStyles.width,
+					height: isInline ? '34px' : buttonBaseStyles.height,
+					minWidth: isInline ? '34px' : undefined,
+					minHeight: isInline ? '34px' : undefined,
+					maxWidth: isInline ? '34px' : undefined,
+					maxHeight: isInline ? '34px' : undefined,
+					padding: isInline ? '0' : '14px',
+					borderRadius: isInline ? '999px' : buttonBaseStyles.borderRadius,
+					aspectRatio: isInline ? '1 / 1' : undefined,
 					background: 'linear-gradient(180deg, #f87171 0%, #ef4444 100%)',
 					color: '#ffffff',
 					fontSize: '14px',
 					fontWeight: 500,
+					boxShadow: isInline
+						? '0 8px 18px rgba(239, 68, 68, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08)'
+						: buttonBaseStyles.boxShadow,
+					boxSizing: 'border-box',
+					appearance: 'none',
+					WebkitAppearance: 'none',
 				}}
 				onTouchStart={(e) => {
 					e.currentTarget.style.transform = 'scale(0.95)';
@@ -551,12 +633,12 @@ export function SendInterruptButton({
 					e.currentTarget.style.transform = 'scale(1)';
 					e.currentTarget.style.backgroundColor = '#ef4444';
 				}}
-				aria-label="Cancel running command or AI query"
+				aria-label={interruptAriaLabel || 'Cancel running command or AI query'}
 			>
 				{/* X icon for interrupt */}
 				<svg
-					width="24"
-					height="24"
+					width={isInline ? 15 : 24}
+					height={isInline ? 15 : 24}
 					viewBox="0 0 24 24"
 					fill="none"
 					stroke="currentColor"
@@ -574,17 +656,32 @@ export function SendInterruptButton({
 	return (
 		<button
 			ref={sendButtonRef}
-			type="submit"
+			type={onSend ? 'button' : 'submit'}
+			onClick={onSend}
 			disabled={isSendDisabled}
 			style={{
 				...buttonBaseStyles,
-				padding: '14px',
+				width: isInline ? '34px' : buttonBaseStyles.width,
+				height: isInline ? '34px' : buttonBaseStyles.height,
+				minWidth: isInline ? '34px' : undefined,
+				minHeight: isInline ? '34px' : undefined,
+				maxWidth: isInline ? '34px' : undefined,
+				maxHeight: isInline ? '34px' : undefined,
+				padding: isInline ? '0' : '14px',
+				borderRadius: isInline ? '999px' : buttonBaseStyles.borderRadius,
+				aspectRatio: isInline ? '1 / 1' : undefined,
 				background: `linear-gradient(180deg, ${colors.accent} 0%, ${colors.accent}dd 100%)`,
 				color: '#ffffff',
 				fontSize: '14px',
 				fontWeight: 500,
 				cursor: isSendDisabled ? 'default' : 'pointer',
 				opacity: isSendDisabled ? 0.5 : 1,
+				boxShadow: isInline
+					? '0 8px 18px rgba(99, 102, 241, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.10)'
+					: buttonBaseStyles.boxShadow,
+				boxSizing: 'border-box',
+				appearance: 'none',
+				WebkitAppearance: 'none',
 			}}
 			onTouchStart={(e) => {
 				e.currentTarget.style.transform = 'scale(0.96)';
@@ -595,12 +692,12 @@ export function SendInterruptButton({
 				onTouchEnd?.(e);
 			}}
 			onTouchMove={onTouchMove}
-			aria-label="Send command (long press for quick actions)"
+			aria-label={sendAriaLabel || 'Send command (long press for quick actions)'}
 		>
 			{/* Arrow up icon for send */}
 			<svg
-				width="24"
-				height="24"
+				width={isInline ? 15 : 24}
+				height={isInline ? 15 : 24}
 				viewBox="0 0 24 24"
 				fill="none"
 				stroke="currentColor"

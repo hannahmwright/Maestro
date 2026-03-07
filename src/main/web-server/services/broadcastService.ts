@@ -22,6 +22,7 @@
 
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
+import type { WebAttachmentSummary } from '../../../shared/remote-web';
 import type {
 	Theme,
 	WebClient,
@@ -234,12 +235,20 @@ export class BroadcastService {
 	 * Broadcast user input to web clients subscribed to a session
 	 * Called when a command is sent from the desktop app so web clients stay in sync
 	 */
-	broadcastUserInput(sessionId: string, command: string, inputMode: 'ai' | 'terminal'): void {
+	broadcastUserInput(
+		sessionId: string,
+		command: string,
+		inputMode: 'ai' | 'terminal',
+		images?: string[],
+		attachments?: WebAttachmentSummary[]
+	): void {
 		this.broadcastToSession(sessionId, {
 			type: 'user_input',
 			sessionId,
 			command,
 			inputMode,
+			images,
+			attachments,
 			timestamp: Date.now(),
 		});
 	}

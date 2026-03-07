@@ -157,10 +157,49 @@ describe('useVoiceInput', () => {
 			await Promise.resolve();
 		});
 
-		await waitFor(() => {
-			expect(onTranscriptionChange).toHaveBeenCalledWith('hello world');
-			expect(result.current.voiceState).toBe('idle');
+		await waitFor(
+			() => {
+				expect(onTranscriptionChange).toHaveBeenCalledWith('hello world');
+				expect(result.current.voiceState).toBe('idle');
+			},
+			{ timeout: 3000 }
+		);
+	});
+
+	it('can stop recording and submit the transcript without leaving it in review state', async () => {
+		const onTranscriptionChange = vi.fn();
+		const onTranscriptionSubmit = vi.fn();
+
+		const { result } = renderHook(() =>
+			useVoiceInput({
+				currentValue: 'hello',
+				onTranscriptionChange,
+				onTranscriptionSubmit,
+			})
+		);
+
+		await act(async () => {
+			result.current.startVoiceInput();
+			await Promise.resolve();
 		});
+
+		await waitFor(() => {
+			expect(result.current.voiceState).toBe('recording');
+		});
+
+		await act(async () => {
+			result.current.stopVoiceInputAndSubmit();
+			await Promise.resolve();
+		});
+
+		await waitFor(
+			() => {
+				expect(onTranscriptionSubmit).toHaveBeenCalledWith('hello world');
+				expect(onTranscriptionChange).not.toHaveBeenCalled();
+				expect(result.current.voiceState).toBe('idle');
+			},
+			{ timeout: 3000 }
+		);
 	});
 
 	it('reports unsupported browsers cleanly', () => {
