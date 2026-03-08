@@ -20,6 +20,7 @@
 
 import { WebSocket } from 'ws';
 import { logger } from '../../utils/logger';
+import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 
 // Logger context for all message handler logs
 const LOG_CONTEXT = 'WebServer';
@@ -47,6 +48,7 @@ export interface WebClientMessage {
 		mimeType?: string;
 		size?: number;
 	}>;
+	demoCapture?: DemoCaptureRequest;
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
@@ -104,7 +106,8 @@ export interface MessageHandlerCallbacks {
 			name: string;
 			mimeType?: string;
 			size?: number;
-		}>
+		}>,
+		demoCapture?: DemoCaptureRequest
 	) => Promise<boolean>;
 	switchMode: (sessionId: string, mode: 'ai' | 'terminal') => Promise<boolean>;
 	selectSession: (sessionId: string, tabId?: string) => Promise<boolean>;
@@ -274,6 +277,10 @@ export class WebSocketMessageHandler {
 			? message.textAttachments
 			: undefined;
 		const attachments = Array.isArray(message.attachments) ? message.attachments : undefined;
+		const demoCapture =
+			message.demoCapture && typeof message.demoCapture === 'object'
+				? (message.demoCapture as DemoCaptureRequest)
+				: undefined;
 		// inputMode from web client - use this instead of server state to avoid sync issues
 		const clientInputMode = message.inputMode as 'ai' | 'terminal' | undefined;
 
@@ -328,7 +335,15 @@ export class WebSocketMessageHandler {
 		// Pass clientInputMode so renderer uses the web's intended mode
 		if (this.callbacks.executeCommand) {
 			this.callbacks
-				.executeCommand(sessionId, command, clientInputMode, images, textAttachments, attachments)
+				.executeCommand(
+					sessionId,
+					command,
+					clientInputMode,
+					images,
+					textAttachments,
+					attachments,
+					demoCapture
+				)
 				.then((success) => {
 					this.send(client, { type: 'command_result', success, sessionId });
 					if (!success) {

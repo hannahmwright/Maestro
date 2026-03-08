@@ -49,6 +49,7 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { autorunSynopsisPrompt } from '../../../prompts';
 import type { WebRemoteLogEntry } from '../../../shared/remote-web';
+import type { DemoCard } from '../../../shared/demo-artifacts';
 import type { UserInputRequest } from '../../../shared/user-input-requests';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -658,10 +659,17 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	// Internal refs — only used by IPC listeners, not needed outside this hook
 	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map());
 	const thinkingChunkRafIdRef = useRef<number | null>(null);
+	const assistantStreamBufferRef = useRef<
+		Map<string, Array<{ mode: 'append' | 'replace' | 'commit' | 'discard'; text?: string }>>
+	>(new Map());
+	const assistantStreamRafIdRef = useRef<number | null>(null);
+	const activeAssistantLogIdRef = useRef<Map<string, string>>(new Map());
 
 	useEffect(() => {
 		// Copy ref value to local variable for cleanup (React ESLint rule)
 		const thinkingChunkBuffer = thinkingChunkBufferRef.current;
+		const assistantStreamBuffer = assistantStreamBufferRef.current;
+		const activeAssistantLogIds = activeAssistantLogIdRef.current;
 
 		// Stable references from stores (Zustand actions are referentially stable)
 		const setSessions = useSessionStore.getState().setSessions;
@@ -671,6 +679,49 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		const getSessions = () => useSessionStore.getState().sessions;
 		const getGroups = () => useSessionStore.getState().groups;
 		const getActiveSessionId = () => useSessionStore.getState().activeSessionId;
+		const clearAgentErrorOnSuccessfulOutput = (actualSessionId: string, targetTabId: string) => {
+			const sessionForErrorCheck = getSessions().find((s) => s.id === actualSessionId);
+			if (!sessionForErrorCheck?.agentError) return;
+
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== actualSessionId) return s;
+					const updatedAiTabs = s.aiTabs.map((tab) =>
+						tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+					);
+					return {
+						...s,
+						agentError: undefined,
+						agentErrorTabId: undefined,
+						agentErrorPaused: false,
+						state: 'busy' as SessionState,
+						aiTabs: updatedAiTabs,
+					};
+				})
+			);
+			window.maestro.agentError.clearError(actualSessionId).catch((err) => {
+				console.error('Failed to clear agent error on successful data:', err);
+			});
+		};
+		const markAiOutputActivity = (actualSessionId: string, targetTabId: string, byteLength = 0) => {
+			deps.batchedUpdater.markDelivered(actualSessionId, targetTabId);
+			if (byteLength > 0) {
+				deps.batchedUpdater.updateCycleBytes(actualSessionId, byteLength);
+			}
+
+			clearAgentErrorOnSuccessfulOutput(actualSessionId, targetTabId);
+
+			const session = getSessions().find((s) => s.id === actualSessionId);
+			if (!session) return;
+			const targetTab = session.aiTabs?.find((t) => t.id === targetTabId);
+			if (!targetTab) return;
+
+			const isTargetTabActive = targetTab.id === session.activeTabId;
+			const isThisSessionActive = session.id === getActiveSessionId();
+			const isUserAtBottom = targetTab.isAtBottom !== false;
+			const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
+			deps.batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
+		};
 		const broadcastSessionLogEntry = (
 			sessionId: string,
 			tabId: string | null,
@@ -682,10 +733,15 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				timestamp: logEntry.timestamp,
 				text: logEntry.text,
 				source: logEntry.source,
+				images: logEntry.images ? [...logEntry.images] : undefined,
+				attachments: logEntry.attachments ? [...logEntry.attachments] : undefined,
 				metadata: logEntry.metadata
 					? {
 							toolState: logEntry.metadata.toolState
 								? { ...logEntry.metadata.toolState }
+								: undefined,
+							demoCard: logEntry.metadata.demoCard
+								? { ...logEntry.metadata.demoCard }
 								: undefined,
 						}
 					: undefined,
@@ -697,6 +753,38 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 					console.error('[Web] Failed to broadcast session log entry', error);
 				});
 		};
+
+		const unsubscribeDemoGenerated = window.maestro.process.onDemoGenerated(
+			(sessionId: string, tabId: string | null, demoCard: DemoCard) => {
+				const logEntry: LogEntry = {
+					id: generateId(),
+					timestamp: demoCard.updatedAt || Date.now(),
+					source: 'system',
+					text: demoCard.status === 'failed' ? 'Demo capture failed' : 'Demo ready',
+					metadata: {
+						demoCard,
+					},
+				};
+
+				setSessions((prev) =>
+					prev.map((session) => {
+						if (session.id !== sessionId) return session;
+						const targetTabId = tabId || session.activeTabId;
+						if (!targetTabId) {
+							return session;
+						}
+						return {
+							...session,
+							aiTabs: session.aiTabs.map((tab) =>
+								tab.id === targetTabId ? { ...tab, logs: [...tab.logs, logEntry] } : tab
+							),
+						};
+					})
+				);
+
+				broadcastSessionLogEntry(sessionId, tabId, 'ai', logEntry);
+			}
+		);
 
 		// ================================================================
 		// onData — Handle process output data (BATCHED for performance)
@@ -752,46 +840,131 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 			// Batch the log append, delivery mark, unread mark, and byte tracking
 			deps.batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
-			deps.batchedUpdater.markDelivered(actualSessionId, targetTabId);
-			deps.batchedUpdater.updateCycleBytes(actualSessionId, data.length);
+			markAiOutputActivity(actualSessionId, targetTabId, data.length);
+		});
 
-			// Clear error state if session had an error but is now receiving successful data
-			const sessionForErrorCheck = getSessions().find((s) => s.id === actualSessionId);
-			if (sessionForErrorCheck?.agentError) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-						const updatedAiTabs = s.aiTabs.map((tab) =>
-							tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+		const unsubscribeAssistantStream = window.maestro.process.onAssistantStream?.(
+			(
+				sessionId: string,
+				event: { mode: 'append' | 'replace' | 'commit' | 'discard'; text?: string }
+			) => {
+				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+				if (!aiTabMatch) return;
+
+				const actualSessionId = aiTabMatch[1];
+				const tabId = aiTabMatch[2];
+				const bufferKey = `${actualSessionId}:${tabId}`;
+				const bufferedEvents = assistantStreamBufferRef.current.get(bufferKey) || [];
+				assistantStreamBufferRef.current.set(bufferKey, [...bufferedEvents, event]);
+
+				if ((event.mode === 'append' || event.mode === 'replace') && event.text) {
+					markAiOutputActivity(actualSessionId, tabId);
+				}
+
+				if (assistantStreamRafIdRef.current === null) {
+					assistantStreamRafIdRef.current = requestAnimationFrame(() => {
+						const bufferedAssistantEvents = new Map(assistantStreamBufferRef.current);
+						assistantStreamBufferRef.current.clear();
+						assistantStreamRafIdRef.current = null;
+
+						setSessions((prev) =>
+							prev.map((session) => {
+								let updatedTabs = session.aiTabs;
+								let sessionChanged = false;
+
+								for (const [key, streamEvents] of bufferedAssistantEvents) {
+									const [eventSessionId, eventTabId] = key.split(':');
+									if (eventSessionId !== session.id) continue;
+
+									const targetTab = updatedTabs.find((tab) => tab.id === eventTabId);
+									if (!targetTab) continue;
+
+									let updatedLogs = targetTab.logs;
+									let tabChanged = false;
+									let activeLogId = activeAssistantLogIds.get(key);
+
+									for (const streamEvent of streamEvents) {
+										if (streamEvent.mode === 'commit') {
+											if (activeLogId) {
+												activeAssistantLogIds.delete(key);
+												activeLogId = undefined;
+											}
+											continue;
+										}
+
+										if (streamEvent.mode === 'discard') {
+											if (!activeLogId) continue;
+											const activeLogIndex = updatedLogs.findIndex((log) => log.id === activeLogId);
+											if (activeLogIndex >= 0) {
+												updatedLogs = [
+													...updatedLogs.slice(0, activeLogIndex),
+													...updatedLogs.slice(activeLogIndex + 1),
+												];
+												tabChanged = true;
+											}
+											activeAssistantLogIds.delete(key);
+											activeLogId = undefined;
+											continue;
+										}
+
+										const text = streamEvent.text || '';
+										if (!text) continue;
+
+										const activeLogIndex = activeLogId
+											? updatedLogs.findIndex((log) => log.id === activeLogId)
+											: -1;
+
+										if (activeLogIndex < 0) {
+											const preservedLogs = updatedLogs.filter((log) => {
+												if (log.source === 'thinking' || log.source === 'tool') {
+													return targetTab.showThinking === 'sticky';
+												}
+												return true;
+											});
+											const newLog: LogEntry = {
+												id: generateId(),
+												timestamp: Date.now(),
+												source: 'ai',
+												text,
+											};
+											updatedLogs = [...preservedLogs, newLog];
+											activeLogId = newLog.id;
+											activeAssistantLogIds.set(key, newLog.id);
+											tabChanged = true;
+											continue;
+										}
+
+										const existingLog = updatedLogs[activeLogIndex];
+										const nextText =
+											streamEvent.mode === 'append' ? existingLog.text + text : text;
+										if (nextText !== existingLog.text) {
+											const updatedLog: LogEntry = {
+												...existingLog,
+												timestamp: Date.now(),
+												text: nextText,
+											};
+											updatedLogs = updatedLogs.map((log, index) =>
+												index === activeLogIndex ? updatedLog : log
+											);
+											tabChanged = true;
+										}
+									}
+
+									if (!tabChanged) continue;
+
+									updatedTabs = updatedTabs.map((tab) =>
+										tab.id === eventTabId ? { ...tab, logs: updatedLogs } : tab
+									);
+									sessionChanged = true;
+								}
+
+								return sessionChanged ? { ...session, aiTabs: updatedTabs } : session;
+							})
 						);
-						return {
-							...s,
-							agentError: undefined,
-							agentErrorTabId: undefined,
-							agentErrorPaused: false,
-							state: 'busy' as SessionState,
-							aiTabs: updatedAiTabs,
-						};
-					})
-				);
-				window.maestro.agentError.clearError(actualSessionId).catch((err) => {
-					console.error('Failed to clear agent error on successful data:', err);
-				});
-			}
-
-			// Determine if tab should be marked as unread
-			const session = getSessions().find((s) => s.id === actualSessionId);
-			if (session) {
-				const targetTab = session.aiTabs?.find((t) => t.id === targetTabId);
-				if (targetTab) {
-					const isTargetTabActive = targetTab.id === session.activeTabId;
-					const isThisSessionActive = session.id === getActiveSessionId();
-					const isUserAtBottom = targetTab.isAtBottom !== false;
-					const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
-					deps.batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
+					});
 				}
 			}
-		});
+		);
 
 		// ================================================================
 		// onExit — Handle process exit
@@ -821,6 +994,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				} else {
 					actualSessionId = sessionId;
 					isFromAi = false;
+				}
+
+				if (isFromAi && tabIdFromSession) {
+					const streamKey = `${actualSessionId}:${tabIdFromSession}`;
+					activeAssistantLogIds.delete(streamKey);
 				}
 
 				// SAFETY CHECK: Verify the process is actually gone
@@ -2414,6 +2592,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		return () => {
 			unsubscribeData();
+			unsubscribeAssistantStream?.();
 			unsubscribeExit();
 			unsubscribeSessionId();
 			unsubscribeModel();
@@ -2432,12 +2611,19 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeSshRemote?.();
 			unsubscribeToolExecution?.();
 			unsubscribeUserInputRequest?.();
+			unsubscribeDemoGenerated?.();
 			// Cancel any pending thinking chunk RAF and clear buffer
 			if (thinkingChunkRafIdRef.current !== null) {
 				cancelAnimationFrame(thinkingChunkRafIdRef.current);
 				thinkingChunkRafIdRef.current = null;
 			}
 			thinkingChunkBuffer.clear();
+			if (assistantStreamRafIdRef.current !== null) {
+				cancelAnimationFrame(assistantStreamRafIdRef.current);
+				assistantStreamRafIdRef.current = null;
+			}
+			assistantStreamBuffer.clear();
+			activeAssistantLogIds.clear();
 		};
 	}, []);
 }

@@ -87,10 +87,18 @@ export class ExitHandler {
 			try {
 				const event = outputParser.parseJsonLine(remainingLine);
 				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
-					managedProcess.resultEmitted = true;
 					const resultText = event.text || managedProcess.streamedText || '';
 					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText);
+						if (managedProcess.toolType === 'codex') {
+							managedProcess.streamedText = resultText;
+							this.emitter.emit('assistant-stream', sessionId, {
+								mode: 'replace',
+								text: resultText,
+							});
+						} else {
+							managedProcess.resultEmitted = true;
+							this.bufferManager.emitDataBuffered(sessionId, resultText);
+						}
 					}
 				}
 			} catch {
@@ -111,7 +119,11 @@ export class ExitHandler {
 					streamedTextLength: managedProcess.streamedText.length,
 				}
 			);
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			if (managedProcess.toolType === 'codex') {
+				this.emitter.emit('assistant-stream', sessionId, { mode: 'commit' });
+			} else {
+				this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			}
 		}
 
 		// Check for errors using the parser (if not already emitted)

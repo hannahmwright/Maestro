@@ -28,6 +28,10 @@ export function setupForwardingListeners(
 		safeSend('process:thinking-chunk', sessionId, content);
 	});
 
+	processManager.on('assistant-stream', (sessionId: string, event) => {
+		safeSend('process:assistant-stream', sessionId, event);
+	});
+
 	// Handle tool execution events (OpenCode, Codex)
 	processManager.on('tool-execution', (sessionId: string, toolEvent: ToolExecution) => {
 		safeSend('process:tool-execution', sessionId, toolEvent);

@@ -338,12 +338,16 @@ export class StdoutHandler {
 
 		// Codex can emit multiple agent_message results in a single turn:
 		// an interim "I'm checking..." message and then the final answer.
-		// Keep the latest result text and emit once at turn completion.
+		// Keep the latest result text and update the provisional renderer entry in place.
 		if (managedProcess.toolType === 'codex' && outputParser.isResultMessage(event) && event.text) {
 			managedProcess.streamedText = event.text;
+			this.emitter.emit('assistant-stream', sessionId, {
+				mode: 'replace',
+				text: event.text,
+			});
 		}
 
-		// For Codex, flush the latest captured result when the turn completes.
+		// For Codex, commit the provisional assistant entry when the turn completes.
 		// turn.completed is normalized as a usage event by the Codex parser.
 		if (
 			managedProcess.toolType === 'codex' &&
@@ -354,14 +358,14 @@ export class StdoutHandler {
 			if (resultText) {
 				managedProcess.resultEmitted = true;
 				logger.debug(
-					'[ProcessManager] Emitting final Codex result at turn completion',
+					'[ProcessManager] Committing streamed Codex result at turn completion',
 					'ProcessManager',
 					{
 						sessionId,
 						resultLength: resultText.length,
 					}
 				);
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.emitter.emit('assistant-stream', sessionId, { mode: 'commit' });
 			}
 		}
 

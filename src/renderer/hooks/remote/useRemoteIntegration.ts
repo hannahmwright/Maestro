@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { Session, SessionState, ThinkingMode } from '../../types';
 import { createTab, closeTab } from '../../utils/tabHelpers';
 import { WEB_APP_BASE_PATH, type ResponseCompletedEvent } from '../../../shared/remote-web';
+import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 
 function buildResponseCompletedEvent(session: Session): ResponseCompletedEvent | null {
 	const activeTab =
@@ -10,7 +11,7 @@ function buildResponseCompletedEvent(session: Session): ResponseCompletedEvent |
 
 	const lastAiLog = [...activeTab.logs]
 		.reverse()
-		.find((log) => log.source === 'stdout' || log.source === 'stderr');
+		.find((log) => log.source === 'stdout' || log.source === 'stderr' || log.source === 'ai');
 	if (!lastAiLog?.text) return null;
 
 	const lines = lastAiLog.text
@@ -129,7 +130,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					name: string;
 					mimeType?: string;
 					size?: number;
-				}>
+				}>,
+				demoCapture?: DemoCaptureRequest
 			) => {
 				console.log('[useRemoteIntegration] onRemoteCommand callback invoked:', {
 					sessionId,
@@ -137,6 +139,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					inputMode,
 					imageCount: images?.length ?? 0,
 					textAttachmentCount: textAttachments?.length ?? 0,
+					demoCaptureEnabled: demoCapture?.enabled ?? false,
 				});
 
 				// Verify the session exists
@@ -192,7 +195,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				});
 				window.dispatchEvent(
 					new CustomEvent('maestro:remoteCommand', {
-						detail: { sessionId, command, inputMode, images, textAttachments, attachments },
+						detail: {
+							sessionId,
+							command,
+							inputMode,
+							images,
+							textAttachments,
+							attachments,
+							demoCapture,
+						},
 					})
 				);
 				console.log('[useRemoteIntegration] Event dispatched successfully');

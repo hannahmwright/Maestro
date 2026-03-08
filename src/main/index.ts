@@ -46,6 +46,7 @@ import {
 	registerSshRemoteHandlers,
 	registerFilesystemHandlers,
 	registerAttachmentsHandlers,
+	registerArtifactsHandlers,
 	registerWebHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
@@ -59,6 +60,12 @@ import {
 	getActiveGroomingSessionCount,
 } from './ipc/handlers';
 import { initializeStatsDB, closeStatsDB, getStatsDB } from './stats';
+import {
+	configureArtifacts,
+	initializeArtifacts,
+	closeArtifacts,
+	getDemoArtifactService,
+} from './artifacts';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
 	routeModeratorResponse,
@@ -373,6 +380,20 @@ app.whenReady().then(async () => {
 		logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 	}
 
+	logger.info('Initializing demo artifacts database', 'Startup');
+	try {
+		configureArtifacts({
+			resolveSshRemote: (sshRemoteId: string) => {
+				return getSshRemoteById(sshRemoteId) || null;
+			},
+		});
+		await initializeArtifacts();
+		logger.info('Demo artifacts initialized', 'Startup');
+	} catch (error) {
+		logger.error(`Failed to initialize demo artifacts: ${error}`, 'Startup');
+		logger.warn('Continuing without demo artifacts - demo capture will be unavailable', 'Startup');
+	}
+
 	// Set up IPC handlers
 	logger.debug('Setting up IPC handlers', 'Startup');
 	setupIpcHandlers();
@@ -466,6 +487,7 @@ const quitHandler = createQuitHandler({
 	getActiveGroomingSessionCount,
 	cleanupAllGroomingSessions,
 	closeStatsDB,
+	closeArtifacts,
 	stopCliWatcher: () => cliWatcher.stop(),
 });
 quitHandler.setup();
@@ -684,6 +706,7 @@ function setupIpcHandlers() {
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app });
+	registerArtifactsHandlers();
 
 	// Register leaderboard handlers (extracted to handlers/leaderboard.ts)
 	registerLeaderboardHandlers({
@@ -751,6 +774,7 @@ function setupProcessListeners() {
 				calculateContextTokens,
 			},
 			getStatsDB,
+			getDemoArtifactService,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

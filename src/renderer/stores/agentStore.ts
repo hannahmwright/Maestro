@@ -31,6 +31,7 @@ import { useSessionStore } from './sessionStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
+import { appendDemoCaptureInstructions } from '../utils/demoCapturePrompt';
 import { gitService } from '../services/git';
 
 const PLAN_MODE_PROMPT_PREFIX = `# Mode: Plan
@@ -334,6 +335,11 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					effectivePrompt = `${PLAN_MODE_PROMPT_PREFIX}\n\n${effectivePrompt}`;
 				}
 
+				effectivePrompt = appendDemoCaptureInstructions(
+					effectivePrompt,
+					item.demoCapture?.enabled === true
+				);
+
 				console.log('[processQueuedItem] Spawning agent with queued message:', {
 					sessionId: targetSessionId,
 					toolType: session.toolType,
@@ -362,6 +368,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionReasoningEffort: targetTab.reasoningEffort ?? 'default',
+					demoCapture: item.demoCapture,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 			} else if (item.type === 'command' && item.command) {

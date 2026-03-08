@@ -27,6 +27,7 @@ import type {
 	UserInputRequestId,
 	UserInputResponse,
 } from '../../shared/user-input-requests';
+import type { DemoCard, DemoCaptureRequest } from '../../shared/demo-artifacts';
 
 /**
  * Helper to log via the main process logger.
@@ -55,6 +56,7 @@ export interface ProcessConfig {
 	modelId?: string; // For model selection (uses agent's modelArgs builder)
 	yoloMode?: boolean; // For YOLO/full-access mode (uses agent's yoloModeArgs)
 	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+	demoCapture?: DemoCaptureRequest;
 	// Stats tracking options
 	querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 	tabId?: string; // Tab ID for multi-tab tracking
@@ -156,6 +158,11 @@ export interface ToolExecutionEvent {
 	toolName: string;
 	state?: unknown;
 	timestamp: number;
+}
+
+export interface AssistantStreamEvent {
+	mode: 'append' | 'replace' | 'commit' | 'discard';
+	text?: string;
 }
 
 /**
@@ -293,6 +300,15 @@ export function createProcessApi() {
 			return () => ipcRenderer.removeListener('process:thinking-chunk', handler);
 		},
 
+		onAssistantStream: (
+			callback: (sessionId: string, event: AssistantStreamEvent) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, event: AssistantStreamEvent) =>
+				callback(sessionId, event);
+			ipcRenderer.on('process:assistant-stream', handler);
+			return () => ipcRenderer.removeListener('process:assistant-stream', handler);
+		},
+
 		/**
 		 * Subscribe to tool execution events
 		 */
@@ -351,7 +367,8 @@ export function createProcessApi() {
 					name: string;
 					mimeType?: string;
 					size?: number;
-				}>
+				}>,
+				demoCapture?: DemoCaptureRequest
 			) => void
 		): (() => void) => {
 			log('Registering onRemoteCommand listener');
@@ -374,7 +391,8 @@ export function createProcessApi() {
 					name: string;
 					mimeType?: string;
 					size?: number;
-				}>
+				}>,
+				demoCapture?: DemoCaptureRequest
 			) => {
 				log('Received remote:executeCommand IPC', {
 					sessionId,
@@ -382,9 +400,10 @@ export function createProcessApi() {
 					inputMode,
 					imageCount: images?.length ?? 0,
 					textAttachmentCount: textAttachments?.length ?? 0,
+					demoCaptureEnabled: demoCapture?.enabled ?? false,
 				});
 				try {
-					callback(sessionId, command, inputMode, images, textAttachments, attachments);
+					callback(sessionId, command, inputMode, images, textAttachments, attachments, demoCapture);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',
@@ -397,6 +416,15 @@ export function createProcessApi() {
 			};
 			ipcRenderer.on('remote:executeCommand', handler);
 			return () => ipcRenderer.removeListener('remote:executeCommand', handler);
+		},
+
+		onDemoGenerated: (
+			callback: (sessionId: string, tabId: string | null, demoCard: DemoCard) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string | null, demoCard: DemoCard) =>
+				callback(sessionId, tabId, demoCard);
+			ipcRenderer.on('process:demo-generated', handler);
+			return () => ipcRenderer.removeListener('process:demo-generated', handler);
 		},
 
 		/**

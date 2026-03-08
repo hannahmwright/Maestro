@@ -35,6 +35,7 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type {
+	WebAssistantStreamUpdate,
 	ResponseCompletedEvent,
 	WebAttachmentSummary,
 	WebRemoteLogEntry,
@@ -130,6 +131,11 @@ export interface MobileSessionHandlers {
 		inputMode: 'ai' | 'terminal',
 		logEntry: LogEntry
 	) => void;
+	onAssistantStream: (
+		sessionId: string,
+		tabId: string | null,
+		event: WebAssistantStreamUpdate
+	) => void;
 	onResponseCompleted: (event: ResponseCompletedEvent) => void;
 }
 
@@ -194,6 +200,10 @@ function getLogsTargetKey(sessionId: string, tabId: string | null): string {
 	return `${sessionId}::${tabId || ''}`;
 }
 
+function isPendingTabId(tabId: string | null | undefined): boolean {
+	return !!tabId?.startsWith('pending-tab-');
+}
+
 /**
  * Hook for managing session state in the mobile web interface
  *
@@ -252,6 +262,7 @@ export function useMobileSessionManagement(
 	const pendingClosedTabIdsRef = useRef<Map<string, Map<string, number>>>(new Map());
 	const pendingAddedSessionIdsRef = useRef<Map<string, number>>(new Map());
 	const recentlyRemovedSessionIdsRef = useRef<Map<string, number>>(new Map());
+	const activeAssistantLogIdsRef = useRef<Map<string, string>>(new Map());
 
 	// Ref to track activeSessionId for use in callbacks (avoids stale closure issues)
 	// Initialize with same value as state to avoid race condition where WebSocket
@@ -270,6 +281,7 @@ export function useMobileSessionManagement(
 		loadedLogsTargetKeyRef.current = null;
 		latestLogsRequestIdRef.current += 1;
 		backgroundLogsRequestCountRef.current = 0;
+		activeAssistantLogIdsRef.current.clear();
 		setIsLoadingLogs(false);
 		setIsSyncingLogs(false);
 		setSessionLogs({ aiLogs: [], shellLogs: [] });
@@ -346,6 +358,10 @@ export function useMobileSessionManagement(
 				background?: boolean;
 			}
 		) => {
+			if (isPendingTabId(tabId)) {
+				return;
+			}
+
 			const targetKey = getLogsTargetKey(sessionId, tabId);
 			const requestId = ++latestLogsRequestIdRef.current;
 			const shouldBlock = !options?.background && loadedLogsTargetKeyRef.current !== targetKey;
@@ -388,6 +404,7 @@ export function useMobileSessionManagement(
 						aiLogs: session?.aiLogs || [],
 						shellLogs: session?.shellLogs || [],
 					});
+					activeAssistantLogIdsRef.current.delete(targetKey);
 					loadedLogsTargetKeyRef.current = targetKey;
 					lastRealtimeActivityAtRef.current = Date.now();
 					webLogger.debug('Fetched session logs:', 'Mobile', {
@@ -927,6 +944,94 @@ export function useMobileSessionManagement(
 		[]
 	);
 
+	const applyAssistantStreamEvent = useCallback(
+		(sessionId: string, tabId: string | null, event: WebAssistantStreamUpdate) => {
+			const currentActiveId = activeSessionIdRef.current;
+			const currentActiveTabId = activeTabIdRef.current;
+
+			if (currentActiveId !== sessionId) {
+				return;
+			}
+
+			if (tabId && currentActiveTabId && tabId !== currentActiveTabId) {
+				return;
+			}
+
+			const targetKey = getLogsTargetKey(sessionId, currentActiveTabId);
+			lastRealtimeActivityAtRef.current = Date.now();
+			loadedLogsTargetKeyRef.current = targetKey;
+
+			setSessionLogs((prev) => {
+				const existingLogs = prev.aiLogs || [];
+				const activeLogId = activeAssistantLogIdsRef.current.get(targetKey);
+				const activeLogIndex = activeLogId
+					? existingLogs.findIndex((entry) => entry.id === activeLogId)
+					: -1;
+
+				if (event.mode === 'commit') {
+					activeAssistantLogIdsRef.current.delete(targetKey);
+					return prev;
+				}
+
+				if (event.mode === 'discard') {
+					activeAssistantLogIdsRef.current.delete(targetKey);
+					if (activeLogIndex < 0) {
+						return prev;
+					}
+					return {
+						...prev,
+						aiLogs: [
+							...existingLogs.slice(0, activeLogIndex),
+							...existingLogs.slice(activeLogIndex + 1),
+						],
+					};
+				}
+
+				const text = event.text || '';
+				if (!text) {
+					return prev;
+				}
+
+				if (activeLogIndex < 0) {
+					const newEntryId = `assistant-stream-${Date.now()}-${Math.random()
+						.toString(36)
+						.slice(2, 11)}`;
+					const newEntry: LogEntry = {
+						id: newEntryId,
+						timestamp: Date.now(),
+						source: 'ai',
+						text,
+					};
+					activeAssistantLogIdsRef.current.set(targetKey, newEntryId);
+					return {
+						...prev,
+						aiLogs: [...existingLogs, newEntry],
+					};
+				}
+
+				const existingLog = existingLogs[activeLogIndex];
+				const existingText = existingLog.text || '';
+				const nextText = event.mode === 'append' ? existingText + text : text;
+				if (nextText === existingText) {
+					return prev;
+				}
+
+				const updatedLogs = [...existingLogs];
+				updatedLogs[activeLogIndex] = {
+					...existingLog,
+					timestamp: Date.now(),
+					source: 'ai',
+					text: nextText,
+				};
+				return {
+					...prev,
+					aiLogs: updatedLogs,
+				};
+			});
+		},
+		[]
+	);
+
 	// WebSocket handlers for session updates
 	const sessionsHandlers = useMemo(
 		(): MobileSessionHandlers => ({
@@ -1331,6 +1436,13 @@ export function useMobileSessionManagement(
 			) => {
 				upsertSessionLogEntry(sessionId, tabId, inputMode, logEntry);
 			},
+			onAssistantStream: (
+				sessionId: string,
+				tabId: string | null,
+				event: WebAssistantStreamUpdate
+			) => {
+				applyAssistantStreamEvent(sessionId, tabId, event);
+			},
 			onResponseCompleted: (event: ResponseCompletedEvent) => {
 				webLogger.debug(`Response completed event received: ${event.eventId}`, 'Mobile');
 				onResponseCompletedEvent?.(event);
@@ -1344,6 +1456,7 @@ export function useMobileSessionManagement(
 			onCustomCommands,
 			onAutoRunStateChange,
 			upsertSessionLogEntry,
+			applyAssistantStreamEvent,
 			fetchSessionLogs,
 			refreshSessionsList,
 			isOffline,

@@ -21,9 +21,17 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			port: number;
 			setGetSessionsCallback = vi.fn();
 			setGetSessionDetailCallback = vi.fn();
+			setGetSessionModelsCallback = vi.fn();
+			setSetSessionModelCallback = vi.fn();
+			setTranscribeAudioCallback = vi.fn();
+			setGetVoiceTranscriptionStatusCallback = vi.fn();
+			setPrewarmVoiceTranscriptionCallback = vi.fn();
 			setGetThemeCallback = vi.fn();
 			setGetCustomCommandsCallback = vi.fn();
 			setGetHistoryCallback = vi.fn();
+			setGetSessionDemosCallback = vi.fn();
+			setGetDemoDetailCallback = vi.fn();
+			setGetArtifactContentCallback = vi.fn();
 			setWriteToSessionCallback = vi.fn();
 			setExecuteCommandCallback = vi.fn();
 			setInterruptSessionCallback = vi.fn();
@@ -31,6 +39,7 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setSelectSessionCallback = vi.fn();
 			setSelectTabCallback = vi.fn();
 			setNewTabCallback = vi.fn();
+			setDeleteSessionCallback = vi.fn();
 			setCloseTabCallback = vi.fn();
 			setRenameTabCallback = vi.fn();
 			setStarTabCallback = vi.fn();
@@ -155,6 +164,9 @@ describe('web-server/web-server-factory', () => {
 			groupsStore: mockGroupsStore,
 			getMainWindow: vi.fn().mockReturnValue(mockMainWindow as BrowserWindow),
 			getProcessManager: vi.fn().mockReturnValue(mockProcessManager),
+			getAgentDetector: vi.fn().mockReturnValue(null),
+			getAgentConfig: vi.fn().mockReturnValue({}),
+			getUserDataPath: vi.fn().mockReturnValue('/tmp/maestro-tests'),
 		};
 	});
 
@@ -259,7 +271,7 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('getSessionsCallback behavior', () => {
-		it('should return sessions with mapped data', () => {
+		it('should return sessions with mapped data', async () => {
 			const createWebServer = createWebServerFactory(deps);
 			const server = createWebServer();
 
@@ -267,13 +279,28 @@ describe('web-server/web-server-factory', () => {
 			const setGetSessionsCallback = server.setGetSessionsCallback as ReturnType<typeof vi.fn>;
 			const callback = setGetSessionsCallback.mock.calls[0][0];
 
-			const sessions = callback();
+			const sessions = await callback();
 
 			expect(Array.isArray(sessions)).toBe(true);
 			expect(sessions.length).toBeGreaterThan(0);
 			expect(sessions[0]).toHaveProperty('id');
 			expect(sessions[0]).toHaveProperty('name');
 			expect(sessions[0]).toHaveProperty('toolType');
+		});
+	});
+
+	describe('getSessionDetailCallback behavior', () => {
+		it('returns no AI logs when an explicit tab is missing', () => {
+			const createWebServer = createWebServerFactory(deps);
+			const server = createWebServer();
+
+			const setDetailCallback = server.setGetSessionDetailCallback as ReturnType<typeof vi.fn>;
+			const callback = setDetailCallback.mock.calls[0][0];
+
+			const detail = callback('session-1', 'pending-tab-123');
+
+			expect(detail?.aiLogs).toEqual([]);
+			expect(detail?.activeTabId).toBe('tab-1');
 		});
 	});
 
@@ -347,7 +374,11 @@ describe('web-server/web-server-factory', () => {
 				'remote:executeCommand',
 				'session-1',
 				'test command',
-				'ai'
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				undefined
 			);
 		});
 	});
@@ -410,7 +441,7 @@ describe('web-server/web-server-factory', () => {
 			const theme = callback();
 
 			expect(getThemeById).toHaveBeenCalled();
-			expect(theme).toEqual({ id: 'dracula', name: 'Dracula' });
+			expect(theme).toMatchObject({ id: 'dracula', name: 'Dracula' });
 		});
 	});
 

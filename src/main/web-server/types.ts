@@ -5,6 +5,7 @@
 
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
+import type { DemoCaptureRequest, DemoCard, DemoDetail } from '../../shared/demo-artifacts';
 import type {
 	PushStatusResponse,
 	PushSubscriptionRecord,
@@ -312,8 +313,23 @@ export type ExecuteCommandCallback = (
 		name: string;
 		mimeType?: string;
 		size?: number;
-	}>
+	}>,
+	demoCapture?: DemoCaptureRequest
 ) => Promise<boolean>;
+
+export type GetSessionDemosCallback = (
+	sessionId: string,
+	tabId?: string | null
+) => Promise<DemoCard[]> | DemoCard[];
+
+export type GetDemoDetailCallback = (demoId: string) => Promise<DemoDetail | null> | DemoDetail | null;
+
+export type GetArtifactContentCallback = (
+	artifactId: string
+) =>
+	| Promise<{ path: string; mimeType: string; filename: string } | null>
+	| { path: string; mimeType: string; filename: string }
+	| null;
 
 /**
  * Callback type for interrupting a session through the desktop's existing logic.

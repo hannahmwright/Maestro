@@ -46,6 +46,7 @@ import { registerDocumentGraphHandlers, DocumentGraphHandlerDependencies } from 
 import { registerSshRemoteHandlers, SshRemoteHandlerDependencies } from './ssh-remote';
 import { registerFilesystemHandlers } from './filesystem';
 import { registerAttachmentsHandlers, AttachmentsHandlerDependencies } from './attachments';
+import { registerArtifactsHandlers } from './artifacts';
 import { registerWebHandlers, WebHandlerDependencies } from './web';
 import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './leaderboard';
 import { registerNotificationsHandlers } from './notifications';
@@ -86,6 +87,7 @@ export { registerSshRemoteHandlers };
 export { registerFilesystemHandlers };
 export { registerAttachmentsHandlers };
 export type { AttachmentsHandlerDependencies };
+export { registerArtifactsHandlers };
 export { registerWebHandlers };
 export type { WebHandlerDependencies };
 export { registerLeaderboardHandlers };
@@ -256,6 +258,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	registerAttachmentsHandlers({
 		app: deps.app,
 	});
+	registerArtifactsHandlers();
 	// Register leaderboard handlers
 	registerLeaderboardHandlers({
 		app: deps.app,

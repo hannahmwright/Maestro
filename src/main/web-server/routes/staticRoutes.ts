@@ -251,6 +251,11 @@ export class StaticRoutes {
 			this.serveIndexHtml(reply, sessionId, tabId || null);
 		});
 
+		server.get(`${WEB_APP_BASE_PATH}/session/:sessionId/demo/:demoId`, async (request, reply) => {
+			const { sessionId } = request.params as { sessionId: string; demoId: string };
+			this.serveIndexHtml(reply, sessionId, null);
+		});
+
 		// Legacy compatibility: redirect the old tokenized routes to /app.
 		server.get(`/${token}`, async (_request, reply) => {
 			return reply.redirect(302, WEB_APP_BASE_PATH);

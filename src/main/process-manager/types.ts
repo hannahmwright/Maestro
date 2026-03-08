@@ -4,6 +4,7 @@ import type { WebSocket } from 'ws';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
 import type { UserInputRequest, UserInputResponse } from '../../shared/user-input-requests';
+import type { DemoCaptureRequest } from '../../shared/demo-artifacts';
 import type {
 	TaskContract,
 	TaskContractInput,
@@ -52,6 +53,7 @@ export interface ProcessConfig {
 	/** Resolved model seed for runtime UI state. */
 	resolvedModel?: string;
 	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+	demoCapture?: DemoCaptureRequest;
 }
 
 export interface CodexAppServerState {
@@ -155,6 +157,7 @@ export interface ProcessManagerEvents {
 	model: (sessionId: string, model: string) => void;
 	'agent-error': (sessionId: string, error: AgentError) => void;
 	'thinking-chunk': (sessionId: string, text: string) => void;
+	'assistant-stream': (sessionId: string, event: AssistantStreamEvent) => void;
 	'tool-execution': (sessionId: string, tool: ToolExecution) => void;
 	'slash-commands': (sessionId: string, commands: unknown[]) => void;
 	'query-complete': (sessionId: string, data: QueryCompleteData) => void;
@@ -167,6 +170,11 @@ export interface ToolExecution {
 	toolName: string;
 	state: unknown;
 	timestamp: number;
+}
+
+export interface AssistantStreamEvent {
+	mode: 'append' | 'replace' | 'commit' | 'discard';
+	text?: string;
 }
 
 export interface QueryCompleteData {

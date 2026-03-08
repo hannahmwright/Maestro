@@ -1,3 +1,5 @@
+import type { DemoCard, DemoCaptureRequest } from './demo-artifacts';
+
 export const WEB_APP_BASE_PATH = '/app';
 export const WEB_APP_API_BASE_PATH = `${WEB_APP_BASE_PATH}/api`;
 export const WEB_APP_WS_PATH = `${WEB_APP_BASE_PATH}/ws`;
@@ -71,14 +73,30 @@ export interface WebRemoteLogEntry {
 	attachments?: WebAttachmentSummary[];
 	metadata?: {
 		toolState?: WebRemoteToolState;
+		demoCard?: DemoCard;
 	};
 }
+
+export interface WebDemoCaptureRequest extends DemoCaptureRequest {}
 
 export interface WebSessionLogEntryEvent {
 	sessionId: string;
 	tabId: string | null;
 	inputMode: 'ai' | 'terminal';
 	logEntry: WebRemoteLogEntry;
+}
+
+export type AssistantStreamMode = 'append' | 'replace' | 'commit' | 'discard';
+
+export interface WebAssistantStreamUpdate {
+	mode: AssistantStreamMode;
+	text?: string;
+}
+
+export interface WebAssistantStreamEvent {
+	sessionId: string;
+	tabId: string | null;
+	event: WebAssistantStreamUpdate;
 }
 
 export interface WebPushSubscriptionInput {

@@ -29,6 +29,7 @@ import {
 	type CustomCommandsMessage,
 	type AutoRunStateMessage,
 	type TabsChangedMessage,
+	type AssistantStreamMessage,
 	type ErrorMessage,
 	type CustomCommand,
 	type AITabData,
@@ -843,6 +844,43 @@ describe('useWebSocket', () => {
 
 			// Both should be received (no deduplication without msgId)
 			expect(onSessionOutput).toHaveBeenCalledTimes(2);
+		});
+
+		it('handles assistant_stream message', () => {
+			const onAssistantStream = vi.fn();
+			const { result } = renderHook(() => useWebSocket({ handlers: { onAssistantStream } }));
+
+			act(() => {
+				result.current.connect();
+			});
+
+			const ws = MockWebSocket.getLastInstance();
+			act(() => {
+				ws.simulateOpen();
+				ws.simulateMessage({
+					type: 'connected',
+					clientId: 'client-123',
+					message: 'Connected',
+					authenticated: true,
+				} as ConnectedMessage);
+			});
+
+			act(() => {
+				ws.simulateMessage({
+					type: 'assistant_stream',
+					sessionId: 'session-1',
+					tabId: 'tab-abc123',
+					event: {
+						mode: 'append',
+						text: 'Hello from stream',
+					},
+				} as AssistantStreamMessage);
+			});
+
+			expect(onAssistantStream).toHaveBeenCalledWith('session-1', 'tab-abc123', {
+				mode: 'append',
+				text: 'Hello from stream',
+			});
 		});
 
 		it('handles session_exit message', () => {

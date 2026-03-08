@@ -13,6 +13,7 @@ import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
 import { ToolActivityBlock } from './ToolActivityBlock';
 import { ToolActivityPanel } from './ToolActivityPanel';
 import type { LogEntry } from '../hooks/useMobileSessionManagement';
+import { buildApiUrl } from '../utils/config';
 
 /** Threshold for character-based truncation */
 const CHAR_TRUNCATE_THRESHOLD = 500;
@@ -54,6 +55,11 @@ function formatTime(timestamp: number): string {
 			date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 		);
 	}
+}
+
+function artifactUrl(artifactId?: string | null): string | null {
+	if (!artifactId) return null;
+	return buildApiUrl(`/artifacts/${artifactId}/content`);
 }
 
 /**
@@ -327,6 +333,7 @@ export const MessageHistory = memo(function MessageHistory({
 					const isTruncatable = !isAssistantResponse && !isTool && shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
 					const attachments = entry.attachments || [];
+					const demoCard = entry.metadata?.demoCard;
 					const showInlineMeta = !isUser;
 					const messageLabel = isUser
 						? 'You'
@@ -450,7 +457,55 @@ export const MessageHistory = memo(function MessageHistory({
 											paddingTop: 0,
 										}}
 									>
-										{entry.images && entry.images.length > 0 && (
+										{demoCard ? (
+											<div
+												style={{
+													border: `1px solid ${colors.border}`,
+													borderRadius: '18px',
+													padding: '12px',
+													background: `${colors.bgMain}cc`,
+													display: 'flex',
+													flexDirection: 'column',
+													gap: '10px',
+												}}
+											>
+												{demoCard.posterArtifact && (
+													<img
+														src={artifactUrl(demoCard.posterArtifact.id) || undefined}
+														alt={demoCard.title}
+														style={{
+															width: '100%',
+															borderRadius: '14px',
+															border: `1px solid ${colors.border}`,
+															display: 'block',
+														}}
+													/>
+												)}
+												<div style={{ fontSize: '15px', fontWeight: 700 }}>{demoCard.title}</div>
+												{demoCard.summary && (
+													<div style={{ fontSize: '13px', color: colors.textDim }}>
+														{demoCard.summary}
+													</div>
+												)}
+												<div
+													style={{
+														display: 'flex',
+														flexWrap: 'wrap',
+														gap: '8px',
+														fontSize: '12px',
+														color: colors.textDim,
+													}}
+												>
+													<span>{demoCard.stepCount} steps</span>
+													{demoCard.durationMs ? (
+														<span>{Math.round(demoCard.durationMs / 1000)}s</span>
+													) : null}
+													<span>{demoCard.status}</span>
+												</div>
+											</div>
+										) : null}
+
+										{!demoCard && entry.images && entry.images.length > 0 && (
 											<div
 												style={{
 													display: 'flex',
@@ -482,7 +537,7 @@ export const MessageHistory = memo(function MessageHistory({
 											</div>
 										)}
 
-										{attachments.length > 0 && (
+										{!demoCard && attachments.length > 0 && (
 											<div
 												style={{
 													display: 'flex',
@@ -523,7 +578,7 @@ export const MessageHistory = memo(function MessageHistory({
 											</div>
 										)}
 
-										{isTool ? (
+										{demoCard ? null : isTool ? (
 											<ToolActivityBlock
 												log={entry}
 												expanded={isExpanded}

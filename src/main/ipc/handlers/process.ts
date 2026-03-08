@@ -1,4 +1,5 @@
 import { ipcMain, BrowserWindow } from 'electron';
+import { randomUUID } from 'crypto';
 import Store from 'electron-store';
 import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
@@ -25,6 +26,7 @@ import { readLocalCodexModel, readRemoteCodexModel } from '../../utils/codex-con
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type { UserInputRequestId, UserInputResponse } from '../../../shared/user-input-requests';
+import { MAESTRO_DEMO_EVENT_PREFIX } from '../../../shared/demo-artifacts';
 import {
 	isCoreUpgradesEnabled,
 	coreUpgradeOrchestrator,
@@ -152,6 +154,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Stats tracking options
 				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 				tabId?: string; // Tab ID for multi-tab tracking
+				demoCapture?: {
+					enabled: boolean;
+				};
 			}) => {
 				const processManager = requireProcessManager(getProcessManager);
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -421,6 +426,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				let useShell = false;
 				let sshRemoteUsed: SshRemoteConfig | null = null;
 				let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
+				if (config.demoCapture?.enabled) {
+					const demoRunId = randomUUID();
+					customEnvVarsToPass = {
+						...(customEnvVarsToPass || {}),
+						MAESTRO_DEMO_CAPTURE: '1',
+						MAESTRO_DEMO_EVENT_PREFIX,
+						MAESTRO_DEMO_RUN_ID: demoRunId,
+						MAESTRO_DEMO_OUTPUT_DIR: 'output/playwright',
+					};
+					logger.info('Demo capture requested for process spawn', LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						toolType: config.toolType,
+						demoRunId,
+					});
+				}
 				let sshStdinScript: string | undefined;
 
 				if (config.sessionCustomPath) {

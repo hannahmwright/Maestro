@@ -19,10 +19,12 @@ import { getActiveTab } from '../../utils/tabHelpers';
 import { maybeStartAutomaticTabNaming } from '../../utils/autoTabNaming';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
+import { appendDemoCaptureInstructions } from '../../utils/demoCapturePrompt';
 import { gitService } from '../../services/git';
 import { captureException } from '../../utils/sentry';
 import { imageOnlyDefaultPrompt } from '../../../prompts';
 import type { WebAttachmentSummary, WebTextAttachmentInput } from '../../../shared/remote-web';
+import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 
 // ============================================================================
 // Dependencies interface
@@ -176,6 +178,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				images?: string[];
 				textAttachments?: WebTextAttachmentInput[];
 				attachments?: WebAttachmentSummary[];
+				demoCapture?: DemoCaptureRequest;
 			}>;
 			const {
 				sessionId,
@@ -184,6 +187,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				images = [],
 				textAttachments = [],
 				attachments = [],
+				demoCapture,
 			} = customEvent.detail;
 
 			console.log('[Remote] Processing remote command via event:', {
@@ -191,8 +195,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				command: command.substring(0, 50),
 				webInputMode,
 				imageCount: images.length,
-				textAttachmentCount: textAttachments.length,
-			});
+					textAttachmentCount: textAttachments.length,
+					demoCaptureEnabled: demoCapture?.enabled ?? false,
+				});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
@@ -416,6 +421,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					promptToSend = `${promptToSend.trim()}\n\n---\n\nAttached files for context:\n\n${attachmentPrompt}`;
 				}
 
+				promptToSend = appendDemoCaptureInstructions(promptToSend, demoCapture?.enabled === true);
+
 				// Filter out YOLO/skip-permissions flags when read-only mode is active
 				const agentArgs = agent.args ?? [];
 				const spawnArgs = isReadOnly
@@ -529,6 +536,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
 					sessionReasoningEffort: activeTab?.reasoningEffort ?? 'default',
+					demoCapture,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 

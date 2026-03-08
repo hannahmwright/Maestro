@@ -18,6 +18,8 @@ describe('Data Listener', () => {
 	let mockOutputParser: ProcessListenerDependencies['outputParser'];
 	let mockDebugLog: ProcessListenerDependencies['debugLog'];
 	let mockPatterns: ProcessListenerDependencies['patterns'];
+	let mockGetProcessManager: ProcessListenerDependencies['getProcessManager'];
+	let mockGetDemoArtifactService: ProcessListenerDependencies['getDemoArtifactService'];
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
 
 	beforeEach(() => {
@@ -39,6 +41,12 @@ describe('Data Listener', () => {
 			parseParticipantSessionId: vi.fn().mockReturnValue(null),
 		};
 		mockDebugLog = vi.fn();
+		mockGetProcessManager = vi.fn().mockReturnValue({
+			get: vi.fn().mockReturnValue(undefined),
+		});
+		mockGetDemoArtifactService = vi.fn().mockReturnValue({
+			handleCaptureEvent: vi.fn().mockResolvedValue(null),
+		});
 		mockPatterns = {
 			REGEX_MODERATOR_SESSION: /^group-chat-(.+)-moderator-/,
 			REGEX_MODERATOR_SESSION_TIMESTAMP: /^group-chat-(.+)-moderator-\d+$/,
@@ -57,10 +65,12 @@ describe('Data Listener', () => {
 
 	const setupListener = () => {
 		setupDataListener(mockProcessManager, {
+			getProcessManager: mockGetProcessManager,
 			safeSend: mockSafeSend,
 			getWebServer: mockGetWebServer,
 			outputBuffer: mockOutputBuffer,
 			outputParser: mockOutputParser,
+			getDemoArtifactService: mockGetDemoArtifactService,
 			debugLog: mockDebugLog,
 			patterns: mockPatterns,
 		});
@@ -70,6 +80,14 @@ describe('Data Listener', () => {
 		it('should register the data event listener', () => {
 			setupListener();
 			expect(mockProcessManager.on).toHaveBeenCalledWith('data', expect.any(Function));
+		});
+
+		it('should register the assistant-stream event listener', () => {
+			setupListener();
+			expect(mockProcessManager.on).toHaveBeenCalledWith(
+				'assistant-stream',
+				expect.any(Function)
+			);
 		});
 	});
 
@@ -324,6 +342,31 @@ describe('Data Listener', () => {
 			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.objectContaining({ source: 'terminal' })
+			);
+		});
+	});
+
+	describe('Assistant Stream Web Broadcast', () => {
+		it('should broadcast assistant stream events to subscribed web clients', () => {
+			setupListener();
+			const handler = eventHandlers.get('assistant-stream');
+
+			handler?.('session-1-ai-tab-1', {
+				mode: 'append',
+				text: 'hello',
+			});
+
+			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({
+					type: 'assistant_stream',
+					sessionId: 'session-1',
+					tabId: 'tab-1',
+					event: {
+						mode: 'append',
+						text: 'hello',
+					},
+				})
 			);
 		});
 	});

@@ -568,8 +568,17 @@ export class CodexAppServerBridge {
 			itemId && managedProcess.codexAppServerState
 				? managedProcess.codexAppServerState.agentMessagePhases.get(itemId)
 				: undefined;
-		if (!delta || phase !== 'commentary') return;
-		this.emitter.emit('thinking-chunk', managedProcess.sessionId, delta);
+		if (!delta) return;
+		if (phase === 'commentary') {
+			this.emitter.emit('thinking-chunk', managedProcess.sessionId, delta);
+			return;
+		}
+		if (phase === 'final_answer') {
+			this.emitter.emit('assistant-stream', managedProcess.sessionId, {
+				mode: 'append',
+				text: delta,
+			});
+		}
 	}
 
 	private handleItemCompleted(managedProcess: ManagedProcess, rawParams: unknown): void {
@@ -594,6 +603,7 @@ export class CodexAppServerBridge {
 				looksLikeBlockingChatQuestion(text);
 
 			if (shouldCorrect) {
+				this.emitter.emit('assistant-stream', managedProcess.sessionId, { mode: 'discard' });
 				state.pendingCorrectionPrompt = `${CHAT_QUESTION_CORRECTION_PROMPT}\n\nPrevious assistant response:\n\n${text}`;
 				state.suppressedFinalAnswerText = text;
 				logger.warn(
@@ -605,7 +615,11 @@ export class CodexAppServerBridge {
 					}
 				);
 			} else {
-				this.emitter.emit('data', managedProcess.sessionId, text);
+				this.emitter.emit('assistant-stream', managedProcess.sessionId, {
+					mode: 'replace',
+					text,
+				});
+				this.emitter.emit('assistant-stream', managedProcess.sessionId, { mode: 'commit' });
 			}
 		}
 		if (itemId && managedProcess.codexAppServerState) {

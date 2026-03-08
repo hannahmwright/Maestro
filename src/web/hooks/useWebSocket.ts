@@ -10,6 +10,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
+	WebAssistantStreamEvent,
 	ResponseCompletedEvent,
 	WebAttachmentSummary,
 	WebRemoteLogEntry,
@@ -141,6 +142,7 @@ export type ServerMessageType =
 	| 'new_tab_result'
 	| 'delete_session_result'
 	| 'session_log_entry'
+	| 'assistant_stream'
 	| 'response_completed'
 	| 'pong'
 	| 'subscribed'
@@ -337,6 +339,10 @@ export interface SessionLogEntryMessage extends ServerMessage, WebSessionLogEntr
 	type: 'session_log_entry';
 }
 
+export interface AssistantStreamMessage extends ServerMessage, WebAssistantStreamEvent {
+	type: 'assistant_stream';
+}
+
 export interface ResponseCompletedMessage extends ServerMessage {
 	type: 'response_completed';
 	event: ResponseCompletedEvent;
@@ -373,6 +379,7 @@ export type TypedServerMessage =
 	| NewTabResultMessage
 	| DeleteSessionResultMessage
 	| SessionLogEntryMessage
+	| AssistantStreamMessage
 	| ResponseCompletedMessage
 	| ErrorMessage
 	| ServerMessage;
@@ -430,6 +437,12 @@ export interface WebSocketEventHandlers {
 		tabId: string | null,
 		inputMode: 'ai' | 'terminal',
 		logEntry: WebRemoteLogEntry
+	) => void;
+	/** Called when provisional assistant text is streamed */
+	onAssistantStream?: (
+		sessionId: string,
+		tabId: string | null,
+		event: WebAssistantStreamEvent['event']
 	) => void;
 	/** Called when a response completed event is received */
 	onResponseCompleted?: (event: ResponseCompletedEvent) => void;
@@ -805,6 +818,16 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 							logEntryMsg.tabId,
 							logEntryMsg.inputMode,
 							logEntryMsg.logEntry
+						);
+						break;
+					}
+
+					case 'assistant_stream': {
+						const assistantStreamMsg = message as AssistantStreamMessage;
+						handlersRef.current?.onAssistantStream?.(
+							assistantStreamMsg.sessionId,
+							assistantStreamMsg.tabId,
+							assistantStreamMsg.event
 						);
 						break;
 					}

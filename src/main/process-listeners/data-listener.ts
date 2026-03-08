@@ -4,7 +4,12 @@
  */
 
 import type { ProcessManager } from '../process-manager';
+import type { AssistantStreamEvent } from '../process-manager/types';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
+import {
+	MAESTRO_DEMO_EVENT_PREFIX,
+	type DemoCaptureEvent,
+} from '../../shared/demo-artifacts';
 
 /**
  * Maximum buffer size per session (10MB).
@@ -29,10 +34,26 @@ export function setupDataListener(
 	processManager: ProcessManager,
 	deps: Pick<
 		ProcessListenerDependencies,
-		'safeSend' | 'getWebServer' | 'outputBuffer' | 'outputParser' | 'debugLog' | 'patterns'
+		| 'getProcessManager'
+		| 'safeSend'
+		| 'getWebServer'
+		| 'outputBuffer'
+		| 'outputParser'
+		| 'debugLog'
+		| 'patterns'
+		| 'getDemoArtifactService'
 	>
 ): void {
-	const { safeSend, getWebServer, outputBuffer, outputParser, debugLog, patterns } = deps;
+	const {
+		getProcessManager,
+		safeSend,
+		getWebServer,
+		outputBuffer,
+		outputParser,
+		debugLog,
+		patterns,
+		getDemoArtifactService,
+	} = deps;
 	const {
 		REGEX_MODERATOR_SESSION,
 		REGEX_AI_SUFFIX,
@@ -40,6 +61,96 @@ export function setupDataListener(
 		REGEX_BATCH_SESSION,
 		REGEX_SYNOPSIS_SESSION,
 	} = patterns;
+	const demoEventRemainders = new Map<string, string>();
+
+	const parseSessionContext = (
+		sessionId: string
+	): { baseSessionId: string; tabId: string | null; isAiOutput: boolean } => {
+		const tabIdMatch = sessionId.match(REGEX_AI_TAB_ID);
+		return {
+			baseSessionId: sessionId.replace(REGEX_AI_SUFFIX, ''),
+			tabId: tabIdMatch ? tabIdMatch[1] : null,
+			isAiOutput: sessionId.includes('-ai-'),
+		};
+	};
+
+	const maybeHandleDemoEventLine = (
+		sessionId: string,
+		line: string,
+		context: { baseSessionId: string; tabId: string | null }
+	): boolean => {
+		const trimmedLine = line.trim();
+		if (!trimmedLine.startsWith(MAESTRO_DEMO_EVENT_PREFIX)) {
+			return false;
+		}
+
+		const rawJson = trimmedLine.slice(MAESTRO_DEMO_EVENT_PREFIX.length).trim();
+		if (!rawJson) {
+			debugLog('DemoCapture', `Ignoring empty demo event payload for ${sessionId}`);
+			return true;
+		}
+
+		let event: DemoCaptureEvent;
+		try {
+			event = JSON.parse(rawJson) as DemoCaptureEvent;
+		} catch (error) {
+			debugLog('DemoCapture', `Failed to parse demo event for ${sessionId}: ${String(error)}`);
+			return true;
+		}
+
+		const managedProcess = getProcessManager()?.get(sessionId);
+
+		void getDemoArtifactService()
+			.handleCaptureEvent({
+				context: {
+					sessionId: context.baseSessionId,
+					tabId: context.tabId,
+					sshRemoteId: managedProcess?.sshRemoteId ?? null,
+					sshRemoteHost: managedProcess?.sshRemoteHost ?? null,
+				},
+				event,
+			})
+			.then((demoCard) => {
+				if (!demoCard) {
+					return;
+				}
+				safeSend('process:demo-generated', context.baseSessionId, context.tabId, demoCard);
+			})
+			.catch((error) => {
+				debugLog('DemoCapture', `Failed to handle demo event for ${sessionId}: ${String(error)}`);
+			});
+
+		return true;
+	};
+
+	const sanitizeDemoEventOutput = (
+		sessionId: string,
+		data: string,
+		context: { baseSessionId: string; tabId: string | null }
+	): string => {
+		const combined = `${demoEventRemainders.get(sessionId) || ''}${data}`;
+		const normalized = combined.replace(/\r\n/g, '\n');
+		const lines = normalized.split('\n');
+		const trailingLine = lines.pop() ?? '';
+		const sanitizedLines: string[] = [];
+
+		for (const line of lines) {
+			if (!maybeHandleDemoEventLine(sessionId, line, context)) {
+				sanitizedLines.push(line);
+			}
+		}
+
+		if (trailingLine.startsWith(MAESTRO_DEMO_EVENT_PREFIX)) {
+			demoEventRemainders.set(sessionId, trailingLine);
+		} else {
+			demoEventRemainders.delete(sessionId);
+			if (trailingLine.length > 0) {
+				sanitizedLines.push(trailingLine);
+			}
+		}
+
+		return sanitizedLines.length > 0 ? sanitizedLines.join('\n') : '';
+	};
 
 	processManager.on('data', (sessionId: string, data: string) => {
 		// Fast path: skip regex for non-group-chat sessions (performance optimization)
@@ -94,7 +205,13 @@ export function setupDataListener(
 			return; // Don't send to regular process:data handler
 		}
 
-		safeSend('process:data', sessionId, data);
+		const sessionContext = parseSessionContext(sessionId);
+		const sanitizedData = sanitizeDemoEventOutput(sessionId, data, sessionContext);
+		if (!sanitizedData) {
+			return;
+		}
+
+		safeSend('process:data', sessionId, sanitizedData);
 
 		// Broadcast to web clients - extract base session ID (remove -ai or -terminal suffix)
 		// IMPORTANT: Skip PTY terminal output (-terminal suffix) as it contains raw ANSI codes.
@@ -116,12 +233,9 @@ export function setupDataListener(
 			}
 
 			// Extract base session ID and tab ID from format: {id}-ai-{tabId}
-			const baseSessionId = sessionId.replace(REGEX_AI_SUFFIX, '');
-			const isAiOutput = sessionId.includes('-ai-');
-
-			// Extract tab ID from session ID format: {id}-ai-{tabId}
-			const tabIdMatch = sessionId.match(REGEX_AI_TAB_ID);
-			const tabId = tabIdMatch ? tabIdMatch[1] : undefined;
+			const baseSessionId = sessionContext.baseSessionId;
+			const isAiOutput = sessionContext.isAiOutput;
+			const tabId = sessionContext.tabId || undefined;
 
 			// Generate unique message ID: timestamp + random suffix for deduplication
 			const msgId = `${Date.now()}-${Math.random()
@@ -129,17 +243,46 @@ export function setupDataListener(
 				.substring(2, 2 + MSG_ID_RANDOM_LENGTH)}`;
 			debugLog(
 				'WebBroadcast',
-				`Broadcasting session_output: msgId=${msgId}, session=${baseSessionId}, tabId=${tabId || 'none'}, source=${isAiOutput ? 'ai' : 'terminal'}, dataLen=${data.length}`
+				`Broadcasting session_output: msgId=${msgId}, session=${baseSessionId}, tabId=${tabId || 'none'}, source=${isAiOutput ? 'ai' : 'terminal'}, dataLen=${sanitizedData.length}`
 			);
 			webServer.broadcastToSessionClients(baseSessionId, {
 				type: 'session_output',
 				sessionId: baseSessionId,
 				tabId,
-				data,
+				data: sanitizedData,
 				source: isAiOutput ? 'ai' : 'terminal',
 				timestamp: Date.now(),
 				msgId,
 			});
 		}
+	});
+
+	processManager.on('assistant-stream', (sessionId: string, event: AssistantStreamEvent) => {
+		const webServer = getWebServer();
+		if (!webServer) {
+			return;
+		}
+
+		if (REGEX_BATCH_SESSION.test(sessionId) || REGEX_SYNOPSIS_SESSION.test(sessionId)) {
+			debugLog('WebBroadcast', `SKIPPING assistant stream for batch/synopsis: session=${sessionId}`);
+			return;
+		}
+
+		const sessionContext = parseSessionContext(sessionId);
+		if (!sessionContext.isAiOutput || !sessionContext.tabId) {
+			debugLog(
+				'WebBroadcast',
+				`SKIPPING assistant stream without AI tab context: session=${sessionId}`
+			);
+			return;
+		}
+
+		webServer.broadcastToSessionClients(sessionContext.baseSessionId, {
+			type: 'assistant_stream',
+			sessionId: sessionContext.baseSessionId,
+			tabId: sessionContext.tabId,
+			event,
+			timestamp: Date.now(),
+		});
 	});
 }

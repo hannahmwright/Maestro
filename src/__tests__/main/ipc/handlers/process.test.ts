@@ -17,6 +17,7 @@ import {
 	registerProcessHandlers,
 	ProcessHandlerDependencies,
 } from '../../../../main/ipc/handlers/process';
+import { MAESTRO_DEMO_EVENT_PREFIX } from '../../../../shared/demo-artifacts';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -285,6 +286,7 @@ describe('process IPC handlers', () => {
 			const expectedChannels = [
 				'process:spawn',
 				'process:write',
+				'process:respond-user-input',
 				'process:interrupt',
 				'process:kill',
 				'process:resize',
@@ -397,6 +399,39 @@ describe('process IPC handlers', () => {
 			});
 
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
+		});
+
+		it('should inject demo capture environment variables for explicitly requested runs', async () => {
+			const mockAgent = {
+				id: 'codex',
+				requiresPty: false,
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 1001, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-demo',
+				toolType: 'codex',
+				cwd: '/test',
+				command: 'codex',
+				args: [],
+				demoCapture: {
+					enabled: true,
+				},
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						MAESTRO_DEMO_CAPTURE: '1',
+						MAESTRO_DEMO_EVENT_PREFIX,
+						MAESTRO_DEMO_RUN_ID: expect.any(String),
+						MAESTRO_DEMO_OUTPUT_DIR: 'output/playwright',
+					}),
+				})
+			);
 		});
 
 		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {

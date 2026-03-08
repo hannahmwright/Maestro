@@ -18,6 +18,9 @@ describe('Data Listener', () => {
 	let mockOutputParser: ProcessListenerDependencies['outputParser'];
 	let mockDebugLog: ProcessListenerDependencies['debugLog'];
 	let mockPatterns: ProcessListenerDependencies['patterns'];
+	let mockGetDemoArtifactService: ProcessListenerDependencies['getDemoArtifactService'];
+	let mockHandleCaptureEvent: ReturnType<typeof vi.fn>;
+	let mockGetProcessManager: ProcessListenerDependencies['getProcessManager'];
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
 
 	beforeEach(() => {
@@ -39,6 +42,13 @@ describe('Data Listener', () => {
 			parseParticipantSessionId: vi.fn().mockReturnValue(null),
 		};
 		mockDebugLog = vi.fn();
+		mockHandleCaptureEvent = vi.fn().mockResolvedValue(null);
+		mockGetDemoArtifactService = vi.fn().mockReturnValue({
+			handleCaptureEvent: mockHandleCaptureEvent,
+		});
+		mockGetProcessManager = vi.fn().mockReturnValue({
+			get: vi.fn().mockReturnValue(undefined),
+		});
 		mockPatterns = {
 			REGEX_MODERATOR_SESSION: /^group-chat-(.+)-moderator-/,
 			REGEX_MODERATOR_SESSION_TIMESTAMP: /^group-chat-(.+)-moderator-\d+$/,
@@ -57,10 +67,12 @@ describe('Data Listener', () => {
 
 	const setupListener = () => {
 		setupDataListener(mockProcessManager, {
+			getProcessManager: mockGetProcessManager,
 			safeSend: mockSafeSend,
 			getWebServer: mockGetWebServer,
 			outputBuffer: mockOutputBuffer,
 			outputParser: mockOutputParser,
+			getDemoArtifactService: mockGetDemoArtifactService,
 			debugLog: mockDebugLog,
 			patterns: mockPatterns,
 		});
@@ -324,6 +336,112 @@ describe('Data Listener', () => {
 			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.objectContaining({ source: 'terminal' })
+			);
+		});
+	});
+
+	describe('Demo Capture Sentinel Events', () => {
+		it('should strip demo event lines from forwarded output and emit a generated demo card', async () => {
+			mockGetProcessManager = vi.fn().mockReturnValue({
+				get: vi.fn().mockReturnValue({
+					sshRemoteId: 'remote-1',
+					sshRemoteHost: 'dev.example.com',
+				}),
+			});
+			const demoCard = {
+				demoId: 'demo-1',
+				captureRunId: 'capture-1',
+				title: 'Checkout demo',
+				summary: 'Walkthrough',
+				status: 'completed' as const,
+				createdAt: 1,
+				updatedAt: 2,
+				stepCount: 2,
+				durationMs: 3000,
+				posterArtifact: null,
+				videoArtifact: null,
+			};
+			mockHandleCaptureEvent.mockResolvedValueOnce(demoCard);
+			setupListener();
+			const handler = eventHandlers.get('data');
+
+			handler?.(
+				'session-123-ai-tab-456',
+				`before\n__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1","title":"Checkout demo"}\nafter\n`
+			);
+			await Promise.resolve();
+
+			expect(mockHandleCaptureEvent).toHaveBeenCalledWith({
+				context: {
+					sessionId: 'session-123',
+					tabId: 'tab-456',
+					sshRemoteId: 'remote-1',
+					sshRemoteHost: 'dev.example.com',
+				},
+				event: expect.objectContaining({
+					type: 'capture_completed',
+					runId: 'run-1',
+					title: 'Checkout demo',
+				}),
+			});
+			expect(mockSafeSend).toHaveBeenCalledWith('process:data', 'session-123-ai-tab-456', 'before\nafter');
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'process:demo-generated',
+				'session-123',
+				'tab-456',
+				demoCard
+			);
+			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
+				'session-123',
+				expect.objectContaining({
+					data: 'before\nafter',
+				})
+			);
+		});
+
+		it('should buffer partial demo event lines across chunks without leaking sentinel output', async () => {
+			setupListener();
+			const handler = eventHandlers.get('data');
+
+			handler?.(
+				'session-999-ai-tab-abc',
+				'visible line\n__MAESTRO_DEMO_EVENT__ {"type":"capture_started"'
+			);
+			handler?.(
+				'session-999-ai-tab-abc',
+				',"runId":"run-9","title":"Demo"}\nfinal line'
+			);
+			await Promise.resolve();
+
+			expect(mockHandleCaptureEvent).toHaveBeenCalledWith({
+				context: {
+					sessionId: 'session-999',
+					tabId: 'tab-abc',
+					sshRemoteId: null,
+					sshRemoteHost: null,
+				},
+				event: {
+					type: 'capture_started',
+					runId: 'run-9',
+					title: 'Demo',
+				},
+			});
+			expect(mockSafeSend).toHaveBeenNthCalledWith(
+				1,
+				'process:data',
+				'session-999-ai-tab-abc',
+				'visible line'
+			);
+			expect(mockSafeSend).toHaveBeenNthCalledWith(
+				2,
+				'process:data',
+				'session-999-ai-tab-abc',
+				'final line'
+			);
+			expect(mockSafeSend).not.toHaveBeenCalledWith(
+				'process:data',
+				'session-999-ai-tab-abc',
+				expect.stringContaining('__MAESTRO_DEMO_EVENT__')
 			);
 		});
 	});

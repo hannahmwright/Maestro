@@ -517,6 +517,17 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const effortMenuRef = useRef<HTMLDivElement | null>(null);
 	const modelMenuRef = useRef<HTMLDivElement | null>(null);
 	const updateSession = useSessionStore((state) => state.updateSession);
+	const demoCaptureRequested = session.inputMode === 'ai' && activeTab?.demoCaptureRequested === true;
+	const toggleDemoCapture = React.useCallback(() => {
+		if (session.inputMode !== 'ai' || !activeTab) return;
+		updateSession(session.id, {
+			aiTabs: session.aiTabs.map((tab) =>
+				tab.id === activeTab.id
+					? { ...tab, demoCaptureRequested: !tab.demoCaptureRequested }
+					: tab
+			),
+		});
+	}, [activeTab, session.aiTabs, session.id, session.inputMode, updateSession]);
 
 	const modeOptions = useMemo(
 		() => [
@@ -1412,6 +1423,31 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							</div>
 
 							<div className="flex items-center gap-2">
+								{session.inputMode === 'ai' && (
+									<button
+										type="button"
+										onClick={toggleDemoCapture}
+										className="flex items-center gap-1.5 text-[10px] transition-all hover:opacity-90"
+										style={{
+											...inlineToolbarPillBaseStyle,
+											border: `1px solid ${
+												demoCaptureRequested
+													? `${theme.colors.accent}70`
+													: `${theme.colors.border}`
+											}`,
+											backgroundColor: demoCaptureRequested
+												? `${theme.colors.accent}18`
+												: 'transparent',
+											color: demoCaptureRequested
+												? theme.colors.accent
+												: theme.colors.textDim,
+										}}
+										title="Capture a demo for the next agent run"
+									>
+										<Sparkles className="w-3.5 h-3.5" />
+										<span>Demo</span>
+									</button>
+								)}
 								{supportsModelSelection && (
 									<div className="relative" ref={modelMenuRef}>
 										<ModelSelectorButton

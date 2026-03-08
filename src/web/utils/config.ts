@@ -128,6 +128,11 @@ export function getSessionUrl(sessionId: string, tabId?: string | null): string 
 	return baseUrl;
 }
 
+export function getSessionDemoUrl(sessionId: string, demoId: string): string {
+	const config = getMaestroConfig();
+	return `${window.location.origin}${config.basePath}/session/${sessionId}/demo/${demoId}`;
+}
+
 /**
  * Get the current tab ID from URL (if specified)
  */
@@ -144,6 +149,21 @@ export function updateUrlForSessionTab(sessionId: string, tabId?: string | null)
 	// Only update if URL actually changed
 	if (window.location.href !== newUrl) {
 		window.history.replaceState({ sessionId, tabId }, '', newUrl);
+	}
+}
+
+export function getCurrentDemoId(): string | null {
+	const pathParts = window.location.pathname.split('/').filter(Boolean);
+	if (pathParts[1] === 'session' && pathParts[3] === 'demo') {
+		return pathParts[4] || null;
+	}
+	return null;
+}
+
+export function updateUrlForDemo(sessionId: string, demoId: string): void {
+	const newUrl = getSessionDemoUrl(sessionId, demoId);
+	if (window.location.href !== newUrl) {
+		window.history.pushState({ sessionId, demoId }, '', newUrl);
 	}
 }
 

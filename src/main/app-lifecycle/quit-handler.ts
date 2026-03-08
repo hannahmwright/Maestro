@@ -29,6 +29,8 @@ export interface QuitHandlerDependencies {
 	cleanupAllGroomingSessions: (pm: ProcessManager) => Promise<void>;
 	/** Function to close the stats database */
 	closeStatsDB: () => void;
+	/** Function to close the demo artifacts database */
+	closeArtifacts?: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
 }
@@ -74,6 +76,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getActiveGroomingSessionCount,
 		cleanupAllGroomingSessions,
 		closeStatsDB,
+		closeArtifacts,
 		stopCliWatcher,
 	} = deps;
 
@@ -187,6 +190,7 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		// Close stats database
 		logger.info('Closing stats database', 'Shutdown');
 		closeStatsDB();
+		closeArtifacts?.();
 
 		logger.info('Shutdown complete', 'Shutdown');
 	}

@@ -14,6 +14,8 @@
  * - GET /api/history - Get history entries
  */
 
+import { createReadStream } from 'fs';
+import fs from 'fs/promises';
 import { FastifyInstance } from 'fastify';
 import {
 	WEB_APP_API_BASE_PATH,
@@ -24,6 +26,7 @@ import {
 	type WebVoiceTranscriptionStatusResponse,
 	type WebPushSubscriptionInput,
 } from '../../../shared/remote-web';
+import type { DemoCard, DemoDetail } from '../../../shared/demo-artifacts';
 import { HistoryEntry } from '../../../shared/types';
 import { logger } from '../../utils/logger';
 import type { Theme, SessionData, SessionDetail, LiveSessionInfo, RateLimitConfig } from '../types';
@@ -50,6 +53,14 @@ export interface ApiRouteCallbacks {
 	getSessions: () => Promise<SessionData[]> | SessionData[];
 	getSessionDetail: (sessionId: string, tabId?: string) => SessionDetail | null;
 	getSessionModels: (sessionId: string, forceRefresh?: boolean) => Promise<string[]> | string[];
+	getSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]> | DemoCard[];
+	getDemoDetail: (demoId: string) => Promise<DemoDetail | null> | DemoDetail | null;
+	getArtifactContent: (
+		artifactId: string
+	) =>
+		| Promise<{ path: string; mimeType: string; filename: string } | null>
+		| { path: string; mimeType: string; filename: string }
+		| null;
 	transcribeAudio: (
 		request: WebVoiceTranscriptionRequest
 	) => Promise<WebVoiceTranscriptionResponse | null>;
@@ -212,6 +223,157 @@ export class ApiRoutes {
 					models,
 					timestamp: Date.now(),
 				};
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/sessions/:id/demos`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const { tabId } = request.query as { tabId?: string };
+
+				if (!this.callbacks.getSessionDemos) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Demo listing service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const demos = await this.callbacks.getSessionDemos(id, tabId || null);
+				return {
+					demos,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/demos/:demoId`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { demoId } = request.params as { demoId: string };
+				if (!this.callbacks.getDemoDetail) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Demo detail service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const demo = await this.callbacks.getDemoDetail(demoId);
+				if (!demo) {
+					return reply.code(404).send({
+						error: 'Not Found',
+						message: `Demo with id '${demoId}' not found`,
+						timestamp: Date.now(),
+					});
+				}
+
+				return {
+					demo,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/artifacts/:artifactId/content`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { artifactId } = request.params as { artifactId: string };
+
+				if (!this.callbacks.getArtifactContent) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Artifact content service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const artifact = await this.callbacks.getArtifactContent(artifactId);
+				if (!artifact) {
+					return reply.code(404).send({
+						error: 'Not Found',
+						message: `Artifact with id '${artifactId}' not found`,
+						timestamp: Date.now(),
+					});
+				}
+
+				let stats;
+				try {
+					stats = await fs.stat(artifact.path);
+				} catch (error) {
+					logger.warn('Artifact content file missing or unreadable', LOG_CONTEXT, {
+						artifactId,
+						path: artifact.path,
+						error: String(error),
+					});
+					return reply.code(404).send({
+						error: 'Not Found',
+						message: `Artifact content for id '${artifactId}' is unavailable`,
+						timestamp: Date.now(),
+					});
+				}
+				const rangeHeader = request.headers.range;
+
+				reply.header('Accept-Ranges', 'bytes');
+				reply.header(
+					'Content-Disposition',
+					`inline; filename="${encodeURIComponent(artifact.filename)}"`
+				);
+				reply.header('Cache-Control', 'private, no-store');
+				reply.type(artifact.mimeType);
+
+				if (rangeHeader) {
+					const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+					if (!match) {
+						return reply.code(416).send();
+					}
+
+					const start = match[1] ? Number.parseInt(match[1], 10) : 0;
+					const end = match[2] ? Number.parseInt(match[2], 10) : stats.size - 1;
+					if (
+						Number.isNaN(start) ||
+						Number.isNaN(end) ||
+						start < 0 ||
+						end < start ||
+						start >= stats.size
+					) {
+						return reply.code(416).send();
+					}
+					const chunkSize = end - start + 1;
+
+					reply.code(206);
+					reply.header('Content-Range', `bytes ${start}-${end}/${stats.size}`);
+					reply.header('Content-Length', chunkSize);
+					return reply.send(createReadStream(artifact.path, { start, end }));
+				}
+
+				reply.header('Content-Length', stats.size);
+				return reply.send(createReadStream(artifact.path));
 			}
 		);
 

@@ -256,6 +256,10 @@ export interface CommandInputBarProps {
 	onRemoveImage?: (index: number) => void;
 	/** Remove a staged text attachment by id */
 	onRemoveTextAttachment?: (attachmentId: string) => void;
+	/** Whether demo capture is enabled for the next send */
+	demoCaptureEnabled?: boolean;
+	/** Toggle next-send demo capture */
+	onToggleDemoCapture?: () => void;
 }
 
 /**
@@ -294,13 +298,24 @@ export function CommandInputBar({
 	onAddAttachments,
 	onRemoveImage,
 	onRemoveTextAttachment,
+	demoCaptureEnabled = false,
+	onToggleDemoCapture,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
-	const textareaRef = useRef<HTMLTextAreaElement | HTMLInputElement>(null);
+	const textareaRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null) as React.MutableRefObject<
+		HTMLTextAreaElement | HTMLInputElement | null
+	>;
 	const containerRef = useRef<HTMLDivElement>(null);
 	const composerSurfaceRef = useRef<HTMLFormElement>(null);
 	const modelMenuRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
+	const actionsMenuRef = useRef<HTMLDivElement>(null);
+	const setTextareaElementRef = useCallback((node: HTMLTextAreaElement | null) => {
+		textareaRef.current = node;
+	}, []);
+	const setInputElementRef = useCallback((node: HTMLInputElement | null) => {
+		textareaRef.current = node;
+	}, []);
 
 	// Mobile phone detection
 	const isMobilePhone = useIsMobilePhone();
@@ -325,6 +340,7 @@ export function CommandInputBar({
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [attachmentError, setAttachmentError] = useState<string | null>(null);
 	const [stagedPreviewIndex, setStagedPreviewIndex] = useState<number | null>(null);
+	const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
 
 	// Internal state for uncontrolled mode
 	const [internalValue, setInternalValue] = useState('');
@@ -430,6 +446,7 @@ export function CommandInputBar({
 		boxShadow: '0 -10px 28px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 	};
 	const canStageAttachments = inputMode === 'ai' && !!onAddAttachments;
+	const hasComposerActions = canStageAttachments || (inputMode === 'ai' && !!onToggleDemoCapture);
 
 	// Get placeholder text based on state
 	const getPlaceholder = () => {
@@ -770,6 +787,34 @@ export function CommandInputBar({
 		fileInputRef.current?.click();
 	}, [canStageAttachments, isDisabled]);
 
+	const handleComposerActionsToggle = useCallback(() => {
+		if (!hasComposerActions || isDisabled) {
+			return;
+		}
+		setActionsMenuOpen((prev) => !prev);
+	}, [hasComposerActions, isDisabled]);
+
+	useEffect(() => {
+		if (!actionsMenuOpen) {
+			return;
+		}
+
+		const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+			const target = event.target as Node | null;
+			if (!target || actionsMenuRef.current?.contains(target)) {
+				return;
+			}
+			setActionsMenuOpen(false);
+		};
+
+		document.addEventListener('mousedown', handlePointerDown);
+		document.addEventListener('touchstart', handlePointerDown);
+		return () => {
+			document.removeEventListener('mousedown', handlePointerDown);
+			document.removeEventListener('touchstart', handlePointerDown);
+		};
+	}, [actionsMenuOpen]);
+
 	const processAttachmentFiles = useCallback(
 		async (files: File[]) => {
 			if (!files.length || !onAddAttachments) {
@@ -1032,6 +1077,78 @@ export function CommandInputBar({
 		</div>
 	);
 
+	const actionsMenu = actionsMenuOpen && (
+		<div
+			style={{
+				position: 'absolute',
+				bottom: 'calc(100% + 10px)',
+				left: 0,
+				minWidth: '196px',
+				padding: '8px',
+				borderRadius: '20px',
+				border: `1px solid ${colors.border}`,
+				background: `linear-gradient(180deg, ${colors.bgSidebar}fb 0%, ${colors.bgMain}f6 100%)`,
+				boxShadow: '0 18px 32px rgba(15, 23, 42, 0.18)',
+				backdropFilter: 'blur(20px)',
+				WebkitBackdropFilter: 'blur(20px)',
+				zIndex: 20,
+			}}
+		>
+			{canStageAttachments && (
+				<button
+					type="button"
+					onClick={() => {
+						setActionsMenuOpen(false);
+						handleAttachmentPickerOpen();
+					}}
+					style={{
+						width: '100%',
+						display: 'flex',
+						alignItems: 'center',
+						gap: '10px',
+						padding: '11px 12px',
+						border: 'none',
+						borderRadius: '14px',
+						background: 'transparent',
+						color: colors.textMain,
+						cursor: 'pointer',
+						textAlign: 'left',
+					}}
+				>
+					<Paperclip size={15} />
+					<span style={{ fontSize: '13px', fontWeight: 600 }}>Attach photos or files</span>
+				</button>
+			)}
+			{inputMode === 'ai' && onToggleDemoCapture && (
+				<button
+					type="button"
+					onClick={() => {
+						setActionsMenuOpen(false);
+						onToggleDemoCapture();
+					}}
+					style={{
+						width: '100%',
+						display: 'flex',
+						alignItems: 'center',
+						gap: '10px',
+						padding: '11px 12px',
+						border: 'none',
+						borderRadius: '14px',
+						background: demoCaptureEnabled ? `${colors.accent}14` : 'transparent',
+						color: demoCaptureEnabled ? colors.accent : colors.textMain,
+						cursor: 'pointer',
+						textAlign: 'left',
+					}}
+				>
+					<FileText size={15} />
+					<span style={{ fontSize: '13px', fontWeight: 600 }}>
+						{demoCaptureEnabled ? 'Demo requested for next run' : 'Request demo/screenshots'}
+					</span>
+				</button>
+			)}
+		</div>
+	);
+
 	const closeStagedPreview = useCallback(() => {
 		setStagedPreviewIndex(null);
 	}, []);
@@ -1256,11 +1373,13 @@ export function CommandInputBar({
 				bottom: keyboardOffset,
 				zIndex: 100,
 				// Safe area padding for notched devices
-				paddingBottom: isKeyboardVisible ? '0' : 'max(14px, env(safe-area-inset-bottom))',
+				paddingBottom: isKeyboardVisible
+					? '0'
+					: 'max(6px, calc(env(safe-area-inset-bottom) - 10px))',
 				paddingLeft: 'env(safe-area-inset-left)',
 				paddingRight: 'env(safe-area-inset-right)',
 				paddingTop: onHistoryOpen ? '4px' : '12px', // Reduced top padding when swipe handle is shown
-				background: 'linear-gradient(180deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.08) 100%)',
+				background: 'transparent',
 				// Smooth transition when keyboard appears/disappears
 				transition: isKeyboardVisible ? 'none' : 'bottom 0.15s ease-out, height 200ms ease-out',
 				overscrollBehavior: 'none',
@@ -1508,33 +1627,40 @@ export function CommandInputBar({
 						</div>
 					)}
 
-					{canStageAttachments && (
-						<button
-							type="button"
-							onClick={handleAttachmentPickerOpen}
-							disabled={isDisabled}
-							style={{
-								alignSelf: 'flex-start',
-								display: 'inline-flex',
-								alignItems: 'center',
-								gap: '8px',
-								padding: '10px 14px',
-								borderRadius: '999px',
-								border: `1px solid ${colors.border}`,
-								background: `${colors.bgMain}d6`,
-								color: colors.textMain,
-								cursor: isDisabled ? 'default' : 'pointer',
-								opacity: isDisabled ? 0.55 : 1,
-							}}
-						>
-							<Paperclip size={14} />
-							<span style={{ fontSize: '13px', fontWeight: 600 }}>Attach</span>
-						</button>
+					{hasComposerActions && (
+						<div style={{ position: 'relative', alignSelf: 'flex-start' }} ref={actionsMenuRef}>
+							<button
+								type="button"
+								onClick={handleComposerActionsToggle}
+								disabled={isDisabled}
+								style={{
+									alignSelf: 'flex-start',
+									display: 'inline-flex',
+									alignItems: 'center',
+									gap: '8px',
+									padding: '10px 14px',
+									borderRadius: '999px',
+									border: `1px solid ${
+										demoCaptureEnabled ? `${colors.accent}66` : colors.border
+									}`,
+									background: demoCaptureEnabled
+										? `${colors.accent}14`
+										: `${colors.bgMain}d6`,
+									color: demoCaptureEnabled ? colors.accent : colors.textMain,
+									cursor: isDisabled ? 'default' : 'pointer',
+									opacity: isDisabled ? 0.55 : 1,
+								}}
+							>
+								<Plus size={14} strokeWidth={2.3} />
+								<span style={{ fontSize: '13px', fontWeight: 600 }}>Actions</span>
+							</button>
+							{actionsMenu}
+						</div>
 					)}
 
 					{/* Full-width textarea */}
 					<textarea
-						ref={textareaRef}
+						ref={setTextareaElementRef}
 						value={value}
 						onChange={handleChange}
 						onPaste={handlePaste}
@@ -1692,49 +1818,58 @@ export function CommandInputBar({
 							overflow: 'hidden',
 						}}
 					>
-						{canStageAttachments && (
-							<button
-								type="button"
-								onClick={handleAttachmentPickerOpen}
-								disabled={isDisabled}
-								aria-label="Attach image or file"
-								style={{
-									width: '34px',
-									height: '34px',
-									minWidth: '34px',
-									minHeight: '34px',
-									maxWidth: '34px',
-									maxHeight: '34px',
-									padding: 0,
-									borderRadius: '999px',
-									border: `1px solid ${
-										stagedImages.length > 0 || stagedTextAttachments.length > 0
-											? `${colors.accent}66`
-											: colors.border
-									}`,
-									background:
-										stagedImages.length > 0 || stagedTextAttachments.length > 0
-											? `${colors.accent}14`
-											: `${colors.bgMain}c8`,
-									color:
-										stagedImages.length > 0 || stagedTextAttachments.length > 0
-											? colors.accent
-											: colors.textDim,
-									display: 'inline-flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									boxSizing: 'border-box',
-									appearance: 'none',
-									WebkitAppearance: 'none',
-									cursor: isDisabled ? 'default' : 'pointer',
-									opacity: isDisabled ? 0.5 : 1,
-									boxShadow:
-										'0 6px 14px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
-									flexShrink: 0,
-								}}
-							>
-								<Plus size={17} strokeWidth={2.3} />
-							</button>
+						{hasComposerActions && (
+							<div style={{ position: 'relative', flexShrink: 0 }} ref={actionsMenuRef}>
+								<button
+									type="button"
+									onClick={handleComposerActionsToggle}
+									disabled={isDisabled}
+									aria-label="Open composer actions"
+									style={{
+										width: '34px',
+										height: '34px',
+										minWidth: '34px',
+										minHeight: '34px',
+										maxWidth: '34px',
+										maxHeight: '34px',
+										padding: 0,
+										borderRadius: '999px',
+										border: `1px solid ${
+											demoCaptureEnabled ||
+											stagedImages.length > 0 ||
+											stagedTextAttachments.length > 0
+												? `${colors.accent}66`
+												: colors.border
+										}`,
+										background:
+											demoCaptureEnabled ||
+											stagedImages.length > 0 ||
+											stagedTextAttachments.length > 0
+												? `${colors.accent}14`
+												: `${colors.bgMain}c8`,
+										color:
+											demoCaptureEnabled ||
+											stagedImages.length > 0 ||
+											stagedTextAttachments.length > 0
+												? colors.accent
+												: colors.textDim,
+										display: 'inline-flex',
+										alignItems: 'center',
+										justifyContent: 'center',
+										boxSizing: 'border-box',
+										appearance: 'none',
+										WebkitAppearance: 'none',
+										cursor: isDisabled ? 'default' : 'pointer',
+										opacity: isDisabled ? 0.5 : 1,
+										boxShadow:
+											'0 6px 14px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+										flexShrink: 0,
+									}}
+								>
+									<Plus size={17} strokeWidth={2.3} />
+								</button>
+								{actionsMenu}
+							</div>
 						)}
 						<div
 							style={{
@@ -1742,7 +1877,7 @@ export function CommandInputBar({
 								minWidth: 0,
 								position: 'relative',
 								overflow: 'visible',
-								['--maestro-placeholder-color' as const]: isInputFocused
+								'--maestro-placeholder-color': isInputFocused
 									? `${colors.textDim}d9`
 									: `${colors.textDim}b8`,
 								transition:
@@ -1756,12 +1891,12 @@ export function CommandInputBar({
 								boxShadow: isInputFocused
 									? `0 0 0 3px ${colors.accent}1f, 0 14px 28px rgba(15, 23, 42, 0.14)`
 									: '0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.6)',
-							}}
+							} as React.CSSProperties & Record<'--maestro-placeholder-color', string>}
 						>
 							{isIdleCompactAiComposer ? (
 								<input
 									className="maestro-mobile-message-input"
-									ref={textareaRef}
+									ref={setInputElementRef}
 									type="text"
 									value={value}
 									onChange={handleChange}
@@ -1812,7 +1947,7 @@ export function CommandInputBar({
 							) : (
 								<textarea
 									className="maestro-mobile-message-input"
-									ref={textareaRef}
+									ref={setTextareaElementRef}
 									value={value}
 									onChange={handleChange}
 									onPaste={handlePaste}
@@ -1954,7 +2089,7 @@ export function CommandInputBar({
 
 						{inputMode !== 'ai' && (
 							<SendInterruptButton
-								isInterruptMode={inputMode === 'ai' && isSessionBusy}
+								isInterruptMode={false}
 								isSendDisabled={isDisabled || isTranscribing || !hasDraft}
 								onInterrupt={handleInterrupt}
 							/>

@@ -5,12 +5,16 @@ import {
 	statRemote,
 	directorySizeRemote,
 	writeFileRemote,
+	downloadFileRemote,
 	existsRemote,
 	mkdirRemote,
 	type RemoteFsDeps,
 } from '../../../main/utils/remote-fs';
 import type { SshRemoteConfig } from '../../../shared/types';
 import type { ExecResult } from '../../../main/utils/execFile';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 
 describe('remote-fs', () => {
 	// Base SSH config for testing
@@ -39,6 +43,7 @@ describe('remote-fs', () => {
 					'22',
 					'testuser@dev.example.com',
 				]),
+			resolveSshPath: vi.fn().mockResolvedValue('/usr/bin/ssh'),
 		};
 	}
 
@@ -521,6 +526,72 @@ describe('remote-fs', () => {
 			const expectedBase64 = Buffer.from('Hello', 'utf-8').toString('base64');
 			expect(stringCommand).toContain(expectedBase64);
 			expect(bufferCommand).toContain(expectedBase64);
+		});
+	});
+
+	describe('downloadFileRemote', () => {
+		it('streams a remote file into a local path', async () => {
+			const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-remote-download-'));
+			const localPath = path.join(tempDir, 'artifact.webm');
+			const deps: RemoteFsDeps = {
+				execSsh: vi.fn().mockResolvedValue({
+					stdout: '4\nregular file\n1703836800\n',
+					stderr: '',
+					exitCode: 0,
+				}),
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+				resolveSshPath: vi.fn().mockResolvedValue('/usr/bin/ssh'),
+				streamSshToFile: vi.fn().mockImplementation(async (_command, _args, outputPath) => {
+					await fs.mkdir(path.dirname(outputPath), { recursive: true });
+					await fs.writeFile(outputPath, Buffer.from('webm'));
+					return {
+						stdout: '',
+						stderr: '',
+						exitCode: 0,
+						bytesWritten: 4,
+					};
+				}),
+			};
+
+			const result = await downloadFileRemote('/remote/demo.webm', localPath, baseConfig, deps);
+
+			expect(result.success).toBe(true);
+			expect(result.data).toEqual({
+				byteSize: 4,
+				mtime: 1703836800000,
+			});
+			expect(await fs.readFile(localPath, 'utf8')).toBe('webm');
+			await fs.rm(tempDir, { recursive: true, force: true });
+		});
+
+		it('rejects transfers when the streamed size does not match remote stat', async () => {
+			const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-remote-download-'));
+			const localPath = path.join(tempDir, 'artifact.webm');
+			const deps: RemoteFsDeps = {
+				execSsh: vi.fn().mockResolvedValue({
+					stdout: '10\nregular file\n1703836800\n',
+					stderr: '',
+					exitCode: 0,
+				}),
+				buildSshArgs: vi.fn().mockReturnValue(['testuser@dev.example.com']),
+				resolveSshPath: vi.fn().mockResolvedValue('/usr/bin/ssh'),
+				streamSshToFile: vi.fn().mockImplementation(async (_command, _args, outputPath) => {
+					await fs.mkdir(path.dirname(outputPath), { recursive: true });
+					await fs.writeFile(outputPath, Buffer.from('short'));
+					return {
+						stdout: '',
+						stderr: '',
+						exitCode: 0,
+						bytesWritten: 5,
+					};
+				}),
+			};
+
+			const result = await downloadFileRemote('/remote/demo.webm', localPath, baseConfig, deps);
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Remote file size changed during transfer');
+			await fs.rm(tempDir, { recursive: true, force: true });
 		});
 	});
 

@@ -385,7 +385,7 @@ describe('StdoutHandler', () => {
 	});
 
 	describe('codex multi-message turn handling', () => {
-		it('should emit only the final Codex result at turn completion', () => {
+		it('should replace the provisional Codex result and commit it at turn completion', () => {
 			const parser = {
 				agentId: 'codex',
 				parseJsonLine: vi.fn((line: string) => {
@@ -419,6 +419,9 @@ describe('StdoutHandler', () => {
 				toolType: 'codex',
 				outputParser: parser as any,
 			});
+			const emitter = (handler as any).emitter as EventEmitter;
+			const assistantStreamSpy = vi.fn();
+			emitter.on('assistant-stream', assistantStreamSpy);
 
 			sendJsonLine(handler, sessionId, {
 				type: 'agent',
@@ -426,6 +429,10 @@ describe('StdoutHandler', () => {
 			});
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.resultEmitted).toBe(false);
+			expect(assistantStreamSpy).toHaveBeenCalledWith(sessionId, {
+				mode: 'replace',
+				text: "I'm checking the project directory now.",
+			});
 
 			sendJsonLine(handler, sessionId, {
 				type: 'agent',
@@ -433,15 +440,18 @@ describe('StdoutHandler', () => {
 			});
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.resultEmitted).toBe(false);
+			expect(assistantStreamSpy).toHaveBeenCalledWith(sessionId, {
+				mode: 'replace',
+				text: '{"confidence":55,"ready":false,"message":"README.md"}',
+			});
 
 			sendJsonLine(handler, sessionId, { type: 'done' });
 
 			expect(proc.resultEmitted).toBe(true);
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(1);
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
-				sessionId,
-				'{"confidence":55,"ready":false,"message":"README.md"}'
-			);
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			expect(assistantStreamSpy).toHaveBeenLastCalledWith(sessionId, {
+				mode: 'commit',
+			});
 		});
 	});
 

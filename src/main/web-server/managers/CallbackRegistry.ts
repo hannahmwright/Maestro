@@ -10,6 +10,9 @@ import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
 	GetSessionModelsCallback,
+	GetSessionDemosCallback,
+	GetDemoDetailCallback,
+	GetArtifactContentCallback,
 	GetVoiceTranscriptionStatusCallback,
 	PrewarmVoiceTranscriptionCallback,
 	TranscribeAudioCallback,
@@ -41,6 +44,9 @@ export interface WebServerCallbacks {
 	getSessions: GetSessionsCallback | null;
 	getSessionDetail: GetSessionDetailCallback | null;
 	getSessionModels: GetSessionModelsCallback | null;
+	getSessionDemos: GetSessionDemosCallback | null;
+	getDemoDetail: GetDemoDetailCallback | null;
+	getArtifactContent: GetArtifactContentCallback | null;
 	getTheme: GetThemeCallback | null;
 	getCustomCommands: GetCustomCommandsCallback | null;
 	transcribeAudio: TranscribeAudioCallback | null;
@@ -68,6 +74,9 @@ export class CallbackRegistry {
 		getSessions: null,
 		getSessionDetail: null,
 		getSessionModels: null,
+		getSessionDemos: null,
+		getDemoDetail: null,
+		getArtifactContent: null,
 		getTheme: null,
 		getCustomCommands: null,
 		transcribeAudio: null,
@@ -105,6 +114,18 @@ export class CallbackRegistry {
 		forceRefresh?: boolean
 	): Promise<Awaited<ReturnType<GetSessionModelsCallback>> | []> {
 		return (await this.callbacks.getSessionModels?.(sessionId, forceRefresh)) ?? [];
+	}
+
+	async getSessionDemos(sessionId: string, tabId?: string | null) {
+		return (await this.callbacks.getSessionDemos?.(sessionId, tabId)) ?? [];
+	}
+
+	async getDemoDetail(demoId: string) {
+		return (await this.callbacks.getDemoDetail?.(demoId)) ?? null;
+	}
+
+	async getArtifactContent(artifactId: string) {
+		return (await this.callbacks.getArtifactContent?.(artifactId)) ?? null;
 	}
 
 	getTheme(): ReturnType<GetThemeCallback> | null {
@@ -158,7 +179,8 @@ export class CallbackRegistry {
 			name: string;
 			mimeType?: string;
 			size?: number;
-		}>
+		}>,
+		demoCapture?: import('../../../shared/demo-artifacts').DemoCaptureRequest
 	): Promise<boolean> {
 		if (!this.callbacks.executeCommand) return false;
 		return this.callbacks.executeCommand(
@@ -167,7 +189,8 @@ export class CallbackRegistry {
 			inputMode,
 			images,
 			textAttachments,
-			attachments
+			attachments,
+			demoCapture
 		);
 	}
 
@@ -246,6 +269,18 @@ export class CallbackRegistry {
 
 	setGetSessionModelsCallback(callback: GetSessionModelsCallback): void {
 		this.callbacks.getSessionModels = callback;
+	}
+
+	setGetSessionDemosCallback(callback: GetSessionDemosCallback): void {
+		this.callbacks.getSessionDemos = callback;
+	}
+
+	setGetDemoDetailCallback(callback: GetDemoDetailCallback): void {
+		this.callbacks.getDemoDetail = callback;
+	}
+
+	setGetArtifactContentCallback(callback: GetArtifactContentCallback): void {
+		this.callbacks.getArtifactContent = callback;
 	}
 
 	setGetThemeCallback(callback: GetThemeCallback): void {

@@ -59,6 +59,9 @@ import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
 	GetSessionModelsCallback,
+	GetSessionDemosCallback,
+	GetDemoDetailCallback,
+	GetArtifactContentCallback,
 	GetVoiceTranscriptionStatusCallback,
 	TranscribeAudioCallback,
 	PrewarmVoiceTranscriptionCallback,
@@ -268,6 +271,18 @@ export class WebServer {
 		this.callbackRegistry.setGetSessionModelsCallback(callback);
 	}
 
+	setGetSessionDemosCallback(callback: GetSessionDemosCallback): void {
+		this.callbackRegistry.setGetSessionDemosCallback(callback);
+	}
+
+	setGetDemoDetailCallback(callback: GetDemoDetailCallback): void {
+		this.callbackRegistry.setGetDemoDetailCallback(callback);
+	}
+
+	setGetArtifactContentCallback(callback: GetArtifactContentCallback): void {
+		this.callbackRegistry.setGetArtifactContentCallback(callback);
+	}
+
 	setTranscribeAudioCallback(callback: TranscribeAudioCallback): void {
 		this.callbackRegistry.setTranscribeAudioCallback(callback);
 	}
@@ -432,6 +447,9 @@ export class WebServer {
 				this.callbackRegistry.getSessionDetail(sessionId, tabId),
 			getSessionModels: (sessionId, forceRefresh) =>
 				this.callbackRegistry.getSessionModels(sessionId, forceRefresh),
+			getSessionDemos: (sessionId, tabId) => this.callbackRegistry.getSessionDemos(sessionId, tabId),
+			getDemoDetail: (demoId) => this.callbackRegistry.getDemoDetail(demoId),
+			getArtifactContent: (artifactId) => this.callbackRegistry.getArtifactContent(artifactId),
 			transcribeAudio: async (request) => this.callbackRegistry.transcribeAudio(request),
 			getVoiceTranscriptionStatus: async () => this.callbackRegistry.getVoiceTranscriptionStatus(),
 			prewarmVoiceTranscription: async () => this.callbackRegistry.prewarmVoiceTranscription(),

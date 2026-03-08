@@ -285,4 +285,140 @@ describe('useMobileSessionManagement', () => {
 		expect(result.current.activeSessionId).toBe('session-2');
 		expect(result.current.sessionLogs.aiLogs[0].text).toBe('session two');
 	});
+
+	it('does not fetch logs for optimistic pending tabs', async () => {
+		const fetchMock = vi.mocked(fetch);
+		fetchMock.mockResolvedValue(createFetchResponse() as any);
+
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				isOffline: false,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([createSession()]);
+			result.current.handleSelectSession('session-1');
+		});
+
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		fetchMock.mockClear();
+
+		act(() => {
+			result.current.handleNewTab();
+		});
+
+		await act(async () => {
+			await Promise.resolve();
+			await Promise.resolve();
+		});
+
+		expect(result.current.activeTabId).toMatch(/^pending-tab-/);
+		expect(result.current.sessionLogs.aiLogs).toEqual([]);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('streams assistant output without disturbing tool logs', () => {
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([createSession()]);
+			result.current.handleSelectSession('session-1');
+		});
+
+		act(() => {
+			result.current.sessionsHandlers.onSessionLogEntry('session-1', 'tab-1', 'ai', {
+				id: 'tool-1',
+				timestamp: Date.now(),
+				source: 'tool',
+				text: 'Running tool',
+			});
+		});
+
+		act(() => {
+			result.current.sessionsHandlers.onAssistantStream('session-1', 'tab-1', {
+				mode: 'append',
+				text: 'Hello',
+			});
+			result.current.sessionsHandlers.onAssistantStream('session-1', 'tab-1', {
+				mode: 'append',
+				text: ' world',
+			});
+			result.current.sessionsHandlers.onAssistantStream('session-1', 'tab-1', {
+				mode: 'commit',
+			});
+		});
+
+		expect(result.current.sessionLogs.aiLogs).toHaveLength(2);
+		expect(result.current.sessionLogs.aiLogs[0]).toMatchObject({
+			id: 'tool-1',
+			source: 'tool',
+			text: 'Running tool',
+		});
+		expect(result.current.sessionLogs.aiLogs[1]).toMatchObject({
+			source: 'ai',
+			text: 'Hello world',
+		});
+
+		act(() => {
+			result.current.sessionsHandlers.onAssistantStream('session-1', 'tab-1', {
+				mode: 'append',
+				text: 'Second reply',
+			});
+		});
+
+		expect(result.current.sessionLogs.aiLogs).toHaveLength(3);
+		expect(result.current.sessionLogs.aiLogs[2]).toMatchObject({
+			source: 'ai',
+			text: 'Second reply',
+		});
+	});
+
+	it('discards provisional assistant output cleanly', () => {
+		const { result } = renderHook(() =>
+			useMobileSessionManagement({
+				...baseDeps,
+				savedActiveSessionId: 'session-1',
+				savedActiveTabId: 'tab-1',
+			})
+		);
+
+		act(() => {
+			result.current.setSessions([createSession()]);
+		});
+
+		act(() => {
+			result.current.sessionsHandlers.onAssistantStream('session-1', 'tab-1', {
+				mode: 'append',
+				text: 'Temporary reply',
+			});
+		});
+
+		expect(result.current.sessionLogs.aiLogs).toHaveLength(1);
+		expect(result.current.sessionLogs.aiLogs[0]).toMatchObject({
+			source: 'ai',
+			text: 'Temporary reply',
+		});
+
+		act(() => {
+			result.current.sessionsHandlers.onAssistantStream('session-1', 'tab-1', {
+				mode: 'discard',
+			});
+		});
+
+		expect(result.current.sessionLogs.aiLogs).toEqual([]);
+	});
 });

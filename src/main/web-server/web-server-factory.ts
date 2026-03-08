@@ -28,6 +28,7 @@ import type { Group } from '../../shared/types';
 import type { SshRemoteConfig } from '../../shared/types';
 import { countUncommittedChanges } from '../../shared/gitUtils';
 import { VoiceTranscriptionManager } from '../voice-transcription-manager';
+import { getDemoArtifactService } from '../artifacts';
 
 /** Store interface for settings */
 interface SettingsStore {
@@ -317,7 +318,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						// Note: 'thinking' logs are already excluded since they have a distinct source type
 						const lastAiLog = [...tabLogs]
 							.reverse()
-							.find((log: any) => log.source === 'stdout' || log.source === 'stderr');
+							.find(
+								(log: any) =>
+									log.source === 'stdout' || log.source === 'stderr' || log.source === 'ai'
+							);
 						if (lastAiLog && lastAiLog.text) {
 							const fullText = lastAiLog.text;
 							// Get first 3 lines or 500 chars, whichever is shorter
@@ -407,11 +411,19 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			// Get the requested tab's logs (or active tab if no tabId provided)
 			// Tabs are the source of truth for AI conversation history
 			let aiLogs: any[] = [];
-			const targetTabId = tabId || session.activeTabId;
+			let resolvedTabId = tabId || session.activeTabId;
 			if (session.aiTabs && session.aiTabs.length > 0) {
+				const requestedTab = tabId ? session.aiTabs.find((t: any) => t.id === tabId) : null;
 				const targetTab =
-					session.aiTabs.find((t: any) => t.id === targetTabId) || session.aiTabs[0];
-				aiLogs = targetTab?.logs || [];
+					requestedTab ||
+					session.aiTabs.find((t: any) => t.id === session.activeTabId) ||
+					session.aiTabs[0];
+
+				// If the caller asked for a specific tab that does not exist yet
+				// (for example, an optimistic pending tab on mobile), don't leak a
+				// different tab's history into the response.
+				aiLogs = tabId && !requestedTab ? [] : targetTab?.logs || [];
+				resolvedTabId = targetTab?.id || resolvedTabId;
 			}
 
 			return {
@@ -426,7 +438,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				usageStats: session.usageStats,
 				agentSessionId: session.agentSessionId,
 				isGitRepo: session.isGitRepo,
-				activeTabId: targetTabId,
+				activeTabId: resolvedTabId,
 				customModel: session.customModel || null,
 				supportsModelSelection: getAgentCapabilities(session.toolType).supportsModelSelection,
 			};
@@ -569,7 +581,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					name: string;
 					mimeType?: string;
 					size?: number;
-				}>
+				}>,
+				demoCapture?: import('../../shared/demo-artifacts').DemoCaptureRequest
 			) => {
 				const mainWindow = getMainWindow();
 				if (!mainWindow) {
@@ -600,11 +613,27 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					inputMode,
 					images,
 					textAttachments,
-					attachments
+					attachments,
+					demoCapture
 				);
 				return true;
 			}
 		);
+		server.setGetSessionDemosCallback((sessionId: string, tabId?: string | null) =>
+			getDemoArtifactService().listSessionDemos(sessionId, tabId)
+		);
+		server.setGetDemoDetailCallback((demoId: string) => getDemoArtifactService().getDemo(demoId));
+		server.setGetArtifactContentCallback((artifactId: string) => {
+			const artifact = getDemoArtifactService().getArtifactRecord(artifactId);
+			if (!artifact) {
+				return null;
+			}
+			return {
+				path: artifact.storedPath,
+				mimeType: artifact.mimeType,
+				filename: artifact.filename,
+			};
+		});
 
 		// Set up callback for web server to interrupt sessions through the desktop
 		// This forwards to the renderer which handles state updates and broadcasts

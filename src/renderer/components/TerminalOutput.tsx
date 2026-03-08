@@ -30,6 +30,8 @@ import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
+import { DemoCardPanel } from './DemoCardPanel';
+import { DemoViewerModal } from './DemoViewerModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { parseMultipleChoiceQuestions } from '../utils/multipleChoiceQuestions';
@@ -891,6 +893,7 @@ const LogItemComponent = memo(
 		const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
 		const [manualAnswer, setManualAnswer] = useState('');
 		const [isSubmittingQuestionnaire, setIsSubmittingQuestionnaire] = useState(false);
+		const [openDemoId, setOpenDemoId] = useState<string | null>(null);
 
 		// Handle expand toggle with scroll adjustment
 		const handleExpandToggle = useCallback(() => {
@@ -1806,6 +1809,12 @@ const LogItemComponent = memo(
 													className="overflow-x-auto scrollbar-thin"
 													dangerouslySetInnerHTML={{ __html: displayHtmlContent }}
 												/>
+											) : log.metadata?.demoCard ? (
+												<DemoCardPanel
+													theme={theme}
+													demoCard={log.metadata.demoCard}
+													onOpen={() => setOpenDemoId(log.metadata?.demoCard?.demoId || null)}
+												/>
 											) : isAIMode && !markdownEditMode ? (
 												// Collapsed markdown preview with rendered markdown
 												<MarkdownRenderer
@@ -1890,6 +1899,17 @@ const LogItemComponent = memo(
 													</div>
 													<div>{highlightMatches(filteredText, outputSearchQuery)}</div>
 												</div>
+											) : log.metadata?.demoCard ? (
+												<div className="space-y-3">
+													<DemoCardPanel
+														theme={theme}
+														demoCard={log.metadata.demoCard}
+														onOpen={() => setOpenDemoId(log.metadata?.demoCard?.demoId || null)}
+													/>
+													{effectiveFilteredText.trim().length > 0 ? (
+														<div>{highlightMatches(filteredText, outputSearchQuery)}</div>
+													) : null}
+												</div>
 											) : isAIMode && !markdownEditMode ? (
 												// Expanded markdown rendering
 												<MarkdownRenderer
@@ -1964,6 +1984,22 @@ const LogItemComponent = memo(
 												>
 													{highlightMatches(filteredText, outputSearchQuery)}
 												</div>
+											</div>
+										) : log.metadata?.demoCard ? (
+											<div className="space-y-3">
+												<DemoCardPanel
+													theme={theme}
+													demoCard={log.metadata.demoCard}
+													onOpen={() => setOpenDemoId(log.metadata?.demoCard?.demoId || null)}
+												/>
+												{effectiveFilteredText.trim().length > 0 ? (
+													<div
+														className="whitespace-pre-wrap text-sm break-words"
+														style={{ color: theme.colors.textMain }}
+													>
+														{highlightMatches(filteredText, outputSearchQuery)}
+													</div>
+												) : null}
 											</div>
 										) : isAIMode && !markdownEditMode ? (
 											// Rendered markdown for AI responses
@@ -2284,6 +2320,7 @@ const LogItemComponent = memo(
 						)}
 					</div>
 				</div>
+				{openDemoId && <DemoViewerModal theme={theme} demoId={openDemoId} onClose={() => setOpenDemoId(null)} />}
 			</>
 		);
 	},

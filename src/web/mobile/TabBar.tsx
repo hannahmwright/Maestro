@@ -7,6 +7,7 @@
  */
 
 import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useLongPress } from '../hooks/useLongPress';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
@@ -293,6 +294,10 @@ function TabActionsPopover({
 		onClose();
 	};
 
+	if (typeof document === 'undefined') {
+		return null;
+	}
+
 	const actionButtonStyle = (disabled?: boolean): React.CSSProperties => ({
 		display: 'flex',
 		alignItems: 'center',
@@ -309,7 +314,7 @@ function TabActionsPopover({
 		transition: 'background-color 0.1s ease',
 	});
 
-	return (
+	return createPortal(
 		<>
 			{/* Backdrop */}
 			<div
@@ -526,7 +531,8 @@ function TabActionsPopover({
 					to { opacity: 1; transform: translateY(0); }
 				}
 			`}</style>
-		</>
+		</>,
+		document.body
 	);
 }
 

@@ -12,6 +12,7 @@ import type {
 	WebAttachmentSummary,
 	WebTextAttachmentInput,
 } from '../../shared/remote-web';
+import type { DemoCaptureRequest } from '../../shared/demo-artifacts';
 import {
 	useWebSocket,
 	type CustomCommand,
@@ -27,7 +28,12 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { usePushSubscription } from '../hooks/usePushSubscription';
 import { useOfflineStatus, useDesktopTheme } from '../main';
 import { showLocalServiceWorkerNotification } from '../utils/serviceWorker';
-import { buildApiUrl } from '../utils/config';
+import {
+	buildApiUrl,
+	getCurrentDemoId,
+	updateUrlForDemo,
+	updateUrlForSessionTab,
+} from '../utils/config';
 import {
 	loadRecentSessionTargets,
 	recordRecentSessionTarget,
@@ -67,6 +73,12 @@ const TabSearchModal = lazy(() =>
 const ResponseViewer = lazy(() =>
 	import('./ResponseViewer').then((module) => ({
 		default: module.ResponseViewer ?? module.default,
+	}))
+);
+
+const MobileDemoViewer = lazy(() =>
+	import('./MobileDemoViewer').then((module) => ({
+		default: module.MobileDemoViewer ?? module.default,
 	}))
 );
 
@@ -845,11 +857,13 @@ export default function MobileApp() {
 	const [commandInput, setCommandInput] = useState('');
 	const [stagedImages, setStagedImages] = useState<string[]>([]);
 	const [stagedTextAttachments, setStagedTextAttachments] = useState<WebTextAttachmentInput[]>([]);
+	const [demoCaptureRequested, setDemoCaptureRequested] = useState(false);
 	const [composerHeight, setComposerHeight] = useState(0);
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
 	const [responseIndex, setResponseIndex] = useState(0);
 	const [recentTargets, setRecentTargets] = useState(() => loadRecentSessionTargets());
+	const [activeDemoId, setActiveDemoId] = useState<string | null>(() => getCurrentDemoId());
 
 	// Custom slash commands from desktop
 	const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
@@ -913,7 +927,8 @@ export default function MobileApp() {
 				inputMode: InputMode,
 				images?: string[],
 				textAttachments?: WebTextAttachmentInput[],
-				attachments?: WebAttachmentSummary[]
+				attachments?: WebAttachmentSummary[],
+				demoCapture?: DemoCaptureRequest
 		  ) => boolean)
 		| null
 	>(null);
@@ -1122,7 +1137,8 @@ export default function MobileApp() {
 			inputMode: InputMode,
 			images?: string[],
 			textAttachments?: WebTextAttachmentInput[],
-			attachments?: WebAttachmentSummary[]
+			attachments?: WebAttachmentSummary[],
+			demoCapture?: DemoCaptureRequest
 		) => {
 			return send({
 				type: 'send_command',
@@ -1132,6 +1148,7 @@ export default function MobileApp() {
 				images,
 				textAttachments,
 				attachments,
+				demoCapture,
 			});
 		};
 	}, [send]);
@@ -1144,8 +1161,18 @@ export default function MobileApp() {
 		if (activeSession?.inputMode !== 'ai') {
 			setStagedImages([]);
 			setStagedTextAttachments([]);
+			setDemoCaptureRequested(false);
 		}
 	}, [activeSession?.id, activeSession?.inputMode]);
+
+	useEffect(() => {
+		const handlePopState = () => {
+			setActiveDemoId(getCurrentDemoId());
+		};
+
+		window.addEventListener('popstate', handlePopState);
+		return () => window.removeEventListener('popstate', handlePopState);
+	}, []);
 
 	// Offline queue hook - stores commands typed while offline and sends when reconnected
 	const {
@@ -1159,9 +1186,17 @@ export default function MobileApp() {
 	} = useOfflineQueue({
 		isOnline: !isOffline,
 		isConnected: isActuallyConnected,
-		sendCommand: (sessionId, command, inputMode, images, textAttachments, attachments) => {
+		sendCommand: (sessionId, command, inputMode, images, textAttachments, attachments, demoCapture) => {
 			if (sendRef.current) {
-				return sendRef.current(sessionId, command, inputMode, images, textAttachments, attachments);
+				return sendRef.current(
+					sessionId,
+					command,
+					inputMode,
+					images,
+					textAttachments,
+					attachments,
+					demoCapture
+				);
 			}
 			return false;
 		},
@@ -1408,6 +1443,7 @@ export default function MobileApp() {
 			const currentMode = (activeSession?.inputMode as InputMode) || 'ai';
 			const hasAttachments = stagedImages.length > 0 || stagedTextAttachments.length > 0;
 			const commandText = command.trim();
+			const demoCapture = currentMode === 'ai' && demoCaptureRequested ? { enabled: true } : undefined;
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
@@ -1428,7 +1464,8 @@ export default function MobileApp() {
 					currentMode,
 					stagedImages.length > 0 ? stagedImages : undefined,
 					stagedTextAttachments.length > 0 ? stagedTextAttachments : undefined,
-					attachmentSummaries.length > 0 ? attachmentSummaries : undefined
+					attachmentSummaries.length > 0 ? attachmentSummaries : undefined,
+					demoCapture
 				);
 				if (queued) {
 					webLogger.debug(`Command queued for later: ${commandText.substring(0, 50)}`, 'Mobile');
@@ -1454,6 +1491,7 @@ export default function MobileApp() {
 						currentMode === 'ai' && attachmentSummaries.length > 0
 							? attachmentSummaries
 							: undefined,
+					demoCapture,
 				});
 				webLogger.info(
 					`[Web->Server] Command send result: ${sendResult}, command="${commandText.substring(0, 50)}" mode=${currentMode} session=${activeSessionId} attachments=${hasAttachments}`,
@@ -1465,6 +1503,7 @@ export default function MobileApp() {
 			setCommandInput('');
 			setStagedImages([]);
 			setStagedTextAttachments([]);
+			setDemoCaptureRequested(false);
 		},
 		[
 			activeSessionId,
@@ -1477,6 +1516,7 @@ export default function MobileApp() {
 			attachmentSummaries,
 			stagedImages,
 			stagedTextAttachments,
+			demoCaptureRequested,
 		]
 	);
 
@@ -1484,6 +1524,34 @@ export default function MobileApp() {
 	const handleCommandChange = useCallback((value: string) => {
 		setCommandInput(value);
 	}, []);
+
+	const handleOpenDemo = useCallback(
+		(demoId: string) => {
+			if (!activeSessionId) {
+				return;
+			}
+			setActiveDemoId(demoId);
+			updateUrlForDemo(activeSessionId, demoId);
+		},
+		[activeSessionId]
+	);
+
+	const handleCloseDemo = useCallback(() => {
+		setActiveDemoId(null);
+		if (activeSessionId) {
+			updateUrlForSessionTab(activeSessionId, activeTabId);
+		}
+	}, [activeSessionId, activeTabId]);
+
+	const handleMessageTap = useCallback(
+		(entry: { metadata?: { demoCard?: { demoId: string } } }) => {
+			const demoId = entry.metadata?.demoCard?.demoId;
+			if (demoId) {
+				handleOpenDemo(demoId);
+			}
+		},
+		[handleOpenDemo]
+	);
 
 	// Handle interrupt request
 	const handleInterrupt = useCallback(async () => {
@@ -1932,6 +2000,7 @@ export default function MobileApp() {
 						isSessionBusy={activeSession.state === 'busy'}
 						autoScroll={true}
 						maxHeight="none"
+						onMessageTap={handleMessageTap}
 					/>
 				)}
 			</div>
@@ -2142,6 +2211,7 @@ export default function MobileApp() {
 					flex: 1,
 					display: 'flex',
 					flexDirection: 'column',
+					backgroundColor: colors.bgMain,
 					paddingBottom:
 						composerReserveHeight !== null
 							? `${composerReserveHeight}px`
@@ -2181,6 +2251,8 @@ export default function MobileApp() {
 				onAddAttachments={handleAddAttachments}
 				onRemoveImage={handleRemoveStagedImage}
 				onRemoveTextAttachment={handleRemoveStagedTextAttachment}
+				demoCaptureEnabled={demoCaptureRequested}
+				onToggleDemoCapture={() => setDemoCaptureRequested((prev) => !prev)}
 				placeholder={
 					!activeSessionId ? 'Select a session first...' : isSmallScreen ? 'Message' : 'Message'
 				}
@@ -2211,6 +2283,12 @@ export default function MobileApp() {
 						onClose={handleCloseResponseViewer}
 						sessionName={activeSession?.name}
 					/>
+				</Suspense>
+			)}
+
+			{activeDemoId && (
+				<Suspense fallback={null}>
+					<MobileDemoViewer demoId={activeDemoId} onClose={handleCloseDemo} />
 				</Suspense>
 			)}
 

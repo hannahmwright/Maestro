@@ -44,6 +44,7 @@ import { createStatsApi } from './stats';
 import { createNotificationApi } from './notifications';
 import { createLeaderboardApi } from './leaderboard';
 import { createAttachmentsApi } from './attachments';
+import { createArtifactsApi } from './artifacts';
 import { createProcessApi } from './process';
 import { createGitApi } from './git';
 import { createFsApi } from './fs';
@@ -159,6 +160,9 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Attachments API
 	attachments: createAttachmentsApi(),
 
+	// Demo artifacts API
+	artifacts: createArtifactsApi(),
+
 	// Auto Run API
 	autorun: createAutorunApi(),
 
@@ -261,6 +265,7 @@ export {
 	createLeaderboardApi,
 	// Attachments
 	createAttachmentsApi,
+	createArtifactsApi,
 	// Process
 	createProcessApi,
 	// Git
@@ -410,6 +415,10 @@ export type {
 	AttachmentListResponse,
 	AttachmentPathResponse,
 } from './attachments';
+export type {
+	// From artifacts
+	ArtifactsApi,
+} from './artifacts';
 export type {
 	// From process
 	ProcessApi,

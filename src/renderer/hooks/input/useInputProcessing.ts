@@ -12,9 +12,11 @@ import { maybeStartAutomaticTabNaming } from '../../utils/autoTabNaming';
 import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
+import { appendDemoCaptureInstructions } from '../../utils/demoCapturePrompt';
 import { useSessionStore } from '../../stores/sessionStore';
 import { gitService } from '../../services/git';
 import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
+import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 
 /**
  * Default prompt used when user sends only an image without text.
@@ -382,6 +384,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			if (currentMode === 'ai') {
 				const activeTab = getActiveTab(activeSession);
 				const isReadOnlyMode = activeTab?.readOnlyMode === true;
+				const demoCapture: DemoCaptureRequest | undefined = activeTab?.demoCaptureRequested
+					? { enabled: true }
+					: undefined;
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
@@ -435,6 +440,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						type: 'message',
 						text: effectiveInputValue,
 						images: [...stagedImages],
+						demoCapture,
 						tabName:
 							activeTab?.name ||
 							(activeTab?.agentSessionId
@@ -466,7 +472,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								...s,
 								executionQueue: [...s.executionQueue, queuedItem],
 								aiTabs: s.aiTabs.map((tab) =>
-									tab.id === targetTabId ? { ...tab, logs: [...tab.logs, queuedLogEntry] } : tab
+									tab.id === targetTabId
+										? {
+												...tab,
+												logs: [...tab.logs, queuedLogEntry],
+												demoCaptureRequested: false,
+											}
+										: tab
 								),
 							};
 						})
@@ -486,6 +498,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const currentBatchState = getBatchState(activeSession.id);
 			const isAutoRunReadOnly = currentBatchState.isRunning && !currentBatchState.worktreeActive;
 			const isReadOnlyEntry = activeTabForEntry?.readOnlyMode === true || isAutoRunReadOnly;
+			const capturedDemoCapture: DemoCaptureRequest | undefined =
+				currentMode === 'ai' && activeTabForEntry?.demoCaptureRequested ? { enabled: true } : undefined;
 
 			const newEntry: LogEntry = {
 				id: generateId(),
@@ -653,6 +667,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									logs: [...tab.logs, newEntry],
 									state: 'busy' as const,
 									thinkingStartTime: Date.now(),
+									demoCaptureRequested: false,
 									// Mark this tab as awaiting session ID so we can assign it correctly
 									// when the session ID comes back (prevents cross-tab assignment)
 									awaitingSessionId: isNewSession ? true : tab.awaitingSessionId,
@@ -916,6 +931,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							effectivePrompt = `${PLAN_MODE_PROMPT_PREFIX}\n\n${effectivePrompt}`;
 						}
 
+						effectivePrompt = appendDemoCaptureInstructions(
+							effectivePrompt,
+							capturedDemoCapture?.enabled === true
+						);
+
 						// Spawn agent with generic config - the main process will use agent-specific
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
@@ -936,6 +956,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomModel: freshSession.customModel,
 							sessionCustomContextWindow: freshSession.customContextWindow,
 							sessionReasoningEffort: freshActiveTab?.reasoningEffort ?? 'default',
+							demoCapture: capturedDemoCapture,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
 							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues

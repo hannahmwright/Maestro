@@ -14,6 +14,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { WebAttachmentSummary, WebTextAttachmentInput } from '../../shared/remote-web';
+import type { DemoCaptureRequest } from '../../shared/demo-artifacts';
 import { webLogger } from '../utils/logger';
 
 /** Storage key for persisting offline queue */
@@ -45,6 +46,8 @@ export interface QueuedCommand {
 	textAttachments?: WebTextAttachmentInput[];
 	/** Attachment summary for UI rendering */
 	attachments?: WebAttachmentSummary[];
+	/** Optional demo capture request for this queued run */
+	demoCapture?: DemoCaptureRequest;
 	/** Number of send attempts */
 	attempts: number;
 	/** Last error message if send failed */
@@ -71,7 +74,8 @@ export interface UseOfflineQueueOptions {
 		inputMode: 'ai' | 'terminal',
 		images?: string[],
 		textAttachments?: WebTextAttachmentInput[],
-		attachments?: WebAttachmentSummary[]
+		attachments?: WebAttachmentSummary[],
+		demoCapture?: DemoCaptureRequest
 	) => boolean;
 	/** Maximum retry attempts per command (default: 3) */
 	maxRetries?: number;
@@ -102,7 +106,8 @@ export interface UseOfflineQueueReturn {
 		inputMode: 'ai' | 'terminal',
 		images?: string[],
 		textAttachments?: WebTextAttachmentInput[],
-		attachments?: WebAttachmentSummary[]
+		attachments?: WebAttachmentSummary[],
+		demoCapture?: DemoCaptureRequest
 	) => QueuedCommand | null;
 	/** Remove a specific command from the queue */
 	removeCommand: (commandId: string) => void;
@@ -234,7 +239,8 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 			inputMode: 'ai' | 'terminal',
 			images?: string[],
 			textAttachments?: WebTextAttachmentInput[],
-			attachments?: WebAttachmentSummary[]
+			attachments?: WebAttachmentSummary[],
+			demoCapture?: DemoCaptureRequest
 		): QueuedCommand | null => {
 			// Check if we're at capacity
 			if (queue.length >= MAX_QUEUE_SIZE) {
@@ -251,6 +257,7 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 				images,
 				textAttachments,
 				attachments,
+				demoCapture,
 				attempts: 0,
 			};
 
@@ -334,7 +341,8 @@ export function useOfflineQueue(options: UseOfflineQueueOptions): UseOfflineQueu
 					cmd.inputMode,
 					cmd.images,
 					cmd.textAttachments,
-					cmd.attachments
+					cmd.attachments,
+					cmd.demoCapture
 				);
 
 				if (success) {

@@ -15,6 +15,11 @@ import { shellEscape } from './shell-escape';
 import { sshRemoteManager } from '../ssh-remote-manager';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
+import { spawn } from 'child_process';
+import { createWriteStream } from 'fs';
+import * as fs from 'fs/promises';
+import { pipeline } from 'stream/promises';
+import * as path from 'path';
 
 /**
  * File or directory entry returned from readDir operations.
@@ -40,6 +45,13 @@ export interface RemoteStatResult {
 	mtime: number;
 }
 
+export interface RemoteCopyResult {
+	/** File size in bytes after the remote copy completes */
+	byteSize: number;
+	/** Source modification time from the remote stat */
+	mtime: number;
+}
+
 /**
  * Result wrapper for remote fs operations.
  * Includes success/failure status and optional error message.
@@ -61,6 +73,15 @@ export interface RemoteFsDeps {
 	execSsh: (command: string, args: string[]) => Promise<ExecResult>;
 	/** Function to build SSH args from config */
 	buildSshArgs: (config: SshRemoteConfig) => string[];
+	/** Function to resolve the SSH binary path */
+	resolveSshPath?: () => Promise<string>;
+	/** Function to stream a remote command's stdout directly into a local file */
+	streamSshToFile?: (
+		command: string,
+		args: string[],
+		localPath: string,
+		timeoutMs: number
+	) => Promise<ExecResult & { bytesWritten: number }>;
 }
 
 /**
@@ -72,6 +93,64 @@ const defaultDeps: RemoteFsDeps = {
 	},
 	buildSshArgs: (config: SshRemoteConfig): string[] => {
 		return sshRemoteManager.buildSshArgs(config);
+	},
+	resolveSshPath,
+	streamSshToFile: async (
+		command: string,
+		args: string[],
+		localPath: string,
+		timeoutMs: number
+	): Promise<ExecResult & { bytesWritten: number }> => {
+		await fs.mkdir(path.dirname(localPath), { recursive: true });
+		return await new Promise((resolve) => {
+			const child = spawn(command, args, {
+				stdio: ['ignore', 'pipe', 'pipe'],
+			});
+			const output = createWriteStream(localPath);
+			let bytesWritten = 0;
+			let stderr = '';
+			let timedOut = false;
+			let spawnError: Error | null = null;
+			let streamError: unknown = null;
+
+			const timeoutHandle = setTimeout(() => {
+				timedOut = true;
+				child.kill('SIGKILL');
+			}, timeoutMs);
+
+			child.stdout.on('data', (chunk: Buffer) => {
+				bytesWritten += chunk.length;
+			});
+
+			child.stderr.on('data', (chunk: Buffer | string) => {
+				stderr += chunk.toString();
+			});
+
+			child.on('error', (error) => {
+				spawnError = error;
+			});
+
+			const pipePromise = pipeline(child.stdout, output).catch((error) => {
+				streamError = error;
+			});
+
+			child.on('close', async (code) => {
+				clearTimeout(timeoutHandle);
+				await pipePromise;
+				if (!stderr && spawnError) {
+					stderr = String(spawnError);
+				}
+				if (!stderr && streamError) {
+					stderr = String(streamError);
+				}
+				resolve({
+					stdout: '',
+					stderr,
+					exitCode: timedOut ? 'ETIMEDOUT' : (code ?? 1),
+					bytesWritten,
+				});
+			});
+		});
 	},
 };
 
@@ -157,7 +236,7 @@ async function execRemoteCommand(
 	let lastResult: ExecResult | null = null;
 
 	// Resolve SSH binary path (critical for Windows where spawn() doesn't search PATH)
-	const sshPath = await resolveSshPath();
+	const sshPath = await (deps.resolveSshPath ?? resolveSshPath)();
 
 	for (let attempt = 0; attempt <= maxRetries; attempt++) {
 		const sshArgs = deps.buildSshArgs(config);
@@ -517,6 +596,88 @@ export async function writeFileRemote(
 	}
 
 	return { success: true };
+}
+
+/**
+ * Download a remote file to a local path using streamed SSH output.
+ *
+ * This keeps binary transfers off the in-memory buffering path, which matters
+ * for larger screenshots and recorded videos.
+ */
+export async function downloadFileRemote(
+	remotePath: string,
+	localPath: string,
+	sshRemote: SshRemoteConfig,
+	deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<RemoteCopyResult>> {
+	const statResult = await statRemote(remotePath, sshRemote, deps);
+	if (!statResult.success || !statResult.data) {
+		return {
+			success: false,
+			error: statResult.error || `Failed to stat remote file: ${remotePath}`,
+		};
+	}
+
+	if (statResult.data.isDirectory) {
+		return {
+			success: false,
+			error: `Path is a directory: ${remotePath}`,
+		};
+	}
+
+	const remoteCommand = `cat ${shellEscape(remotePath)}`;
+	const streamToFile = deps.streamSshToFile ?? defaultDeps.streamSshToFile!;
+	const sshPathResolver = deps.resolveSshPath ?? resolveSshPath;
+	const { maxRetries, baseDelayMs, maxDelayMs } = DEFAULT_RETRY_CONFIG;
+
+	for (let attempt = 0; attempt <= maxRetries; attempt++) {
+		await fs.rm(localPath, { force: true });
+		const sshPath = await sshPathResolver();
+		const sshArgs = deps.buildSshArgs(sshRemote);
+		sshArgs.push(remoteCommand);
+		const result = await streamToFile(sshPath, sshArgs, localPath, SSH_COMMAND_TIMEOUT_MS);
+
+		if (result.exitCode === 0) {
+			if (result.bytesWritten !== statResult.data.size) {
+				await fs.rm(localPath, { force: true });
+				return {
+					success: false,
+					error: `Remote file size changed during transfer: expected ${statResult.data.size} bytes, received ${result.bytesWritten} bytes`,
+				};
+			}
+
+			return {
+				success: true,
+				data: {
+					byteSize: result.bytesWritten,
+					mtime: statResult.data.mtime,
+				},
+			};
+		}
+
+		const combinedOutput = `${result.stderr} ${result.stdout}`;
+		const isNodeTimeout = result.exitCode === 'ETIMEDOUT';
+		if ((isRecoverableSshError(combinedOutput) || isNodeTimeout) && attempt < maxRetries) {
+			const delay = getBackoffDelay(attempt, baseDelayMs, maxDelayMs);
+			logger.debug(
+				`[remote-fs] SSH artifact download transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${result.stderr.slice(0, 100)}`
+			);
+			await sleep(delay);
+			continue;
+		}
+
+		await fs.rm(localPath, { force: true });
+		return {
+			success: false,
+			error: result.stderr || `Failed to download remote file: ${remotePath}`,
+		};
+	}
+
+	await fs.rm(localPath, { force: true });
+	return {
+		success: false,
+		error: `Failed to download remote file: ${remotePath}`,
+	};
 }
 
 /**

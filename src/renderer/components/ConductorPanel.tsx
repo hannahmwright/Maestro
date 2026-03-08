@@ -694,7 +694,15 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			(conductor?.publishPolicy === 'none' || latestIntegrationRun.prUrl)
 	);
 	const percentComplete = taskCounts.total ? Math.round((taskCounts.done / taskCounts.total) * 100) : 0;
-	const overviewCards = useMemo(
+	const overviewCards = useMemo<
+		Array<{
+			label: string;
+			value: string | number;
+			detail: string;
+			icon: React.ReactNode;
+			tone: 'default' | 'accent' | 'success' | 'warning';
+		}>
+	>(
 		() => [
 			{
 				label: 'Overall progress',
@@ -704,7 +712,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						? `${taskCounts.done} of ${taskCounts.total} tasks finished`
 						: 'No tasks yet. Start a plan to give Conductor something to work through.',
 				icon: <Activity />,
-				tone: (taskCounts.done > 0 ? 'success' : 'default') as const,
+				tone: taskCounts.done > 0 ? 'success' : 'default',
 			},
 			{
 				label: 'Active right now',
@@ -716,7 +724,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							? `${taskCounts.ready} ready to start`
 							: 'Nothing is running right now',
 				icon: <Users />,
-				tone: (taskCounts.running > 0 ? 'accent' : 'default') as const,
+				tone: taskCounts.running > 0 ? 'accent' : 'default',
 			},
 			{
 				label: 'Needs your input',
@@ -727,7 +735,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						? `${taskCounts.blocked} task${taskCounts.blocked === 1 ? '' : 's'} blocked right now`
 						: 'No blockers or approvals waiting on you',
 				icon: <ShieldAlert />,
-				tone: ((pendingRun || taskCounts.blocked > 0) ? 'warning' : 'default') as const,
+				tone: pendingRun || taskCounts.blocked > 0 ? 'warning' : 'default',
 			},
 			{
 				label: 'Shipping status',
@@ -740,7 +748,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							? 'Execution finished. The next step is pulling results together.'
 							: 'Nothing ready to ship yet.',
 				icon: <CheckCircle2 />,
-				tone: (shippingComplete || latestIntegrationRun?.status === 'completed' ? 'success' : 'default') as const,
+				tone: shippingComplete || latestIntegrationRun?.status === 'completed' ? 'success' : 'default',
 			},
 		],
 		[

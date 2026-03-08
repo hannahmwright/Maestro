@@ -31,6 +31,7 @@ describe('Forwarding Listeners', () => {
 
 		expect(mockProcessManager.on).toHaveBeenCalledWith('slash-commands', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('thinking-chunk', expect.any(Function));
+		expect(mockProcessManager.on).toHaveBeenCalledWith('assistant-stream', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('tool-execution', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('stderr', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('command-exit', expect.any(Function));
@@ -64,6 +65,18 @@ describe('Forwarding Listeners', () => {
 		handler?.(testSessionId, testChunk);
 
 		expect(mockSafeSend).toHaveBeenCalledWith('process:thinking-chunk', testSessionId, testChunk);
+	});
+
+	it('should forward assistant-stream events to renderer', () => {
+		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+
+		const handler = eventHandlers.get('assistant-stream');
+		const testSessionId = 'test-session-123';
+		const testEvent = { mode: 'append', text: 'Hello' };
+
+		handler?.(testSessionId, testEvent);
+
+		expect(mockSafeSend).toHaveBeenCalledWith('process:assistant-stream', testSessionId, testEvent);
 	});
 
 	it('should forward tool-execution events to renderer', () => {

@@ -355,7 +355,7 @@ export function TabSearchModal({
 	}, []);
 
 	const recentLookup = useMemo(() => {
-		return new Map(
+		return new Map<string, number>(
 			recentTargets.map(
 				(target) => [`${target.sessionId}:${target.tabId}`, target.viewedAt] as const
 			)

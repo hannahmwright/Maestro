@@ -55,6 +55,7 @@ import type {
 	ConductorTaskPriority,
 } from '../../shared/types';
 import type { WebAttachmentSummary } from '../../shared/remote-web';
+import type { DemoCard, DemoCaptureRequest } from '../../shared/demo-artifacts';
 import type { UserInputRequest } from '../../shared/user-input-requests';
 
 // Re-export group chat types from shared location
@@ -227,6 +228,7 @@ export interface LogEntry {
 			/** Provider-specific fields preserved for debugging/future UI */
 			[key: string]: unknown;
 		};
+		demoCard?: DemoCard;
 	};
 }
 
@@ -242,6 +244,7 @@ export interface QueuedItem {
 	// For messages
 	text?: string; // Message text
 	images?: string[]; // Attached images (base64)
+	demoCapture?: DemoCaptureRequest; // Optional next-send scoped demo capture request
 	// For commands
 	command?: string; // Slash command (e.g., '/commit')
 	commandArgs?: string; // Arguments passed after the command (e.g., 'Blah blah' from '/speckit.plan Blah blah')
@@ -455,6 +458,7 @@ export interface AITab {
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
 	pendingUserInputRequest?: UserInputRequest | null; // Active Codex request_user_input questionnaire for this tab
+	demoCaptureRequested?: boolean; // Next-send scoped demo capture toggle for this tab
 }
 
 // A single "thinking item" — one busy tab within a session.

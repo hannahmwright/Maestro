@@ -30,7 +30,7 @@ export interface UseLongPressReturn {
 	handlers: {
 		onTouchStart: (e: React.TouchEvent) => void;
 		onTouchMove: (e: React.TouchEvent) => void;
-		onTouchEnd: () => void;
+		onTouchEnd: (e: React.TouchEvent) => void;
 		onTouchCancel: () => void;
 	};
 	/** onClick handler that guards against long-press and scroll (for non-touch devices, fires onTap) */
@@ -90,16 +90,24 @@ export function useLongPress({ onLongPress, onTap }: UseLongPressOptions): UseLo
 		[clearTimer]
 	);
 
-	const onTouchEnd = useCallback(() => {
+	const onTouchEnd = useCallback(
+		(e: React.TouchEvent) => {
 		clearTimer();
-		if (!isScrollingRef.current && !isLongPressTriggeredRef.current) {
+		if (isLongPressTriggeredRef.current) {
+			// Prevent the synthetic click fired on touch release from immediately
+			// activating whatever was rendered by the long-press callback.
+			e.preventDefault();
+			e.stopPropagation();
+		} else if (!isScrollingRef.current) {
 			triggerHaptic(HAPTIC_PATTERNS.tap);
 			onTap?.();
 		}
 		touchStartRef.current = null;
 		isScrollingRef.current = false;
 		isLongPressTriggeredRef.current = false;
-	}, [clearTimer, onTap]);
+		},
+		[clearTimer, onTap]
+	);
 
 	const onTouchCancel = useCallback(() => {
 		clearTimer();

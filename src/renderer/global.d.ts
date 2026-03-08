@@ -44,6 +44,55 @@ type UserInputResponse = {
 	answers: Record<string, { answers: string[] }>;
 };
 
+type DemoCaptureRequest = {
+	enabled: boolean;
+};
+
+type ArtifactRef = {
+	id: string;
+	kind: 'image' | 'video' | 'other';
+	mimeType: string;
+	byteSize: number;
+	createdAt: number;
+	filename: string;
+	width?: number | null;
+	height?: number | null;
+	durationMs?: number | null;
+	derivedFromArtifactId?: string | null;
+};
+
+type DemoStep = {
+	id: string;
+	demoId: string;
+	orderIndex: number;
+	title: string;
+	description?: string | null;
+	timestampMs?: number | null;
+	actionType?: string | null;
+	toolContext?: string | null;
+	screenshotArtifact?: ArtifactRef | null;
+};
+
+type DemoCard = {
+	demoId: string;
+	captureRunId: string;
+	title: string;
+	summary?: string | null;
+	status: 'capturing' | 'completed' | 'failed';
+	createdAt: number;
+	updatedAt: number;
+	stepCount: number;
+	durationMs?: number | null;
+	posterArtifact?: ArtifactRef | null;
+	videoArtifact?: ArtifactRef | null;
+};
+
+type DemoDetail = DemoCard & {
+	sessionId: string;
+	tabId?: string | null;
+	steps: DemoStep[];
+};
+
 interface ProcessConfig {
 	sessionId: string;
 	toolType: string;
@@ -76,6 +125,7 @@ interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomContextWindow?: number;
 	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+	demoCapture?: DemoCaptureRequest;
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -568,6 +618,12 @@ interface MaestroAPI {
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
+		onAssistantStream: (
+			callback: (
+				sessionId: string,
+				event: { mode: 'append' | 'replace' | 'commit' | 'discard'; text?: string }
+			) => void
+		) => () => void;
 		onToolExecution: (
 			callback: (
 				sessionId: string,
@@ -602,8 +658,12 @@ interface MaestroAPI {
 					name: string;
 					mimeType?: string;
 					size?: number;
-				}>
+				}>,
+				demoCapture?: DemoCaptureRequest
 			) => void
+		) => () => void;
+		onDemoGenerated: (
+			callback: (sessionId: string, tabId: string | null, demoCard: DemoCard) => void
 		) => () => void;
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
@@ -1861,6 +1921,14 @@ interface MaestroAPI {
 		delete: (sessionId: string, filename: string) => Promise<{ success: boolean; error?: string }>;
 		list: (sessionId: string) => Promise<{ success: boolean; files: string[]; error?: string }>;
 		getPath: (sessionId: string) => Promise<{ success: boolean; path: string }>;
+	};
+	artifacts: {
+		listSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]>;
+		getDemo: (demoId: string) => Promise<DemoDetail | null>;
+		loadArtifact: (artifactId: string) => Promise<string | null>;
+		getArtifactFileInfo: (
+			artifactId: string
+		) => Promise<{ id: string; path: string; mimeType: string; filename: string } | null>;
 	};
 	// Auto Run file operations
 	// SSH remote support: Core operations accept optional sshRemoteId for remote file operations

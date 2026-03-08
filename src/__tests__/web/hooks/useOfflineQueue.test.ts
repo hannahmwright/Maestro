@@ -731,12 +731,14 @@ describe('useOfflineQueue', () => {
 				'ai',
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 			expect(sendCommand).toHaveBeenCalledWith(
 				's2',
 				'second',
 				'terminal',
+				undefined,
 				undefined,
 				undefined,
 				undefined
@@ -1797,6 +1799,7 @@ describe('useOfflineQueue', () => {
 				'ai',
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 			expect(sendCommand).toHaveBeenCalledWith(
@@ -1805,12 +1808,14 @@ describe('useOfflineQueue', () => {
 				'terminal',
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 			expect(sendCommand).toHaveBeenCalledWith(
 				's3',
 				'for s3',
 				'ai',
+				undefined,
 				undefined,
 				undefined,
 				undefined

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { useKeyboardVisibility } from '../../../web/hooks/useKeyboardVisibility';
 
 type MockViewport = {
@@ -34,6 +34,29 @@ function setVisualViewport(mockViewport?: MockViewport) {
 	}
 }
 
+function createMockViewport(initial: { height: number; offsetTop: number }) {
+	const listeners = new Map<string, Set<() => void>>();
+	const viewport: MockViewport & { emit: (event: string) => void } = {
+		height: initial.height,
+		offsetTop: initial.offsetTop,
+		addEventListener: vi.fn((event: string, handler: () => void) => {
+			if (!listeners.has(event)) {
+				listeners.set(event, new Set());
+			}
+			listeners.get(event)!.add(handler);
+		}),
+		removeEventListener: vi.fn((event: string, handler: () => void) => {
+			listeners.get(event)?.delete(handler);
+		}),
+		emit: (event: string) => {
+			for (const handler of listeners.get(event) || []) {
+				handler();
+			}
+		},
+	};
+	return viewport;
+}
+
 describe('useKeyboardVisibility', () => {
 	const originalInnerHeight = window.innerHeight;
 
@@ -56,17 +79,15 @@ describe('useKeyboardVisibility', () => {
 	});
 
 	it('calculates keyboard offset from viewport height', async () => {
-		const addEventListener = vi.fn();
-		const removeEventListener = vi.fn();
+		const viewport = createMockViewport({ height: 600, offsetTop: 0 });
 
-		setVisualViewport({
-			height: 600,
-			offsetTop: 0,
-			addEventListener,
-			removeEventListener,
-		});
+		setVisualViewport(viewport);
 
 		window.innerHeight = 800;
+
+		const input = document.createElement('textarea');
+		document.body.appendChild(input);
+		input.focus();
 
 		const { result } = renderHook(() => useKeyboardVisibility());
 
@@ -74,27 +95,54 @@ describe('useKeyboardVisibility', () => {
 			expect(result.current.keyboardOffset).toBe(200);
 			expect(result.current.isKeyboardVisible).toBe(true);
 		});
+
+		input.remove();
 	});
 
 	it('registers and cleans up viewport listeners', () => {
-		const addEventListener = vi.fn();
-		const removeEventListener = vi.fn();
+		const viewport = createMockViewport({ height: 700, offsetTop: 0 });
 
-		setVisualViewport({
-			height: 700,
-			offsetTop: 0,
-			addEventListener,
-			removeEventListener,
-		});
+		setVisualViewport(viewport);
 
 		const { unmount } = renderHook(() => useKeyboardVisibility());
 
-		expect(addEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
-		expect(addEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+		expect(viewport.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
+		expect(viewport.addEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
 
 		unmount();
 
-		expect(removeEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
-		expect(removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+		expect(viewport.removeEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
+		expect(viewport.removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+	});
+
+	it('clears stale keyboard offset when the viewport returns to its baseline', async () => {
+		const viewport = createMockViewport({ height: 780, offsetTop: 0 });
+		setVisualViewport(viewport);
+		window.innerHeight = 844;
+
+		const { result } = renderHook(() => useKeyboardVisibility());
+
+		expect(result.current.keyboardOffset).toBe(0);
+		expect(result.current.isKeyboardVisible).toBe(false);
+
+		act(() => {
+			viewport.height = 520;
+			viewport.emit('resize');
+		});
+
+		await waitFor(() => {
+			expect(result.current.keyboardOffset).toBe(260);
+			expect(result.current.isKeyboardVisible).toBe(true);
+		});
+
+		act(() => {
+			viewport.height = 780;
+			viewport.emit('resize');
+		});
+
+		await waitFor(() => {
+			expect(result.current.keyboardOffset).toBe(0);
+			expect(result.current.isKeyboardVisible).toBe(false);
+		});
 	});
 });
