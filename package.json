@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.15.3",
+	"version": "0.15.4",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -53,7 +53,7 @@
 		"build:web": "vite build --config vite.config.web.mts",
 		"package": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --win --linux",
 		"package:mac": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac",
-		"package:mac:fork": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --config build/electron-builder.fork.js",
+		"package:mac:fork": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --mac --config build/electron-builder.fork.js --publish never",
 		"package:win": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --win",
 		"package:linux": "node scripts/set-version.mjs npm run build && node scripts/set-version.mjs electron-builder --linux",
 		"publish:fork:mac": "npm run package:mac:fork && node scripts/publish-fork-release.mjs",
