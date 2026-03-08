@@ -1186,7 +1186,15 @@ export default function MobileApp() {
 	} = useOfflineQueue({
 		isOnline: !isOffline,
 		isConnected: isActuallyConnected,
-		sendCommand: (sessionId, command, inputMode, images, textAttachments, attachments, demoCapture) => {
+		sendCommand: (
+			sessionId,
+			command,
+			inputMode,
+			images,
+			textAttachments,
+			attachments,
+			demoCapture
+		) => {
 			if (sendRef.current) {
 				return sendRef.current(
 					sessionId,
@@ -1443,7 +1451,8 @@ export default function MobileApp() {
 			const currentMode = (activeSession?.inputMode as InputMode) || 'ai';
 			const hasAttachments = stagedImages.length > 0 || stagedTextAttachments.length > 0;
 			const commandText = command.trim();
-			const demoCapture = currentMode === 'ai' && demoCaptureRequested ? { enabled: true } : undefined;
+			const demoCapture =
+				currentMode === 'ai' && demoCaptureRequested ? { enabled: true } : undefined;
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
@@ -1995,6 +2004,7 @@ export default function MobileApp() {
 				) : (
 					<MessageHistory
 						logs={chatLogs}
+						sessionId={activeSessionId}
 						inputMode={activeSession.inputMode as 'ai' | 'terminal'}
 						toolLogs={toolLogs}
 						isSessionBusy={activeSession.state === 'busy'}

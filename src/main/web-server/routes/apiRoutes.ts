@@ -16,7 +16,7 @@
 
 import { createReadStream } from 'fs';
 import fs from 'fs/promises';
-import { FastifyInstance } from 'fastify';
+import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
 	WEB_APP_API_BASE_PATH,
 	type PushStatusResponse,
@@ -61,6 +61,16 @@ export interface ApiRouteCallbacks {
 		| Promise<{ path: string; mimeType: string; filename: string } | null>
 		| { path: string; mimeType: string; filename: string }
 		| null;
+	getSessionLocalFile: (
+		sessionId: string,
+		requestedPath: string
+	) =>
+		| Promise<
+				| { path: string; mimeType: string; filename: string; requestedPath: string }
+				| { errorCode: number; message: string }
+		  >
+		| { path: string; mimeType: string; filename: string; requestedPath: string }
+		| { errorCode: number; message: string };
 	transcribeAudio: (
 		request: WebVoiceTranscriptionRequest
 	) => Promise<WebVoiceTranscriptionResponse | null>;
@@ -111,6 +121,285 @@ export class ApiRoutes {
 	 */
 	updateRateLimitConfig(config: RateLimitConfig): void {
 		this.rateLimitConfig = config;
+	}
+
+	private isHtmlNavigationRequest(request: FastifyRequest): boolean {
+		const acceptHeader = request.headers.accept || '';
+		return (
+			request.headers['sec-fetch-dest'] === 'document' ||
+			acceptHeader.includes('text/html') ||
+			request.headers['upgrade-insecure-requests'] === '1'
+		);
+	}
+
+	private escapeHtml(value: string): string {
+		return value
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#39;');
+	}
+
+	private sendContentError(
+		request: FastifyRequest,
+		reply: FastifyReply,
+		statusCode: number,
+		title: string,
+		message: string
+	): FastifyReply {
+		if (this.isHtmlNavigationRequest(request)) {
+			const escapedTitle = this.escapeHtml(title);
+			const escapedMessage = this.escapeHtml(message);
+			return reply.code(statusCode).type('text/html').send(`<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>${escapedTitle}</title>
+		<style>
+			body {
+				margin: 0;
+				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				background: #020617;
+				color: #e2e8f0;
+				min-height: 100vh;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				padding: 24px;
+			}
+			.card {
+				max-width: 640px;
+				width: 100%;
+				background: rgba(15, 23, 42, 0.92);
+				border: 1px solid rgba(148, 163, 184, 0.24);
+				border-radius: 20px;
+				padding: 24px;
+				box-shadow: 0 24px 60px rgba(15, 23, 42, 0.45);
+			}
+			h1 {
+				margin: 0 0 12px;
+				font-size: 24px;
+				line-height: 1.2;
+			}
+			p {
+				margin: 0;
+				font-size: 15px;
+				line-height: 1.6;
+				color: #cbd5e1;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="card">
+			<h1>${escapedTitle}</h1>
+			<p>${escapedMessage}</p>
+		</div>
+	</body>
+</html>`);
+		}
+
+		return reply.code(statusCode).send({
+			error: title,
+			message,
+			timestamp: Date.now(),
+		});
+	}
+
+	private async sendStreamableFile(
+		request: FastifyRequest,
+		reply: FastifyReply,
+		file: { path: string; mimeType: string; filename: string }
+	): Promise<FastifyReply | void> {
+		let stats;
+		try {
+			stats = await fs.stat(file.path);
+		} catch (error) {
+			logger.warn('File content missing or unreadable', LOG_CONTEXT, {
+				path: file.path,
+				error: String(error),
+			});
+			return this.sendContentError(
+				request,
+				reply,
+				404,
+				'Not Found',
+				`The requested file is no longer available: ${file.filename}`
+			);
+		}
+
+		const rangeHeader = request.headers.range;
+
+		reply.header('Accept-Ranges', 'bytes');
+		reply.header('Content-Disposition', `inline; filename="${encodeURIComponent(file.filename)}"`);
+		reply.header('Cache-Control', 'private, no-store');
+		reply.type(file.mimeType);
+
+		if (rangeHeader) {
+			const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
+			if (!match) {
+				return reply.code(416).send();
+			}
+
+			const start = match[1] ? Number.parseInt(match[1], 10) : 0;
+			const end = match[2] ? Number.parseInt(match[2], 10) : stats.size - 1;
+			if (
+				Number.isNaN(start) ||
+				Number.isNaN(end) ||
+				start < 0 ||
+				end < start ||
+				start >= stats.size ||
+				end >= stats.size
+			) {
+				return reply.code(416).send();
+			}
+			const chunkSize = end - start + 1;
+
+			reply.code(206);
+			reply.header('Content-Range', `bytes ${start}-${end}/${stats.size}`);
+			reply.header('Content-Length', chunkSize);
+			return reply.send(createReadStream(file.path, { start, end }));
+		}
+
+		reply.header('Content-Length', stats.size);
+		return reply.send(createReadStream(file.path));
+	}
+
+	private buildLocalFileViewerHtml(file: {
+		filename: string;
+		mimeType: string;
+		contentUrl: string;
+		requestedPath: string;
+	}): string {
+		const escapedFilename = this.escapeHtml(file.filename);
+		const escapedMimeType = this.escapeHtml(file.mimeType);
+		const escapedRequestedPath = this.escapeHtml(file.requestedPath);
+		const escapedContentUrl = this.escapeHtml(file.contentUrl);
+		const isVideo = file.mimeType.startsWith('video/');
+		const isImage = file.mimeType.startsWith('image/');
+		const mediaMarkup = isVideo
+			? `<video id="media" controls playsinline preload="metadata" src="${escapedContentUrl}"></video>`
+			: isImage
+				? `<img id="media" src="${escapedContentUrl}" alt="${escapedFilename}" />`
+				: `<div class="fallback"><p>This file can be downloaded from Maestro, but it does not have an inline viewer.</p></div>`;
+		const unsupportedHint = isVideo
+			? 'If this browser cannot play the recording, the video format is likely unsupported on this device.'
+			: 'If the preview does not load, try downloading the file instead.';
+
+		return `<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>${escapedFilename}</title>
+		<style>
+			body {
+				margin: 0;
+				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+				background: #020617;
+				color: #e2e8f0;
+				min-height: 100vh;
+			}
+			.shell {
+				min-height: 100vh;
+				display: flex;
+				flex-direction: column;
+				padding: 20px;
+				gap: 16px;
+				box-sizing: border-box;
+			}
+			.card {
+				background: rgba(15, 23, 42, 0.92);
+				border: 1px solid rgba(148, 163, 184, 0.22);
+				border-radius: 20px;
+				padding: 18px;
+				box-shadow: 0 24px 60px rgba(15, 23, 42, 0.35);
+			}
+			h1 {
+				margin: 0 0 6px;
+				font-size: 22px;
+				line-height: 1.2;
+			}
+			.meta {
+				font-size: 13px;
+				color: #94a3b8;
+				word-break: break-word;
+			}
+			.viewer {
+				flex: 1;
+				display: flex;
+				align-items: center;
+				justify-content: center;
+				background: #000;
+				border-radius: 20px;
+				overflow: hidden;
+				min-height: 280px;
+			}
+			#media {
+				width: 100%;
+				max-width: 100%;
+				max-height: calc(100vh - 220px);
+				display: block;
+				background: #000;
+			}
+			#error {
+				display: none;
+				margin-top: 12px;
+				padding: 14px 16px;
+				border-radius: 14px;
+				border: 1px solid rgba(248, 113, 113, 0.3);
+				background: rgba(127, 29, 29, 0.28);
+				color: #fecaca;
+				font-size: 14px;
+				line-height: 1.5;
+			}
+			a.button {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				margin-top: 16px;
+				padding: 12px 16px;
+				border-radius: 999px;
+				background: #2563eb;
+				color: #eff6ff;
+				text-decoration: none;
+				font-weight: 600;
+			}
+			.fallback p {
+				margin: 0;
+				font-size: 15px;
+				line-height: 1.6;
+				color: #cbd5e1;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="shell">
+			<div class="card">
+				<h1>${escapedFilename}</h1>
+				<div class="meta">${escapedMimeType}</div>
+				<div class="meta">${escapedRequestedPath}</div>
+			</div>
+			<div class="card viewer">
+				${mediaMarkup}
+			</div>
+			<div id="error" class="card">
+				Unable to open this file remotely. ${unsupportedHint}
+			</div>
+			<a class="button" href="${escapedContentUrl}" target="_blank" rel="noopener noreferrer">Open Raw File</a>
+		</div>
+		<script>
+			const media = document.getElementById('media');
+			const error = document.getElementById('error');
+			if (media && error) {
+				media.addEventListener('error', () => {
+					error.style.display = 'block';
+				});
+			}
+		</script>
+	</body>
+</html>`;
 	}
 
 	/**
@@ -315,65 +604,125 @@ export class ApiRoutes {
 
 				const artifact = await this.callbacks.getArtifactContent(artifactId);
 				if (!artifact) {
-					return reply.code(404).send({
-						error: 'Not Found',
-						message: `Artifact with id '${artifactId}' not found`,
-						timestamp: Date.now(),
-					});
+					return this.sendContentError(
+						request,
+						reply,
+						404,
+						'Not Found',
+						`Artifact with id '${artifactId}' not found`
+					);
 				}
 
-				let stats;
-				try {
-					stats = await fs.stat(artifact.path);
-				} catch (error) {
-					logger.warn('Artifact content file missing or unreadable', LOG_CONTEXT, {
-						artifactId,
-						path: artifact.path,
-						error: String(error),
-					});
-					return reply.code(404).send({
-						error: 'Not Found',
-						message: `Artifact content for id '${artifactId}' is unavailable`,
-						timestamp: Date.now(),
-					});
-				}
-				const rangeHeader = request.headers.range;
+				return this.sendStreamableFile(request, reply, artifact);
+			}
+		);
 
-				reply.header('Accept-Ranges', 'bytes');
-				reply.header(
-					'Content-Disposition',
-					`inline; filename="${encodeURIComponent(artifact.filename)}"`
-				);
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/session/:id/local-file/content`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const { path: requestedPath } = request.query as { path?: string };
+
+				if (!requestedPath) {
+					return this.sendContentError(
+						request,
+						reply,
+						400,
+						'Bad Request',
+						'A local file path is required.'
+					);
+				}
+
+				if (!this.callbacks.getSessionLocalFile) {
+					return this.sendContentError(
+						request,
+						reply,
+						503,
+						'Service Unavailable',
+						'Local file streaming is not configured.'
+					);
+				}
+
+				const file = await this.callbacks.getSessionLocalFile(id, requestedPath);
+				if ('errorCode' in file) {
+					return this.sendContentError(
+						request,
+						reply,
+						file.errorCode,
+						'Local File Unavailable',
+						file.message
+					);
+				}
+
+				return this.sendStreamableFile(request, reply, file);
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/session/:id/local-file/view`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const { path: requestedPath } = request.query as { path?: string };
+
+				if (!requestedPath) {
+					return this.sendContentError(
+						request,
+						reply,
+						400,
+						'Bad Request',
+						'A local file path is required.'
+					);
+				}
+
+				if (!this.callbacks.getSessionLocalFile) {
+					return this.sendContentError(
+						request,
+						reply,
+						503,
+						'Service Unavailable',
+						'Local file streaming is not configured.'
+					);
+				}
+
+				const file = await this.callbacks.getSessionLocalFile(id, requestedPath);
+				if ('errorCode' in file) {
+					return this.sendContentError(
+						request,
+						reply,
+						file.errorCode,
+						'Local File Unavailable',
+						file.message
+					);
+				}
+
+				const contentUrl = `${WEB_APP_API_BASE_PATH}/session/${encodeURIComponent(
+					id
+				)}/local-file/content?path=${encodeURIComponent(file.requestedPath)}`;
 				reply.header('Cache-Control', 'private, no-store');
-				reply.type(artifact.mimeType);
-
-				if (rangeHeader) {
-					const match = rangeHeader.match(/bytes=(\d*)-(\d*)/);
-					if (!match) {
-						return reply.code(416).send();
-					}
-
-					const start = match[1] ? Number.parseInt(match[1], 10) : 0;
-					const end = match[2] ? Number.parseInt(match[2], 10) : stats.size - 1;
-					if (
-						Number.isNaN(start) ||
-						Number.isNaN(end) ||
-						start < 0 ||
-						end < start ||
-						start >= stats.size
-					) {
-						return reply.code(416).send();
-					}
-					const chunkSize = end - start + 1;
-
-					reply.code(206);
-					reply.header('Content-Range', `bytes ${start}-${end}/${stats.size}`);
-					reply.header('Content-Length', chunkSize);
-					return reply.send(createReadStream(artifact.path, { start, end }));
-				}
-
-				reply.header('Content-Length', stats.size);
-				return reply.send(createReadStream(artifact.path));
+				return reply.type('text/html').send(
+					this.buildLocalFileViewerHtml({
+						filename: file.filename,
+						mimeType: file.mimeType,
+						contentUrl,
+						requestedPath: file.requestedPath,
+					})
+				);
 			}
 		);
 

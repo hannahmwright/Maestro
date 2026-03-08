@@ -4,7 +4,8 @@ export function appendDemoCaptureInstructions(prompt: string, enabled?: boolean)
 	}
 
 	const trimmedPrompt = prompt.trim();
-	const basePrompt = trimmedPrompt.length > 0 ? trimmedPrompt : 'Demonstrate the requested workflow.';
+	const basePrompt =
+		trimmedPrompt.length > 0 ? trimmedPrompt : 'Demonstrate the requested workflow.';
 
 	return `${basePrompt}
 
@@ -58,5 +59,8 @@ Rules:
 - Use human-readable step titles.
 - Save demo screenshots and videos under \`output/playwright/\`.
 - Prefer the Maestro Playwright helper for demo artifacts over ad hoc screenshot/video commands.
+- Never present raw local file paths or local-file URLs such as \`output/playwright/*.webm\`, \`file://...\`, or \`/Users/.../output/playwright/...\` as user-facing links.
+- When a demo was captured successfully, reference the Maestro demo result/card rather than the underlying local artifact path.
+- If remote playback or sharing is not available for a recorded file, explicitly say that remote playback is unsupported instead of pasting a local path.
 - Do not silently skip demo capture on this run if the workflow is demoable.`;
 }

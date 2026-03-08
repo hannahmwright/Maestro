@@ -130,6 +130,8 @@ export function ToolActivityPanel({ logs, isSessionBusy = false }: ToolActivityP
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const previousLogCountRef = useRef(logs.length);
 	const previousBusyRef = useRef(isSessionBusy);
+	const previousExpandedRef = useRef(isSessionBusy);
+	const previousFeedSignatureRef = useRef('');
 	const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 	const [isPanelExpanded, setIsPanelExpanded] = useState(isSessionBusy);
 	const [isAtBottom, setIsAtBottom] = useState(true);
@@ -138,6 +140,19 @@ export function ToolActivityPanel({ logs, isSessionBusy = false }: ToolActivityP
 	const totalDuration = useMemo(() => getFeedDuration(logs, isSessionBusy), [isSessionBusy, logs]);
 	const summaryLabel =
 		totalDuration !== null ? `Worked for ${formatDurationMs(totalDuration)}` : 'Worked';
+	const feedSignature = useMemo(
+		() =>
+			logs
+				.map((log) => {
+					const toolState = log.metadata?.toolState;
+					const status = normalizeToolStatus(toolState?.status);
+					const startedAt = getTimingValue(toolState, ['startTimestamp', 'startedAt']) ?? '';
+					const completedAt = getTimingValue(toolState, ['endTimestamp', 'completedAt']) ?? '';
+					return `${log.id || log.timestamp}:${status}:${startedAt}:${completedAt}:${log.text || log.content || ''}`;
+				})
+				.join('|'),
+		[logs]
+	);
 
 	useEffect(() => {
 		if (!logs.length) {
@@ -147,6 +162,8 @@ export function ToolActivityPanel({ logs, isSessionBusy = false }: ToolActivityP
 			setPendingCount(0);
 			previousLogCountRef.current = 0;
 			previousBusyRef.current = isSessionBusy;
+			previousExpandedRef.current = false;
+			previousFeedSignatureRef.current = '';
 			return;
 		}
 
@@ -182,14 +199,32 @@ export function ToolActivityPanel({ logs, isSessionBusy = false }: ToolActivityP
 	}, []);
 
 	useEffect(() => {
+		if (!logs.length) {
+			previousExpandedRef.current = isPanelExpanded;
+			return;
+		}
+
+		if (isPanelExpanded && !previousExpandedRef.current) {
+			window.requestAnimationFrame(() => {
+				scrollToBottom('auto');
+			});
+		}
+
+		previousExpandedRef.current = isPanelExpanded;
+	}, [isPanelExpanded, logs.length, scrollToBottom]);
+
+	useEffect(() => {
 		if (!logs.length || !isPanelExpanded) {
 			previousLogCountRef.current = logs.length;
+			previousFeedSignatureRef.current = feedSignature;
 			return;
 		}
 
 		const previousCount = previousLogCountRef.current;
 		const newCount = Math.max(0, logs.length - previousCount);
+		const feedChanged = previousFeedSignatureRef.current !== feedSignature;
 		previousLogCountRef.current = logs.length;
+		previousFeedSignatureRef.current = feedSignature;
 
 		if (previousCount === 0) {
 			window.requestAnimationFrame(() => {
@@ -198,19 +233,21 @@ export function ToolActivityPanel({ logs, isSessionBusy = false }: ToolActivityP
 			return;
 		}
 
-		if (newCount === 0) {
+		if (!feedChanged) {
 			return;
 		}
 
 		if (isAtBottom) {
 			window.requestAnimationFrame(() => {
-				scrollToBottom('smooth');
+				scrollToBottom(newCount > 0 ? 'smooth' : 'auto');
 			});
 			return;
 		}
 
-		setPendingCount((current) => current + newCount);
-	}, [isAtBottom, isPanelExpanded, logs.length, scrollToBottom]);
+		if (newCount > 0) {
+			setPendingCount((current) => current + newCount);
+		}
+	}, [feedSignature, isAtBottom, isPanelExpanded, logs.length, scrollToBottom]);
 
 	const toggleExpanded = useCallback((itemKey: string) => {
 		setExpandedItems((current) => {
@@ -265,6 +302,7 @@ export function ToolActivityPanel({ logs, isSessionBusy = false }: ToolActivityP
 		return (
 			<button
 				type="button"
+				data-mobile-composer-safe-zone="true"
 				onClick={() => setIsPanelExpanded(true)}
 				style={{
 					display: 'flex',
@@ -305,6 +343,7 @@ export function ToolActivityPanel({ logs, isSessionBusy = false }: ToolActivityP
 
 	return (
 		<div
+			data-mobile-composer-safe-zone="true"
 			style={{
 				display: 'flex',
 				flexDirection: 'column',

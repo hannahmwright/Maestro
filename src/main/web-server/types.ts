@@ -322,7 +322,9 @@ export type GetSessionDemosCallback = (
 	tabId?: string | null
 ) => Promise<DemoCard[]> | DemoCard[];
 
-export type GetDemoDetailCallback = (demoId: string) => Promise<DemoDetail | null> | DemoDetail | null;
+export type GetDemoDetailCallback = (
+	demoId: string
+) => Promise<DemoDetail | null> | DemoDetail | null;
 
 export type GetArtifactContentCallback = (
 	artifactId: string
@@ -330,6 +332,17 @@ export type GetArtifactContentCallback = (
 	| Promise<{ path: string; mimeType: string; filename: string } | null>
 	| { path: string; mimeType: string; filename: string }
 	| null;
+
+export type GetSessionLocalFileCallback = (
+	sessionId: string,
+	requestedPath: string
+) =>
+	| Promise<
+			| { path: string; mimeType: string; filename: string; requestedPath: string }
+			| { errorCode: number; message: string }
+	  >
+	| { path: string; mimeType: string; filename: string; requestedPath: string }
+	| { errorCode: number; message: string };
 
 /**
  * Callback type for interrupting a session through the desktop's existing logic.

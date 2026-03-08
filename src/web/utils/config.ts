@@ -133,6 +133,12 @@ export function getSessionDemoUrl(sessionId: string, demoId: string): string {
 	return `${window.location.origin}${config.basePath}/session/${sessionId}/demo/${demoId}`;
 }
 
+export function getSessionLocalFileViewerUrl(sessionId: string, filePath: string): string {
+	return `${buildApiUrl(
+		`/session/${encodeURIComponent(sessionId)}/local-file/view`
+	)}?path=${encodeURIComponent(filePath)}`;
+}
+
 /**
  * Get the current tab ID from URL (if specified)
  */

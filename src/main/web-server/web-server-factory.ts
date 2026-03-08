@@ -30,6 +30,25 @@ import { countUncommittedChanges } from '../../shared/gitUtils';
 import { VoiceTranscriptionManager } from '../voice-transcription-manager';
 import { getDemoArtifactService } from '../artifacts';
 
+const STREAMABLE_LOCAL_FILE_EXTENSIONS = new Set([
+	'.mp4',
+	'.m4v',
+	'.mov',
+	'.webm',
+	'.png',
+	'.jpg',
+	'.jpeg',
+	'.gif',
+	'.webp',
+	'.svg',
+	'.txt',
+	'.md',
+	'.json',
+	'.yaml',
+	'.yml',
+	'.pdf',
+]);
+
 /** Store interface for settings */
 interface SettingsStore {
 	get<T>(key: string, defaultValue?: T): T;
@@ -186,6 +205,109 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				(remote) => remote.id === session.sessionSshRemoteConfig.remoteId && remote.enabled
 			) || null
 		);
+	}
+
+	function guessMimeType(filePath: string): string {
+		const ext = path.extname(filePath).toLowerCase();
+		if (ext === '.mp4' || ext === '.m4v') return 'video/mp4';
+		if (ext === '.mov') return 'video/quicktime';
+		if (ext === '.webm') return 'video/webm';
+		if (ext === '.png') return 'image/png';
+		if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+		if (ext === '.gif') return 'image/gif';
+		if (ext === '.webp') return 'image/webp';
+		if (ext === '.svg') return 'image/svg+xml';
+		if (ext === '.txt' || ext === '.md') return 'text/plain; charset=utf-8';
+		if (ext === '.json') return 'application/json; charset=utf-8';
+		if (ext === '.yaml' || ext === '.yml') return 'application/yaml; charset=utf-8';
+		if (ext === '.pdf') return 'application/pdf';
+		return 'application/octet-stream';
+	}
+
+	function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+		const relative = path.relative(rootPath, candidatePath);
+		return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+	}
+
+	function resolveSessionLocalFile(
+		sessionId: string,
+		requestedPath: string
+	):
+		| { path: string; mimeType: string; filename: string; requestedPath: string }
+		| { errorCode: number; message: string } {
+		const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+		const session = sessions.find((candidate) => candidate.id === sessionId);
+		if (!session) {
+			return { errorCode: 404, message: `Session with id '${sessionId}' not found.` };
+		}
+
+		if (getSshRemoteConfig(session)) {
+			return {
+				errorCode: 409,
+				message: 'Remote SSH session files are not streamable from the web interface yet.',
+			};
+		}
+
+		const trimmedPath = requestedPath.trim();
+		if (!trimmedPath) {
+			return { errorCode: 400, message: 'A file path is required.' };
+		}
+
+		const rootCandidates = Array.from(
+			new Set(
+				[session.projectRoot, session.cwd]
+					.map((candidate) => (typeof candidate === 'string' ? candidate.trim() : ''))
+					.filter(Boolean)
+					.map((candidate) => path.resolve(candidate))
+			)
+		);
+		if (rootCandidates.length === 0) {
+			return {
+				errorCode: 400,
+				message: 'This session does not have a valid local project root for file streaming.',
+			};
+		}
+
+		const normalizedRequest = trimmedPath.replace(/^file:\/\//i, '');
+		const resolvedCandidates = path.isAbsolute(normalizedRequest)
+			? [path.resolve(normalizedRequest)]
+			: rootCandidates.map((rootPath) => path.resolve(rootPath, normalizedRequest));
+		const resolvedPath =
+			resolvedCandidates.find((candidate) =>
+				rootCandidates.some((rootPath) => isPathWithinRoot(candidate, rootPath))
+			) || null;
+		if (!resolvedPath) {
+			return {
+				errorCode: 403,
+				message: 'Only files inside the active session project can be streamed remotely.',
+			};
+		}
+
+		if (!STREAMABLE_LOCAL_FILE_EXTENSIONS.has(path.extname(resolvedPath).toLowerCase())) {
+			return {
+				errorCode: 415,
+				message: 'This file type is not supported for remote streaming.',
+			};
+		}
+
+		try {
+			const stats = fs.statSync(resolvedPath);
+			if (!stats.isFile()) {
+				return { errorCode: 400, message: 'The requested path is not a file.' };
+			}
+		} catch {
+			return {
+				errorCode: 404,
+				message: `The requested file does not exist: ${normalizedRequest}`,
+			};
+		}
+
+		return {
+			path: resolvedPath,
+			mimeType: guessMimeType(resolvedPath),
+			filename: path.basename(resolvedPath),
+			requestedPath: normalizedRequest,
+		};
 	}
 
 	async function getGitFileCount(session: StoredSession): Promise<number> {
@@ -634,6 +756,9 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				filename: artifact.filename,
 			};
 		});
+		server.setGetSessionLocalFileCallback((sessionId: string, requestedPath: string) =>
+			resolveSessionLocalFile(sessionId, requestedPath)
+		);
 
 		// Set up callback for web server to interrupt sessions through the desktop
 		// This forwards to the renderer which handles state updates and broadcasts

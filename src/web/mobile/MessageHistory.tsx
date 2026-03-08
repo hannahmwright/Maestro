@@ -23,6 +23,8 @@ const LINE_TRUNCATE_THRESHOLD = 8;
 export interface MessageHistoryProps {
 	/** Log entries to display */
 	logs: LogEntry[];
+	/** Active session ID for resolving local project file links */
+	sessionId?: string | null;
 	/** Input mode to determine which logs to show */
 	inputMode: 'ai' | 'terminal';
 	/** Tool activity entries for the latest assistant turn */
@@ -67,6 +69,7 @@ function artifactUrl(artifactId?: string | null): string | null {
  */
 export const MessageHistory = memo(function MessageHistory({
 	logs,
+	sessionId = null,
 	inputMode,
 	toolLogs = [],
 	isSessionBusy = false,
@@ -115,21 +118,19 @@ export const MessageHistory = memo(function MessageHistory({
 				})()
 			: -1;
 
+	const hasAssistantResponseAfterLatestUser =
+		inputMode === 'ai' &&
+		latestUserLogIndex >= 0 &&
+		logs.slice(latestUserLogIndex + 1).some((entry) => {
+			const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+			return source !== 'user' && source !== 'system' && source !== 'thinking' && source !== 'tool';
+		});
+
 	const showPendingAssistantIndicator =
 		inputMode === 'ai' &&
-		toolLogs.length === 0 &&
 		isSessionBusy &&
-		(() => {
-			for (let index = logs.length - 1; index >= 0; index -= 1) {
-				const entry = logs[index];
-				const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
-				if (source === 'system') {
-					continue;
-				}
-				return source === 'user';
-			}
-			return false;
-		})();
+		latestUserLogIndex >= 0 &&
+		!hasAssistantResponseAfterLatestUser;
 
 	/**
 	 * Check if a message should be truncated
@@ -606,7 +607,11 @@ export const MessageHistory = memo(function MessageHistory({
 												>
 													thinking
 												</div>
-												<MobileMarkdownRenderer content={displayText} fontSize={13} />
+												<MobileMarkdownRenderer
+													content={displayText}
+													fontSize={13}
+													sessionId={sessionId}
+												/>
 											</div>
 										) : inputMode === 'terminal' || isUser ? (
 											<div
@@ -624,6 +629,7 @@ export const MessageHistory = memo(function MessageHistory({
 											<MobileMarkdownRenderer
 												content={displayText}
 												fontSize={isAssistantResponse ? 14 : 13}
+												sessionId={sessionId}
 											/>
 										)}
 										{isTruncatable && !isExpanded && (

@@ -14,13 +14,18 @@
  * - Frontmatter parsing (not needed for AI responses)
  */
 
-import React, { memo, useCallback, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { normalizeMobileCodeLanguage, SyntaxHighlighter } from './prismLight';
+import {
+	buildSessionLocalFileViewerUrl,
+	extractStreamableLocalFilePath,
+	findStreamableLocalFilePathsInText,
+} from '../utils/localFileLinks';
 
 /**
  * Props for MobileMarkdownRenderer
@@ -30,6 +35,8 @@ export interface MobileMarkdownRendererProps {
 	content: string;
 	/** Optional custom font size (default: 13px) */
 	fontSize?: number;
+	/** Active Maestro session ID for streaming local project files through the desktop app */
+	sessionId?: string | null;
 }
 
 /**
@@ -186,10 +193,19 @@ CodeBlockWithCopy.displayName = 'CodeBlockWithCopy';
  * Renders markdown content with full GFM support for mobile displays.
  */
 export const MobileMarkdownRenderer = memo(
-	({ content, fontSize = 13 }: MobileMarkdownRendererProps) => {
+	({ content, fontSize = 13, sessionId = null }: MobileMarkdownRendererProps) => {
 		const colors = useThemeColors();
 		const { isDark } = useTheme();
 		const syntaxStyle = isDark ? vscDarkPlus : vs;
+		const [linkError, setLinkError] = useState<string | null>(null);
+		const detectedLocalFileLinks = useMemo(
+			() => findStreamableLocalFilePathsInText(content),
+			[content]
+		);
+
+		useEffect(() => {
+			setLinkError(null);
+		}, [content, sessionId]);
 
 		return (
 			<div
@@ -200,23 +216,76 @@ export const MobileMarkdownRenderer = memo(
 					wordBreak: 'break-word',
 				}}
 			>
+				{linkError ? (
+					<div
+						style={{
+							marginBottom: '10px',
+							padding: '10px 12px',
+							borderRadius: '10px',
+							border: `1px solid ${colors.error}33`,
+							backgroundColor: `${colors.error}14`,
+							color: colors.error,
+							fontSize: '12px',
+							lineHeight: 1.5,
+						}}
+					>
+						{linkError}
+					</div>
+				) : null}
+				{detectedLocalFileLinks.length > 0 ? (
+					<div
+						style={{
+							marginBottom: '10px',
+							padding: '10px 12px',
+							borderRadius: '10px',
+							border: `1px solid ${colors.warning}33`,
+							backgroundColor: `${colors.warning}14`,
+							color: colors.textMain,
+							fontSize: '12px',
+							lineHeight: 1.5,
+						}}
+					>
+						This response included raw local file links. Maestro can rewrite supported project files
+						for remote viewing, but agents should return demo artifacts instead of local
+						`output/playwright` paths.
+					</div>
+				) : null}
 				<ReactMarkdown
 					remarkPlugins={[remarkGfm]}
 					components={{
 						// Links open in new tab
-						a: ({ href, children }) => (
-							<a
-								href={href}
-								target="_blank"
-								rel="noopener noreferrer"
-								style={{
-									color: colors.accent,
-									textDecoration: 'underline',
-								}}
-							>
-								{children}
-							</a>
-						),
+						a: ({ href, children }) => {
+							const streamableLocalFilePath = extractStreamableLocalFilePath(href);
+							const resolvedHref =
+								streamableLocalFilePath && sessionId
+									? buildSessionLocalFileViewerUrl(sessionId, streamableLocalFilePath)
+									: href;
+
+							return (
+								<a
+									href={resolvedHref}
+									target="_blank"
+									rel="noopener noreferrer"
+									onClick={(event) => {
+										if (streamableLocalFilePath && !sessionId) {
+											event.preventDefault();
+											setLinkError(
+												'This link points to a desktop-local file, but there is no active session context to stream it remotely.'
+											);
+											return;
+										}
+
+										setLinkError(null);
+									}}
+									style={{
+										color: colors.accent,
+										textDecoration: 'underline',
+									}}
+								>
+									{children}
+								</a>
+							);
+						},
 
 						// Block code: extract code element from <pre><code>...</code></pre>
 						pre: ({ children }: any) => {

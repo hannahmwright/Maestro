@@ -75,6 +75,8 @@ const MOBILE_MAX_WIDTH = 480;
 /** Height of expanded input on mobile */
 const MOBILE_EXPANDED_HEIGHT_VH = 30;
 
+const MOBILE_COMPOSER_SAFE_ZONE_ATTR = 'data-mobile-composer-safe-zone';
+
 const TEXT_ATTACHMENT_MAX_BYTES = 180 * 1024;
 
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
@@ -191,6 +193,15 @@ function useIsMobilePhone(): boolean {
 	return isMobile;
 }
 
+function isWithinMobileComposerSafeZone(target: EventTarget | null | undefined): boolean {
+	if (!(target instanceof Node)) {
+		return false;
+	}
+
+	const element = target instanceof Element ? target : target.parentElement;
+	return element?.closest(`[${MOBILE_COMPOSER_SAFE_ZONE_ATTR}="true"]`) !== null;
+}
+
 /** Input mode type - AI assistant or terminal */
 export type InputMode = 'ai' | 'terminal';
 
@@ -302,11 +313,12 @@ export function CommandInputBar({
 	onToggleDemoCapture,
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
-	const textareaRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(null) as React.MutableRefObject<
-		HTMLTextAreaElement | HTMLInputElement | null
-	>;
+	const textareaRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(
+		null
+	) as React.MutableRefObject<HTMLTextAreaElement | HTMLInputElement | null>;
 	const containerRef = useRef<HTMLDivElement>(null);
 	const composerSurfaceRef = useRef<HTMLFormElement>(null);
+	const lastComposerInteractionAtRef = useRef(0);
 	const modelMenuRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const actionsMenuRef = useRef<HTMLDivElement>(null);
@@ -524,6 +536,36 @@ export function CommandInputBar({
 		textarea.focus(preventScroll ? { preventScroll: true } : undefined);
 	}, []);
 
+	const markComposerInteraction = useCallback(() => {
+		lastComposerInteractionAtRef.current = Date.now();
+	}, []);
+
+	const shouldKeepExpandedComposerOpen = useCallback((relatedTarget?: EventTarget | null) => {
+		const container = containerRef.current;
+		if (!container) {
+			return false;
+		}
+
+		const activeElement = document.activeElement;
+		if (activeElement instanceof Node && container.contains(activeElement)) {
+			return true;
+		}
+
+		if (isWithinMobileComposerSafeZone(activeElement)) {
+			return true;
+		}
+
+		if (relatedTarget instanceof Node && container.contains(relatedTarget)) {
+			return true;
+		}
+
+		if (isWithinMobileComposerSafeZone(relatedTarget)) {
+			return true;
+		}
+
+		return Date.now() - lastComposerInteractionAtRef.current < 400;
+	}, []);
+
 	/**
 	 * Handle form submission
 	 */
@@ -580,6 +622,11 @@ export function CommandInputBar({
 		if (!isExpanded || !isMobilePhone || inputMode !== 'ai') return;
 
 		const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+			if (isWithinMobileComposerSafeZone(e.target)) {
+				lastComposerInteractionAtRef.current = Date.now();
+				return;
+			}
+
 			if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
 				setIsInputFocused(false);
 				setIsExpanded(false);
@@ -1079,6 +1126,7 @@ export function CommandInputBar({
 
 	const actionsMenu = actionsMenuOpen && (
 		<div
+			{...{ [MOBILE_COMPOSER_SAFE_ZONE_ATTR]: 'true' }}
 			style={{
 				position: 'absolute',
 				bottom: 'calc(100% + 10px)',
@@ -1366,6 +1414,8 @@ export function CommandInputBar({
 		<div
 			ref={containerRef}
 			{...swipeUpHandlers}
+			onMouseDownCapture={markComposerInteraction}
+			onTouchStartCapture={markComposerInteraction}
 			style={{
 				position: 'fixed',
 				left: 0,
@@ -1446,6 +1496,7 @@ export function CommandInputBar({
 			{supportsModelSelection && modelMenuOpen && (
 				<div
 					ref={modelMenuRef}
+					{...{ [MOBILE_COMPOSER_SAFE_ZONE_ATTR]: 'true' }}
 					style={{
 						position: 'absolute',
 						left: '12px',
@@ -1608,7 +1659,7 @@ export function CommandInputBar({
 						padding: '14px 14px 12px',
 						flex: 1,
 						maxWidth: '100%',
-						overflow: 'hidden',
+						overflow: 'visible',
 						borderRadius: '26px 26px 0 0',
 						...composerSurfaceStyle,
 					}}
@@ -1640,12 +1691,8 @@ export function CommandInputBar({
 									gap: '8px',
 									padding: '10px 14px',
 									borderRadius: '999px',
-									border: `1px solid ${
-										demoCaptureEnabled ? `${colors.accent}66` : colors.border
-									}`,
-									background: demoCaptureEnabled
-										? `${colors.accent}14`
-										: `${colors.bgMain}d6`,
+									border: `1px solid ${demoCaptureEnabled ? `${colors.accent}66` : colors.border}`,
+									background: demoCaptureEnabled ? `${colors.accent}14` : `${colors.bgMain}d6`,
 									color: demoCaptureEnabled ? colors.accent : colors.textMain,
 									cursor: isDisabled ? 'default' : 'pointer',
 									opacity: isDisabled ? 0.55 : 1,
@@ -1703,13 +1750,14 @@ export function CommandInputBar({
 						onFocus={() => {
 							setIsInputFocused(true);
 						}}
-						onBlur={(_e) => {
+						onBlur={(e) => {
 							setIsInputFocused(false);
 							// Delay collapse to allow click on send button
 							setTimeout(() => {
-								if (!containerRef.current?.contains(document.activeElement)) {
-									setIsExpanded(false);
+								if (shouldKeepExpandedComposerOpen(e.relatedTarget)) {
+									return;
 								}
+								setIsExpanded(false);
 							}, 150);
 							onInputBlur?.();
 						}}
@@ -1872,26 +1920,28 @@ export function CommandInputBar({
 							</div>
 						)}
 						<div
-							style={{
-								flex: 1,
-								minWidth: 0,
-								position: 'relative',
-								overflow: 'visible',
-								'--maestro-placeholder-color': isInputFocused
-									? `${colors.textDim}d9`
-									: `${colors.textDim}b8`,
-								transition:
-									'border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease',
-								padding: isIdleCompactAiComposer ? '0' : '3px',
-								borderRadius: '20px',
-								border: `1px solid ${isInputFocused ? `${colors.accent}66` : `${colors.border}cc`}`,
-								background: isInputFocused
-									? 'linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.94) 100%)'
-									: 'linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(241, 245, 249, 0.88) 100%)',
-								boxShadow: isInputFocused
-									? `0 0 0 3px ${colors.accent}1f, 0 14px 28px rgba(15, 23, 42, 0.14)`
-									: '0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.6)',
-							} as React.CSSProperties & Record<'--maestro-placeholder-color', string>}
+							style={
+								{
+									flex: 1,
+									minWidth: 0,
+									position: 'relative',
+									overflow: 'visible',
+									'--maestro-placeholder-color': isInputFocused
+										? `${colors.textDim}d9`
+										: `${colors.textDim}b8`,
+									transition:
+										'border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease',
+									padding: isIdleCompactAiComposer ? '0' : '3px',
+									borderRadius: '20px',
+									border: `1px solid ${isInputFocused ? `${colors.accent}66` : `${colors.border}cc`}`,
+									background: isInputFocused
+										? 'linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.94) 100%)'
+										: 'linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(241, 245, 249, 0.88) 100%)',
+									boxShadow: isInputFocused
+										? `0 0 0 3px ${colors.accent}1f, 0 14px 28px rgba(15, 23, 42, 0.14)`
+										: '0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.6)',
+								} as React.CSSProperties & Record<'--maestro-placeholder-color', string>
+							}
 						>
 							{isIdleCompactAiComposer ? (
 								<input

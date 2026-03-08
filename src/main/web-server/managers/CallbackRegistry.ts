@@ -13,6 +13,7 @@ import type {
 	GetSessionDemosCallback,
 	GetDemoDetailCallback,
 	GetArtifactContentCallback,
+	GetSessionLocalFileCallback,
 	GetVoiceTranscriptionStatusCallback,
 	PrewarmVoiceTranscriptionCallback,
 	TranscribeAudioCallback,
@@ -47,6 +48,7 @@ export interface WebServerCallbacks {
 	getSessionDemos: GetSessionDemosCallback | null;
 	getDemoDetail: GetDemoDetailCallback | null;
 	getArtifactContent: GetArtifactContentCallback | null;
+	getSessionLocalFile: GetSessionLocalFileCallback | null;
 	getTheme: GetThemeCallback | null;
 	getCustomCommands: GetCustomCommandsCallback | null;
 	transcribeAudio: TranscribeAudioCallback | null;
@@ -77,6 +79,7 @@ export class CallbackRegistry {
 		getSessionDemos: null,
 		getDemoDetail: null,
 		getArtifactContent: null,
+		getSessionLocalFile: null,
 		getTheme: null,
 		getCustomCommands: null,
 		transcribeAudio: null,
@@ -126,6 +129,15 @@ export class CallbackRegistry {
 
 	async getArtifactContent(artifactId: string) {
 		return (await this.callbacks.getArtifactContent?.(artifactId)) ?? null;
+	}
+
+	async getSessionLocalFile(sessionId: string, requestedPath: string) {
+		return (
+			(await this.callbacks.getSessionLocalFile?.(sessionId, requestedPath)) ?? {
+				errorCode: 503,
+				message: 'Local file streaming is not configured.',
+			}
+		);
 	}
 
 	getTheme(): ReturnType<GetThemeCallback> | null {
@@ -281,6 +293,10 @@ export class CallbackRegistry {
 
 	setGetArtifactContentCallback(callback: GetArtifactContentCallback): void {
 		this.callbacks.getArtifactContent = callback;
+	}
+
+	setGetSessionLocalFileCallback(callback: GetSessionLocalFileCallback): void {
+		this.callbacks.getSessionLocalFile = callback;
 	}
 
 	setGetThemeCallback(callback: GetThemeCallback): void {
