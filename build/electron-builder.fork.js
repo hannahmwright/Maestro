@@ -6,7 +6,7 @@ const packageJson = require('../package.json');
 module.exports = {
 	...packageJson.build,
 	appId: 'com.vervetechgroup.maestro.fork',
-	productName: 'Maestro Fork',
+	productName: 'Maestro',
 	publish: {
 		provider: 'github',
 		owner: 'hannahmwright',

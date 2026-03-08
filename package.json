@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.15.4",
+	"version": "0.15.5",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -22,7 +22,7 @@
 			"label": "Hannah Fork Releases",
 			"owner": "hannahmwright",
 			"repo": "Maestro",
-			"productName": "Maestro Fork",
+			"productName": "Maestro",
 			"appId": "com.vervetechgroup.maestro.fork"
 		}
 	},

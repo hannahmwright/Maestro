@@ -12,7 +12,7 @@ This repo now supports a fork-specific release channel modeled after the Veranot
 
 Fork release builds use:
 
-- Product name: `Maestro Fork`
+- Product name: `Maestro`
 - App ID: `com.vervetechgroup.maestro.fork`
 - GitHub release repo: `hannahmwright/Maestro`
 
