@@ -619,7 +619,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     # Run release even if some builds failed (fail-fast: false allows partial success)
-    if: always() && startsWith(github.ref, 'refs/tags/') && needs.build.result != 'cancelled'
+    if: github.repository == 'RunMaestro/Maestro' && always() && startsWith(github.ref, 'refs/tags/') && needs.build.result != 'cancelled'
 
     steps:
       # Download each platform's artifacts separately to handle partial failures
@@ -742,7 +742,7 @@ jobs:
   sync-docs:
     needs: release
     runs-on: ubuntu-latest
-    if: always() && needs.release.result == 'success'
+    if: github.repository == 'RunMaestro/Maestro' && always() && needs.release.result == 'success'
 
     steps:
       - name: Checkout main branch
