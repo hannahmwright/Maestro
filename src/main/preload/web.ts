@@ -85,6 +85,8 @@ export function createWebApi() {
 			groupName?: string | null;
 			groupEmoji?: string | null;
 			effectiveContextWindow?: number | null;
+			aiTabs?: AiTabState[];
+			activeTabId?: string;
 			isGitRepo?: boolean;
 			parentSessionId?: string | null;
 			worktreeBranch?: string | null;

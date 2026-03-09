@@ -140,6 +140,8 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 				groupName?: string | null;
 				groupEmoji?: string | null;
 				effectiveContextWindow?: number | null;
+				aiTabs?: AITabData[];
+				activeTabId?: string;
 				isGitRepo?: boolean;
 				parentSessionId?: string | null;
 				worktreeBranch?: string | null;

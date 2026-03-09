@@ -15,8 +15,9 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { appendDemoCaptureInstructions } from '../../utils/demoCapturePrompt';
 import { useSessionStore } from '../../stores/sessionStore';
 import { gitService } from '../../services/git';
-import { imageOnlyDefaultPrompt, maestroSystemPrompt } from '../../../prompts';
+import { imageOnlyDefaultPrompt } from '../../../prompts';
 import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
+import { getAgentSystemPromptTemplate } from '../../utils/agentSystemPrompt';
 
 /**
  * Default prompt used when user sends only an image without text.
@@ -499,7 +500,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const isAutoRunReadOnly = currentBatchState.isRunning && !currentBatchState.worktreeActive;
 			const isReadOnlyEntry = activeTabForEntry?.readOnlyMode === true || isAutoRunReadOnly;
 			const capturedDemoCapture: DemoCaptureRequest | undefined =
-				currentMode === 'ai' && activeTabForEntry?.demoCaptureRequested ? { enabled: true } : undefined;
+				currentMode === 'ai' && activeTabForEntry?.demoCaptureRequested
+					? { enabled: true }
+					: undefined;
 
 			const newEntry: LogEntry = {
 				id: generateId(),
@@ -867,10 +870,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							});
 						}
 
-						// For NEW sessions (no agentSessionId), prepend Maestro system prompt
-						// This introduces Maestro and sets directory restrictions for the agent
+						// For new sessions, prepend the provider-specific Maestro system prompt.
 						const isNewSession = !tabAgentSessionId;
-						if (isNewSession && maestroSystemPrompt) {
+						const systemPromptTemplate = getAgentSystemPromptTemplate(freshSession.toolType);
+						if (isNewSession && systemPromptTemplate) {
 							// Get git branch for template substitution
 							let gitBranch: string | undefined;
 							if (freshSession.isGitRepo) {
@@ -906,7 +909,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								parentSessionId: freshSession.parentSessionId,
 								historyFilePath,
 							});
-							const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+							const substitutedSystemPrompt = substituteTemplateVariables(systemPromptTemplate, {
 								session: freshSession,
 								gitBranch,
 								historyFilePath,

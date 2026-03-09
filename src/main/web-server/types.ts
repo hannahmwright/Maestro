@@ -174,6 +174,8 @@ export interface SessionBroadcastData {
 	groupName?: string | null;
 	groupEmoji?: string | null;
 	effectiveContextWindow?: number | null;
+	aiTabs?: AITabData[];
+	activeTabId?: string;
 	isGitRepo?: boolean;
 	/** Worktree subagent support */
 	parentSessionId?: string | null;

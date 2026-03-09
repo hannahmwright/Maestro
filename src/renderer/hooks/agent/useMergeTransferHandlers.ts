@@ -23,11 +23,11 @@ import { getModalActions } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
-import { maestroSystemPrompt } from '../../../prompts';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useMergeSessionWithSessions } from './useMergeSession';
 import { useSendToAgentWithSessions } from './useSendToAgent';
 import { captureException } from '../../utils/sentry';
+import { getAgentSystemPromptTemplate } from '../../utils/agentSystemPrompt';
 
 // ============================================================================
 // Dependencies interface
@@ -469,9 +469,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 					// Read conductorProfile from settings store at call time
 					const conductorProfile = useSettingsStore.getState().conductorProfile;
 
-					// Prepend Maestro system prompt since this is a new session
-					if (maestroSystemPrompt) {
-						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					// Prepend the provider-specific Maestro system prompt since this is a new session.
+					const systemPromptTemplate = getAgentSystemPromptTemplate(targetSession.toolType);
+					if (systemPromptTemplate) {
+						const substitutedSystemPrompt = substituteTemplateVariables(systemPromptTemplate, {
 							session: targetSession,
 							gitBranch,
 							conductorProfile,

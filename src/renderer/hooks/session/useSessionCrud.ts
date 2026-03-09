@@ -260,6 +260,19 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);
+				const webInitialTab = {
+					id: initialTab.id,
+					agentSessionId: initialTab.agentSessionId || null,
+					name: initialTab.name || null,
+					starred: initialTab.starred || false,
+					hasUnread: !!initialTab.hasUnread,
+					inputValue: initialTab.inputValue || '',
+					usageStats: initialTab.usageStats || null,
+					createdAt: initialTab.createdAt,
+					state: initialTab.state || 'idle',
+					thinkingStartTime: initialTab.thinkingStartTime || null,
+					currentModel: initialTab.currentModel || null,
+				};
 				void window.maestro.web.broadcastSessionAdded({
 					id: newSession.id,
 					name: newSession.name,
@@ -274,6 +287,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						typeof newSession.customContextWindow === 'number' && newSession.customContextWindow > 0
 							? newSession.customContextWindow
 							: null,
+					aiTabs: [webInitialTab],
+					activeTabId: initialTabId,
 					isGitRepo: newSession.isGitRepo,
 					parentSessionId: newSession.parentSessionId || null,
 					worktreeBranch: newSession.worktreeBranch || null,

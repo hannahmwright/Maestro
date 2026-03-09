@@ -174,12 +174,20 @@ export function ThemeProvider({
 		injectCSSProperties(activeTheme);
 		const fontFamily = activeTheme.fontFamily || CODEX_DEFAULT_FONT_STACK;
 		document.documentElement.style.setProperty('--font-interface', fontFamily);
+		document.documentElement.style.backgroundColor = activeTheme.colors.bgMain;
+		document.documentElement.style.color = activeTheme.colors.textMain;
 		document.body.style.fontFamily = fontFamily;
+		document.body.style.backgroundColor = activeTheme.colors.bgMain;
+		document.body.style.color = activeTheme.colors.textMain;
 
 		// Cleanup on unmount
 		return () => {
 			document.documentElement.style.removeProperty('--font-interface');
+			document.documentElement.style.removeProperty('background-color');
+			document.documentElement.style.removeProperty('color');
 			document.body.style.removeProperty('font-family');
+			document.body.style.removeProperty('background-color');
+			document.body.style.removeProperty('color');
 			removeCSSProperties();
 		};
 	}, [activeTheme]);

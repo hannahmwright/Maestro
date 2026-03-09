@@ -168,6 +168,21 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 						groupId: session.groupId || null,
 						groupName: session.groupName || null,
 						groupEmoji: session.groupEmoji || null,
+						aiTabs:
+							session.aiTabs?.map((tab: StoredSession['aiTabs'][number]) => ({
+								id: tab.id,
+								agentSessionId: tab.agentSessionId || null,
+								name: tab.name || null,
+								starred: tab.starred || false,
+								hasUnread: !!tab.hasUnread,
+								inputValue: tab.inputValue || '',
+								usageStats: tab.usageStats || null,
+								createdAt: tab.createdAt,
+								state: tab.state || 'idle',
+								thinkingStartTime: tab.thinkingStartTime || null,
+								currentModel: tab.currentModel || null,
+							})) || [],
+						activeTabId: session.activeTabId || session.aiTabs?.[0]?.id,
 						parentSessionId: session.parentSessionId || null,
 						worktreeBranch: session.worktreeBranch || null,
 					});
@@ -237,7 +252,10 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 				conductorsStore.set('runs', data.runs);
 			} catch (err) {
 				const code = (err as NodeJS.ErrnoException).code;
-				logger.warn(`Failed to persist conductors: ${code || (err as Error).message}`, 'Conductors');
+				logger.warn(
+					`Failed to persist conductors: ${code || (err as Error).message}`,
+					'Conductors'
+				);
 				return false;
 			}
 			return true;

@@ -29,10 +29,10 @@ import { createTab, getActiveTab } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
 import { useSessionStore } from './sessionStore';
 import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
-import { maestroSystemPrompt } from '../../prompts';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { appendDemoCaptureInstructions } from '../utils/demoCapturePrompt';
 import { gitService } from '../services/git';
+import { getAgentSystemPromptTemplate } from '../utils/agentSystemPrompt';
 
 const PLAN_MODE_PROMPT_PREFIX = `# Mode: Plan
 
@@ -309,9 +309,10 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 				// Process a message - spawn agent with the message text
 				let effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
-				// For NEW sessions (no agentSessionId), prepend Maestro system prompt
+				// For new sessions, prepend the provider-specific Maestro system prompt.
 				const isNewSession = !tabAgentSessionId;
-				if (isNewSession && maestroSystemPrompt) {
+				const systemPromptTemplate = getAgentSystemPromptTemplate(session.toolType);
+				if (isNewSession && systemPromptTemplate) {
 					let gitBranch: string | undefined;
 					if (session.isGitRepo) {
 						try {
@@ -322,7 +323,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						}
 					}
 
-					const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					const substitutedSystemPrompt = substituteTemplateVariables(systemPromptTemplate, {
 						session,
 						gitBranch,
 						conductorProfile: deps.conductorProfile,
@@ -409,11 +410,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						conductorProfile: deps.conductorProfile,
 					});
 
-					// For NEW sessions, prepend Maestro system prompt
+					// For new sessions, prepend the provider-specific Maestro system prompt.
 					const isNewSessionForCommand = !tabAgentSessionId;
 					let promptForAgent = substitutedPrompt;
-					if (isNewSessionForCommand && maestroSystemPrompt) {
-						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+					const systemPromptTemplate = getAgentSystemPromptTemplate(session.toolType);
+					if (isNewSessionForCommand && systemPromptTemplate) {
+						const substitutedSystemPrompt = substituteTemplateVariables(systemPromptTemplate, {
 							session,
 							gitBranch,
 							conductorProfile: deps.conductorProfile,

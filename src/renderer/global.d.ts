@@ -885,6 +885,20 @@ interface MaestroAPI {
 			groupName?: string | null;
 			groupEmoji?: string | null;
 			effectiveContextWindow?: number | null;
+			aiTabs?: Array<{
+				id: string;
+				agentSessionId: string | null;
+				name: string | null;
+				starred: boolean;
+				hasUnread?: boolean;
+				inputValue: string;
+				usageStats?: UsageStats | null;
+				createdAt: number;
+				state: 'idle' | 'busy';
+				thinkingStartTime?: number | null;
+				currentModel?: string | null;
+			}>;
+			activeTabId?: string;
 			isGitRepo?: boolean;
 			parentSessionId?: string | null;
 			worktreeBranch?: string | null;
