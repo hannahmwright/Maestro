@@ -103,7 +103,11 @@ export class ProcessManager extends EventEmitter {
 		}
 	}
 
-	respondToUserInput(sessionId: string, requestId: UserInputRequestId, response: UserInputResponse) {
+	respondToUserInput(
+		sessionId: string,
+		requestId: UserInputRequestId,
+		response: UserInputResponse
+	) {
 		return this.codexAppServerBridge.respondToUserInput(sessionId, requestId, response);
 	}
 

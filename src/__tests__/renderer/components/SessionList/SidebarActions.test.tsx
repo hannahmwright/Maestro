@@ -30,7 +30,6 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 		leftSidebarOpen: true,
 		hasNoSessions: false,
 		shortcuts: defaultShortcuts,
-		addNewSession: vi.fn(),
 		openWizard: vi.fn(),
 		setLeftSidebarOpen: vi.fn(),
 		...overrides,
@@ -38,40 +37,29 @@ function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = 
 }
 
 describe('SidebarActions', () => {
-	it('renders collapse button, New Agent, and Wizard when sidebar is open', () => {
+	it('renders collapse button and New Agent when sidebar is open', () => {
 		render(<SidebarActions {...createProps()} />);
 
 		expect(screen.getByText('New Agent')).toBeTruthy();
-		expect(screen.getByText('Wizard')).toBeTruthy();
 	});
 
-	it('hides New Agent and Wizard when sidebar is collapsed', () => {
+	it('hides New Agent when sidebar is collapsed', () => {
 		render(<SidebarActions {...createProps({ leftSidebarOpen: false })} />);
 
 		expect(screen.queryByText('New Agent')).toBeNull();
-		expect(screen.queryByText('Wizard')).toBeNull();
 	});
 
-	it('hides Wizard button when openWizard is undefined', () => {
+	it('hides New Agent when openWizard is undefined', () => {
 		render(<SidebarActions {...createProps({ openWizard: undefined })} />);
 
-		expect(screen.getByText('New Agent')).toBeTruthy();
-		expect(screen.queryByText('Wizard')).toBeNull();
+		expect(screen.queryByText('New Agent')).toBeNull();
 	});
 
-	it('calls addNewSession when New Agent is clicked', () => {
-		const addNewSession = vi.fn();
-		render(<SidebarActions {...createProps({ addNewSession })} />);
-
-		fireEvent.click(screen.getByText('New Agent'));
-		expect(addNewSession).toHaveBeenCalledOnce();
-	});
-
-	it('calls openWizard when Wizard is clicked', () => {
+	it('calls openWizard when New Agent is clicked', () => {
 		const openWizard = vi.fn();
 		render(<SidebarActions {...createProps({ openWizard })} />);
 
-		fireEvent.click(screen.getByText('Wizard'));
+		fireEvent.click(screen.getByText('New Agent'));
 		expect(openWizard).toHaveBeenCalledOnce();
 	});
 

@@ -3222,10 +3222,10 @@ function MaestroConsoleInner() {
 					!activeGroupChatId &&
 					!activeConductorGroupId &&
 					!logViewerOpen && (
-					<ErrorBoundary>
-						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
-					</ErrorBoundary>
-				)}
+						<ErrorBoundary>
+							<RightPanel ref={rightPanelRef} {...rightPanelProps} />
+						</ErrorBoundary>
+					)}
 
 				{/* Old settings modal removed - using new SettingsModal component below */}
 				{/* NOTE: NewInstanceModal and EditAgentModal are now rendered via AppSessionModals */}

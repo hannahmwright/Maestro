@@ -384,7 +384,11 @@ describe('Data Listener', () => {
 					title: 'Checkout demo',
 				}),
 			});
-			expect(mockSafeSend).toHaveBeenCalledWith('process:data', 'session-123-ai-tab-456', 'before\nafter');
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'process:data',
+				'session-123-ai-tab-456',
+				'before\nafter'
+			);
 			expect(mockSafeSend).toHaveBeenCalledWith(
 				'process:demo-generated',
 				'session-123',
@@ -407,10 +411,7 @@ describe('Data Listener', () => {
 				'session-999-ai-tab-abc',
 				'visible line\n__MAESTRO_DEMO_EVENT__ {"type":"capture_started"'
 			);
-			handler?.(
-				'session-999-ai-tab-abc',
-				',"runId":"run-9","title":"Demo"}\nfinal line'
-			);
+			handler?.('session-999-ai-tab-abc', ',"runId":"run-9","title":"Demo"}\nfinal line');
 			await Promise.resolve();
 
 			expect(mockHandleCaptureEvent).toHaveBeenCalledWith({

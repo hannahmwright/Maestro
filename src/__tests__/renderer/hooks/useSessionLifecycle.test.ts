@@ -154,6 +154,12 @@ beforeEach(() => {
 		groups: {
 			setAll: vi.fn(),
 		},
+		web: {
+			broadcastSessionRemoved: vi.fn().mockResolvedValue(undefined),
+		},
+		live: {
+			broadcastActiveSession: vi.fn().mockResolvedValue(undefined),
+		},
 	};
 });
 

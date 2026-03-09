@@ -56,7 +56,10 @@ export function DemoCardPanel({ theme, demoCard, onOpen }: DemoCardPanelProps) {
 					/>
 				) : null}
 				<div className="flex flex-col gap-1">
-					<div className="text-[11px] font-semibold tracking-[0.12em]" style={{ color: theme.colors.textDim }}>
+					<div
+						className="text-[11px] font-semibold tracking-[0.12em]"
+						style={{ color: theme.colors.textDim }}
+					>
 						DEMO
 					</div>
 					<div className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>

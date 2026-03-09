@@ -83,24 +83,28 @@ esac
 
 	it('emits capture_started and step_created for screenshot-step', async () => {
 		const outputDir = path.join(tempDir, 'output');
-		const { stdout } = await execFileAsync(helperPath, [
-			'screenshot-step',
-			'--title',
-			'Loaded dashboard',
-			'--description',
-			'Dashboard rendered',
-			'--filename',
-			path.join(outputDir, 'step-1.png'),
-		], {
-			env: {
-				...process.env,
-				PWCLI: fakePwcliPath,
-				MAESTRO_DEMO_CAPTURE: '1',
-				MAESTRO_DEMO_EVENT_PREFIX: '__MAESTRO_DEMO_EVENT__',
-				MAESTRO_DEMO_RUN_ID: 'script-run-1',
-				MAESTRO_DEMO_OUTPUT_DIR: outputDir,
-			},
-		});
+		const { stdout } = await execFileAsync(
+			helperPath,
+			[
+				'screenshot-step',
+				'--title',
+				'Loaded dashboard',
+				'--description',
+				'Dashboard rendered',
+				'--filename',
+				path.join(outputDir, 'step-1.png'),
+			],
+			{
+				env: {
+					...process.env,
+					PWCLI: fakePwcliPath,
+					MAESTRO_DEMO_CAPTURE: '1',
+					MAESTRO_DEMO_EVENT_PREFIX: '__MAESTRO_DEMO_EVENT__',
+					MAESTRO_DEMO_RUN_ID: 'script-run-1',
+					MAESTRO_DEMO_OUTPUT_DIR: outputDir,
+				},
+			}
+		);
 
 		expect(stdout).toContain('"type":"capture_started"');
 		expect(stdout).toContain('"runId":"script-run-1"');
@@ -121,16 +125,20 @@ esac
 				MAESTRO_DEMO_OUTPUT_DIR: outputDir,
 			},
 		});
-		const completeResult = await execFileAsync(helperPath, ['complete', '--title', 'Demo', '--summary', 'Summary'], {
-			env: {
-				...process.env,
-				PWCLI: fakePwcliPath,
-				MAESTRO_DEMO_CAPTURE: '1',
-				MAESTRO_DEMO_EVENT_PREFIX: '__MAESTRO_DEMO_EVENT__',
-				MAESTRO_DEMO_RUN_ID: 'script-run-2',
-				MAESTRO_DEMO_OUTPUT_DIR: outputDir,
-			},
-		});
+		const completeResult = await execFileAsync(
+			helperPath,
+			['complete', '--title', 'Demo', '--summary', 'Summary'],
+			{
+				env: {
+					...process.env,
+					PWCLI: fakePwcliPath,
+					MAESTRO_DEMO_CAPTURE: '1',
+					MAESTRO_DEMO_EVENT_PREFIX: '__MAESTRO_DEMO_EVENT__',
+					MAESTRO_DEMO_RUN_ID: 'script-run-2',
+					MAESTRO_DEMO_OUTPUT_DIR: outputDir,
+				},
+			}
+		);
 
 		expect(videoResult.stdout).toContain('"type":"artifact_created"');
 		expect(videoResult.stdout).toContain('"role":"video"');

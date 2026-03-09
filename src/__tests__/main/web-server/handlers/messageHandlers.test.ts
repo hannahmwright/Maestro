@@ -134,7 +134,15 @@ describe('WebSocketMessageHandler', () => {
 
 			// Wait for async callback
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'Hello Claude!', 'ai');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'Hello Claude!',
+					'ai',
+					undefined,
+					undefined,
+					undefined,
+					undefined
+				);
 			});
 
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
@@ -151,7 +159,15 @@ describe('WebSocketMessageHandler', () => {
 			});
 
 			await vi.waitFor(() => {
-				expect(callbacks.executeCommand).toHaveBeenCalledWith('session-1', 'ls -la', 'terminal');
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'ls -la',
+					'terminal',
+					undefined,
+					undefined,
+					undefined,
+					undefined
+				);
 			});
 		});
 
@@ -518,7 +534,7 @@ describe('WebSocketMessageHandler', () => {
 	});
 
 	describe('Get Sessions', () => {
-		it('should return sessions list with live info', () => {
+		it('should return sessions list with live info', async () => {
 			(callbacks.getLiveSessionInfo as any).mockReturnValue({
 				sessionId: 'session-1',
 				agentSessionId: 'live-claude-456',
@@ -528,11 +544,13 @@ describe('WebSocketMessageHandler', () => {
 
 			handler.handleMessage(client, { type: 'get_sessions' });
 
-			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('sessions_list');
-			expect(response.sessions).toHaveLength(1);
-			expect(response.sessions[0].agentSessionId).toBe('live-claude-456');
-			expect(response.sessions[0].isLive).toBe(true);
+			await vi.waitFor(() => {
+				const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
+				expect(response.type).toBe('sessions_list');
+				expect(response.sessions).toHaveLength(1);
+				expect(response.sessions[0].agentSessionId).toBe('live-claude-456');
+				expect(response.sessions[0].isLive).toBe(true);
+			});
 		});
 	});
 

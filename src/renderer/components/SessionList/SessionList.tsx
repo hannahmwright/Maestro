@@ -1004,7 +1004,9 @@ function SessionListInner(props: SessionListProps) {
 								>
 									<div
 										className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
-										style={{ color: !group.collapsed ? theme.colors.textMain : theme.colors.textDim }}
+										style={{
+											color: !group.collapsed ? theme.colors.textMain : theme.colors.textDim,
+										}}
 										onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
 									>
 										{group.collapsed ? (
@@ -1085,8 +1087,12 @@ function SessionListInner(props: SessionListProps) {
 											}}
 											className="mx-3 mt-1.5 mb-1 px-3 py-2 rounded-lg border text-left transition-colors"
 											style={{
-												backgroundColor: isConductorActive ? `${theme.colors.accent}12` : 'transparent',
-												borderColor: isConductorActive ? `${theme.colors.accent}26` : 'rgba(255,255,255,0.06)',
+												backgroundColor: isConductorActive
+													? `${theme.colors.accent}12`
+													: 'transparent',
+												borderColor: isConductorActive
+													? `${theme.colors.accent}26`
+													: 'rgba(255,255,255,0.06)',
 												color: isConductorActive ? theme.colors.textMain : theme.colors.textDim,
 											}}
 											title={`Open Conductor for ${group.name}`}
@@ -1094,7 +1100,7 @@ function SessionListInner(props: SessionListProps) {
 											<div className="flex items-center justify-between gap-3">
 												<div className="flex items-center gap-2 min-w-0">
 													<Radio className="w-3.5 h-3.5 shrink-0" />
-														<span className="text-[11px] font-semibold uppercase tracking-[0.16em]">
+													<span className="text-[11px] font-semibold uppercase tracking-[0.16em]">
 														Conductor
 													</span>
 												</div>
@@ -1102,9 +1108,7 @@ function SessionListInner(props: SessionListProps) {
 													<span
 														className="text-[10px] uppercase"
 														style={{
-															color: isConductorActive
-																? theme.colors.accent
-																: theme.colors.textDim,
+															color: isConductorActive ? theme.colors.accent : theme.colors.textDim,
 														}}
 													>
 														{conductor.status.replace(/_/g, ' ')}
@@ -1178,7 +1182,7 @@ function SessionListInner(props: SessionListProps) {
 						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
 						<div className="mb-1 mt-4">
 							<div
-									className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
+								className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
 								onClick={() => setUngroupedCollapsed(!ungroupedCollapsed)}
 								onDragOver={handleDragOver}
 								onDrop={handleDropOnUngrouped}
@@ -1188,7 +1192,7 @@ function SessionListInner(props: SessionListProps) {
 								})}
 							>
 								<div
-										className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
+									className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
 									style={{ color: theme.colors.textDim }}
 								>
 									{ungroupedCollapsed ? (
@@ -1204,12 +1208,12 @@ function SessionListInner(props: SessionListProps) {
 										e.stopPropagation();
 										createNewGroup();
 									}}
-										className="px-2 py-0.5 rounded-full text-[10px] font-medium transition-opacity flex items-center gap-1"
-										style={{
-											backgroundColor: `${theme.colors.accent}14`,
-											border: `1px solid ${theme.colors.accent}28`,
-											color: theme.colors.accent,
-										}}
+									className="px-2 py-0.5 rounded-full text-[10px] font-medium transition-opacity flex items-center gap-1"
+									style={{
+										backgroundColor: `${theme.colors.accent}14`,
+										border: `1px solid ${theme.colors.accent}28`,
+										color: theme.colors.accent,
+									}}
 									title="Create new group"
 								>
 									<Plus className="w-3 h-3" />

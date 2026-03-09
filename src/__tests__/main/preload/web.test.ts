@@ -43,7 +43,9 @@ describe('Web Preload API', () => {
 					'web:broadcastUserInput',
 					'session-123',
 					'hello world',
-					'ai'
+					'ai',
+					undefined,
+					undefined
 				);
 			});
 
@@ -56,7 +58,9 @@ describe('Web Preload API', () => {
 					'web:broadcastUserInput',
 					'session-123',
 					'ls -la',
-					'terminal'
+					'terminal',
+					undefined,
+					undefined
 				);
 			});
 		});

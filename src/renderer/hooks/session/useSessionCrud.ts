@@ -273,7 +273,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					thinkingStartTime: initialTab.thinkingStartTime || null,
 					currentModel: initialTab.currentModel || null,
 				};
-				void window.maestro.web.broadcastSessionAdded({
+				void window.maestro.web?.broadcastSessionAdded?.({
 					id: newSession.id,
 					name: newSession.name,
 					toolType: newSession.toolType,
@@ -293,7 +293,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					parentSessionId: newSession.parentSessionId || null,
 					worktreeBranch: newSession.worktreeBranch || null,
 				});
-				void window.maestro.live.broadcastActiveSession(newId);
+				void window.maestro.live?.broadcastActiveSession?.(newId);
 				setTimeout(() => flushSessionPersistence(), 0);
 				(window as any).maestro.stats.recordSessionCreated({
 					sessionId: newId,

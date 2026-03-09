@@ -195,9 +195,9 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				command: command.substring(0, 50),
 				webInputMode,
 				imageCount: images.length,
-					textAttachmentCount: textAttachments.length,
-					demoCaptureEnabled: demoCapture?.enabled ?? false,
-				});
+				textAttachmentCount: textAttachments.length,
+				demoCaptureEnabled: demoCapture?.enabled ?? false,
+			});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);

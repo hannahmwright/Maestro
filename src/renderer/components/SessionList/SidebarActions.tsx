@@ -7,7 +7,7 @@ interface SidebarActionsProps {
 	theme: Theme;
 	leftSidebarOpen: boolean;
 	hasNoSessions: boolean;
-	shortcuts: Record<string, Shortcut>;
+	shortcuts?: Record<string, Shortcut>;
 	openWizard?: () => void;
 	setLeftSidebarOpen: (open: boolean) => void;
 }
@@ -16,10 +16,13 @@ export const SidebarActions = memo(function SidebarActions({
 	theme,
 	leftSidebarOpen,
 	hasNoSessions,
-	shortcuts,
+	shortcuts = {},
 	openWizard,
 	setLeftSidebarOpen,
 }: SidebarActionsProps) {
+	const toggleSidebarShortcut = formatShortcutKeys(shortcuts.toggleSidebar?.keys ?? []);
+	const openWizardShortcut = formatShortcutKeys(shortcuts.openWizard?.keys ?? []);
+
 	return (
 		<div
 			className="p-2 border-t flex gap-2 items-center"
@@ -33,7 +36,7 @@ export const SidebarActions = memo(function SidebarActions({
 				title={
 					hasNoSessions && leftSidebarOpen
 						? 'Add an agent first to collapse sidebar'
-						: `${leftSidebarOpen ? 'Collapse' : 'Expand'} Sidebar (${formatShortcutKeys(shortcuts.toggleSidebar.keys)})`
+						: `${leftSidebarOpen ? 'Collapse' : 'Expand'} Sidebar (${toggleSidebarShortcut})`
 				}
 			>
 				{leftSidebarOpen ? (
@@ -49,7 +52,7 @@ export const SidebarActions = memo(function SidebarActions({
 					onClick={openWizard}
 					className="flex-1 flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
 					style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
-					title={`New Agent (${formatShortcutKeys(shortcuts.openWizard.keys)})`}
+					title={`New Agent (${openWizardShortcut})`}
 				>
 					<Wand2 className="w-3 h-3" /> New Agent
 				</button>

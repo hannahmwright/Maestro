@@ -58,7 +58,11 @@ export interface DemoArtifactServiceOptions {
 	) => Promise<RemoteFsResult<{ byteSize: number; mtime: number }>>;
 }
 
-function guessMimeType(filePath: string, explicitMimeType?: string, kind?: ArtifactRecord['kind']): string {
+function guessMimeType(
+	filePath: string,
+	explicitMimeType?: string,
+	kind?: ArtifactRecord['kind']
+): string {
 	if (explicitMimeType) {
 		return explicitMimeType;
 	}
@@ -89,8 +93,12 @@ export class DemoArtifactService {
 	private readonly staleCaptureMs: number;
 	private readonly transcodeVideo?: DemoArtifactServiceOptions['transcodeVideo'];
 	private readonly resolveSshRemote?: DemoArtifactServiceOptions['resolveSshRemote'];
-	private readonly statRemoteArtifact: NonNullable<DemoArtifactServiceOptions['statRemoteArtifact']>;
-	private readonly downloadRemoteArtifact: NonNullable<DemoArtifactServiceOptions['downloadRemoteArtifact']>;
+	private readonly statRemoteArtifact: NonNullable<
+		DemoArtifactServiceOptions['statRemoteArtifact']
+	>;
+	private readonly downloadRemoteArtifact: NonNullable<
+		DemoArtifactServiceOptions['downloadRemoteArtifact']
+	>;
 	private readonly sessionRunMap = new Map<string, string>();
 	private readonly captureRunDemoMap = new Map<string, string>();
 	private readonly captureRunArtifacts = new Map<string, ArtifactRecord[]>();
@@ -98,7 +106,8 @@ export class DemoArtifactService {
 
 	constructor(db: ArtifactsDB, options: DemoArtifactServiceOptions = {}) {
 		this.db = db;
-		this.artifactsRoot = options.artifactsRoot ?? path.join(app.getPath('userData'), ARTIFACTS_DIRNAME);
+		this.artifactsRoot =
+			options.artifactsRoot ?? path.join(app.getPath('userData'), ARTIFACTS_DIRNAME);
 		this.now = options.now ?? (() => Date.now());
 		this.maxArtifactBytes = options.maxArtifactBytes ?? DEFAULT_MAX_ARTIFACT_BYTES;
 		this.retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
@@ -162,7 +171,10 @@ export class DemoArtifactService {
 		}
 	}
 
-	private selectPosterArtifact(artifacts: ArtifactRecord[], preferredArtifactId?: string | null): ArtifactRecord | null {
+	private selectPosterArtifact(
+		artifacts: ArtifactRecord[],
+		preferredArtifactId?: string | null
+	): ArtifactRecord | null {
 		if (preferredArtifactId) {
 			const preferred = artifacts.find((artifact) => artifact.id === preferredArtifactId);
 			if (preferred) {
@@ -172,7 +184,10 @@ export class DemoArtifactService {
 		return artifacts.find((artifact) => artifact.kind === 'image') || null;
 	}
 
-	private selectVideoArtifact(artifacts: ArtifactRecord[], preferredArtifactId?: string | null): ArtifactRecord | null {
+	private selectVideoArtifact(
+		artifacts: ArtifactRecord[],
+		preferredArtifactId?: string | null
+	): ArtifactRecord | null {
 		if (preferredArtifactId) {
 			const preferred = artifacts.find((artifact) => artifact.id === preferredArtifactId);
 			if (preferred) {
@@ -229,7 +244,10 @@ export class DemoArtifactService {
 		return record;
 	}
 
-	private ensureDemoRecord(captureRun: CaptureRunRecord, status: DemoStatus = 'capturing'): DemoRecord {
+	private ensureDemoRecord(
+		captureRun: CaptureRunRecord,
+		status: DemoStatus = 'capturing'
+	): DemoRecord {
 		this.hydrateCaptureRunCaches(captureRun.id);
 		const existing = this.db.getDemoByCaptureRun(captureRun.id);
 		const now = this.now();
@@ -293,7 +311,11 @@ export class DemoArtifactService {
 		};
 	}
 
-	private async copyArtifact(inputPath: string, artifactId: string, filename: string): Promise<string> {
+	private async copyArtifact(
+		inputPath: string,
+		artifactId: string,
+		filename: string
+	): Promise<string> {
 		const ext = path.extname(filename) || path.extname(inputPath);
 		const safeName = `${artifactId}${ext}`;
 		const storedPath = path.join(this.artifactsRoot, safeName);
@@ -301,7 +323,11 @@ export class DemoArtifactService {
 		return storedPath;
 	}
 
-	private buildStoredArtifactPath(artifactId: string, filename: string, sourcePath: string): string {
+	private buildStoredArtifactPath(
+		artifactId: string,
+		filename: string,
+		sourcePath: string
+	): string {
 		const ext = path.extname(filename) || path.extname(sourcePath);
 		return path.join(this.artifactsRoot, `${artifactId}${ext}`);
 	}
@@ -316,10 +342,14 @@ export class DemoArtifactService {
 		const transcode = this.transcodeVideo ?? this.defaultTranscodeVideo.bind(this);
 		const result = await transcode(source.storedPath, outputPath);
 		if (!result.success) {
-			await this.logLifecycle('warn', 'Failed to create MP4 derivative; using original video artifact', {
-				artifactId: source.id,
-				stderr: result.stderr,
-			});
+			await this.logLifecycle(
+				'warn',
+				'Failed to create MP4 derivative; using original video artifact',
+				{
+					artifactId: source.id,
+					stderr: result.stderr,
+				}
+			);
 			await fs.rm(outputPath, { force: true });
 			return null;
 		}
@@ -398,12 +428,16 @@ export class DemoArtifactService {
 			}
 
 			if (statResult.data.isDirectory) {
-				await this.logLifecycle('warn', 'Skipping remote demo artifact because path is a directory', {
-					captureRunId,
-					sourcePath,
-					sshRemoteId: context.sshRemoteId,
-					sshRemoteHost: context.sshRemoteHost,
-				});
+				await this.logLifecycle(
+					'warn',
+					'Skipping remote demo artifact because path is a directory',
+					{
+						captureRunId,
+						sourcePath,
+						sshRemoteId: context.sshRemoteId,
+						sshRemoteHost: context.sshRemoteHost,
+					}
+				);
 				return null;
 			}
 
@@ -518,7 +552,9 @@ export class DemoArtifactService {
 				sessionId: context.sessionId,
 				tabId: context.tabId || null,
 				captureRunId,
-				kind: event.kind || (guessMimeType(normalizedPath, event.mimeType).startsWith('video/') ? 'video' : 'image'),
+				kind:
+					event.kind ||
+					(guessMimeType(normalizedPath, event.mimeType).startsWith('video/') ? 'video' : 'image'),
 				mimeType: guessMimeType(normalizedPath, event.mimeType, event.kind || undefined),
 				byteSize: stats.size,
 				sha256: createHash('sha256').update(buffer).digest('hex'),
@@ -567,7 +603,9 @@ export class DemoArtifactService {
 	}
 
 	private buildDemoCard(demo: DemoRecord): DemoCard {
-		const artifacts = this.captureRunArtifacts.get(demo.captureRunId) || this.db.listArtifactsForCaptureRun(demo.captureRunId);
+		const artifacts =
+			this.captureRunArtifacts.get(demo.captureRunId) ||
+			this.db.listArtifactsForCaptureRun(demo.captureRunId);
 		const poster = this.selectPosterArtifact(artifacts, demo.posterArtifactId);
 		const video = this.selectVideoArtifact(artifacts, demo.videoArtifactId);
 		const steps = this.db.listDemoSteps(demo.id);
@@ -601,7 +639,9 @@ export class DemoArtifactService {
 		event?: DemoCaptureEvent
 	): Promise<void> {
 		const demo = this.ensureDemoRecord(captureRun, 'capturing');
-		const artifacts = this.captureRunArtifacts.get(captureRun.id) || this.db.listArtifactsForCaptureRun(captureRun.id);
+		const artifacts =
+			this.captureRunArtifacts.get(captureRun.id) ||
+			this.db.listArtifactsForCaptureRun(captureRun.id);
 		const posterCandidate =
 			event?.role === 'poster' && recentArtifact?.kind === 'image'
 				? recentArtifact
@@ -661,7 +701,9 @@ export class DemoArtifactService {
 						: undefined
 			)) || null;
 
-		const artifacts = this.captureRunArtifacts.get(captureRun.id) || this.db.listArtifactsForCaptureRun(captureRun.id);
+		const artifacts =
+			this.captureRunArtifacts.get(captureRun.id) ||
+			this.db.listArtifactsForCaptureRun(captureRun.id);
 		const demo = this.ensureDemoRecord(
 			{
 				...captureRun,
@@ -672,9 +714,7 @@ export class DemoArtifactService {
 			},
 			status
 		);
-		let selectedVideo =
-			videoArtifact ||
-			this.selectVideoArtifact(artifacts, demo.videoArtifactId);
+		let selectedVideo = videoArtifact || this.selectVideoArtifact(artifacts, demo.videoArtifactId);
 		const videoDerivative = selectedVideo ? await this.createMp4Derivative(selectedVideo) : null;
 		if (videoDerivative) {
 			selectedVideo = videoDerivative;
@@ -725,17 +765,12 @@ export class DemoArtifactService {
 				tabId: run.tabId,
 				updatedAt: run.updatedAt,
 			});
-			await this.finalizeDemo(
-				{ sessionId: run.sessionId, tabId: run.tabId },
-				run,
-				'failed',
-				{
-					type: 'capture_failed',
-					runId: run.externalRunId || undefined,
-					title: run.title || 'Captured demo',
-					summary: run.summary || 'Capture did not complete before the session ended.',
-				}
-			);
+			await this.finalizeDemo({ sessionId: run.sessionId, tabId: run.tabId }, run, 'failed', {
+				type: 'capture_failed',
+				runId: run.externalRunId || undefined,
+				title: run.title || 'Captured demo',
+				summary: run.summary || 'Capture did not complete before the session ended.',
+			});
 		}
 	}
 
@@ -814,7 +849,8 @@ export class DemoArtifactService {
 				kind: event.kind || 'image',
 			});
 			const demo = this.ensureDemoRecord(updatedRun, 'capturing');
-			const currentSteps = this.captureRunSteps.get(updatedRun.id) || this.db.listDemoSteps(demo.id);
+			const currentSteps =
+				this.captureRunSteps.get(updatedRun.id) || this.db.listDemoSteps(demo.id);
 			const nextStep: DemoStepRecord = {
 				id: randomUUID(),
 				demoId: demo.id,

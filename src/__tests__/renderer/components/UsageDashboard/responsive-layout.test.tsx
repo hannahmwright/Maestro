@@ -48,6 +48,8 @@ vi.mock('lucide-react', () => {
 		AlertTriangle: createIcon('alert-triangle', '⚠️'),
 		ChevronDown: createIcon('chevron-down', '▼'),
 		ChevronUp: createIcon('chevron-up', '▲'),
+		Briefcase: createIcon('briefcase', '💼'),
+		Coffee: createIcon('coffee', '☕'),
 		Sunrise: createIcon('sunrise', '🌅'),
 		Globe: createIcon('globe', '🌐'),
 		Zap: createIcon('zap', '⚡'),

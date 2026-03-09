@@ -5,7 +5,13 @@
  * These types are used across the main process for type-safe store access.
  */
 
-import type { SshRemoteConfig, Group, Conductor, ConductorTask, ConductorRun } from '../../shared/types';
+import type {
+	SshRemoteConfig,
+	Group,
+	Conductor,
+	ConductorTask,
+	ConductorRun,
+} from '../../shared/types';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)

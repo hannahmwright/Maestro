@@ -144,6 +144,8 @@ describe('persistence IPC handlers', () => {
 				'sessions:setAll',
 				'groups:getAll',
 				'groups:setAll',
+				'conductors:getAll',
+				'conductors:setAll',
 				'cli:getActivity',
 			];
 
@@ -369,19 +371,23 @@ describe('persistence IPC handlers', () => {
 			const handler = handlers.get('sessions:setAll');
 			await handler!({} as any, newSessions);
 
-			expect(mockWebServer.broadcastSessionAdded).toHaveBeenCalledWith({
-				id: 'session-1',
-				name: 'Session 1',
-				toolType: 'claude-code',
-				state: 'idle',
-				inputMode: 'ai',
-				cwd: '/test',
-				groupId: null,
-				groupName: null,
-				groupEmoji: null,
-				parentSessionId: null,
-				worktreeBranch: null,
-			});
+			expect(mockWebServer.broadcastSessionAdded).toHaveBeenCalledWith(
+				expect.objectContaining({
+					id: 'session-1',
+					name: 'Session 1',
+					toolType: 'claude-code',
+					state: 'idle',
+					inputMode: 'ai',
+					cwd: '/test',
+					groupId: null,
+					groupName: null,
+					groupEmoji: null,
+					parentSessionId: null,
+					worktreeBranch: null,
+					aiTabs: [],
+					activeTabId: undefined,
+				})
+			);
 		});
 
 		it('should detect removed sessions and broadcast to web clients', async () => {

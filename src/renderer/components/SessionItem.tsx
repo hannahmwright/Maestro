@@ -13,7 +13,11 @@ function getSidebarRowStyle(
 	const keyboard = options?.keyboard ?? false;
 
 	return {
-		borderColor: active ? `${theme.colors.accent}48` : keyboard ? `${theme.colors.accent}24` : 'transparent',
+		borderColor: active
+			? `${theme.colors.accent}48`
+			: keyboard
+				? `${theme.colors.accent}24`
+				: 'transparent',
 		backgroundColor: active
 			? `${theme.colors.accent}12`
 			: keyboard
@@ -23,11 +27,7 @@ function getSidebarRowStyle(
 	};
 }
 
-function getSidebarPillStyle(
-	theme: Theme,
-	background: string,
-	color: string
-): React.CSSProperties {
+function getSidebarPillStyle(theme: Theme, background: string, color: string): React.CSSProperties {
 	return {
 		background,
 		color,
@@ -208,11 +208,7 @@ export const SessionItem = memo(function SessionItem({
 						{variant === 'bookmark' && group && (
 							<span
 								className="text-[9px] px-1 py-0.5 rounded"
-								style={getSidebarPillStyle(
-									theme,
-									'rgba(255,255,255,0.12)',
-									theme.colors.textDim
-								)}
+								style={getSidebarPillStyle(theme, 'rgba(255,255,255,0.12)', theme.colors.textDim)}
 							>
 								{group.name}
 							</span>
@@ -242,7 +238,11 @@ export const SessionItem = memo(function SessionItem({
 							{session.sessionSshRemoteConfig?.enabled && (
 								<div
 									className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center"
-									style={getSidebarPillStyle(theme, `${theme.colors.warning}30`, theme.colors.warning)}
+									style={getSidebarPillStyle(
+										theme,
+										`${theme.colors.warning}30`,
+										theme.colors.warning
+									)}
 									title="Running on remote host via SSH"
 								>
 									<Server className="w-3 h-3" />
@@ -265,7 +265,9 @@ export const SessionItem = memo(function SessionItem({
 								session.sessionSshRemoteConfig?.enabled
 									? `${theme.colors.warning}30`
 									: `${theme.colors.textDim}20`,
-								session.sessionSshRemoteConfig?.enabled ? theme.colors.warning : theme.colors.textDim
+								session.sessionSshRemoteConfig?.enabled
+									? theme.colors.warning
+									: theme.colors.textDim
 							)}
 							title={
 								session.sessionSshRemoteConfig?.enabled

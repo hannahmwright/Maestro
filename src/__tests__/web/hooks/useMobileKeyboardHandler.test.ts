@@ -51,32 +51,7 @@ describe('useMobileKeyboardHandler', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('toggles input mode with Cmd+J', () => {
-		const handleModeToggle = vi.fn();
-		const handleSelectTab = vi.fn();
-		const activeSession: MobileKeyboardSession = { inputMode: 'ai' };
-
-		renderHook(() =>
-			useMobileKeyboardHandler({
-				activeSessionId: 'session-1',
-				activeSession,
-				handleModeToggle,
-				handleSelectTab,
-			})
-		);
-
-		const event = new KeyboardEvent('keydown', { key: 'j', metaKey: true, cancelable: true });
-
-		act(() => {
-			document.dispatchEvent(event);
-		});
-
-		expect(handleModeToggle).toHaveBeenCalledTimes(1);
-		expect(handleModeToggle).toHaveBeenCalledWith('terminal');
-	});
-
 	it('cycles to previous and next tabs with Cmd+[ and Cmd+]', () => {
-		const handleModeToggle = vi.fn();
 		const handleSelectTab = vi.fn();
 		const tabs = createTabs();
 		const activeSession: MobileKeyboardSession = {
@@ -89,7 +64,6 @@ describe('useMobileKeyboardHandler', () => {
 			useMobileKeyboardHandler({
 				activeSessionId: 'session-1',
 				activeSession,
-				handleModeToggle,
 				handleSelectTab,
 			})
 		);
@@ -111,24 +85,22 @@ describe('useMobileKeyboardHandler', () => {
 	});
 
 	it('does not handle shortcuts when there is no active session', () => {
-		const handleModeToggle = vi.fn();
 		const handleSelectTab = vi.fn();
 
 		renderHook(() =>
 			useMobileKeyboardHandler({
 				activeSessionId: null,
 				activeSession: null,
-				handleModeToggle,
 				handleSelectTab,
 			})
 		);
 
-		const event = new KeyboardEvent('keydown', { key: 'j', metaKey: true, cancelable: true });
+		const event = new KeyboardEvent('keydown', { key: '[', metaKey: true, cancelable: true });
 
 		act(() => {
 			document.dispatchEvent(event);
 		});
 
-		expect(handleModeToggle).not.toHaveBeenCalled();
+		expect(handleSelectTab).not.toHaveBeenCalled();
 	});
 });

@@ -9,7 +9,6 @@
  * - Log level toggle buttons
  * - GitHub CLI path input with clear button
  * - Enter to Send toggles for AI and Terminal modes
- * - History toggle
  * - Thinking mode toggle (Off/On/Sticky)
  * - Auto-scroll toggle
  * - Automatic tab naming toggle
@@ -191,7 +190,6 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('System Log Level')).toBeInTheDocument();
 			expect(screen.getByText('GitHub CLI (gh) Path')).toBeInTheDocument();
 			expect(screen.getByText('Input Send Behavior')).toBeInTheDocument();
-			expect(screen.getByText('Default History Toggle')).toBeInTheDocument();
 			expect(screen.getByText('Reasoning View Default')).toBeInTheDocument();
 			expect(screen.getByText('Automatic Tab Naming')).toBeInTheDocument();
 			expect(screen.getByText('Auto-scroll AI Output')).toBeInTheDocument();
@@ -847,55 +845,7 @@ describe('GeneralTab', () => {
 	});
 
 	// =========================================================================
-	// 10. History
-	// =========================================================================
-	describe('History', () => {
-		it('should render history toggle', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Enable "History" by default for new tabs')).toBeInTheDocument();
-		});
-
-		it('should call setDefaultSaveToHistory when toggle switch is clicked', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// SettingCheckbox uses role="button" wrapper and role="switch" toggle
-			const titleElement = screen.getByText('Enable "History" by default for new tabs');
-			const toggleContainer = titleElement.closest('[role="button"]');
-			const toggleSwitch = toggleContainer?.querySelector('button[role="switch"]');
-			expect(toggleSwitch).toBeDefined();
-
-			fireEvent.click(toggleSwitch!);
-			expect(mockSetDefaultSaveToHistory).toHaveBeenCalledWith(false);
-		});
-
-		it('should call setDefaultSaveToHistory with true when currently false', async () => {
-			mockUseSettingsOverrides = { defaultSaveToHistory: false };
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const titleElement = screen.getByText('Enable "History" by default for new tabs');
-			const toggleContainer = titleElement.closest('[role="button"]');
-			const toggleSwitch = toggleContainer?.querySelector('button[role="switch"]');
-
-			fireEvent.click(toggleSwitch!);
-			expect(mockSetDefaultSaveToHistory).toHaveBeenCalledWith(true);
-		});
-	});
-
-	// =========================================================================
-	// 11. Thinking Mode
+	// 10. Thinking Mode
 	// =========================================================================
 	describe('Thinking Mode', () => {
 		it('should render thinking mode toggle group with Off, On, Sticky', async () => {

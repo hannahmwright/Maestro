@@ -2,9 +2,12 @@ import { ipcMain } from 'electron';
 import { getDemoArtifactService } from '../../artifacts';
 
 export function registerArtifactsHandlers(): void {
-	ipcMain.handle('artifacts:listSessionDemos', async (_event, sessionId: string, tabId?: string | null) => {
-		return getDemoArtifactService().listSessionDemos(sessionId, tabId);
-	});
+	ipcMain.handle(
+		'artifacts:listSessionDemos',
+		async (_event, sessionId: string, tabId?: string | null) => {
+			return getDemoArtifactService().listSessionDemos(sessionId, tabId);
+		}
+	);
 
 	ipcMain.handle('artifacts:getDemo', async (_event, demoId: string) => {
 		return getDemoArtifactService().getDemo(demoId);

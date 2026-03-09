@@ -34,10 +34,16 @@ describe('createMaestroModeContextValue', () => {
 
 	it('builds dashboard mode context from config', () => {
 		const config: MaestroConfig = {
-			securityToken: 'token-123',
+			basePath: '/app',
 			sessionId: null,
-			apiBase: '/token-123/api',
-			wsUrl: '/token-123/ws',
+			tabId: null,
+			apiBase: '/app/api',
+			wsUrl: '/app/ws',
+			authMode: 'cloudflare-access',
+			clientInstanceId: 'client-123',
+			webPush: {
+				enabled: false,
+			},
 		};
 
 		const context = createMaestroModeContextValue(config);
@@ -45,18 +51,26 @@ describe('createMaestroModeContextValue', () => {
 		expect(context.isDashboard).toBe(true);
 		expect(context.isSession).toBe(false);
 		expect(context.sessionId).toBeNull();
-		expect(context.securityToken).toBe('token-123');
+		expect(context.tabId).toBeNull();
+		expect(context.basePath).toBe('/app');
 
 		context.goToDashboard();
-		expect(window.location.href).toBe('http://localhost/token-123');
+		expect(window.location.href).toBe('http://localhost/app');
 	});
 
 	it('builds session mode context from config', () => {
 		const config: MaestroConfig = {
-			securityToken: 'token-456',
+			basePath: '/app',
 			sessionId: 'session-abc',
-			apiBase: '/token-456/api',
-			wsUrl: '/token-456/ws',
+			tabId: 'tab-123',
+			apiBase: '/app/api',
+			wsUrl: '/app/ws',
+			authMode: 'cloudflare-access',
+			clientInstanceId: 'client-456',
+			webPush: {
+				enabled: true,
+				publicKey: 'pub-key',
+			},
 		};
 
 		const context = createMaestroModeContextValue(config);
@@ -64,9 +78,10 @@ describe('createMaestroModeContextValue', () => {
 		expect(context.isDashboard).toBe(false);
 		expect(context.isSession).toBe(true);
 		expect(context.sessionId).toBe('session-abc');
-		expect(context.securityToken).toBe('token-456');
+		expect(context.tabId).toBe('tab-123');
+		expect(context.basePath).toBe('/app');
 
 		context.goToSession('session-xyz');
-		expect(window.location.href).toBe('http://localhost/token-456/session/session-xyz');
+		expect(window.location.href).toBe('http://localhost/app/session/session-xyz');
 	});
 });

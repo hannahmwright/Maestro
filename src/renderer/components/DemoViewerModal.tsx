@@ -153,7 +153,10 @@ export function DemoViewerModal({ theme, demoId, onClose }: DemoViewerModalProps
 								backgroundColor: `${theme.colors.bgMain}cc`,
 							}}
 						>
-							<div className="mb-1 text-[11px] uppercase tracking-wide" style={{ color: theme.colors.textDim }}>
+							<div
+								className="mb-1 text-[11px] uppercase tracking-wide"
+								style={{ color: theme.colors.textDim }}
+							>
 								Step {index + 1}
 							</div>
 							<div className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>

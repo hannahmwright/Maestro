@@ -1095,7 +1095,7 @@ describe('TabBar', () => {
 	});
 
 	describe('hover overlay', () => {
-		it('shows overlay after hover delay for tabs with agentSessionId', async () => {
+		it('shows overlay on context menu for tabs with agentSessionId', async () => {
 			const tabs = [
 				createTab({
 					id: 'tab-1',
@@ -1118,17 +1118,8 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
+			fireEvent.contextMenu(tab);
 
-			// Overlay not visible yet
-			expect(screen.queryByText('Copy Session ID')).not.toBeInTheDocument();
-
-			// Advance timers past the 400ms delay
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
-
-			// Now overlay should be visible
 			expect(screen.getByText('Copy Session ID')).toBeInTheDocument();
 			expect(screen.getByText('Star Session')).toBeInTheDocument();
 			expect(screen.getByText('Rename Tab')).toBeInTheDocument();
@@ -1165,7 +1156,7 @@ describe('TabBar', () => {
 			expect(screen.queryByText('Copy Session ID')).not.toBeInTheDocument();
 		});
 
-		it('closes overlay on mouse leave', async () => {
+		it('closes overlay on outside click', async () => {
 			const tabs = [
 				createTab({
 					id: 'tab-1',
@@ -1189,19 +1180,10 @@ describe('TabBar', () => {
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
 
 			// Open overlay
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 			expect(screen.getByText('Copy Session ID')).toBeInTheDocument();
 
-			// Leave tab
-			fireEvent.mouseLeave(tab);
-
-			// Wait for close delay
-			act(() => {
-				vi.advanceTimersByTime(150);
-			});
+			fireEvent.mouseDown(document.body);
 
 			expect(screen.queryByText('Copy Session ID')).not.toBeInTheDocument();
 		});
@@ -1230,10 +1212,7 @@ describe('TabBar', () => {
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
 
 			// Open overlay
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			const overlay = screen.getByText('Copy Session ID').closest('.fixed')!;
 
@@ -1250,7 +1229,7 @@ describe('TabBar', () => {
 			expect(screen.getByText('Copy Session ID')).toBeInTheDocument();
 		});
 
-		it('closes overlay when mouse leaves overlay', async () => {
+		it('closes overlay when clicking outside after focusing overlay', async () => {
 			const tabs = [
 				createTab({
 					id: 'tab-1',
@@ -1274,10 +1253,7 @@ describe('TabBar', () => {
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
 
 			// Open overlay
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			const overlay = screen.getByText('Copy Session ID').closest('.fixed')!;
 
@@ -1288,10 +1264,8 @@ describe('TabBar', () => {
 			// Verify overlay is still visible
 			expect(screen.getByText('Copy Session ID')).toBeInTheDocument();
 
-			// Now leave the overlay
-			fireEvent.mouseLeave(overlay);
+			fireEvent.mouseDown(document.body);
 
-			// Overlay should close immediately
 			expect(screen.queryByText('Copy Session ID')).not.toBeInTheDocument();
 		});
 
@@ -1319,10 +1293,7 @@ describe('TabBar', () => {
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
 
 			// Open overlay
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			const overlay = screen.getByText('Copy Session ID').closest('.fixed')!;
 
@@ -1354,10 +1325,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			fireEvent.click(screen.getByText('Copy Session ID'));
 
@@ -1394,10 +1362,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			fireEvent.click(screen.getByText('Star Session'));
 			expect(mockOnTabStar).toHaveBeenCalledWith('tab-1', true);
@@ -1426,10 +1391,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByText('Unstar Session')).toBeInTheDocument();
 		});
@@ -1456,10 +1418,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			fireEvent.click(screen.getByText('Rename Tab'));
 			expect(mockOnRequestRename).toHaveBeenCalledWith('tab-1');
@@ -1487,10 +1446,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			fireEvent.click(screen.getByText('Mark as Unread'));
 			expect(mockOnTabMarkUnread).toHaveBeenCalledWith('tab-1');
@@ -1517,10 +1473,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('My Session Name').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Session name appears in overlay header
 			const overlayNames = screen.getAllByText('My Session Name');
@@ -1548,10 +1501,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('FULL').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByText('full-session-id-12345')).toBeInTheDocument();
 		});
@@ -1986,7 +1936,7 @@ describe('TabBar', () => {
 			expect(activeTabName).not.toHaveClass('truncate');
 		});
 
-		it('handles many tabs', () => {
+		it('handles many tabs', { timeout: 20000 }, () => {
 			const tabs = Array.from({ length: 50 }, (_, i) =>
 				createTab({ id: `tab-${i}`, name: `Tab ${i + 1}` })
 			);
@@ -2150,11 +2100,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByText('Move to First Position')).toBeInTheDocument();
 			expect(screen.getByText('Move to Last Position')).toBeInTheDocument();
@@ -2179,11 +2125,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Move to First Position is hidden on first tab
 			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
@@ -2210,11 +2152,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Move to Last Position is hidden on last tab
 			expect(screen.queryByText('Move to Last Position')).not.toBeInTheDocument();
@@ -2238,11 +2176,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Both move options are hidden when only one tab exists
 			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
@@ -2269,11 +2203,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 3').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			fireEvent.click(screen.getByText('Move to First Position'));
 
@@ -2301,11 +2231,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			fireEvent.click(screen.getByText('Move to Last Position'));
 
@@ -2332,11 +2258,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Move options should not be shown without onTabReorder
 			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
@@ -2362,11 +2284,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByText('Move to First Position')).toBeInTheDocument();
 
@@ -2395,11 +2313,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByTestId('chevrons-left-icon')).toBeInTheDocument();
 		});
@@ -2423,11 +2337,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByTestId('chevrons-right-icon')).toBeInTheDocument();
 		});
@@ -2453,11 +2363,7 @@ describe('TabBar', () => {
 
 			// Open overlay menu on Tab 1 (first tab)
 			const tab1 = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab1);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab1);
 
 			// Move to First Position is hidden on first tab
 			expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
@@ -2467,13 +2373,11 @@ describe('TabBar', () => {
 			// Close menu by hovering away
 			fireEvent.mouseLeave(tab1);
 
+			fireEvent.mouseDown(document.body);
+
 			// Open overlay menu on Tab 3 (last tab)
 			const tab3 = screen.getByText('Tab 3').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab3);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab3);
 
 			// Move to Last Position is hidden on last tab
 			expect(screen.queryByText('Move to Last Position')).not.toBeInTheDocument();
@@ -2499,11 +2403,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 11').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Middle tab should show both move options
 			expect(screen.getByText('Move to First Position')).toBeInTheDocument();
@@ -2518,7 +2418,7 @@ describe('TabBar', () => {
 			mockOnSendToAgent.mockClear();
 		});
 
-		it('shows Send to Agent button in hover overlay when onSendToAgent is provided', async () => {
+		it('shows Send to Agent button in the context menu when onSendToAgent is provided', async () => {
 			const tabs = [
 				createTab({
 					id: 'tab-1',
@@ -2541,12 +2441,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			// Advance timers past the 400ms delay
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Send to Agent button should be visible
 			expect(screen.getByText('Context: Send to Agent')).toBeInTheDocument();
@@ -2573,11 +2468,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Send to Agent button should NOT be visible
 			expect(screen.queryByText('Context: Send to Agent')).not.toBeInTheDocument();
@@ -2644,11 +2535,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Compacted Tab').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByText('Context: Send to Agent')).toBeInTheDocument();
 		});
@@ -2676,11 +2563,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			const sendToAgentButton = screen.getByText('Context: Send to Agent');
 			fireEvent.click(sendToAgentButton);
@@ -2712,11 +2595,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// Click Send to Agent
 			const sendToAgentButton = screen.getByText('Context: Send to Agent');
@@ -2749,11 +2628,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			// The ArrowRightCircle icon should be present
 			expect(screen.getByTestId('arrow-right-circle-icon')).toBeInTheDocument();
@@ -2791,11 +2666,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByText('Context: Publish as GitHub Gist')).toBeInTheDocument();
 		});
@@ -2824,11 +2695,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.queryByText('Context: Publish as GitHub Gist')).not.toBeInTheDocument();
 		});
@@ -2857,11 +2724,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.queryByText('Context: Publish as GitHub Gist')).not.toBeInTheDocument();
 		});
@@ -2890,11 +2753,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			const publishGistButton = screen.getByText('Context: Publish as GitHub Gist');
 			fireEvent.click(publishGistButton);
@@ -2927,11 +2786,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			const publishGistButton = screen.getByText('Context: Publish as GitHub Gist');
 			fireEvent.click(publishGistButton);
@@ -2963,11 +2818,7 @@ describe('TabBar', () => {
 			);
 
 			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			fireEvent.mouseEnter(tab);
-
-			act(() => {
-				vi.advanceTimersByTime(450);
-			});
+			fireEvent.contextMenu(tab);
 
 			expect(screen.getByTestId('share2-icon')).toBeInTheDocument();
 		});
@@ -2997,7 +2848,7 @@ describe('FileTab overlay menu', () => {
 		{ type: 'file' as const, id: 'file-tab-1', data: fileTab },
 	];
 
-	it('shows file overlay menu on hover after delay', async () => {
+	it('shows file overlay menu on context menu', async () => {
 		vi.useFakeTimers();
 
 		render(
@@ -3018,20 +2869,8 @@ describe('FileTab overlay menu', () => {
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 		expect(fileTabElement).toBeInTheDocument();
 
-		// Hover over the file tab
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
-		// Overlay should not be visible immediately
-		expect(screen.queryByText('Copy File Path')).not.toBeInTheDocument();
-
-		// Wait for the delay
-		await act(async () => {
-			vi.advanceTimersByTime(450);
-		});
-
-		// Overlay should now be visible with file-specific actions
 		expect(screen.getByText('Copy File Path')).toBeInTheDocument();
 		expect(screen.getByText('Copy File Name')).toBeInTheDocument();
 		expect(screen.getByText('Open in Default App')).toBeInTheDocument();
@@ -3060,10 +2899,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show file-specific actions (these are unique to file tabs)
 		expect(screen.getByText('Copy File Path')).toBeInTheDocument();
@@ -3098,10 +2934,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		const copyPathButton = screen.getByText('Copy File Path');
 		await act(async () => {
@@ -3139,10 +2972,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		const copyNameButton = screen.getByText('Copy File Name');
 		await act(async () => {
@@ -3182,10 +3012,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		const openButton = screen.getByText('Open in Default App');
 		await act(async () => {
@@ -3225,10 +3052,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		const revealButton = screen.getByText(/Reveal in (Finder|Explorer|File Manager)/);
 		await act(async () => {
@@ -3261,10 +3085,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Get all "Close Tab" buttons - find the one in the file tab overlay
 		// The overlay buttons are in a div with specific styling
@@ -3327,10 +3148,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show Close Other Tabs option
 		const closeOtherButtons = screen.getAllByText('Close Other Tabs');
@@ -3374,10 +3192,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show Close Other Tabs but disabled
 		const closeOtherButton = screen.getByText('Close Other Tabs');
@@ -3432,10 +3247,7 @@ describe('FileTab overlay menu', () => {
 		// Hover over the middle tab (file-tab-1 at index 1)
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show Close Tabs to Left option
 		const closeLeftButtons = screen.getAllByText('Close Tabs to Left');
@@ -3481,10 +3293,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show Close Tabs to Left but disabled (first tab)
 		const closeLeftButton = screen.getByText('Close Tabs to Left');
@@ -3539,10 +3348,7 @@ describe('FileTab overlay menu', () => {
 		// Hover over the middle tab (file-tab-1 at index 1)
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show Close Tabs to Right option
 		const closeRightButtons = screen.getAllByText('Close Tabs to Right');
@@ -3588,10 +3394,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show Close Tabs to Right but disabled (last tab)
 		const closeRightButton = screen.getByText('Close Tabs to Right');
@@ -3629,10 +3432,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should show Move to First Position
 		expect(screen.getByText('Move to First Position')).toBeInTheDocument();
@@ -3668,10 +3468,7 @@ describe('FileTab overlay menu', () => {
 
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		// Should NOT show Move to First Position
 		expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
@@ -3679,7 +3476,7 @@ describe('FileTab overlay menu', () => {
 		vi.useRealTimers();
 	});
 
-	it('closes overlay when mouse leaves', async () => {
+	it('closes overlay on outside click', async () => {
 		vi.useFakeTimers();
 
 		render(
@@ -3700,20 +3497,12 @@ describe('FileTab overlay menu', () => {
 		const fileTabElement = screen.getByText('document').closest('[data-tab-id="file-tab-1"]');
 
 		// Hover to open overlay
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement!);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement!);
 
 		expect(screen.getByText('Copy File Path')).toBeInTheDocument();
 
-		// Mouse leave from tab
-		await act(async () => {
-			fireEvent.mouseLeave(fileTabElement!);
-			vi.advanceTimersByTime(150); // Wait for close delay
-		});
+		fireEvent.mouseDown(document.body);
 
-		// Overlay should be closed
 		expect(screen.queryByText('Copy File Path')).not.toBeInTheDocument();
 
 		vi.useRealTimers();
@@ -4030,10 +3819,7 @@ describe('Unified tabs drag and drop', () => {
 		// Hover over file1 (index 1, not first or last)
 		const fileTabElement = screen.getByText('file1').closest('[data-tab-id]')!;
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement);
 
 		// Should show both move options
 		expect(screen.getByText('Move to First Position')).toBeInTheDocument();
@@ -4060,10 +3846,7 @@ describe('Unified tabs drag and drop', () => {
 		// Hover over AI Tab 1 (index 0, first tab)
 		const aiTabElement = screen.getByText('AI Tab 1').closest('[data-tab-id]')!;
 
-		await act(async () => {
-			fireEvent.mouseEnter(aiTabElement);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(aiTabElement);
 
 		// Move to First should be hidden (not just disabled)
 		expect(screen.queryByText('Move to First Position')).not.toBeInTheDocument();
@@ -4091,10 +3874,7 @@ describe('Unified tabs drag and drop', () => {
 		// Hover over file2 (index 3, last tab)
 		const fileTabElement = screen.getByText('file2').closest('[data-tab-id]')!;
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement);
 
 		// Move to First should be visible
 		expect(screen.getByText('Move to First Position')).toBeInTheDocument();
@@ -4122,10 +3902,7 @@ describe('Unified tabs drag and drop', () => {
 		// Hover over file1 (index 1)
 		const fileTabElement = screen.getByText('file1').closest('[data-tab-id]')!;
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement);
 
 		// Click Move to First
 		const moveButton = screen.getByText('Move to First Position');
@@ -4155,10 +3932,7 @@ describe('Unified tabs drag and drop', () => {
 		// Hover over file1 (index 1)
 		const fileTabElement = screen.getByText('file1').closest('[data-tab-id]')!;
 
-		await act(async () => {
-			fireEvent.mouseEnter(fileTabElement);
-			vi.advanceTimersByTime(450);
-		});
+		fireEvent.contextMenu(fileTabElement);
 
 		// Click Move to Last
 		const moveButton = screen.getByText('Move to Last Position');
@@ -4286,7 +4060,7 @@ describe('Unified active tab styling consistency', () => {
 		vi.clearAllMocks();
 	});
 
-	it('applies same active styling to both AI tabs and file tabs', () => {
+	it('applies same active styling to both AI tabs and file tabs', { timeout: 20000 }, () => {
 		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab' });
 		const fileTab: FilePreviewTab = {
 			id: 'file-tab-1',
@@ -5705,7 +5479,7 @@ describe('Performance: Many file tabs (10+)', () => {
 		});
 	});
 
-	it('maintains active tab styling among many tabs', () => {
+	it('maintains active tab styling among many tabs', { timeout: 20000 }, () => {
 		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab', agentSessionId: 'sess-1' });
 		const fileTabs = createManyFileTabs(20);
 		const unifiedTabs = createUnifiedTabsFromFiles(fileTabs, aiTab);

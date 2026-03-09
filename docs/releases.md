@@ -17,8 +17,6 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 **Latest: v0.15.6** | Released March 8, 2026
 
-
-
 ### Previous Releases in this Series
 
 - **v0.15.5** (March 8, 2026)
@@ -33,6 +31,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 All releases are available on the [GitHub Releases page](https://github.com/RunMaestro/Maestro/releases).
 
 Maestro is available for:
+
 - **macOS** - Apple Silicon (arm64) and Intel (x64)
 - **Windows** - x64
 - **Linux** - x64 and arm64, AppImage, deb, and rpm packages

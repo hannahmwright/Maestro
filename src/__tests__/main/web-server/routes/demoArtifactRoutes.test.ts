@@ -101,7 +101,7 @@ describe('demo artifact API routes', () => {
 		});
 
 		expect(response.statusCode).toBe(404);
-		expect(response.json().message).toContain('unavailable');
+		expect(response.json().message).toContain('no longer available');
 
 		await server.close();
 	});

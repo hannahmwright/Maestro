@@ -282,7 +282,6 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} />);
 
 			expect(screen.getByRole('button', { name: 'Files' })).toBeInTheDocument();
-			expect(screen.getByRole('button', { name: 'History' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Processes' })).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Auto Run' })).toBeInTheDocument();
 		});
@@ -302,8 +301,8 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			const historyTab = screen.getByRole('button', { name: 'History' });
-			expect(historyTab.style.borderColor).toBe('transparent');
+			const processesTab = screen.getByRole('button', { name: 'Processes' });
+			expect(processesTab.style.borderColor).toBe('transparent');
 		});
 
 		it('should call setActiveRightTab when tab is clicked', () => {
@@ -311,8 +310,8 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ setActiveRightTab });
 			render(<RightPanel {...props} />);
 
-			fireEvent.click(screen.getByRole('button', { name: 'History' }));
-			expect(setActiveRightTab).toHaveBeenCalledWith('history');
+			fireEvent.click(screen.getByRole('button', { name: 'Processes' }));
+			expect(setActiveRightTab).toHaveBeenCalledWith('processes');
 
 			fireEvent.click(screen.getByRole('button', { name: 'Auto Run' }));
 			expect(setActiveRightTab).toHaveBeenCalledWith('autorun');
@@ -333,13 +332,13 @@ describe('RightPanel', () => {
 			expect(screen.queryByTestId('auto-run')).not.toBeInTheDocument();
 		});
 
-		it('should show HistoryPanel when history tab is active', () => {
-			useUIStore.setState({ activeRightTab: 'history' });
+		it('should show ProcessesPanel when processes tab is active', () => {
+			useUIStore.setState({ activeRightTab: 'processes' });
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
-			expect(screen.getByTestId('history-panel')).toBeInTheDocument();
+			expect(screen.getByTestId('processes-panel')).toBeInTheDocument();
 			expect(screen.queryByTestId('auto-run')).not.toBeInTheDocument();
 		});
 
@@ -349,7 +348,7 @@ describe('RightPanel', () => {
 			render(<RightPanel {...props} />);
 
 			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
-			expect(screen.queryByTestId('history-panel')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('processes-panel')).not.toBeInTheDocument();
 			expect(screen.getByTestId('auto-run')).toBeInTheDocument();
 		});
 
@@ -976,34 +975,8 @@ describe('RightPanel', () => {
 			expect(setActiveRightTab).toHaveBeenCalledWith('autorun');
 		});
 
-		it('should show "View history" link when on autorun tab during batch run', () => {
+		it('should show batch run status when on autorun tab during batch run', () => {
 			useUIStore.setState({ activeRightTab: 'autorun' });
-			const setActiveRightTab = vi.fn();
-			const currentSessionBatchState: BatchRunState = {
-				isRunning: true,
-				isStopping: false,
-				documents: ['doc1'],
-				currentDocumentIndex: 0,
-				totalTasks: 10,
-				completedTasks: 5,
-				currentDocTasksTotal: 10,
-				currentDocTasksCompleted: 5,
-				totalTasksAcrossAllDocs: 10,
-				completedTasksAcrossAllDocs: 5,
-				loopEnabled: false,
-				loopIteration: 0,
-			};
-			const props = createDefaultProps({ currentSessionBatchState, setActiveRightTab });
-			render(<RightPanel {...props} />);
-
-			const link = screen.getByText('View history');
-			expect(link).toBeInTheDocument();
-			fireEvent.click(link);
-			expect(setActiveRightTab).toHaveBeenCalledWith('history');
-		});
-
-		it('should not show "View history" link when on history tab during batch run', () => {
-			useUIStore.setState({ activeRightTab: 'history' });
 			const currentSessionBatchState: BatchRunState = {
 				isRunning: true,
 				isStopping: false,
@@ -1021,7 +994,29 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ currentSessionBatchState });
 			render(<RightPanel {...props} />);
 
-			expect(screen.queryByText('View history')).not.toBeInTheDocument();
+			expect(screen.getByText('Auto Run Active')).toBeInTheDocument();
+		});
+
+		it('should not show paused error link when batch run is active without an error', () => {
+			useUIStore.setState({ activeRightTab: 'processes' });
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(screen.queryByText('Auto Run Paused')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1242,13 +1237,13 @@ describe('RightPanel', () => {
 			const props = createDefaultProps({ setActiveRightTab });
 			render(<RightPanel {...props} />);
 
-			const historyTab = screen.getByRole('button', { name: 'History' });
+			const processesTab = screen.getByRole('button', { name: 'Processes' });
 			const filesTab = screen.getByRole('button', { name: 'Files' });
 			const autoRunTab = screen.getByRole('button', { name: 'Auto Run' });
 
 			// Rapid clicks
 			for (let i = 0; i < 10; i++) {
-				fireEvent.click(historyTab);
+				fireEvent.click(processesTab);
 				fireEvent.click(filesTab);
 				fireEvent.click(autoRunTab);
 			}
@@ -1349,7 +1344,7 @@ describe('RightPanel', () => {
 			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
-			expect(screen.getAllByRole('button')).toHaveLength(5); // toggle + 4 tabs
+			expect(screen.getAllByRole('button')).toHaveLength(4); // toggle + 3 tabs
 		});
 	});
 

@@ -130,6 +130,15 @@ const renderComponent = (props: Partial<CommandInputBarProps> = {}) => {
 	return render(<CommandInputBar {...createProps(props)} />);
 };
 
+const focusAiComposer = async () => {
+	const input = screen.getByRole('textbox');
+	fireEvent.focus(input);
+	await waitFor(() => {
+		expect(screen.getByLabelText(/AI message input/i)).toBeInTheDocument();
+	});
+	return screen.getByLabelText(/AI message input/i);
+};
+
 describe('CommandInputBar', () => {
 	let originalVibrate: typeof navigator.vibrate;
 	let originalVisualViewport: VisualViewport | null;
@@ -198,20 +207,14 @@ describe('CommandInputBar', () => {
 
 		it('renders textarea for AI mode', () => {
 			renderComponent({ inputMode: 'ai' });
-			const textarea = screen.getByRole('textbox');
-			expect(textarea.tagName.toLowerCase()).toBe('textarea');
-		});
-
-		it('renders input for terminal mode', () => {
-			renderComponent({ inputMode: 'terminal' });
 			const input = screen.getByRole('textbox');
 			expect(input.tagName.toLowerCase()).toBe('input');
 		});
 
-		it('renders mode toggle button', () => {
-			renderComponent();
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
-			expect(toggleButton).toBeInTheDocument();
+		it('renders textarea for terminal mode', () => {
+			renderComponent({ inputMode: 'terminal' });
+			const textarea = screen.getByRole('textbox');
+			expect(textarea.tagName.toLowerCase()).toBe('textarea');
 		});
 
 		it('renders send button', () => {
@@ -220,9 +223,10 @@ describe('CommandInputBar', () => {
 			expect(sendButton).toBeInTheDocument();
 		});
 
-		it('renders interrupt button when session is busy in AI mode', () => {
+		it('renders expanded interrupt button when session is busy in AI mode', async () => {
 			renderComponent({ inputMode: 'ai', isSessionBusy: true });
-			const interruptButton = screen.getByRole('button', { name: /cancel/i });
+			await focusAiComposer();
+			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
 			expect(interruptButton).toBeInTheDocument();
 		});
 
@@ -249,11 +253,6 @@ describe('CommandInputBar', () => {
 			expect(screen.getByPlaceholderText(/AI thinking/i)).toBeInTheDocument();
 		});
 
-		it('shows shortened cwd in terminal mode', () => {
-			renderComponent({ inputMode: 'terminal', cwd: '/Users/testuser/projects/myapp' });
-			expect(screen.getByPlaceholderText('~/projects/myapp')).toBeInTheDocument();
-		});
-
 		it('shows custom placeholder when provided', () => {
 			renderComponent({ placeholder: 'Custom placeholder' });
 			expect(screen.getByPlaceholderText('Custom placeholder')).toBeInTheDocument();
@@ -261,7 +260,7 @@ describe('CommandInputBar', () => {
 
 		it('shows default placeholder when no custom provided', () => {
 			renderComponent();
-			expect(screen.getByPlaceholderText('Enter command...')).toBeInTheDocument();
+			expect(screen.getByPlaceholderText('Message agent...')).toBeInTheDocument();
 		});
 	});
 
@@ -387,14 +386,23 @@ describe('CommandInputBar', () => {
 	});
 
 	describe('Keyboard Handling', () => {
-		it('Enter adds newline in AI mode (default behavior)', () => {
+		it('Enter submits in compact AI mode', () => {
 			const onSubmit = vi.fn();
 			renderComponent({ inputMode: 'ai', value: 'test', onSubmit });
 
-			const textarea = screen.getByRole('textbox');
+			const input = screen.getByRole('textbox');
+			fireEvent.keyDown(input, { key: 'Enter' });
+
+			expect(onSubmit).toHaveBeenCalledWith('test');
+		});
+
+		it('Enter adds newline in expanded AI mode', async () => {
+			const onSubmit = vi.fn();
+			renderComponent({ inputMode: 'ai', value: 'test', onSubmit });
+
+			const textarea = await focusAiComposer();
 			fireEvent.keyDown(textarea, { key: 'Enter' });
 
-			// In AI mode, Enter does NOT submit - form submission is via button
 			expect(onSubmit).not.toHaveBeenCalled();
 		});
 
@@ -408,93 +416,35 @@ describe('CommandInputBar', () => {
 			expect(onSubmit).toHaveBeenCalledWith('test');
 		});
 
-		it('Shift+Enter ALSO submits in terminal mode (single line input)', () => {
-			// Note: In terminal mode, the component uses an <input> element which has its own
-			// inline onKeyDown handler that always submits on Enter, regardless of shiftKey.
-			// This is intentional because <input type="text"> is single-line and doesn't
-			// support multi-line input anyway.
+		it('Shift+Enter does not submit in terminal mode', () => {
 			const onSubmit = vi.fn();
 			renderComponent({ inputMode: 'terminal', value: 'test', onSubmit });
 
-			const input = screen.getByRole('textbox');
-			fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+			const textarea = screen.getByRole('textbox');
+			fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: true });
 
-			expect(onSubmit).toHaveBeenCalledWith('test');
-		});
-	});
-
-	describe('Mode Toggle', () => {
-		it('calls onModeToggle when toggle button is clicked', () => {
-			const onModeToggle = vi.fn();
-			renderComponent({ inputMode: 'ai', onModeToggle });
-
-			const toggleButton = screen.getByRole('button', { name: /switch to terminal/i });
-			fireEvent.click(toggleButton);
-
-			expect(onModeToggle).toHaveBeenCalledWith('terminal');
-		});
-
-		it('switches from terminal to AI mode', () => {
-			const onModeToggle = vi.fn();
-			renderComponent({ inputMode: 'terminal', onModeToggle });
-
-			const toggleButton = screen.getByRole('button', { name: /switch to AI/i });
-			fireEvent.click(toggleButton);
-
-			expect(onModeToggle).toHaveBeenCalledWith('ai');
-		});
-
-		it('triggers haptic feedback on mode toggle', () => {
-			const onModeToggle = vi.fn();
-			renderComponent({ inputMode: 'ai', onModeToggle });
-
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
-			fireEvent.click(toggleButton);
-
-			expect(navigator.vibrate).toHaveBeenCalledWith(10); // 'light' = 10ms
-		});
-
-		it('mode toggle is disabled when offline', () => {
-			renderComponent({ isOffline: true });
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
-			expect(toggleButton).toBeDisabled();
-		});
-
-		it('mode toggle is disabled when not connected', () => {
-			renderComponent({ isConnected: false });
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
-			expect(toggleButton).toBeDisabled();
-		});
-
-		it('mode toggle button shows AI label when in AI mode', () => {
-			renderComponent({ inputMode: 'ai' });
-			const toggleButton = screen.getByRole('button', { name: /currently in AI mode/i });
-			expect(toggleButton).toHaveTextContent('AI');
-		});
-
-		it('mode toggle button shows CLI label when in terminal mode', () => {
-			renderComponent({ inputMode: 'terminal' });
-			const toggleButton = screen.getByRole('button', { name: /currently in terminal mode/i });
-			expect(toggleButton).toHaveTextContent('CLI');
+			expect(onSubmit).not.toHaveBeenCalled();
 		});
 	});
 
 	describe('Interrupt Button', () => {
-		it('calls onInterrupt when interrupt button is clicked', () => {
+		it('calls onInterrupt when interrupt button is clicked', async () => {
 			const onInterrupt = vi.fn();
 			renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt });
 
-			const interruptButton = screen.getByRole('button', { name: /cancel/i });
+			await focusAiComposer();
+			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
 			fireEvent.click(interruptButton);
 
 			expect(onInterrupt).toHaveBeenCalled();
 		});
 
-		it('triggers strong haptic feedback on interrupt', () => {
+		it('triggers strong haptic feedback on interrupt', async () => {
 			const onInterrupt = vi.fn();
 			renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt });
 
-			const interruptButton = screen.getByRole('button', { name: /cancel/i });
+			await focusAiComposer();
+			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
 			fireEvent.click(interruptButton);
 
 			expect(navigator.vibrate).toHaveBeenCalledWith(50); // 'strong' = 50ms
@@ -575,27 +525,6 @@ describe('CommandInputBar', () => {
 			expect(screen.queryByTestId('slash-autocomplete')).not.toBeInTheDocument();
 			expect(onChange).toHaveBeenCalledWith('');
 		});
-
-		it('shows slash command button in AI mode', () => {
-			renderComponent({ inputMode: 'ai' });
-			expect(screen.getByRole('button', { name: /open slash commands/i })).toBeInTheDocument();
-		});
-
-		it('does not show slash command button in terminal mode', () => {
-			renderComponent({ inputMode: 'terminal' });
-			expect(
-				screen.queryByRole('button', { name: /open slash commands/i })
-			).not.toBeInTheDocument();
-		});
-
-		it('clicking slash command button opens autocomplete', () => {
-			renderComponent({ inputMode: 'ai' });
-
-			const slashButton = screen.getByRole('button', { name: /open slash commands/i });
-			fireEvent.click(slashButton);
-
-			expect(screen.getByTestId('slash-autocomplete')).toBeInTheDocument();
-		});
 	});
 
 	describe('Swipe Up Handle', () => {
@@ -665,127 +594,11 @@ describe('CommandInputBar', () => {
 		});
 	});
 
-	describe('Quick Actions Menu', () => {
-		it('does not show quick actions menu initially', () => {
-			renderComponent();
-			expect(screen.queryByTestId('quick-actions-menu')).not.toBeInTheDocument();
-		});
-
-		it('shows quick actions menu on long-press of send button', async () => {
-			renderComponent({ value: 'test' });
-
-			const sendButton = screen.getByRole('button', { name: /send/i });
-
-			// Start touch
-			fireEvent.touchStart(sendButton, {
-				touches: [{ clientX: 100, clientY: 100 }],
-			});
-
-			// Wait for long-press duration
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(600);
-			});
-
-			expect(screen.getByTestId('quick-actions-menu')).toBeInTheDocument();
-		});
-
-		it('cancels long-press if touch ends before duration', () => {
-			// Use real timers for this test since we need to test timer cancellation
-			vi.useRealTimers();
-			renderComponent({ value: 'test' });
-
-			const sendButton = screen.getByRole('button', { name: /send/i });
-
-			// Start touch (starts 500ms timer)
-			fireEvent.touchStart(sendButton, {
-				touches: [{ clientX: 100, clientY: 100 }],
-			});
-
-			// End touch immediately - should clear the timer
-			fireEvent.touchEnd(sendButton);
-
-			// Menu should not be visible since timer was cleared
-			expect(screen.queryByTestId('quick-actions-menu')).not.toBeInTheDocument();
-
-			// Restore fake timers
-			vi.useFakeTimers({ shouldAdvanceTime: true });
-		});
-
-		it('cancels long-press if touch moves', () => {
-			// Use real timers for this test since we need to test timer cancellation
-			vi.useRealTimers();
-			renderComponent({ value: 'test' });
-
-			const sendButton = screen.getByRole('button', { name: /send/i });
-
-			// Start touch
-			fireEvent.touchStart(sendButton, {
-				touches: [{ clientX: 100, clientY: 100 }],
-			});
-
-			// Move touch - should clear the timer
-			fireEvent.touchMove(sendButton, {
-				touches: [{ clientX: 150, clientY: 150 }],
-			});
-
-			// Menu should not be visible since timer was cleared
-			expect(screen.queryByTestId('quick-actions-menu')).not.toBeInTheDocument();
-
-			// Restore fake timers
-			vi.useFakeTimers({ shouldAdvanceTime: true });
-		});
-
-		it('handles switch_mode action from quick actions', async () => {
-			const onModeToggle = vi.fn();
-			renderComponent({ value: 'test', inputMode: 'ai', onModeToggle });
-
-			const sendButton = screen.getByRole('button', { name: /send/i });
-
-			fireEvent.touchStart(sendButton, {
-				touches: [{ clientX: 100, clientY: 100 }],
-			});
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(600);
-			});
-
-			const switchModeButton = screen.getByTestId('qa-switch-mode');
-			fireEvent.click(switchModeButton);
-
-			expect(onModeToggle).toHaveBeenCalledWith('terminal');
-		});
-
-		it('closes quick actions menu on close button', async () => {
-			renderComponent({ value: 'test' });
-
-			const sendButton = screen.getByRole('button', { name: /send/i });
-
-			fireEvent.touchStart(sendButton, {
-				touches: [{ clientX: 100, clientY: 100 }],
-			});
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(600);
-			});
-
-			const closeButton = screen.getByTestId('qa-close');
-			fireEvent.click(closeButton);
-
-			expect(screen.queryByTestId('quick-actions-menu')).not.toBeInTheDocument();
-		});
-	});
-
 	describe('Terminal Mode UI', () => {
-		it('shows $ prompt in terminal mode', () => {
+		it('uses inherited font for terminal input', () => {
 			renderComponent({ inputMode: 'terminal' });
-			expect(screen.getByText('$')).toBeInTheDocument();
-		});
-
-		it('uses monospace font for terminal input', () => {
-			renderComponent({ inputMode: 'terminal' });
-			const input = screen.getByRole('textbox');
-			// The inline style uses 'ui-monospace, monospace'
-			expect(input.style.fontFamily).toContain('monospace');
+			const textarea = screen.getByRole('textbox');
+			expect(textarea.style.fontFamily).toBe('inherit');
 		});
 	});
 
@@ -812,59 +625,55 @@ describe('CommandInputBar', () => {
 			expect(onInputBlur).toHaveBeenCalled();
 		});
 
-		it('keeps neutral styling on focus in AI mode', () => {
+		it('expands AI composer on focus', async () => {
 			renderComponent({ inputMode: 'ai' });
-			const textarea = screen.getByRole('textbox');
-
-			fireEvent.focus(textarea);
-
-			expect(textarea.style.borderColor).toBe('rgb(68, 68, 68)');
-			expect(textarea.style.boxShadow).toBe('none');
+			const textarea = await focusAiComposer();
+			expect(textarea.tagName.toLowerCase()).toBe('textarea');
 		});
 
 		it('adds focus ring on focus in terminal mode', () => {
 			renderComponent({ inputMode: 'terminal' });
-			const input = screen.getByRole('textbox');
+			const textarea = screen.getByRole('textbox');
 
-			fireEvent.focus(input);
+			fireEvent.focus(textarea);
 
-			// Terminal mode sets border on parent container
-			const container = input.parentElement;
-			expect(container?.style.borderColor).toBe('rgb(99, 102, 241)');
+			const container = textarea.parentElement;
+			expect(container?.style.border).toContain('rgba(99, 102, 241, 0.4)');
 		});
 	});
 
 	describe('Touch Feedback on Buttons', () => {
-		it('scales down mode toggle button on touch', () => {
-			renderComponent();
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
+		it('scales down send button on touch', () => {
+			renderComponent({ value: 'test' });
+			const sendButton = screen.getByRole('button', { name: /send command/i });
 
-			fireEvent.touchStart(toggleButton, {
+			fireEvent.touchStart(sendButton, {
 				touches: [{ clientX: 0, clientY: 0 }],
-				currentTarget: toggleButton,
+				currentTarget: sendButton,
 			});
 
-			expect(toggleButton.style.transform).toBe('scale(0.95)');
+			expect(sendButton.style.transform).toBe('scale(0.96)');
 		});
 
 		it('scales back up on touch end', () => {
-			renderComponent();
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
+			renderComponent({ value: 'test' });
+			const sendButton = screen.getByRole('button', { name: /send command/i });
 
-			fireEvent.touchStart(toggleButton, {
+			fireEvent.touchStart(sendButton, {
 				touches: [{ clientX: 0, clientY: 0 }],
-				currentTarget: toggleButton,
+				currentTarget: sendButton,
 			});
-			fireEvent.touchEnd(toggleButton, {
-				currentTarget: toggleButton,
+			fireEvent.touchEnd(sendButton, {
+				currentTarget: sendButton,
 			});
 
-			expect(toggleButton.style.transform).toBe('scale(1)');
+			expect(sendButton.style.transform).toBe('scale(1)');
 		});
 
-		it('interrupt button changes color on touch', () => {
+		it('interrupt button changes color on touch', async () => {
 			renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt: vi.fn() });
-			const interruptButton = screen.getByRole('button', { name: /cancel/i });
+			await focusAiComposer();
+			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
 
 			fireEvent.touchStart(interruptButton, {
 				touches: [{ clientX: 0, clientY: 0 }],
@@ -876,24 +685,28 @@ describe('CommandInputBar', () => {
 	});
 
 	describe('Accessibility', () => {
-		it('has aria-label on AI textarea', () => {
+		it('has aria-label on compact AI input', () => {
 			renderComponent({ inputMode: 'ai' });
+			expect(
+				screen.getByLabelText(/message input\. type slash commands directly if needed\./i)
+			).toBeInTheDocument();
+		});
+
+		it('has aria-label on expanded AI textarea', async () => {
+			renderComponent({ inputMode: 'ai' });
+			await focusAiComposer();
 			expect(screen.getByLabelText(/AI message input/i)).toBeInTheDocument();
 		});
 
-		it('has aria-label on terminal input', () => {
+		it('has aria-label on terminal textarea', () => {
 			renderComponent({ inputMode: 'terminal' });
-			expect(screen.getByLabelText(/Shell command input/i)).toBeInTheDocument();
-		});
-
-		it('mode toggle has aria-pressed attribute', () => {
-			renderComponent({ inputMode: 'ai' });
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
-			expect(toggleButton).toHaveAttribute('aria-pressed', 'true');
+			expect(
+				screen.getByLabelText(/message input\. type slash commands directly if needed\./i)
+			).toBeInTheDocument();
 		});
 
 		it('has aria-multiline on textarea', () => {
-			renderComponent({ inputMode: 'ai' });
+			renderComponent({ inputMode: 'terminal' });
 			const textarea = screen.getByRole('textbox');
 			expect(textarea).toHaveAttribute('aria-multiline', 'true');
 		});
@@ -901,38 +714,20 @@ describe('CommandInputBar', () => {
 
 	describe('Constants', () => {
 		// Test that the component uses the expected constants
-		it('send button meets minimum touch target size', () => {
+		it('inline AI send button uses compact action sizing', () => {
 			renderComponent({ value: 'test' });
 			const sendButton = screen.getByRole('button', { name: /send/i });
 
-			// MIN_TOUCH_TARGET + 4 = 48px
+			expect(sendButton.style.width).toBe('34px');
+			expect(sendButton.style.height).toBe('34px');
+		});
+
+		it('terminal send button meets minimum touch target size', () => {
+			renderComponent({ inputMode: 'terminal', value: 'test' });
+			const sendButton = screen.getByRole('button', { name: /send command/i });
+
 			expect(sendButton.style.width).toBe('48px');
 			expect(sendButton.style.height).toBe('48px');
-		});
-
-		it('mode toggle button meets minimum touch target size', () => {
-			renderComponent();
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
-
-			expect(toggleButton.style.width).toBe('48px');
-			expect(toggleButton.style.height).toBe('48px');
-		});
-	});
-
-	describe('Cleanup', () => {
-		it('cleans up timers on unmount', () => {
-			const { unmount } = renderComponent({ value: 'test' });
-
-			const sendButton = screen.getByRole('button', { name: /send/i });
-			fireEvent.touchStart(sendButton, {
-				touches: [{ clientX: 100, clientY: 100 }],
-			});
-
-			// Unmount before timer fires
-			unmount();
-
-			// Should not throw or cause issues
-			expect(vi.getTimerCount()).toBe(0);
 		});
 	});
 });
@@ -947,15 +742,6 @@ describe('triggerHapticFeedback helper', () => {
 		});
 	});
 
-	it('triggers light haptic (10ms)', () => {
-		renderComponent({ inputMode: 'ai', onModeToggle: vi.fn() });
-
-		const toggleButton = screen.getByRole('button', { name: /switch to/i });
-		fireEvent.click(toggleButton);
-
-		expect(navigator.vibrate).toHaveBeenCalledWith(10);
-	});
-
 	it('triggers medium haptic (25ms) on submit', () => {
 		const onSubmit = vi.fn();
 		renderComponent({ value: 'test', onSubmit });
@@ -966,10 +752,11 @@ describe('triggerHapticFeedback helper', () => {
 		expect(navigator.vibrate).toHaveBeenCalledWith(25);
 	});
 
-	it('triggers strong haptic (50ms) on interrupt', () => {
+	it('triggers strong haptic (50ms) on interrupt', async () => {
 		renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt: vi.fn() });
 
-		const interruptButton = screen.getByRole('button', { name: /cancel/i });
+		await focusAiComposer();
+		const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
 		fireEvent.click(interruptButton);
 
 		expect(navigator.vibrate).toHaveBeenCalledWith(50);
@@ -983,9 +770,10 @@ describe('triggerHapticFeedback helper', () => {
 		});
 
 		expect(() => {
-			renderComponent({ inputMode: 'ai', onModeToggle: vi.fn() });
-			const toggleButton = screen.getByRole('button', { name: /switch to/i });
-			fireEvent.click(toggleButton);
+			const onSubmit = vi.fn();
+			renderComponent({ value: 'test', onSubmit });
+			const form = screen.getByRole('textbox').closest('form');
+			fireEvent.submit(form!);
 		}).not.toThrow();
 	});
 });
@@ -1126,23 +914,6 @@ describe('Edge Cases', () => {
 		expect(screen.getByTestId('slash-autocomplete')).toBeInTheDocument();
 	});
 
-	it('handles rapid mode toggles', () => {
-		const onModeToggle = vi.fn();
-		renderComponent({ inputMode: 'ai', onModeToggle });
-
-		const toggleButton = screen.getByRole('button', { name: /switch to/i });
-
-		// Rapid clicks
-		fireEvent.click(toggleButton);
-		fireEvent.click(toggleButton);
-		fireEvent.click(toggleButton);
-
-		expect(onModeToggle).toHaveBeenCalledTimes(3);
-		expect(onModeToggle).toHaveBeenNthCalledWith(1, 'terminal');
-		expect(onModeToggle).toHaveBeenNthCalledWith(2, 'terminal');
-		expect(onModeToggle).toHaveBeenNthCalledWith(3, 'terminal');
-	});
-
 	it('handles very long input value', () => {
 		const longValue = 'a'.repeat(10000);
 		renderComponent({ value: longValue });
@@ -1167,17 +938,12 @@ describe('Edge Cases', () => {
 		expect(textarea).toHaveValue(unicode);
 	});
 
-	it('handles newlines in input value', () => {
+	it('handles newlines in terminal input value', () => {
 		const multiline = 'line 1\nline 2\nline 3';
-		renderComponent({ inputMode: 'ai', value: multiline });
+		renderComponent({ inputMode: 'terminal', value: multiline });
 
 		const textarea = screen.getByRole('textbox');
 		expect(textarea).toHaveValue(multiline);
-	});
-
-	it('handles cwd with special characters', () => {
-		renderComponent({ inputMode: 'terminal', cwd: '/Users/test user/my project (2)' });
-		expect(screen.getByPlaceholderText('~/my project (2)')).toBeInTheDocument();
 	});
 
 	it('handles null/undefined callbacks gracefully', () => {
@@ -1185,7 +951,6 @@ describe('Edge Cases', () => {
 			renderComponent({
 				onSubmit: undefined,
 				onChange: undefined,
-				onModeToggle: undefined,
 				onInterrupt: undefined,
 				onHistoryOpen: undefined,
 			});

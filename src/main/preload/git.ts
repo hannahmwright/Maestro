@@ -245,7 +245,7 @@ export function createGitApi() {
 			success: boolean;
 			hasUncommittedChanges: boolean;
 			error?: string;
-			}> =>
+		}> =>
 			ipcRenderer.invoke(
 				'git:worktreeCheckout',
 				worktreePath,
@@ -296,14 +296,7 @@ export function createGitApi() {
 			if (ghPath !== undefined) {
 				return ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body, ghPath);
 			}
-			return ipcRenderer.invoke(
-				'git:createPR',
-				worktreePath,
-				baseBranch,
-				title,
-				body,
-				undefined
-			);
+			return ipcRenderer.invoke('git:createPR', worktreePath, baseBranch, title, body, undefined);
 		},
 
 		/**

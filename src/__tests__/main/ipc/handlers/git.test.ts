@@ -40,6 +40,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 // Mock the cliDetection module
 vi.mock('../../../../main/utils/cliDetection', () => ({
 	resolveGhPath: vi.fn().mockResolvedValue('gh'),
+	resolveSshPath: vi.fn().mockResolvedValue('ssh'),
 	getCachedGhStatus: vi.fn().mockReturnValue(null),
 	setCachedGhStatus: vi.fn(),
 }));
@@ -82,16 +83,23 @@ const { mockSpawnSync } = vi.hoisted(() => ({
 	mockSpawnSync: vi.fn(),
 }));
 
-vi.mock('child_process', () => ({
-	spawnSync: mockSpawnSync,
-	// Include other exports that might be needed
-	spawn: vi.fn(),
-	exec: vi.fn(),
-	execSync: vi.fn(),
-	execFile: vi.fn(),
-	execFileSync: vi.fn(),
-	fork: vi.fn(),
-}));
+vi.mock('child_process', () => {
+	const childProcessModule = {
+		spawnSync: mockSpawnSync,
+		// Include other exports that might be needed
+		spawn: vi.fn(),
+		exec: vi.fn(),
+		execSync: vi.fn(),
+		execFile: vi.fn(),
+		execFileSync: vi.fn(),
+		fork: vi.fn(),
+	};
+
+	return {
+		...childProcessModule,
+		default: childProcessModule,
+	};
+});
 
 describe('Git IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -132,7 +140,7 @@ describe('Git IPC handlers', () => {
 	});
 
 	describe('registration', () => {
-		it('should register all 26 git handlers', () => {
+		it('should register all 28 git handlers', () => {
 			const expectedChannels = [
 				'git:status',
 				'git:diff',
@@ -151,6 +159,7 @@ describe('Git IPC handlers', () => {
 				'git:getRepoRoot',
 				'git:worktreeSetup',
 				'git:worktreeCheckout',
+				'git:mergeBranchIntoWorktree',
 				'git:createPR',
 				'git:checkGhCli',
 				'git:getDefaultBranch',
@@ -159,10 +168,11 @@ describe('Git IPC handlers', () => {
 				'git:watchWorktreeDirectory',
 				'git:unwatchWorktreeDirectory',
 				'git:removeWorktree',
+				'git:deleteLocalBranch',
 				'git:createGist',
 			];
 
-			expect(handlers.size).toBe(26);
+			expect(handlers.size).toBe(28);
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
 			}

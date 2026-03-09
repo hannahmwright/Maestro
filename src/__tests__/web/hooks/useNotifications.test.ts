@@ -85,6 +85,11 @@ describe('useNotifications', () => {
 
 		// Setup default mock Notification
 		(window as any).Notification = createMockNotification('default');
+		Object.defineProperty(navigator, 'serviceWorker', {
+			value: undefined,
+			writable: true,
+			configurable: true,
+		});
 
 		// Mock document.visibilityState
 		Object.defineProperty(document, 'visibilityState', {
@@ -551,28 +556,28 @@ describe('useNotifications', () => {
 	// showNotification() Callback Tests
 	// ============================================
 	describe('showNotification()', () => {
-		it('returns null when not supported', () => {
+		it('returns false when not supported', async () => {
 			delete (window as any).Notification;
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
-			const notification = result.current.showNotification('Test', {});
-			expect(notification).toBeNull();
+			const notification = await result.current.showNotification('Test', {});
+			expect(notification).toBe(false);
 		});
 
-		it('returns null when permission is default', () => {
+		it('returns false when permission is default', async () => {
 			(window as any).Notification = createMockNotification('default');
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
-			const notification = result.current.showNotification('Test', {});
-			expect(notification).toBeNull();
+			const notification = await result.current.showNotification('Test', {});
+			expect(notification).toBe(false);
 		});
 
-		it('returns null when permission is denied', () => {
+		it('returns false when permission is denied', async () => {
 			(window as any).Notification = createMockNotification('denied');
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
-			const notification = result.current.showNotification('Test', {});
-			expect(notification).toBeNull();
+			const notification = await result.current.showNotification('Test', {});
+			expect(notification).toBe(false);
 		});
 
 		it('logs when cannot show notification', () => {
@@ -587,13 +592,15 @@ describe('useNotifications', () => {
 			);
 		});
 
-		it('creates notification when granted', () => {
+		it('creates notification when granted', async () => {
 			(window as any).Notification = createMockNotification('granted');
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
-			const notification = result.current.showNotification('Test Title', { body: 'Test body' });
+			const notification = await result.current.showNotification('Test Title', {
+				body: 'Test body',
+			});
 
-			expect(notification).not.toBeNull();
+			expect(notification).toBe(true);
 			expect((window as any).Notification).toHaveBeenCalledWith(
 				'Test Title',
 				expect.objectContaining({
@@ -602,39 +609,39 @@ describe('useNotifications', () => {
 			);
 		});
 
-		it('uses default icon path', () => {
+		it('uses default icon path', async () => {
 			(window as any).Notification = createMockNotification('granted');
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
-			result.current.showNotification('Test', {});
+			await result.current.showNotification('Test', {});
 
 			expect((window as any).Notification).toHaveBeenCalledWith(
 				'Test',
 				expect.objectContaining({
-					icon: '/maestro-icon-192.png',
+					icon: expect.stringContaining('/app/icons/icon-192x192.png'),
 				})
 			);
 		});
 
-		it('uses default badge path', () => {
+		it('uses default badge path', async () => {
 			(window as any).Notification = createMockNotification('granted');
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
-			result.current.showNotification('Test', {});
+			await result.current.showNotification('Test', {});
 
 			expect((window as any).Notification).toHaveBeenCalledWith(
 				'Test',
 				expect.objectContaining({
-					badge: '/maestro-icon-192.png',
+					badge: expect.stringContaining('/app/icons/icon-192x192.png'),
 				})
 			);
 		});
 
-		it('merges provided options with defaults', () => {
+		it('merges provided options with defaults', async () => {
 			(window as any).Notification = createMockNotification('granted');
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
-			result.current.showNotification('Test', {
+			await result.current.showNotification('Test', {
 				body: 'Custom body',
 				tag: 'custom-tag',
 			});
@@ -642,8 +649,8 @@ describe('useNotifications', () => {
 			expect((window as any).Notification).toHaveBeenCalledWith(
 				'Test',
 				expect.objectContaining({
-					icon: '/maestro-icon-192.png',
-					badge: '/maestro-icon-192.png',
+					icon: expect.stringContaining('/app/icons/icon-192x192.png'),
+					badge: expect.stringContaining('/app/icons/icon-192x192.png'),
 					body: 'Custom body',
 					tag: 'custom-tag',
 				})
@@ -666,7 +673,7 @@ describe('useNotifications', () => {
 			);
 		});
 
-		it('handles Notification constructor error', () => {
+		it('handles Notification constructor error', async () => {
 			const mockNotification = createMockNotification('granted');
 			mockNotification.mockImplementation(() => {
 				throw new Error('Notification error');
@@ -675,9 +682,9 @@ describe('useNotifications', () => {
 			(window as any).Notification.permission = 'granted';
 
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
-			const notification = result.current.showNotification('Test', {});
+			const notification = await result.current.showNotification('Test', {});
 
-			expect(notification).toBeNull();
+			expect(notification).toBe(false);
 			expect(webLogger.error).toHaveBeenCalledWith(
 				'Error showing notification',
 				'Notifications',
@@ -685,7 +692,7 @@ describe('useNotifications', () => {
 			);
 		});
 
-		it('returns null on constructor error', () => {
+		it('returns false on constructor error', async () => {
 			const mockNotification = createMockNotification('granted');
 			mockNotification.mockImplementation(() => {
 				throw new Error('Constructor error');
@@ -694,9 +701,9 @@ describe('useNotifications', () => {
 			(window as any).Notification.permission = 'granted';
 
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
-			const notification = result.current.showNotification('Test', {});
+			const notification = await result.current.showNotification('Test', {});
 
-			expect(notification).toBeNull();
+			expect(notification).toBe(false);
 		});
 	});
 
@@ -1200,8 +1207,8 @@ describe('useNotifications', () => {
 			expect(onGranted).toHaveBeenCalled();
 
 			// Now can show notification
-			const notification = result.current.showNotification('Success!', {});
-			expect(notification).not.toBeNull();
+			const notification = await result.current.showNotification('Success!', {});
+			expect(notification).toBe(true);
 		});
 
 		it('full permission deny flow', async () => {
@@ -1219,11 +1226,11 @@ describe('useNotifications', () => {
 			expect(onDenied).toHaveBeenCalled();
 
 			// Cannot show notification
-			const notification = result.current.showNotification('Test', {});
-			expect(notification).toBeNull();
+			const notification = await result.current.showNotification('Test', {});
+			expect(notification).toBe(false);
 		});
 
-		it('user UI decline flow', () => {
+		it('user UI decline flow', async () => {
 			const { result } = renderHook(() => useNotifications({ autoRequest: false }));
 
 			expect(result.current.hasDeclined).toBe(false);
@@ -1236,8 +1243,8 @@ describe('useNotifications', () => {
 			expect(localStorageMock.setItem).toHaveBeenCalledWith(NOTIFICATION_DECLINED_KEY, 'true');
 
 			// Cannot show notification (permission still default)
-			const notification = result.current.showNotification('Test', {});
-			expect(notification).toBeNull();
+			const notification = await result.current.showNotification('Test', {});
+			expect(notification).toBe(false);
 		});
 
 		it('auto-request only fires once per session', async () => {

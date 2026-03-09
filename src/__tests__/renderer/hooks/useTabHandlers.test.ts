@@ -728,17 +728,6 @@ describe('useTabHandlers', () => {
 			expect((session.aiTabs[0] as any).readOnlyMode).toBe(true);
 		});
 
-		it('handleToggleTabSaveToHistory toggles save-to-history', () => {
-			const tab = createMockAITab({ id: 'tab-1', saveToHistory: true } as any);
-			const { result } = renderWithSession([tab]);
-			act(() => {
-				result.current.handleToggleTabSaveToHistory();
-			});
-
-			const session = getSession();
-			expect((session.aiTabs[0] as any).saveToHistory).toBe(false);
-		});
-
 		it('handleToggleTabShowThinking cycles thinking mode', () => {
 			const tab = createMockAITab({ id: 'tab-1' });
 			const { result } = renderWithSession([tab]);

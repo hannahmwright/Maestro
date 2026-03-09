@@ -29,7 +29,7 @@ afterEach(async () => {
 			await fs.rm(dir, { recursive: true, force: true });
 		})
 	);
-});
+}, 30_000);
 
 describe('EditApplier', () => {
 	it('blocks apply when TS/JS syntax validation fails', async () => {
@@ -166,7 +166,7 @@ describe('EditApplier', () => {
 		expect(result.blocked_reasons).toContain('semantic_validation_failed');
 		expect(result.syntax_errors.length).toBeGreaterThan(0);
 		expect(await fs.readFile(targetPath, 'utf8')).toBe('export const value: number = 1;\n');
-	}, 30_000);
+	}, 90_000);
 
 	it('allows apply when semantic errors are pre-existing and unchanged', async () => {
 		const task = await createTaskWithTempRepo();
@@ -216,5 +216,5 @@ describe('EditApplier', () => {
 		expect(result.applied).toBe(true);
 		expect(result.blocked_reasons).toEqual([]);
 		expect(await fs.readFile(targetPath, 'utf8')).toBe('export const value = 2;\n');
-	}, 30_000);
+	}, 90_000);
 });

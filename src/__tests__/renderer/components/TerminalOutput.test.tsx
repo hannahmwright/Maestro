@@ -1803,9 +1803,9 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			const toggleButton = screen.getByTitle(/Show plain text/);
-			// Verify the hover behavior classes are present
-			expect(toggleButton).toHaveClass('opacity-0');
-			expect(toggleButton).toHaveClass('group-hover:opacity-50');
+			const actionBar = toggleButton.parentElement;
+			expect(actionBar).toHaveClass('opacity-0');
+			expect(actionBar).toHaveClass('group-hover:opacity-100');
 		});
 
 		it('shows raw markdown source including link URLs in plain text mode', () => {

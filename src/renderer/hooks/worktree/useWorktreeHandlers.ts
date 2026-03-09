@@ -505,11 +505,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			deleteWtSession.sessionSshRemoteConfig.remoteId
 				? deleteWtSession.sessionSshRemoteConfig.remoteId
 				: undefined;
-		const result = await window.maestro.git.removeWorktree(
-			deleteWtSession.cwd,
-			true,
-			sshRemoteId
-		);
+		const result = await window.maestro.git.removeWorktree(deleteWtSession.cwd, true, sshRemoteId);
 		if (!result.success) {
 			throw new Error(result.error || 'Failed to remove worktree');
 		}

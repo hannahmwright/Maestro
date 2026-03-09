@@ -849,7 +849,11 @@ describe('handleConfirmAndDeleteWorktreeOnDisk', () => {
 			await result.current.handleConfirmAndDeleteWorktreeOnDisk();
 		});
 
-		expect(mockGit.removeWorktree).toHaveBeenCalledWith('/projects/worktrees/feature-1', true);
+		expect(mockGit.removeWorktree).toHaveBeenCalledWith(
+			'/projects/worktrees/feature-1',
+			true,
+			undefined
+		);
 
 		const sessions = useSessionStore.getState().sessions;
 		expect(sessions.length).toBe(1);

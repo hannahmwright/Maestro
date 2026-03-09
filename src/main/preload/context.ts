@@ -59,14 +59,7 @@ export function createContextApi() {
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
 				customModel?: string;
-				reasoningEffort?:
-					| 'default'
-					| 'none'
-					| 'minimal'
-					| 'low'
-					| 'medium'
-					| 'high'
-					| 'xhigh';
+				reasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 			}
 		): Promise<string> =>
 			ipcRenderer.invoke('context:groomContext', projectRoot, agentType, prompt, options),

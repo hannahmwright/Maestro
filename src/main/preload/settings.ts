@@ -55,11 +55,8 @@ export function createGroupsApi() {
 export function createConductorsApi() {
 	return {
 		getAll: () => ipcRenderer.invoke('conductors:getAll'),
-		setAll: (data: {
-			conductors: Conductor[];
-			tasks: ConductorTask[];
-			runs: ConductorRun[];
-		}) => ipcRenderer.invoke('conductors:setAll', data),
+		setAll: (data: { conductors: Conductor[]; tasks: ConductorTask[]; runs: ConductorRun[] }) =>
+			ipcRenderer.invoke('conductors:setAll', data),
 	};
 }
 

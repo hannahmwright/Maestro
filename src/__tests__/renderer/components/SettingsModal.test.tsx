@@ -61,6 +61,13 @@ vi.mock('../../../renderer/components/SpecKitCommandsPanel', () => ({
 	),
 }));
 
+// Mock OpenSpecCommandsPanel
+vi.mock('../../../renderer/components/OpenSpecCommandsPanel', () => ({
+	OpenSpecCommandsPanel: ({ theme }: { theme: Theme }) => (
+		<div data-testid="open-spec-commands-panel">OpenSpec Commands Panel</div>
+	),
+}));
+
 // Mock CustomThemeBuilder
 vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
 	CustomThemeBuilder: ({ isSelected, onSelect }: { isSelected: boolean; onSelect: () => void }) => (
@@ -960,30 +967,6 @@ describe('SettingsModal', () => {
 			});
 
 			expect(screen.getByText(formatEnterToSend(false))).toBeInTheDocument();
-		});
-	});
-
-	describe('General tab - History toggle', () => {
-		it('should call setDefaultSaveToHistory when toggle switch is changed', async () => {
-			const setDefaultSaveToHistory = vi.fn();
-			render(
-				<SettingsModal
-					{...createDefaultProps({ setDefaultSaveToHistory, defaultSaveToHistory: true })}
-				/>
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// SettingCheckbox uses a button with role="switch" instead of input[type="checkbox"]
-			const titleElement = screen.getByText('Enable "History" by default for new tabs');
-			const toggleContainer = titleElement.closest('[role="button"]');
-			const toggleSwitch = toggleContainer?.querySelector('button[role="switch"]');
-			expect(toggleSwitch).toBeDefined();
-
-			fireEvent.click(toggleSwitch!);
-			expect(mockSetDefaultSaveToHistory).toHaveBeenCalledWith(false);
 		});
 	});
 

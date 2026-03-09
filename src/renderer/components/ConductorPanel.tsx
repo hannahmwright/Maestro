@@ -102,21 +102,24 @@ const SETTINGS_GUIDE_STEPS = [
 	{
 		key: 'plan',
 		title: 'Drop in a request',
-		description: 'Use + New plan to describe what you want changed. Conductor turns that into task-sized steps.',
+		description:
+			'Use + New plan to describe what you want changed. Conductor turns that into task-sized steps.',
 		icon: ClipboardList,
 		accent: 'accent',
 	},
 	{
 		key: 'approve',
 		title: 'Review or auto-run',
-		description: 'Keep approvals on if you want to review the task list first, or turn on auto-execute to keep things moving.',
+		description:
+			'Keep approvals on if you want to review the task list first, or turn on auto-execute to keep things moving.',
 		icon: Sparkles,
 		accent: 'warning',
 	},
 	{
 		key: 'ship',
 		title: 'Watch progress and ship',
-		description: 'Conductor works through the plan, pulls finished work together, and can open a PR when it is ready.',
+		description:
+			'Conductor works through the plan, pulls finished work together, and can open a PR when it is ready.',
 		icon: CheckCircle2,
 		accent: 'accent',
 	},
@@ -252,13 +255,15 @@ function getGlassButtonStyle(
 
 function getGlassInputStyle(theme: Theme): React.CSSProperties {
 	return {
-		background: 'linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.07) 55%, rgba(255,255,255,0.03) 100%)',
+		background:
+			'linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.07) 55%, rgba(255,255,255,0.03) 100%)',
 		backgroundColor: theme.colors.bgMain,
 		border: '1px solid rgba(255,255,255,0.10)',
 		color: theme.colors.textMain,
 		backdropFilter: 'blur(18px)',
 		WebkitBackdropFilter: 'blur(18px)',
-		boxShadow: '0 10px 20px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(255,255,255,0.02)',
+		boxShadow:
+			'0 10px 20px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(255,255,255,0.02)',
 	};
 }
 
@@ -319,7 +324,10 @@ function SummaryCard({
 			})}
 		>
 			<div className="min-w-0">
-				<div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: theme.colors.textDim }}>
+				<div
+					className="text-[11px] uppercase tracking-[0.18em]"
+					style={{ color: theme.colors.textDim }}
+				>
 					{label}
 				</div>
 				<div className="text-3xl font-semibold mt-3" style={{ color: theme.colors.textMain }}>
@@ -426,7 +434,10 @@ function formatMemorySummary(snapshot: ResourceSnapshot | null): string {
 	return `${freeGb} GB available of ${totalGb} GB`;
 }
 
-function getTaskStatusTone(theme: Theme, status: ConductorTaskStatus): { bg: string; fg: string; border: string } {
+function getTaskStatusTone(
+	theme: Theme,
+	status: ConductorTaskStatus
+): { bg: string; fg: string; border: string } {
 	switch (status) {
 		case 'done':
 			return {
@@ -577,7 +588,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		() => groups.find((candidate) => candidate.id === groupId) || null,
 		[groups, groupId]
 	);
-	const tasks = useMemo(() => allTasks.filter((task) => task.groupId === groupId), [allTasks, groupId]);
+	const tasks = useMemo(
+		() => allTasks.filter((task) => task.groupId === groupId),
+		[allTasks, groupId]
+	);
 	const runs = useMemo(() => allRuns.filter((run) => run.groupId === groupId), [allRuns, groupId]);
 	const groupSessions = useMemo(
 		() => sessions.filter((session) => session.groupId === groupId && !session.parentSessionId),
@@ -606,10 +620,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		[runs]
 	);
 	const plannerTasks = useMemo(() => tasks.filter((task) => task.source === 'planner'), [tasks]);
-	const manualTasks = useMemo(
-		() => tasks.filter((task) => task.source !== 'planner'),
-		[tasks]
-	);
+	const manualTasks = useMemo(() => tasks.filter((task) => task.source !== 'planner'), [tasks]);
 
 	const taskCounts = useMemo(
 		() => ({
@@ -674,26 +685,31 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	}, [tasks, taskSearch, statusFilter, sourceFilter, sortMode]);
 	const filteredTaskCountsByStatus = useMemo(
 		() =>
-			BOARD_COLUMNS.reduce<Record<ConductorTaskStatus, number>>((acc, status) => {
-				acc[status] = filteredTasks.filter((task) => task.status === status).length;
-				return acc;
-			}, {
-				draft: 0,
-				ready: 0,
-				running: 0,
-				blocked: 0,
-				needs_review: 0,
-				done: 0,
-			}),
+			BOARD_COLUMNS.reduce<Record<ConductorTaskStatus, number>>(
+				(acc, status) => {
+					acc[status] = filteredTasks.filter((task) => task.status === status).length;
+					return acc;
+				},
+				{
+					draft: 0,
+					ready: 0,
+					running: 0,
+					blocked: 0,
+					needs_review: 0,
+					done: 0,
+				}
+			),
 		[filteredTasks]
 	);
 
 	const shippingComplete = Boolean(
 		latestIntegrationRun &&
-			latestIntegrationRun.status === 'completed' &&
-			(conductor?.publishPolicy === 'none' || latestIntegrationRun.prUrl)
+		latestIntegrationRun.status === 'completed' &&
+		(conductor?.publishPolicy === 'none' || latestIntegrationRun.prUrl)
 	);
-	const percentComplete = taskCounts.total ? Math.round((taskCounts.done / taskCounts.total) * 100) : 0;
+	const percentComplete = taskCounts.total
+		? Math.round((taskCounts.done / taskCounts.total) * 100)
+		: 0;
 	const overviewCards = useMemo<
 		Array<{
 			label: string;
@@ -739,7 +755,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			},
 			{
 				label: 'Shipping status',
-				value: shippingComplete ? 'Ready' : latestIntegrationRun?.status === 'completed' ? 'PR next' : 'Not yet',
+				value: shippingComplete
+					? 'Ready'
+					: latestIntegrationRun?.status === 'completed'
+						? 'PR next'
+						: 'Not yet',
 				detail: latestIntegrationRun?.prUrl
 					? 'A pull request has already been opened for the latest result.'
 					: latestIntegrationRun?.status === 'completed'
@@ -748,7 +768,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							? 'Execution finished. The next step is pulling results together.'
 							: 'Nothing ready to ship yet.',
 				icon: <CheckCircle2 />,
-				tone: shippingComplete || latestIntegrationRun?.status === 'completed' ? 'success' : 'default',
+				tone:
+					shippingComplete || latestIntegrationRun?.status === 'completed' ? 'success' : 'default',
 			},
 		],
 		[
@@ -932,13 +953,13 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				prompt,
 				{
 					sshRemoteConfig: selectedTemplate.sessionSshRemoteConfig,
-						customPath: selectedTemplate.customPath,
-						customArgs: selectedTemplate.customArgs,
-						customEnvVars: selectedTemplate.customEnvVars,
-						customModel: selectedTemplate.customModel,
-						reasoningEffort: activeTemplateTab?.reasoningEffort ?? 'default',
-					}
-				);
+					customPath: selectedTemplate.customPath,
+					customArgs: selectedTemplate.customArgs,
+					customEnvVars: selectedTemplate.customEnvVars,
+					customModel: selectedTemplate.customModel,
+					reasoningEffort: activeTemplateTab?.reasoningEffort ?? 'default',
+				}
+			);
 			const parsedPlan = parseConductorPlannerResponse(response);
 			const titleToId = new Map<string, string>();
 			const plannedTasks = parsedPlan.tasks.map((task) => {
@@ -974,29 +995,29 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				createdAt: Date.now(),
 			};
 
-				replacePlannerTasks(groupId, plannedTasksWithDeps);
-				updateRun(runId, {
-					status: 'awaiting_approval',
+			replacePlannerTasks(groupId, plannedTasksWithDeps);
+			updateRun(runId, {
+				status: 'awaiting_approval',
 				summary: parsedPlan.summary,
 				taskIds: plannedTasksWithDeps.map((task) => task.id),
 				events: [planningStartedEvent, planGeneratedEvent],
-				});
-				setConductor(groupId, { status: 'awaiting_approval' });
-				setActiveTab('backlog');
-				if (requestOverride) {
-					setDraftDescription('');
-					setPlannerNotes('');
-					setIsPlanComposerOpen(false);
+			});
+			setConductor(groupId, { status: 'awaiting_approval' });
+			setActiveTab('backlog');
+			if (requestOverride) {
+				setDraftDescription('');
+				setPlannerNotes('');
+				setIsPlanComposerOpen(false);
+			}
+			if (options?.autoExecute) {
+				const approved = approvePlanningRun(runId);
+				if (approved) {
+					window.setTimeout(() => {
+						void handleRunReadyTasks();
+					}, 0);
 				}
-				if (options?.autoExecute) {
-					const approved = approvePlanningRun(runId);
-					if (approved) {
-						window.setTimeout(() => {
-							void handleRunReadyTasks();
-						}, 0);
-					}
-				}
-			} catch (error) {
+			}
+		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Plan generation failed.';
 			const failedAt = Date.now();
 			setPlanningError(message);
@@ -1160,7 +1181,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					sshRemoteId
 				);
 				if (!workerSetupResult.success) {
-					throw new Error(workerSetupResult.error || `Failed to create worktree for ${task.title}.`);
+					throw new Error(
+						workerSetupResult.error || `Failed to create worktree for ${task.title}.`
+					);
 				}
 
 				if (!workerBranches.includes(workerTarget.branchName)) {
@@ -1301,7 +1324,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				}
 
 				if (activeWorkers.size === 0) {
-					const remainingReady = Array.from(tasksById.values()).filter((task) => task.status === 'ready');
+					const remainingReady = Array.from(tasksById.values()).filter(
+						(task) => task.status === 'ready'
+					);
 					if (remainingReady.length > 0) {
 						blockedMessage =
 							blockedTaskIds.size > 0
@@ -1351,7 +1376,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			setConductor(groupId, { status: finalBlocked ? 'blocked' : 'idle' });
 			if (finalBlocked) {
 				setExecutionError(
-					blockedMessage || 'One or more tasks blocked during execution. Check the event feed for details.'
+					blockedMessage ||
+						'One or more tasks blocked during execution. Check the event feed for details.'
 				);
 			}
 		} catch (error) {
@@ -1402,7 +1428,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 
 		try {
 			const sshRemoteId = selectedTemplateSshRemoteId;
-			const repoRootResult = await window.maestro.git.getRepoRoot(selectedTemplate.cwd, sshRemoteId);
+			const repoRootResult = await window.maestro.git.getRepoRoot(
+				selectedTemplate.cwd,
+				sshRemoteId
+			);
 			if (!repoRootResult.success || !repoRootResult.root) {
 				setIntegrationError(repoRootResult.error || 'Cleanup requires a git repository.');
 				return;
@@ -1443,7 +1472,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			}
 
 			const finishedAt = Date.now();
-			const cleanupMessageParts = [`Cleaned ${cleanedWorktrees} worktree${cleanedWorktrees === 1 ? '' : 's'}.`];
+			const cleanupMessageParts = [
+				`Cleaned ${cleanedWorktrees} worktree${cleanedWorktrees === 1 ? '' : 's'}.`,
+			];
 			if (conductor?.deleteWorkerBranchesOnSuccess) {
 				cleanupMessageParts.push(
 					`Deleted ${deletedBranches} worker branch${deletedBranches === 1 ? '' : 'es'}.`
@@ -1497,7 +1528,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		}
 
 		const sshRemoteId =
-			selectedTemplate.sessionSshRemoteConfig?.enabled && selectedTemplate.sessionSshRemoteConfig.remoteId
+			selectedTemplate.sessionSshRemoteConfig?.enabled &&
+			selectedTemplate.sessionSshRemoteConfig.remoteId
 				? selectedTemplate.sessionSshRemoteConfig.remoteId
 				: undefined;
 		const repoRootResult = await window.maestro.git.getRepoRoot(selectedTemplate.cwd, sshRemoteId);
@@ -1582,18 +1614,16 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						runId: integrationRunId,
 						groupId,
 						type: 'integration_conflict',
-						message:
-							mergeResult.conflicted
-								? `Merge conflict while integrating ${branchName}.`
-								: `Failed to integrate ${branchName}. ${mergeResult.error || ''}`.trim(),
+						message: mergeResult.conflicted
+							? `Merge conflict while integrating ${branchName}.`
+							: `Failed to integrate ${branchName}. ${mergeResult.error || ''}`.trim(),
 						createdAt: eventTime,
 					});
 					updateRun(integrationRunId, {
 						status: 'attention_required',
-						summary:
-							mergeResult.conflicted
-								? `Integration stopped on a merge conflict in ${branchName}.`
-								: mergeResult.error || `Failed to integrate ${branchName}.`,
+						summary: mergeResult.conflicted
+							? `Integration stopped on a merge conflict in ${branchName}.`
+							: mergeResult.error || `Failed to integrate ${branchName}.`,
 						endedAt: eventTime,
 						events: [...events],
 					});
@@ -1730,7 +1760,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				endedAt,
 				events: [...events],
 			});
-			setConductor(groupId, { status: cleanupFailures.length === 0 ? 'idle' : 'attention_required' });
+			setConductor(groupId, {
+				status: cleanupFailures.length === 0 ? 'idle' : 'attention_required',
+			});
 			if (cleanupFailures.length > 0) {
 				setIntegrationError(cleanupFailures.join('\n'));
 			}
@@ -1844,7 +1876,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const latestIntegrationIsRemote = Boolean(latestIntegrationRun?.sshRemoteId);
 
 	return (
-		<div className="flex-1 min-w-0 min-h-0 flex flex-col" style={{ backgroundColor: theme.colors.bgMain }}>
+		<div
+			className="flex-1 min-w-0 min-h-0 flex flex-col"
+			style={{ backgroundColor: theme.colors.bgMain }}
+		>
 			<div
 				className="px-6 py-5 flex items-start justify-between gap-6"
 				style={{
@@ -1860,15 +1895,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				}}
 			>
 				<div>
-					<div className="text-xs uppercase tracking-[0.18em]" style={{ color: theme.colors.textDim }}>
+					<div
+						className="text-xs uppercase tracking-[0.18em]"
+						style={{ color: theme.colors.textDim }}
+					>
 						Conductor
 					</div>
 					<h1 className="text-2xl font-semibold mt-2" style={{ color: theme.colors.textMain }}>
 						{group ? `${group.emoji} ${group.name}` : 'Unknown Group'}
 					</h1>
 					<p className="text-sm mt-2 max-w-3xl" style={{ color: theme.colors.textDim }}>
-						Your project foreman for turning loose ideas into a reviewed plan, coordinated execution,
-						and one clean branch to ship.
+						Your project foreman for turning loose ideas into a reviewed plan, coordinated
+						execution, and one clean branch to ship.
 					</p>
 				</div>
 				<div className="flex items-center gap-3">
@@ -1915,13 +1953,15 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							className={tabButtonClass}
 							style={{
 								...getGlassButtonStyle(theme, { active: activeTab === tab }),
-								background: activeTab === tab
-									? `linear-gradient(180deg, ${theme.colors.accent}16 0%, rgba(255,255,255,0.07) 100%)`
-									: 'transparent',
+								background:
+									activeTab === tab
+										? `linear-gradient(180deg, ${theme.colors.accent}16 0%, rgba(255,255,255,0.07) 100%)`
+										: 'transparent',
 								borderColor: activeTab === tab ? `${theme.colors.accent}26` : 'transparent',
-								boxShadow: activeTab === tab
-									? `inset 0 -2px 0 0 ${theme.colors.accent}, 0 10px 22px rgba(15, 23, 42, 0.08)`
-									: 'none',
+								boxShadow:
+									activeTab === tab
+										? `inset 0 -2px 0 0 ${theme.colors.accent}, 0 10px 22px rgba(15, 23, 42, 0.08)`
+										: 'none',
 							}}
 						>
 							{tab === 'overview' ? 'Home' : tab === 'backlog' ? 'Tasks' : 'Runs'}
@@ -1932,16 +1972,16 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 
 			<div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 scrollbar-thin">
 				{!conductor?.templateSessionId && (
-							<div
-								className="rounded-xl border p-5 mb-5"
-								style={{
-									...getGlassPanelStyle(theme, {
-										tint: `${theme.colors.warning}12`,
-										borderColor: `${theme.colors.warning}38`,
-										strong: true,
-									}),
-								}}
-							>
+					<div
+						className="rounded-xl border p-5 mb-5"
+						style={{
+							...getGlassPanelStyle(theme, {
+								tint: `${theme.colors.warning}12`,
+								borderColor: `${theme.colors.warning}38`,
+								strong: true,
+							}),
+						}}
+					>
 						<div className="flex items-start gap-3">
 							<ShieldAlert className="w-5 h-5 mt-0.5" style={{ color: theme.colors.warning }} />
 							<div className="flex-1">
@@ -1949,8 +1989,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 									Pick the lead agent
 								</div>
 								<p className="text-sm mt-1 mb-4" style={{ color: theme.colors.textDim }}>
-									Choose one existing session in this group. Conductor will copy its repo, tools, model
-									settings, and env vars whenever it spins up workers.
+									Choose one existing session in this group. Conductor will copy its repo, tools,
+									model settings, and env vars whenever it spins up workers.
 								</p>
 								<div className="flex flex-wrap gap-2">
 									{groupSessions.length > 0 ? (
@@ -2009,8 +2049,12 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 										<History className="w-4 h-4" />
 										<h2 className="font-semibold">Recent updates</h2>
 									</div>
-									<p className="text-sm mt-2 leading-6 max-w-2xl" style={{ color: theme.colors.textDim }}>
-										The latest plain-English updates from planning, execution, and shipping all show up here.
+									<p
+										className="text-sm mt-2 leading-6 max-w-2xl"
+										style={{ color: theme.colors.textDim }}
+									>
+										The latest plain-English updates from planning, execution, and shipping all show
+										up here.
 									</p>
 								</div>
 								<div className="flex flex-wrap items-center gap-2">
@@ -2029,7 +2073,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
 										style={getGlassButtonStyle(theme)}
 									>
-										{isExecuting ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+										{isExecuting ? (
+											<Loader2 className="w-4 h-4 animate-spin" />
+										) : (
+											<PlayCircle className="w-4 h-4" />
+										)}
 										{isExecuting ? 'Running...' : 'Start the run'}
 									</button>
 									<button
@@ -2060,12 +2108,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
 										style={getGlassButtonStyle(theme)}
 									>
-										{isCreatingPr ? <Loader2 className="w-4 h-4 animate-spin" /> : <History className="w-4 h-4" />}
+										{isCreatingPr ? (
+											<Loader2 className="w-4 h-4 animate-spin" />
+										) : (
+											<History className="w-4 h-4" />
+										)}
 										{isCreatingPr ? 'Creating PR...' : 'Open a PR'}
 									</button>
 									{latestIntegrationRun?.prUrl && (
 										<button
-											onClick={() => void window.maestro.shell.openExternal(latestIntegrationRun.prUrl!)}
+											onClick={() =>
+												void window.maestro.shell.openExternal(latestIntegrationRun.prUrl!)
+											}
 											className="px-4 py-2 rounded-lg text-sm font-medium inline-flex items-center gap-2"
 											style={getGlassButtonStyle(theme)}
 										>
@@ -2083,14 +2137,20 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 											className="px-4 py-2 rounded-lg text-sm font-medium inline-flex items-center gap-2"
 											style={getGlassButtonStyle(theme)}
 										>
-											{latestIntegrationIsRemote ? <Copy className="w-4 h-4" /> : <FolderOpen className="w-4 h-4" />}
+											{latestIntegrationIsRemote ? (
+												<Copy className="w-4 h-4" />
+											) : (
+												<FolderOpen className="w-4 h-4" />
+											)}
 											{latestIntegrationIsRemote ? 'Copy remote folder path' : 'Open local folder'}
 										</button>
 									)}
 									{advancedMode && (
 										<button
 											onClick={() =>
-												void handleCleanupRunArtifacts(latestIntegrationRun || latestExecutionRun || latestRun!)
+												void handleCleanupRunArtifacts(
+													latestIntegrationRun || latestExecutionRun || latestRun!
+												)
 											}
 											disabled={
 												isCleaningUp ||
@@ -2104,7 +2164,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 											className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
 											style={getGlassButtonStyle(theme)}
 										>
-											{isCleaningUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+											{isCleaningUp ? (
+												<Loader2 className="w-4 h-4 animate-spin" />
+											) : (
+												<Trash2 className="w-4 h-4" />
+											)}
 											{isCleaningUp ? 'Cleaning...' : 'Clean up leftovers'}
 										</button>
 									)}
@@ -2164,34 +2228,48 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 												: theme.colors.border,
 										}}
 									>
-										<div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: theme.colors.textDim }}>
+										<div
+											className="text-[11px] uppercase tracking-[0.18em]"
+											style={{ color: theme.colors.textDim }}
+										>
 											Latest update
 										</div>
 										{latestUpdate ? (
 											<>
-												<div className="font-semibold text-lg mt-3" style={{ color: theme.colors.textMain }}>
+												<div
+													className="font-semibold text-lg mt-3"
+													style={{ color: theme.colors.textMain }}
+												>
 													{latestUpdate.event.message}
 												</div>
-												<div className="text-sm mt-2 leading-6" style={{ color: theme.colors.textDim }}>
-													{formatLabel(latestUpdate.runKind)} run · {formatTimestamp(latestUpdate.event.createdAt)}
+												<div
+													className="text-sm mt-2 leading-6"
+													style={{ color: theme.colors.textDim }}
+												>
+													{formatLabel(latestUpdate.runKind)} run ·{' '}
+													{formatTimestamp(latestUpdate.event.createdAt)}
 												</div>
 											</>
 										) : (
 											<p className="text-sm mt-3 leading-6" style={{ color: theme.colors.textDim }}>
-												Once you create a plan, Conductor will start narrating the important moments here.
+												Once you create a plan, Conductor will start narrating the important moments
+												here.
 											</p>
 										)}
 									</div>
 
 									{latestPlanningRun?.summary && (
-										<div
-										className="rounded-2xl border p-4"
-										style={getGlassPanelStyle(theme)}
-									>
-											<div className="text-[11px] uppercase tracking-[0.18em]" style={{ color: theme.colors.textDim }}>
+										<div className="rounded-2xl border p-4" style={getGlassPanelStyle(theme)}>
+											<div
+												className="text-[11px] uppercase tracking-[0.18em]"
+												style={{ color: theme.colors.textDim }}
+											>
 												Latest plan summary
 											</div>
-											<p className="text-sm mt-3 leading-6" style={{ color: theme.colors.textMain }}>
+											<p
+												className="text-sm mt-3 leading-6"
+												style={{ color: theme.colors.textMain }}
+											>
 												{latestPlanningRun.summary}
 											</p>
 										</div>
@@ -2199,14 +2277,14 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 
 									{(executionError || integrationError) && (
 										<div
-										className="rounded-2xl border p-4 text-sm"
-										style={{
-											...getGlassPanelStyle(theme, {
-												tint: `${theme.colors.warning}12`,
-												borderColor: `${theme.colors.warning}35`,
-											}),
-											color: theme.colors.warning,
-										}}
+											className="rounded-2xl border p-4 text-sm"
+											style={{
+												...getGlassPanelStyle(theme, {
+													tint: `${theme.colors.warning}12`,
+													borderColor: `${theme.colors.warning}35`,
+												}),
+												color: theme.colors.warning,
+											}}
 										>
 											{executionError || integrationError}
 										</div>
@@ -2234,7 +2312,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 													style={{
 														...getGlassPanelStyle(theme, {
 															tint: `${toneColor}10`,
-															borderColor: tone === 'default' ? 'rgba(255,255,255,0.10)' : `${toneColor}28`,
+															borderColor:
+																tone === 'default' ? 'rgba(255,255,255,0.10)' : `${toneColor}28`,
 														}),
 													}}
 												>
@@ -2267,7 +2346,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																	{formatConductorStatusLabel(runStatus)}
 																</span>
 															</div>
-															<div className="text-sm mt-3 leading-6" style={{ color: theme.colors.textMain }}>
+															<div
+																className="text-sm mt-3 leading-6"
+																style={{ color: theme.colors.textMain }}
+															>
 																{event.message}
 															</div>
 															<div className="text-xs mt-3" style={{ color: theme.colors.textDim }}>
@@ -2279,16 +2361,13 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 											);
 										})
 									) : (
-										<div
-											className="rounded-2xl border p-6"
-											style={getGlassPanelStyle(theme)}
-										>
+										<div className="rounded-2xl border p-6" style={getGlassPanelStyle(theme)}>
 											<div className="font-semibold" style={{ color: theme.colors.textMain }}>
 												No updates yet
 											</div>
 											<p className="text-sm mt-2 leading-6" style={{ color: theme.colors.textDim }}>
-												Create a plan and this feed will turn into a clean timeline of planning, work in motion,
-												and shipping updates.
+												Create a plan and this feed will turn into a clean timeline of planning,
+												work in motion, and shipping updates.
 											</p>
 										</div>
 									)}
@@ -2298,10 +2377,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					</div>
 				)}
 
-					{activeTab === 'backlog' && (
-						<div className="space-y-5">
-
-							{pendingRun && (
+				{activeTab === 'backlog' && (
+					<div className="space-y-5">
+						{pendingRun && (
 							<div
 								className="rounded-xl border p-5"
 								style={{
@@ -2314,13 +2392,16 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							>
 								<div className="flex items-start justify-between gap-4">
 									<div>
-										<div className="flex items-center gap-2" style={{ color: theme.colors.textMain }}>
+										<div
+											className="flex items-center gap-2"
+											style={{ color: theme.colors.textMain }}
+										>
 											<CheckCircle2 className="w-4 h-4" />
 											<h2 className="font-semibold">Give this plan a quick okay</h2>
 										</div>
 										<p className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
-											Check that the breakdown looks sane. Once you approve it, Conductor can start working
-											through the approved items.
+											Check that the breakdown looks sane. Once you approve it, Conductor can start
+											working through the approved items.
 										</p>
 										{pendingRun.summary && (
 											<div
@@ -2340,51 +2421,59 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 									</button>
 								</div>
 							</div>
-							)}
+						)}
 
-							<div className="flex justify-end">
-								<div className="flex items-center gap-2">
-									<button
-										onClick={handleRunReadyTasks}
-										disabled={isExecuting || taskCounts.ready === 0 || !!pendingRun}
-										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-										style={getGlassButtonStyle(theme, { accent: true })}
-									>
-										{isExecuting ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
-										{isExecuting ? 'Running...' : 'Start the run'}
-									</button>
-									<button
-										onClick={handleIntegrateCompletedWork}
-										disabled={
-											isIntegrating ||
-											!latestExecutionRun?.taskBranches ||
-											Object.keys(latestExecutionRun.taskBranches).length === 0
-										}
-										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-										style={getGlassButtonStyle(theme)}
-									>
-										{isIntegrating ? (
-											<Loader2 className="w-4 h-4 animate-spin" />
-										) : (
-											<FolderKanban className="w-4 h-4" />
-										)}
-										{isIntegrating ? 'Integrating...' : 'Pull results together'}
-									</button>
-									<button
-										onClick={handleCreateIntegrationPr}
-										disabled={
-											isCreatingPr ||
-											!latestIntegrationRun?.worktreePath ||
-											latestIntegrationRun.status === 'integrating'
-										}
-										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-										style={getGlassButtonStyle(theme)}
-									>
-										{isCreatingPr ? <Loader2 className="w-4 h-4 animate-spin" /> : <History className="w-4 h-4" />}
-										{isCreatingPr ? 'Creating PR...' : 'Open a PR'}
-									</button>
-								</div>
+						<div className="flex justify-end">
+							<div className="flex items-center gap-2">
+								<button
+									onClick={handleRunReadyTasks}
+									disabled={isExecuting || taskCounts.ready === 0 || !!pendingRun}
+									className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
+									style={getGlassButtonStyle(theme, { accent: true })}
+								>
+									{isExecuting ? (
+										<Loader2 className="w-4 h-4 animate-spin" />
+									) : (
+										<PlayCircle className="w-4 h-4" />
+									)}
+									{isExecuting ? 'Running...' : 'Start the run'}
+								</button>
+								<button
+									onClick={handleIntegrateCompletedWork}
+									disabled={
+										isIntegrating ||
+										!latestExecutionRun?.taskBranches ||
+										Object.keys(latestExecutionRun.taskBranches).length === 0
+									}
+									className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
+									style={getGlassButtonStyle(theme)}
+								>
+									{isIntegrating ? (
+										<Loader2 className="w-4 h-4 animate-spin" />
+									) : (
+										<FolderKanban className="w-4 h-4" />
+									)}
+									{isIntegrating ? 'Integrating...' : 'Pull results together'}
+								</button>
+								<button
+									onClick={handleCreateIntegrationPr}
+									disabled={
+										isCreatingPr ||
+										!latestIntegrationRun?.worktreePath ||
+										latestIntegrationRun.status === 'integrating'
+									}
+									className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
+									style={getGlassButtonStyle(theme)}
+								>
+									{isCreatingPr ? (
+										<Loader2 className="w-4 h-4 animate-spin" />
+									) : (
+										<History className="w-4 h-4" />
+									)}
+									{isCreatingPr ? 'Creating PR...' : 'Open a PR'}
+								</button>
 							</div>
+						</div>
 
 						<div
 							className="rounded-xl border p-5"
@@ -2397,13 +2486,16 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							<div className="flex flex-col gap-4">
 								<div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
 									<div>
-										<div className="flex items-center gap-2" style={{ color: theme.colors.textMain }}>
+										<div
+											className="flex items-center gap-2"
+											style={{ color: theme.colors.textMain }}
+										>
 											<FolderKanban className="w-4 h-4" />
 											<h2 className="font-semibold">Your task space</h2>
 										</div>
 										<p className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
-										Use the board when you want the big picture. Switch to the list when you need to search,
-										sort, and tidy up details.
+											Use the board when you want the big picture. Switch to the list when you need
+											to search, sort, and tidy up details.
 										</p>
 									</div>
 									<div className="flex items-center gap-2">
@@ -2475,7 +2567,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 											<option value="all">All sources</option>
 											<option value="manual">{formatTaskSourceLabel('manual')}</option>
 											<option value="planner">{formatTaskSourceLabel('planner')}</option>
-											<option value="worker_followup">{formatTaskSourceLabel('worker_followup')}</option>
+											<option value="worker_followup">
+												{formatTaskSourceLabel('worker_followup')}
+											</option>
 										</select>
 									</div>
 									<div className="relative">
@@ -2540,244 +2634,257 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 										className="rounded-xl border p-8 text-center"
 										style={{ ...getGlassPanelStyle(theme), color: theme.colors.textDim }}
 									>
-										Your wish list is empty. Add a change you want, then let Conductor turn it into a plan.
+										Your wish list is empty. Add a change you want, then let Conductor turn it into
+										a plan.
 									</div>
 								) : backlogView === 'board' ? (
 									<div className="overflow-x-auto pb-2 scrollbar-thin">
 										<div className="grid grid-cols-1 xl:grid-cols-3 2xl:grid-cols-6 gap-4 min-w-[1200px] 2xl:min-w-0">
-										{BOARD_COLUMNS.map((status) => {
-											const columnTasks = filteredTasks.filter((task) => task.status === status);
-											const tone = getTaskStatusTone(theme, status);
-											return (
-												<div
-													key={status}
-													className="rounded-xl border p-3 min-h-[280px]"
-													onDragOver={(e) => {
-														e.preventDefault();
-													}}
-													onDrop={() => {
-														if (draggedTaskId) {
-															handleTaskStatusMove(draggedTaskId, status);
-															setDraggedTaskId(null);
-														}
-													}}
-													style={getGlassPanelStyle(theme, {
-														tint: `${tone.fg}08`,
-														borderColor: tone.border,
-													})}
-												>
-													<div className="flex items-center justify-between gap-2 mb-3">
-														<div>
-															<div className="font-semibold" style={{ color: theme.colors.textMain }}>
-																{formatTaskStatusLabel(status)}
+											{BOARD_COLUMNS.map((status) => {
+												const columnTasks = filteredTasks.filter((task) => task.status === status);
+												const tone = getTaskStatusTone(theme, status);
+												return (
+													<div
+														key={status}
+														className="rounded-xl border p-3 min-h-[280px]"
+														onDragOver={(e) => {
+															e.preventDefault();
+														}}
+														onDrop={() => {
+															if (draggedTaskId) {
+																handleTaskStatusMove(draggedTaskId, status);
+																setDraggedTaskId(null);
+															}
+														}}
+														style={getGlassPanelStyle(theme, {
+															tint: `${tone.fg}08`,
+															borderColor: tone.border,
+														})}
+													>
+														<div className="flex items-center justify-between gap-2 mb-3">
+															<div>
+																<div
+																	className="font-semibold"
+																	style={{ color: theme.colors.textMain }}
+																>
+																	{formatTaskStatusLabel(status)}
+																</div>
+																<div
+																	className="text-xs mt-1"
+																	style={{ color: theme.colors.textDim }}
+																>
+																	{columnTasks.length} task{columnTasks.length === 1 ? '' : 's'}
+																</div>
+																<div
+																	className="text-xs mt-2 leading-5"
+																	style={{ color: theme.colors.textDim }}
+																>
+																	{BOARD_COLUMN_HINTS[status]}
+																</div>
 															</div>
-															<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-																{columnTasks.length} task{columnTasks.length === 1 ? '' : 's'}
-															</div>
-															<div
-																className="text-xs mt-2 leading-5"
-																style={{ color: theme.colors.textDim }}
-															>
-																{BOARD_COLUMN_HINTS[status]}
-															</div>
-														</div>
-														<span
-															className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
-															style={{
-																backgroundColor: tone.bg,
-																borderColor: tone.border,
-																color: tone.fg,
-															}}
-														>
-															{formatTaskStatusLabel(status)}
-														</span>
-													</div>
-
-													<div className="space-y-3">
-														{columnTasks.length > 0 ? (
-															columnTasks.map((task) => {
-																const statusTone = getTaskStatusTone(theme, task.status);
-																const priorityTone = getTaskPriorityTone(theme, task.priority);
-																return (
-																	<div
-																		key={task.id}
-																		draggable
-																		onDragStart={() => setDraggedTaskId(task.id)}
-																		onDragEnd={() => setDraggedTaskId(null)}
-																		className="rounded-xl border p-3 cursor-grab active:cursor-grabbing"
-																		style={getGlassPanelStyle(theme, {
-																			tint:
-																				draggedTaskId === task.id
-																					? `${theme.colors.accent}12`
-																					: 'rgba(255,255,255,0.09)',
-																			borderColor:
-																				draggedTaskId === task.id
-																					? `${theme.colors.accent}45`
-																					: 'rgba(255,255,255,0.08)',
-																		})}
-																	>
-																		<div className="flex items-start justify-between gap-3">
-																			<div className="flex-1 min-w-0">
-																				<div className="flex items-start gap-2">
-																					<div
-																						className="mt-0.5"
-																						style={{ color: theme.colors.textDim }}
-																					>
-																						<Rows3 className="w-4 h-4" />
-																					</div>
-																					<div className="min-w-0 flex-1">
-																						<div
-																							className="font-semibold"
-																							style={{ color: theme.colors.textMain }}
-																						>
-																							{task.title}
-																						</div>
-																						{task.description && (
-																							<p
-																								className="text-sm mt-2 line-clamp-3"
-																								style={{ color: theme.colors.textDim }}
-																							>
-																								{task.description}
-																							</p>
-																						)}
-																					</div>
-																				</div>
-																			</div>
-																			<button
-																				onClick={() => deleteTask(task.id)}
-																				className="p-2 rounded-lg hover:bg-white/5"
-																				title="Delete task"
-																				style={{ color: theme.colors.textDim }}
-																			>
-																				<Trash2 className="w-4 h-4" />
-																			</button>
-																		</div>
-
-																		<div className="flex flex-wrap gap-2 mt-3">
-																			<span
-																				className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
-																				style={{
-																					backgroundColor: priorityTone.bg,
-																					borderColor: priorityTone.border,
-																					color: priorityTone.fg,
-																				}}
-																			>
-																				{task.priority}
-																			</span>
-																			<span
-																				className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
-																				style={{
-																					backgroundColor: statusTone.bg,
-																					borderColor: statusTone.border,
-																					color: statusTone.fg,
-																				}}
-																			>
-																				{formatTaskStatusLabel(task.status)}
-																			</span>
-																			<span
-																				className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
-																				style={{
-																					backgroundColor:
-																						task.source === 'planner'
-																							? `${theme.colors.accent}12`
-																							: `${theme.colors.textDim}10`,
-																					borderColor:
-																						task.source === 'planner'
-																							? `${theme.colors.accent}24`
-																							: `${theme.colors.textDim}20`,
-																					color:
-																						task.source === 'planner'
-																							? theme.colors.accent
-																							: theme.colors.textDim,
-																				}}
-																			>
-																				{formatTaskSourceLabel(task.source)}
-																			</span>
-																		</div>
-
-																		<div className="grid grid-cols-2 gap-2 mt-3 text-xs">
-																			<div
-																				className="rounded-lg border px-2 py-2"
-																				style={{ ...getGlassPanelStyle(theme), color: theme.colors.textDim }}
-																			>
-																				<div>Deps</div>
-																				<div style={{ color: theme.colors.textMain }}>
-																					{task.dependsOn.length}
-																				</div>
-																			</div>
-																			<div
-																				className="rounded-lg border px-2 py-2"
-																				style={{ ...getGlassPanelStyle(theme), color: theme.colors.textDim }}
-																			>
-																				<div>Scope</div>
-																				<div style={{ color: theme.colors.textMain }}>
-																					{task.scopePaths.length}
-																				</div>
-																			</div>
-																		</div>
-
-																		{task.scopePaths.length > 0 && (
-																			<div
-																				className="text-xs mt-3 line-clamp-2"
-																				style={{ color: theme.colors.textDim }}
-																			>
-																				Scope: {task.scopePaths.join(', ')}
-																			</div>
-																		)}
-
-																		<div className="flex flex-wrap gap-2 mt-3">
-																			<select
-																				value={task.status}
-																				onChange={(e) =>
-																					updateTask(task.id, {
-																						status: e.target.value as ConductorTaskStatus,
-																					})
-																				}
-																				className="rounded-lg border px-2 py-2 text-xs"
-																				style={getGlassInputStyle(theme)}
-																			>
-																				{STATUS_OPTIONS.map((option) => (
-																					<option key={option} value={option}>
-																						{formatTaskStatusLabel(option)}
-																					</option>
-																				))}
-																			</select>
-																			<select
-																				value={task.priority}
-																				onChange={(e) =>
-																					updateTask(task.id, {
-																						priority: e.target.value as ConductorTaskPriority,
-																					})
-																				}
-																				className="rounded-lg border px-2 py-2 text-xs"
-																				style={getGlassInputStyle(theme)}
-																			>
-																				{PRIORITY_OPTIONS.map((option) => (
-																					<option key={option} value={option}>
-																						{formatLabel(option)}
-																					</option>
-																				))}
-																			</select>
-																		</div>
-																	</div>
-																);
-															})
-														) : (
-															<div
-																className="rounded-lg border border-dashed p-4 text-sm"
+															<span
+																className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
 																style={{
-																	backgroundColor: `${theme.colors.textDim}08`,
-																	borderColor: `${theme.colors.textDim}22`,
-																	color: theme.colors.textDim,
+																	backgroundColor: tone.bg,
+																	borderColor: tone.border,
+																	color: tone.fg,
 																}}
 															>
-																Drop a task here or adjust filters to surface this lane.
-															</div>
-														)}
+																{formatTaskStatusLabel(status)}
+															</span>
+														</div>
+
+														<div className="space-y-3">
+															{columnTasks.length > 0 ? (
+																columnTasks.map((task) => {
+																	const statusTone = getTaskStatusTone(theme, task.status);
+																	const priorityTone = getTaskPriorityTone(theme, task.priority);
+																	return (
+																		<div
+																			key={task.id}
+																			draggable
+																			onDragStart={() => setDraggedTaskId(task.id)}
+																			onDragEnd={() => setDraggedTaskId(null)}
+																			className="rounded-xl border p-3 cursor-grab active:cursor-grabbing"
+																			style={getGlassPanelStyle(theme, {
+																				tint:
+																					draggedTaskId === task.id
+																						? `${theme.colors.accent}12`
+																						: 'rgba(255,255,255,0.09)',
+																				borderColor:
+																					draggedTaskId === task.id
+																						? `${theme.colors.accent}45`
+																						: 'rgba(255,255,255,0.08)',
+																			})}
+																		>
+																			<div className="flex items-start justify-between gap-3">
+																				<div className="flex-1 min-w-0">
+																					<div className="flex items-start gap-2">
+																						<div
+																							className="mt-0.5"
+																							style={{ color: theme.colors.textDim }}
+																						>
+																							<Rows3 className="w-4 h-4" />
+																						</div>
+																						<div className="min-w-0 flex-1">
+																							<div
+																								className="font-semibold"
+																								style={{ color: theme.colors.textMain }}
+																							>
+																								{task.title}
+																							</div>
+																							{task.description && (
+																								<p
+																									className="text-sm mt-2 line-clamp-3"
+																									style={{ color: theme.colors.textDim }}
+																								>
+																									{task.description}
+																								</p>
+																							)}
+																						</div>
+																					</div>
+																				</div>
+																				<button
+																					onClick={() => deleteTask(task.id)}
+																					className="p-2 rounded-lg hover:bg-white/5"
+																					title="Delete task"
+																					style={{ color: theme.colors.textDim }}
+																				>
+																					<Trash2 className="w-4 h-4" />
+																				</button>
+																			</div>
+
+																			<div className="flex flex-wrap gap-2 mt-3">
+																				<span
+																					className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
+																					style={{
+																						backgroundColor: priorityTone.bg,
+																						borderColor: priorityTone.border,
+																						color: priorityTone.fg,
+																					}}
+																				>
+																					{task.priority}
+																				</span>
+																				<span
+																					className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
+																					style={{
+																						backgroundColor: statusTone.bg,
+																						borderColor: statusTone.border,
+																						color: statusTone.fg,
+																					}}
+																				>
+																					{formatTaskStatusLabel(task.status)}
+																				</span>
+																				<span
+																					className="px-2 py-1 rounded-full border text-[11px] uppercase tracking-wide"
+																					style={{
+																						backgroundColor:
+																							task.source === 'planner'
+																								? `${theme.colors.accent}12`
+																								: `${theme.colors.textDim}10`,
+																						borderColor:
+																							task.source === 'planner'
+																								? `${theme.colors.accent}24`
+																								: `${theme.colors.textDim}20`,
+																						color:
+																							task.source === 'planner'
+																								? theme.colors.accent
+																								: theme.colors.textDim,
+																					}}
+																				>
+																					{formatTaskSourceLabel(task.source)}
+																				</span>
+																			</div>
+
+																			<div className="grid grid-cols-2 gap-2 mt-3 text-xs">
+																				<div
+																					className="rounded-lg border px-2 py-2"
+																					style={{
+																						...getGlassPanelStyle(theme),
+																						color: theme.colors.textDim,
+																					}}
+																				>
+																					<div>Deps</div>
+																					<div style={{ color: theme.colors.textMain }}>
+																						{task.dependsOn.length}
+																					</div>
+																				</div>
+																				<div
+																					className="rounded-lg border px-2 py-2"
+																					style={{
+																						...getGlassPanelStyle(theme),
+																						color: theme.colors.textDim,
+																					}}
+																				>
+																					<div>Scope</div>
+																					<div style={{ color: theme.colors.textMain }}>
+																						{task.scopePaths.length}
+																					</div>
+																				</div>
+																			</div>
+
+																			{task.scopePaths.length > 0 && (
+																				<div
+																					className="text-xs mt-3 line-clamp-2"
+																					style={{ color: theme.colors.textDim }}
+																				>
+																					Scope: {task.scopePaths.join(', ')}
+																				</div>
+																			)}
+
+																			<div className="flex flex-wrap gap-2 mt-3">
+																				<select
+																					value={task.status}
+																					onChange={(e) =>
+																						updateTask(task.id, {
+																							status: e.target.value as ConductorTaskStatus,
+																						})
+																					}
+																					className="rounded-lg border px-2 py-2 text-xs"
+																					style={getGlassInputStyle(theme)}
+																				>
+																					{STATUS_OPTIONS.map((option) => (
+																						<option key={option} value={option}>
+																							{formatTaskStatusLabel(option)}
+																						</option>
+																					))}
+																				</select>
+																				<select
+																					value={task.priority}
+																					onChange={(e) =>
+																						updateTask(task.id, {
+																							priority: e.target.value as ConductorTaskPriority,
+																						})
+																					}
+																					className="rounded-lg border px-2 py-2 text-xs"
+																					style={getGlassInputStyle(theme)}
+																				>
+																					{PRIORITY_OPTIONS.map((option) => (
+																						<option key={option} value={option}>
+																							{formatLabel(option)}
+																						</option>
+																					))}
+																				</select>
+																			</div>
+																		</div>
+																	);
+																})
+															) : (
+																<div
+																	className="rounded-lg border border-dashed p-4 text-sm"
+																	style={{
+																		backgroundColor: `${theme.colors.textDim}08`,
+																		borderColor: `${theme.colors.textDim}22`,
+																		color: theme.colors.textDim,
+																	}}
+																>
+																	Drop a task here or adjust filters to surface this lane.
+																</div>
+															)}
+														</div>
 													</div>
-												</div>
-											);
-										})}
+												);
+											})}
 										</div>
 									</div>
 								) : (
@@ -2792,7 +2899,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 											<div
 												className="grid gap-3 px-4 py-3 text-xs uppercase tracking-wide border-b"
 												style={{
-													gridTemplateColumns: 'minmax(260px,2fr) 110px 110px 140px 100px 120px 120px 72px',
+													gridTemplateColumns:
+														'minmax(260px,2fr) 110px 110px 140px 100px 120px 120px 72px',
 													borderColor: theme.colors.border,
 													color: theme.colors.textDim,
 												}}
@@ -2821,7 +2929,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																}}
 															>
 																<div className="min-w-0">
-																	<div className="font-semibold" style={{ color: theme.colors.textMain }}>
+																	<div
+																		className="font-semibold"
+																		style={{ color: theme.colors.textMain }}
+																	>
 																		{task.title}
 																	</div>
 																	{task.description && (
@@ -2833,7 +2944,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																		</div>
 																	)}
 																	{task.scopePaths.length > 0 && (
-																		<div className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+																		<div
+																			className="text-xs mt-2"
+																			style={{ color: theme.colors.textDim }}
+																		>
 																			{task.scopePaths.join(', ')}
 																		</div>
 																	)}
@@ -2908,7 +3022,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 														);
 													})
 												) : (
-													<div className="px-4 py-10 text-center" style={{ color: theme.colors.textDim }}>
+													<div
+														className="px-4 py-10 text-center"
+														style={{ color: theme.colors.textDim }}
+													>
 														No tasks match the current search and filters.
 													</div>
 												)}
@@ -2934,82 +3051,90 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 									})}
 								>
 									<div className="flex items-start justify-between gap-4">
-											<div>
-												<div className="font-semibold" style={{ color: theme.colors.textMain }}>
-													{run.summary || 'Conductor planning run'}
-												</div>
-												<div className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
-													Type: {(run.kind || 'planning').replace(/^\w/, (char) => char.toUpperCase())}
-												</div>
-												<div className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
-													Status: {formatConductorStatusLabel(run.status)}
-												</div>
-												{advancedMode && run.branchName && (
-													<div className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
-														Branch: {run.branchName}
-													</div>
-												)}
-												{advancedMode && run.worktreePath && (
-													<div className="text-sm mt-1 break-all" style={{ color: theme.colors.textDim }}>
-														{run.sshRemoteId ? 'Remote worktree' : 'Worktree'}: {run.worktreePath}
-													</div>
-												)}
+										<div>
+											<div className="font-semibold" style={{ color: theme.colors.textMain }}>
+												{run.summary || 'Conductor planning run'}
+											</div>
+											<div className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
+												Type:{' '}
+												{(run.kind || 'planning').replace(/^\w/, (char) => char.toUpperCase())}
+											</div>
+											<div className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
+												Status: {formatConductorStatusLabel(run.status)}
+											</div>
+											{advancedMode && run.branchName && (
 												<div className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
-													Started: {formatTimestamp(run.startedAt)}
+													Branch: {run.branchName}
 												</div>
+											)}
+											{advancedMode && run.worktreePath && (
+												<div
+													className="text-sm mt-1 break-all"
+													style={{ color: theme.colors.textDim }}
+												>
+													{run.sshRemoteId ? 'Remote worktree' : 'Worktree'}: {run.worktreePath}
+												</div>
+											)}
+											<div className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
+												Started: {formatTimestamp(run.startedAt)}
+											</div>
 											{run.approvedAt && (
 												<div className="text-sm mt-1" style={{ color: theme.colors.textDim }}>
 													Approved: {formatTimestamp(run.approvedAt)}
 												</div>
 											)}
 										</div>
-									<div className="text-sm" style={{ color: theme.colors.textDim }}>
-										{run.taskIds.length} task{run.taskIds.length === 1 ? '' : 's'}
+										<div className="text-sm" style={{ color: theme.colors.textDim }}>
+											{run.taskIds.length} task{run.taskIds.length === 1 ? '' : 's'}
+										</div>
+									</div>
+									<div className="flex flex-wrap gap-2 mt-4">
+										{run.prUrl && (
+											<button
+												onClick={() => void window.maestro.shell.openExternal(run.prUrl!)}
+												className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2"
+												style={getGlassButtonStyle(theme)}
+											>
+												<ExternalLink className="w-4 h-4" />
+												Open pull request
+											</button>
+										)}
+										{advancedMode && run.worktreePath && (
+											<button
+												onClick={() =>
+													run.sshRemoteId
+														? void handleCopyRemotePath(run.worktreePath!)
+														: void window.maestro.shell.openPath(run.worktreePath!)
+												}
+												className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2"
+												style={getGlassButtonStyle(theme)}
+											>
+												{run.sshRemoteId ? (
+													<Copy className="w-4 h-4" />
+												) : (
+													<FolderOpen className="w-4 h-4" />
+												)}
+												{run.sshRemoteId ? 'Copy remote folder path' : 'Open local folder'}
+											</button>
+										)}
+										{advancedMode && (
+											<button
+												onClick={() => void handleCleanupRunArtifacts(run)}
+												disabled={isCleaningUp || collectRunArtifactPaths(run).length === 0}
+												className="px-3 py-2 rounded-lg text-sm disabled:opacity-50 inline-flex items-center gap-2"
+												style={getGlassButtonStyle(theme)}
+											>
+												{isCleaningUp ? (
+													<Loader2 className="w-4 h-4 animate-spin" />
+												) : (
+													<Trash2 className="w-4 h-4" />
+												)}
+												Clean up leftovers
+											</button>
+										)}
 									</div>
 								</div>
-								<div className="flex flex-wrap gap-2 mt-4">
-									{run.prUrl && (
-										<button
-											onClick={() => void window.maestro.shell.openExternal(run.prUrl!)}
-											className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2"
-											style={getGlassButtonStyle(theme)}
-										>
-											<ExternalLink className="w-4 h-4" />
-											Open pull request
-										</button>
-									)}
-									{advancedMode && run.worktreePath && (
-										<button
-											onClick={() =>
-												run.sshRemoteId
-													? void handleCopyRemotePath(run.worktreePath!)
-													: void window.maestro.shell.openPath(run.worktreePath!)
-											}
-											className="px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2"
-											style={getGlassButtonStyle(theme)}
-										>
-											{run.sshRemoteId ? (
-												<Copy className="w-4 h-4" />
-											) : (
-												<FolderOpen className="w-4 h-4" />
-											)}
-											{run.sshRemoteId ? 'Copy remote folder path' : 'Open local folder'}
-										</button>
-									)}
-									{advancedMode && (
-										<button
-											onClick={() => void handleCleanupRunArtifacts(run)}
-											disabled={isCleaningUp || collectRunArtifactPaths(run).length === 0}
-											className="px-3 py-2 rounded-lg text-sm disabled:opacity-50 inline-flex items-center gap-2"
-											style={getGlassButtonStyle(theme)}
-										>
-											{isCleaningUp ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-											Clean up leftovers
-										</button>
-									)}
-								</div>
-							</div>
-						))
+							))
 						) : (
 							<div
 								className="rounded-xl border p-8 text-center"
@@ -3047,14 +3172,17 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								strong: true,
 							})}
 						>
-							<div className="flex items-center gap-2 mb-2" style={{ color: theme.colors.textMain }}>
+							<div
+								className="flex items-center gap-2 mb-2"
+								style={{ color: theme.colors.textMain }}
+							>
 								<Sparkles className="w-4 h-4" />
 								<h2 className="font-semibold">How Conductor works</h2>
 							</div>
 							<p className="text-sm leading-6 mb-4" style={{ color: theme.colors.textDim }}>
-								Conductor is easiest when you treat it like a lead dev for this group: pick one trusted
-								agent, describe the changes you want, then decide whether you want to review the plan or
-								let it keep moving.
+								Conductor is easiest when you treat it like a lead dev for this group: pick one
+								trusted agent, describe the changes you want, then decide whether you want to review
+								the plan or let it keep moving.
 							</p>
 							<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
 								{SETTINGS_GUIDE_STEPS.map((step, index) => {
@@ -3098,7 +3226,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 													<div className="font-semibold" style={{ color: theme.colors.textMain }}>
 														{step.title}
 													</div>
-													<p className="text-sm leading-6 mt-2" style={{ color: theme.colors.textDim }}>
+													<p
+														className="text-sm leading-6 mt-2"
+														style={{ color: theme.colors.textDim }}
+													>
 														{step.description}
 													</p>
 												</div>
@@ -3131,23 +3262,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								</button>
 							</div>
 							<p className="text-sm leading-6 mb-4" style={{ color: theme.colors.textDim }}>
-								Use one trusted session as the lead. Conductor copies its environment, then handles the
-								rest. Defaults are already selected, so most people can leave advanced controls alone.
+								Use one trusted session as the lead. Conductor copies its environment, then handles
+								the rest. Defaults are already selected, so most people can leave advanced controls
+								alone.
 							</p>
 							<div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm mb-4">
-								<div
-									className="rounded-2xl border p-4"
-									style={getGlassPanelStyle(theme)}
-								>
+								<div className="rounded-2xl border p-4" style={getGlassPanelStyle(theme)}>
 									<div style={{ color: theme.colors.textDim }}>Lead agent</div>
 									<div className="font-semibold mt-2" style={{ color: theme.colors.textMain }}>
 										{selectedTemplate?.name || 'Not configured'}
 									</div>
 								</div>
-								<div
-									className="rounded-2xl border p-4"
-									style={getGlassPanelStyle(theme)}
-								>
+								<div className="rounded-2xl border p-4" style={getGlassPanelStyle(theme)}>
 									<div style={{ color: theme.colors.textDim }}>Work style</div>
 									<div className="font-semibold mt-2" style={{ color: theme.colors.textMain }}>
 										{formatLabel(conductor?.resourceProfile || 'balanced')}
@@ -3155,27 +3281,22 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								</div>
 							</div>
 							{!advancedMode && (
-								<div
-									className="rounded-2xl border p-4 text-sm"
-									style={getGlassPanelStyle(theme)}
-								>
+								<div className="rounded-2xl border p-4 text-sm" style={getGlassPanelStyle(theme)}>
 									<div className="font-semibold" style={{ color: theme.colors.textMain }}>
 										Defaults selected
 									</div>
 									<div className="mt-2 leading-6" style={{ color: theme.colors.textDim }}>
 										Resource profile: {formatLabel(conductor?.resourceProfile || 'balanced')}
 										<br />
-										Publish policy: {conductor?.publishPolicy === 'none' ? 'No publish action' : 'Manual PR'}
+										Publish policy:{' '}
+										{conductor?.publishPolicy === 'none' ? 'No publish action' : 'Manual PR'}
 										<br />
 										Auto execute tasks: {conductor?.autoExecuteOnPlanCreation ? 'On' : 'Off'}
 									</div>
 								</div>
 							)}
 							{advancedMode && (
-								<div
-									className="rounded-2xl border p-4"
-									style={getGlassPanelStyle(theme)}
-								>
+								<div className="rounded-2xl border p-4" style={getGlassPanelStyle(theme)}>
 									<div className="space-y-3 text-sm">
 										<div>
 											<div className="mb-2" style={{ color: theme.colors.textDim }}>
@@ -3185,7 +3306,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 												value={conductor?.resourceProfile || 'balanced'}
 												onChange={(e) =>
 													setConductor(groupId, {
-														resourceProfile: e.target.value as 'conservative' | 'balanced' | 'aggressive',
+														resourceProfile: e.target.value as
+															| 'conservative'
+															| 'balanced'
+															| 'aggressive',
 													})
 												}
 												className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -3282,13 +3406,16 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								strong: true,
 							})}
 						>
-							<div className="flex items-center gap-2 mb-3" style={{ color: theme.colors.textMain }}>
+							<div
+								className="flex items-center gap-2 mb-3"
+								style={{ color: theme.colors.textMain }}
+							>
 								<FolderKanban className="w-4 h-4" />
 								<h2 className="font-semibold">How fast Conductor should go</h2>
 							</div>
 							<p className="text-sm leading-6 mb-4" style={{ color: theme.colors.textDim }}>
-								Conductor slows itself down when your machine is under pressure, so you do not have to
-								think about worker counts all day.
+								Conductor slows itself down when your machine is under pressure, so you do not have
+								to think about worker counts all day.
 							</p>
 							<div className="space-y-2 text-sm" style={{ color: theme.colors.textDim }}>
 								<div>
@@ -3327,7 +3454,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 										{resourceGate.allowed ? 'Open' : 'Holding'}
 									</span>
 								</div>
-								{resourceGate.message && <div style={{ color: theme.colors.warning }}>{resourceGate.message}</div>}
+								{resourceGate.message && (
+									<div style={{ color: theme.colors.warning }}>{resourceGate.message}</div>
+								)}
 							</div>
 						</div>
 					</div>
@@ -3391,14 +3520,14 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						{planningError && (
 							<div
 								className="rounded-lg border p-3 text-sm"
-							style={{
-								...getGlassPanelStyle(theme, {
-									tint: `${theme.colors.warning}12`,
-									borderColor: `${theme.colors.warning}35`,
-								}),
-								color: theme.colors.warning,
-							}}
-						>
+								style={{
+									...getGlassPanelStyle(theme, {
+										tint: `${theme.colors.warning}12`,
+										borderColor: `${theme.colors.warning}35`,
+									}),
+									color: theme.colors.warning,
+								}}
+							>
 								{planningError}
 							</div>
 						)}
@@ -3429,7 +3558,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
 								style={getGlassButtonStyle(theme, { accent: true })}
 							>
-								{isPlanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+								{isPlanning ? (
+									<Loader2 className="w-4 h-4 animate-spin" />
+								) : (
+									<Sparkles className="w-4 h-4" />
+								)}
 								{isPlanning ? 'Planning...' : 'Submit plan'}
 							</button>
 						</div>

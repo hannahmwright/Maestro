@@ -51,7 +51,11 @@ vi.mock('better-sqlite3', () => ({
 		exec = mockExec;
 		prepare = mockPrepare;
 		close = mockClose;
-		transaction = vi.fn((fn: (...args: any[]) => void) => (...args: any[]) => fn(...args));
+		transaction = vi.fn(
+			(fn: (...args: any[]) => void) =>
+				(...args: any[]) =>
+					fn(...args)
+		);
 	},
 }));
 
@@ -107,10 +111,18 @@ describe('ArtifactsDB', () => {
 
 		expect(lastDbPath).toBe(path.join(mockUserDataPath, 'artifacts.db'));
 		expect(mockPragma).toHaveBeenCalledWith('journal_mode = WAL');
-		expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS capture_runs'));
-		expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS artifacts'));
-		expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS demos'));
-		expect(mockExec).toHaveBeenCalledWith(expect.stringContaining('CREATE TABLE IF NOT EXISTS demo_steps'));
+		expect(mockExec).toHaveBeenCalledWith(
+			expect.stringContaining('CREATE TABLE IF NOT EXISTS capture_runs')
+		);
+		expect(mockExec).toHaveBeenCalledWith(
+			expect.stringContaining('CREATE TABLE IF NOT EXISTS artifacts')
+		);
+		expect(mockExec).toHaveBeenCalledWith(
+			expect.stringContaining('CREATE TABLE IF NOT EXISTS demos')
+		);
+		expect(mockExec).toHaveBeenCalledWith(
+			expect.stringContaining('CREATE TABLE IF NOT EXISTS demo_steps')
+		);
 	});
 
 	it('maps artifact rows from snake_case to camelCase', async () => {

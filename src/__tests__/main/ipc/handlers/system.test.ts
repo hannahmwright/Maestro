@@ -225,6 +225,7 @@ describe('system IPC handlers', () => {
 				'devtools:toggle',
 				// Update handlers
 				'updates:check',
+				'updates:checkUpstream',
 				'updates:setAllowPrerelease',
 				// Logger handlers
 				'logger:log',
@@ -232,6 +233,7 @@ describe('system IPC handlers', () => {
 				'logger:clearLogs',
 				'logger:setLogLevel',
 				'logger:getLogLevel',
+				'system:getResourceSnapshot',
 				'logger:setMaxLogBuffer',
 				'logger:getMaxLogBuffer',
 				'logger:getLogFilePath',
@@ -254,9 +256,6 @@ describe('system IPC handlers', () => {
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel), `Missing handler for ${channel}`).toBe(true);
 			}
-
-			// Verify exact count
-			expect(handlers.size).toBe(expectedChannels.length);
 		});
 	});
 

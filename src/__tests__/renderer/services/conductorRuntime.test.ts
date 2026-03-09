@@ -59,8 +59,15 @@ describe('conductorRuntime', () => {
 	});
 
 	it('treats overlapping scope paths as conflicting', () => {
-		expect(tasksConflict(createTask('left', ['src/renderer']), createTask('right', ['src/renderer/components']))).toBe(true);
-		expect(tasksConflict(createTask('left', ['src/main']), createTask('right', ['src/renderer']))).toBe(false);
+		expect(
+			tasksConflict(
+				createTask('left', ['src/renderer']),
+				createTask('right', ['src/renderer/components'])
+			)
+		).toBe(true);
+		expect(
+			tasksConflict(createTask('left', ['src/main']), createTask('right', ['src/renderer']))
+		).toBe(false);
 		expect(tasksConflict(createTask('left', []), createTask('right', ['src/renderer']))).toBe(true);
 	});
 });

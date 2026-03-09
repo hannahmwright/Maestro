@@ -326,7 +326,15 @@ describe('Process Preload API', () => {
 			api.onRemoteCommand(callback);
 			registeredHandler!({}, 'session-123', 'test command', 'ai');
 
-			expect(callback).toHaveBeenCalledWith('session-123', 'test command', 'ai');
+			expect(callback).toHaveBeenCalledWith(
+				'session-123',
+				'test command',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				undefined
+			);
 		});
 	});
 });

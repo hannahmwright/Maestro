@@ -1,3 +1,4 @@
+import { existsSync } from 'fs';
 import * as fs from 'fs/promises';
 import path from 'path';
 import ts from 'typescript';
@@ -62,13 +63,49 @@ function parseTsConfig(repoRoot: string): ParsedTsConfig | null {
 	};
 }
 
+function buildSemanticCompilerOptions(
+	repoRoot: string,
+	options: ts.CompilerOptions
+): ts.CompilerOptions {
+	const localTypeRoots = [
+		path.join(repoRoot, 'node_modules', '@types'),
+		path.join(repoRoot, '@types'),
+	].filter((candidate) => existsSync(candidate));
+
+	// Keep semantic validation scoped to the target repo so temp or sandbox repos do not
+	// inherit ambient @types packages from Maestro's own workspace.
+	if (!options.typeRoots && !options.types && localTypeRoots.length === 0) {
+		return {
+			...options,
+			noEmit: true,
+			skipLibCheck: true,
+			types: [],
+		};
+	}
+
+	if (!options.typeRoots && !options.types && localTypeRoots.length > 0) {
+		return {
+			...options,
+			noEmit: true,
+			skipLibCheck: true,
+			typeRoots: localTypeRoots,
+		};
+	}
+
+	return {
+		...options,
+		noEmit: true,
+		skipLibCheck: true,
+	};
+}
+
 function collectSemanticDiagnostics(repoRoot: string): SyntaxValidationError[] {
 	const parsedConfig = parseTsConfig(repoRoot);
 	if (!parsedConfig || parsedConfig.fileNames.length === 0) return [];
-	const program = ts.createProgram(parsedConfig.fileNames, {
-		...parsedConfig.options,
-		noEmit: true,
-	});
+	const program = ts.createProgram(
+		parsedConfig.fileNames,
+		buildSemanticCompilerOptions(repoRoot, parsedConfig.options)
+	);
 	const diagnostics = ts
 		.getPreEmitDiagnostics(program)
 		.filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error);

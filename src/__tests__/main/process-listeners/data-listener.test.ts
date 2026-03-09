@@ -84,10 +84,7 @@ describe('Data Listener', () => {
 
 		it('should register the assistant-stream event listener', () => {
 			setupListener();
-			expect(mockProcessManager.on).toHaveBeenCalledWith(
-				'assistant-stream',
-				expect.any(Function)
-			);
+			expect(mockProcessManager.on).toHaveBeenCalledWith('assistant-stream', expect.any(Function));
 		});
 	});
 

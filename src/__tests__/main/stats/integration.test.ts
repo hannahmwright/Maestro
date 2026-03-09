@@ -735,7 +735,7 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			expect(packageJson.dependencies['better-sqlite3']).toBeDefined();
 		});
 
-		it('should have electron-rebuild in devDependencies', async () => {
+		it('should have electron rebuild tooling in devDependencies', async () => {
 			const fs = await import('node:fs');
 			const path = await import('node:path');
 
@@ -744,7 +744,7 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			const packageJson = JSON.parse(packageJsonContent);
 
 			expect(packageJson.devDependencies).toBeDefined();
-			expect(packageJson.devDependencies['electron-rebuild']).toBeDefined();
+			expect(packageJson.devDependencies['@electron/rebuild']).toBeDefined();
 		});
 
 		it('should have @types/better-sqlite3 in devDependencies', async () => {

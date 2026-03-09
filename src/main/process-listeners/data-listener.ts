@@ -6,10 +6,7 @@
 import type { ProcessManager } from '../process-manager';
 import type { AssistantStreamEvent } from '../process-manager/types';
 import { GROUP_CHAT_PREFIX, type ProcessListenerDependencies } from './types';
-import {
-	MAESTRO_DEMO_EVENT_PREFIX,
-	type DemoCaptureEvent,
-} from '../../shared/demo-artifacts';
+import { MAESTRO_DEMO_EVENT_PREFIX, type DemoCaptureEvent } from '../../shared/demo-artifacts';
 
 /**
  * Maximum buffer size per session (10MB).
@@ -264,7 +261,10 @@ export function setupDataListener(
 		}
 
 		if (REGEX_BATCH_SESSION.test(sessionId) || REGEX_SYNOPSIS_SESSION.test(sessionId)) {
-			debugLog('WebBroadcast', `SKIPPING assistant stream for batch/synopsis: session=${sessionId}`);
+			debugLog(
+				'WebBroadcast',
+				`SKIPPING assistant stream for batch/synopsis: session=${sessionId}`
+			);
 			return;
 		}
 

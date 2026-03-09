@@ -134,9 +134,7 @@ export const processService = {
 		return window.maestro.process.onToolExecution(handler);
 	},
 
-	onUserInputRequest(
-		handler: (sessionId: string, request: UserInputRequest) => void
-	): () => void {
+	onUserInputRequest(handler: (sessionId: string, request: UserInputRequest) => void): () => void {
 		return window.maestro.process.onUserInputRequest(handler);
 	},
 };

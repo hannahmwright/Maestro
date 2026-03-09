@@ -254,9 +254,16 @@ const mockMaestro = {
 	agents: {
 		detect: vi.fn(),
 		get: vi.fn(),
+		getConfig: vi.fn(),
+		getModels: vi.fn(),
+		setCustomPath: vi.fn(),
+		setConfig: vi.fn(),
 	},
 	git: {
 		isRepo: vi.fn(),
+	},
+	sessions: {
+		getAll: vi.fn(),
 	},
 	dialog: {
 		selectFolder: vi.fn(),
@@ -303,7 +310,12 @@ describe('Wizard Integration Tests', () => {
 		// Setup default mock responses
 		mockMaestro.agents.detect.mockResolvedValue(mockAgents);
 		mockMaestro.agents.get.mockResolvedValue(mockAgents[0]);
+		mockMaestro.agents.getConfig.mockResolvedValue({});
+		mockMaestro.agents.getModels.mockResolvedValue([]);
+		mockMaestro.agents.setCustomPath.mockResolvedValue(undefined);
+		mockMaestro.agents.setConfig.mockResolvedValue(undefined);
 		mockMaestro.git.isRepo.mockResolvedValue(true);
+		mockMaestro.sessions.getAll.mockResolvedValue([]);
 		mockMaestro.settings.get.mockResolvedValue(undefined);
 		mockMaestro.settings.set.mockResolvedValue(undefined);
 		mockMaestro.dialog.selectFolder.mockResolvedValue('/test/project/path');

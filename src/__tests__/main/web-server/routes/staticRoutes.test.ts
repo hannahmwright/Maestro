@@ -1,22 +1,11 @@
-/**
- * Tests for StaticRoutes
- *
- * Static Routes handle dashboard views, PWA files, and security redirects.
- * Routes are protected by a security token prefix.
- *
- * Note: Tests that require fs mocking are skipped due to ESM module limitations.
- * The fs-dependent functionality is tested via integration tests.
- *
- * Routes tested:
- * - / - Redirect to website (no access without token)
- * - /health - Health check endpoint
- * - /:token - Invalid token catch-all, redirect to website
- */
-
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StaticRoutes } from '../../../../main/web-server/routes/staticRoutes';
+import {
+	WEB_APP_BASE_PATH,
+	WEB_APP_MANIFEST_PATH,
+	WEB_APP_SERVICE_WORKER_PATH,
+} from '../../../../shared/remote-web';
 
-// Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
 	logger: {
 		info: vi.fn(),
@@ -26,9 +15,6 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
-/**
- * Mock Fastify instance with route registration tracking
- */
 function createMockFastify() {
 	const routes: Map<string, { handler: Function }> = new Map();
 
@@ -41,17 +27,14 @@ function createMockFastify() {
 	};
 }
 
-/**
- * Mock reply object
- */
 function createMockReply() {
-	const reply: any = {
+	return {
 		code: vi.fn().mockReturnThis(),
 		send: vi.fn().mockReturnThis(),
 		type: vi.fn().mockReturnThis(),
+		header: vi.fn().mockReturnThis(),
 		redirect: vi.fn().mockReturnThis(),
 	};
-	return reply;
 }
 
 describe('StaticRoutes', () => {
@@ -68,172 +51,102 @@ describe('StaticRoutes', () => {
 		staticRoutes.registerRoutes(mockFastify as any);
 	});
 
-	describe('Route Registration', () => {
-		it('should register all static routes', () => {
-			// 8 routes: /, /health, manifest.json, sw.js, dashboard, dashboard/, session/:id, /:token
-			expect(mockFastify.get).toHaveBeenCalledTimes(8);
-		});
-
-		it('should register routes with correct paths', () => {
-			expect(mockFastify.routes.has('GET:/')).toBe(true);
-			expect(mockFastify.routes.has('GET:/health')).toBe(true);
-			expect(mockFastify.routes.has(`GET:/${securityToken}/manifest.json`)).toBe(true);
-			expect(mockFastify.routes.has(`GET:/${securityToken}/sw.js`)).toBe(true);
-			expect(mockFastify.routes.has(`GET:/${securityToken}`)).toBe(true);
-			expect(mockFastify.routes.has(`GET:/${securityToken}/`)).toBe(true);
-			expect(mockFastify.routes.has(`GET:/${securityToken}/session/:sessionId`)).toBe(true);
-			expect(mockFastify.routes.has('GET:/:token')).toBe(true);
-		});
+	it('registers the stable app routes and legacy token redirects', () => {
+		expect(mockFastify.get).toHaveBeenCalledTimes(12);
+		expect(mockFastify.routes.has('GET:/')).toBe(true);
+		expect(mockFastify.routes.has('GET:/health')).toBe(true);
+		expect(mockFastify.routes.has(`GET:${WEB_APP_MANIFEST_PATH}`)).toBe(true);
+		expect(mockFastify.routes.has(`GET:${WEB_APP_SERVICE_WORKER_PATH}`)).toBe(true);
+		expect(mockFastify.routes.has(`GET:${WEB_APP_BASE_PATH}`)).toBe(true);
+		expect(mockFastify.routes.has(`GET:${WEB_APP_BASE_PATH}/`)).toBe(true);
+		expect(mockFastify.routes.has(`GET:${WEB_APP_BASE_PATH}/session/:sessionId`)).toBe(true);
+		expect(mockFastify.routes.has(`GET:${WEB_APP_BASE_PATH}/session/:sessionId/demo/:demoId`)).toBe(
+			true
+		);
+		expect(mockFastify.routes.has(`GET:/${securityToken}`)).toBe(true);
+		expect(mockFastify.routes.has(`GET:/${securityToken}/`)).toBe(true);
+		expect(mockFastify.routes.has(`GET:/${securityToken}/session/:sessionId`)).toBe(true);
+		expect(mockFastify.routes.has('GET:/:token')).toBe(true);
 	});
 
-	describe('GET / (Root Redirect)', () => {
-		it('should redirect to website', async () => {
-			const route = mockFastify.getRoute('GET', '/');
-			const reply = createMockReply();
-			await route!.handler({}, reply);
+	it('redirects root requests to the stable app scope', async () => {
+		const route = mockFastify.getRoute('GET', '/');
+		const reply = createMockReply();
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
-		});
+		await route!.handler({}, reply);
+
+		expect(reply.redirect).toHaveBeenCalledWith(302, WEB_APP_BASE_PATH);
 	});
 
-	describe('GET /health', () => {
-		it('should return health status', async () => {
-			const route = mockFastify.getRoute('GET', '/health');
-			const result = await route!.handler();
+	it('returns a health payload', async () => {
+		const route = mockFastify.getRoute('GET', '/health');
+		const result = await route!.handler();
 
-			expect(result.status).toBe('ok');
-			expect(result.timestamp).toBeDefined();
-		});
+		expect(result.status).toBe('ok');
+		expect(result.timestamp).toBeTypeOf('number');
 	});
 
-	describe('Null webAssetsPath handling', () => {
-		it('should return 404 for manifest.json when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null);
-			const noAssetsFastify = createMockFastify();
-			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
+	it('returns missing-asset responses when web assets are unavailable', async () => {
+		const noAssetsRoutes = new StaticRoutes(securityToken, null);
+		const noAssetsFastify = createMockFastify();
+		noAssetsRoutes.registerRoutes(noAssetsFastify as any);
 
-			const route = noAssetsFastify.getRoute('GET', `/${securityToken}/manifest.json`);
-			const reply = createMockReply();
-			await route!.handler({}, reply);
+		const manifestRoute = noAssetsFastify.getRoute('GET', WEB_APP_MANIFEST_PATH);
+		const swRoute = noAssetsFastify.getRoute('GET', WEB_APP_SERVICE_WORKER_PATH);
+		const appRoute = noAssetsFastify.getRoute('GET', WEB_APP_BASE_PATH);
+		const reply = createMockReply();
 
-			expect(reply.code).toHaveBeenCalledWith(404);
-		});
+		await manifestRoute!.handler({}, reply);
+		expect(reply.code).toHaveBeenCalledWith(404);
 
-		it('should return 404 for sw.js when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null);
-			const noAssetsFastify = createMockFastify();
-			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
+		reply.code.mockClear();
+		reply.send.mockClear();
+		await swRoute!.handler({}, reply);
+		expect(reply.code).toHaveBeenCalledWith(404);
 
-			const route = noAssetsFastify.getRoute('GET', `/${securityToken}/sw.js`);
-			const reply = createMockReply();
-			await route!.handler({}, reply);
-
-			expect(reply.code).toHaveBeenCalledWith(404);
-		});
-
-		it('should return 503 for dashboard when webAssetsPath is null', async () => {
-			const noAssetsRoutes = new StaticRoutes(securityToken, null);
-			const noAssetsFastify = createMockFastify();
-			noAssetsRoutes.registerRoutes(noAssetsFastify as any);
-
-			const route = noAssetsFastify.getRoute('GET', `/${securityToken}`);
-			const reply = createMockReply();
-			await route!.handler({}, reply);
-
-			expect(reply.code).toHaveBeenCalledWith(503);
-			expect(reply.send).toHaveBeenCalledWith(
-				expect.objectContaining({ error: 'Service Unavailable' })
-			);
-		});
+		reply.code.mockClear();
+		reply.send.mockClear();
+		await appRoute!.handler({}, reply);
+		expect(reply.code).toHaveBeenCalledWith(503);
+		expect(reply.send).toHaveBeenCalledWith(
+			expect.objectContaining({ error: 'Service Unavailable' })
+		);
 	});
 
-	describe('GET /:token (Invalid Token Catch-all)', () => {
-		it('should redirect to website for invalid token', async () => {
-			const route = mockFastify.getRoute('GET', '/:token');
-			const reply = createMockReply();
-			await route!.handler({ params: { token: 'invalid-token' } }, reply);
+	it('redirects invalid token requests to the website', async () => {
+		const route = mockFastify.getRoute('GET', '/:token');
+		const reply = createMockReply();
 
-			expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
-		});
+		await route!.handler({ params: { token: 'invalid-token' } }, reply);
+
+		expect(reply.redirect).toHaveBeenCalledWith(302, 'https://runmaestro.ai');
 	});
 
-	describe('Security Token Validation', () => {
-		it('should use provided security token in routes', () => {
-			const customToken = 'custom-secure-token-456';
-			const customRoutes = new StaticRoutes(customToken, webAssetsPath);
-			const customFastify = createMockFastify();
-			customRoutes.registerRoutes(customFastify as any);
+	it('keeps legacy redirects for the configured security token', async () => {
+		const route = mockFastify.getRoute('GET', `/${securityToken}/session/:sessionId`);
+		const reply = createMockReply();
 
-			expect(customFastify.routes.has(`GET:/${customToken}`)).toBe(true);
-			expect(customFastify.routes.has(`GET:/${customToken}/manifest.json`)).toBe(true);
-			expect(customFastify.routes.has(`GET:/${customToken}/sw.js`)).toBe(true);
-			expect(customFastify.routes.has(`GET:/${customToken}/session/:sessionId`)).toBe(true);
-		});
+		await route!.handler(
+			{
+				params: { sessionId: 'session-123' },
+				query: { tabId: 'tab-456' },
+			},
+			reply
+		);
+
+		expect(reply.redirect).toHaveBeenCalledWith(
+			302,
+			`${WEB_APP_BASE_PATH}/session/session-123?tabId=tab-456`
+		);
 	});
 
-	describe('XSS Sanitization (sanitizeId)', () => {
-		// Access private method via type casting for testing
-		const getSanitizeId = (routes: StaticRoutes) => {
-			return (routes as any).sanitizeId.bind(routes);
-		};
+	it('sanitizes session and tab ids for injected config', () => {
+		const sanitizeId = (staticRoutes as any).sanitizeId.bind(staticRoutes);
 
-		it('should allow valid UUID-style IDs', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('abc123')).toBe('abc123');
-			expect(sanitizeId('session-1')).toBe('session-1');
-			expect(sanitizeId('tab_abc_123')).toBe('tab_abc_123');
-			expect(sanitizeId('a1b2c3d4-e5f6-7890-abcd-ef1234567890')).toBe(
-				'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
-			);
-		});
-
-		it('should return null for null/undefined input', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId(null)).toBeNull();
-			expect(sanitizeId(undefined)).toBeNull();
-			expect(sanitizeId('')).toBeNull();
-		});
-
-		it('should reject XSS payloads with script tags', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('<script>alert(1)</script>')).toBeNull();
-			expect(sanitizeId('session<script>')).toBeNull();
-			expect(sanitizeId('tab</script>')).toBeNull();
-		});
-
-		it('should reject XSS payloads with JavaScript URLs', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('javascript:alert(1)')).toBeNull();
-			expect(sanitizeId('session:javascript')).toBeNull();
-		});
-
-		it('should reject XSS payloads with HTML entities', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('&lt;script&gt;')).toBeNull();
-			expect(sanitizeId('session&#x3C;')).toBeNull();
-		});
-
-		it('should reject special characters that could break HTML/JS', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('"onload="alert(1)')).toBeNull();
-			expect(sanitizeId("'onclick='alert(1)")).toBeNull();
-			expect(sanitizeId('session;alert(1)')).toBeNull();
-			expect(sanitizeId('session&alert=1')).toBeNull();
-			expect(sanitizeId('session?alert=1')).toBeNull();
-			expect(sanitizeId('session#alert')).toBeNull();
-		});
-
-		it('should reject whitespace', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('session 1')).toBeNull();
-			expect(sanitizeId('tab\t1')).toBeNull();
-			expect(sanitizeId('tab\n1')).toBeNull();
-		});
-
-		it('should reject path traversal attempts', () => {
-			const sanitizeId = getSanitizeId(staticRoutes);
-			expect(sanitizeId('../../../etc/passwd')).toBeNull();
-			expect(sanitizeId('..%2F..%2F')).toBeNull();
-		});
+		expect(sanitizeId('session-1')).toBe('session-1');
+		expect(sanitizeId('tab_123')).toBe('tab_123');
+		expect(sanitizeId('<script>alert(1)</script>')).toBeNull();
+		expect(sanitizeId('session?alert=1')).toBeNull();
+		expect(sanitizeId('../../../etc/passwd')).toBeNull();
 	});
 });

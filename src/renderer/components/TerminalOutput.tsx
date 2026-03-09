@@ -1031,10 +1031,7 @@ const LogItemComponent = memo(
 
 		const processedText = processLogTextHelper(textToProcess, isTerminal && log.source !== 'user');
 
-		// Skip rendering stderr entries that have no actual content
-		if (log.source === 'stderr' && !processedText.trim()) {
-			return null;
-		}
+		const skipEmptyStderr = log.source === 'stderr' && !processedText.trim();
 
 		// Separate stdout and stderr for terminal output
 		const separated =
@@ -1218,7 +1215,12 @@ const LogItemComponent = memo(
 					setIsSubmittingQuestionnaire(false);
 				}
 			},
-			[isSubmittingQuestionnaire, multipleChoiceQuestions, onReplayMessage, questionnaireQuestionCount]
+			[
+				isSubmittingQuestionnaire,
+				multipleChoiceQuestions,
+				onReplayMessage,
+				questionnaireQuestionCount,
+			]
 		);
 
 		const handleQuestionAnswer = useCallback(
@@ -1246,6 +1248,10 @@ const LogItemComponent = memo(
 				submitQuestionnaire,
 			]
 		);
+
+		if (skipEmptyStderr) {
+			return null;
+		}
 
 		return (
 			<>
@@ -2094,7 +2100,9 @@ const LogItemComponent = memo(
 													type="text"
 													value={manualAnswer}
 													onChange={(e) => setManualAnswer(e.target.value)}
-													placeholder={activeQuestion.manualAnswerOption.description || 'Type your answer'}
+													placeholder={
+														activeQuestion.manualAnswerOption.description || 'Type your answer'
+													}
 													className="min-w-0 flex-1 rounded-md border px-3 py-2 text-sm outline-none"
 													style={{
 														borderColor: `${theme.colors.border}cc`,
@@ -2122,7 +2130,10 @@ const LogItemComponent = memo(
 										</div>
 									)}
 									{isSubmittingQuestionnaire && (
-										<div className="text-[10px] uppercase tracking-wide" style={{ color: theme.colors.accent }}>
+										<div
+											className="text-[10px] uppercase tracking-wide"
+											style={{ color: theme.colors.accent }}
+										>
 											Sending answers...
 										</div>
 									)}
@@ -2320,7 +2331,9 @@ const LogItemComponent = memo(
 						)}
 					</div>
 				</div>
-				{openDemoId && <DemoViewerModal theme={theme} demoId={openDemoId} onClose={() => setOpenDemoId(null)} />}
+				{openDemoId && (
+					<DemoViewerModal theme={theme} demoId={openDemoId} onClose={() => setOpenDemoId(null)} />
+				)}
 			</>
 		);
 	},
@@ -2721,8 +2734,7 @@ export const TerminalOutput = memo(
 			[session.inputMode, session.aiTabs, session.activeTabId]
 		);
 		const pendingUserInputRequest = activeTab?.pendingUserInputRequest ?? null;
-		const activePendingQuestion =
-			pendingUserInputRequest?.questions[pendingQuestionIndex] ?? null;
+		const activePendingQuestion = pendingUserInputRequest?.questions[pendingQuestionIndex] ?? null;
 		const showPendingUserInputRequest =
 			!!pendingUserInputRequest &&
 			pendingQuestionIndex < pendingUserInputRequest.questions.length &&
@@ -3221,7 +3233,9 @@ export const TerminalOutput = memo(
 							log={log}
 							index={index}
 							previousLogTimestamp={index > 0 ? filteredLogs[index - 1].timestamp : undefined}
-							hasLaterUserResponse={filteredLogs.slice(index + 1).some((entry) => entry.source === 'user')}
+							hasLaterUserResponse={filteredLogs
+								.slice(index + 1)
+								.some((entry) => entry.source === 'user')}
 							isTerminal={isTerminal}
 							isAIMode={isAIMode}
 							theme={theme}
@@ -3317,10 +3331,7 @@ export const TerminalOutput = memo(
 									{activePendingQuestion.header} • Question {pendingQuestionIndex + 1} of{' '}
 									{pendingUserInputRequest.questions.length}
 								</div>
-								<div
-									className="mt-2 text-sm font-medium"
-									style={{ color: theme.colors.textMain }}
-								>
+								<div className="mt-2 text-sm font-medium" style={{ color: theme.colors.textMain }}>
 									{activePendingQuestion.question}
 								</div>
 								<div className="mt-3 flex flex-col gap-2">
@@ -3338,10 +3349,7 @@ export const TerminalOutput = memo(
 											disabled={isSubmittingPendingRequest}
 										>
 											<div className="text-sm font-medium">{option.label}</div>
-											<div
-												className="mt-1 text-xs"
-												style={{ color: theme.colors.textDim }}
-											>
+											<div className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
 												{option.description}
 											</div>
 										</button>
@@ -3383,12 +3391,8 @@ export const TerminalOutput = memo(
 															backgroundColor: theme.colors.accent,
 															color: theme.colors.accentForeground,
 														}}
-														onClick={() =>
-															void handlePendingQuestionAnswer([pendingManualAnswer])
-														}
-														disabled={
-															isSubmittingPendingRequest || !pendingManualAnswer.trim()
-														}
+														onClick={() => void handlePendingQuestionAnswer([pendingManualAnswer])}
+														disabled={isSubmittingPendingRequest || !pendingManualAnswer.trim()}
 													>
 														Continue
 													</button>

@@ -740,9 +740,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							toolState: logEntry.metadata.toolState
 								? { ...logEntry.metadata.toolState }
 								: undefined,
-							demoCard: logEntry.metadata.demoCard
-								? { ...logEntry.metadata.demoCard }
-								: undefined,
+							demoCard: logEntry.metadata.demoCard ? { ...logEntry.metadata.demoCard } : undefined,
 						}
 					: undefined,
 			};
@@ -754,37 +752,38 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				});
 		};
 
-		const unsubscribeDemoGenerated = window.maestro.process.onDemoGenerated(
-			(sessionId: string, tabId: string | null, demoCard: DemoCard) => {
-				const logEntry: LogEntry = {
-					id: generateId(),
-					timestamp: demoCard.updatedAt || Date.now(),
-					source: 'system',
-					text: demoCard.status === 'failed' ? 'Demo capture failed' : 'Demo ready',
-					metadata: {
-						demoCard,
-					},
-				};
+		const unsubscribeDemoGenerated =
+			window.maestro.process.onDemoGenerated?.(
+				(sessionId: string, tabId: string | null, demoCard: DemoCard) => {
+					const logEntry: LogEntry = {
+						id: generateId(),
+						timestamp: demoCard.updatedAt || Date.now(),
+						source: 'system',
+						text: demoCard.status === 'failed' ? 'Demo capture failed' : 'Demo ready',
+						metadata: {
+							demoCard,
+						},
+					};
 
-				setSessions((prev) =>
-					prev.map((session) => {
-						if (session.id !== sessionId) return session;
-						const targetTabId = tabId || session.activeTabId;
-						if (!targetTabId) {
-							return session;
-						}
-						return {
-							...session,
-							aiTabs: session.aiTabs.map((tab) =>
-								tab.id === targetTabId ? { ...tab, logs: [...tab.logs, logEntry] } : tab
-							),
-						};
-					})
-				);
+					setSessions((prev) =>
+						prev.map((session) => {
+							if (session.id !== sessionId) return session;
+							const targetTabId = tabId || session.activeTabId;
+							if (!targetTabId) {
+								return session;
+							}
+							return {
+								...session,
+								aiTabs: session.aiTabs.map((tab) =>
+									tab.id === targetTabId ? { ...tab, logs: [...tab.logs, logEntry] } : tab
+								),
+							};
+						})
+					);
 
-				broadcastSessionLogEntry(sessionId, tabId, 'ai', logEntry);
-			}
-		);
+					broadcastSessionLogEntry(sessionId, tabId, 'ai', logEntry);
+				}
+			) || (() => {});
 
 		// ================================================================
 		// onData — Handle process output data (BATCHED for performance)
@@ -935,8 +934,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 										}
 
 										const existingLog = updatedLogs[activeLogIndex];
-										const nextText =
-											streamEvent.mode === 'append' ? existingLog.text + text : text;
+										const nextText = streamEvent.mode === 'append' ? existingLog.text + text : text;
 										if (nextText !== existingLog.text) {
 											const updatedLog: LogEntry = {
 												...existingLog,
@@ -1684,45 +1682,46 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			}
 		);
 
-		const unsubscribeModel = window.maestro.process.onModel((sessionId: string, model: string) => {
-			const trimmedModel = model.trim();
-			if (!trimmedModel || isBatchSession(sessionId) || isSynopsisSession(sessionId)) {
-				return;
-			}
+		const unsubscribeModel =
+			window.maestro.process.onModel?.((sessionId: string, model: string) => {
+				const trimmedModel = model.trim();
+				if (!trimmedModel || isBatchSession(sessionId) || isSynopsisSession(sessionId)) {
+					return;
+				}
 
-			const parsed = parseSessionId(sessionId);
-			const actualSessionId = parsed.actualSessionId;
-			const tabId = parsed.tabId ?? undefined;
+				const parsed = parseSessionId(sessionId);
+				const actualSessionId = parsed.actualSessionId;
+				const tabId = parsed.tabId ?? undefined;
 
-			setSessions((prev) =>
-				prev.map((session) => {
-					if (session.id !== actualSessionId) return session;
+				setSessions((prev) =>
+					prev.map((session) => {
+						if (session.id !== actualSessionId) return session;
 
-					let targetTab;
-					if (tabId) {
-						targetTab = session.aiTabs?.find((tab) => tab.id === tabId);
-					}
+						let targetTab;
+						if (tabId) {
+							targetTab = session.aiTabs?.find((tab) => tab.id === tabId);
+						}
 
-					if (!targetTab) {
-						const awaitingTab = session.aiTabs?.find(
-							(tab) => tab.awaitingSessionId && !tab.agentSessionId
-						);
-						targetTab = awaitingTab || getActiveTab(session);
-					}
+						if (!targetTab) {
+							const awaitingTab = session.aiTabs?.find(
+								(tab) => tab.awaitingSessionId && !tab.agentSessionId
+							);
+							targetTab = awaitingTab || getActiveTab(session);
+						}
 
-					if (!targetTab || !session.aiTabs) {
-						return session;
-					}
+						if (!targetTab || !session.aiTabs) {
+							return session;
+						}
 
-					return {
-						...session,
-						aiTabs: session.aiTabs.map((tab) =>
-							tab.id === targetTab.id ? { ...tab, currentModel: trimmedModel } : tab
-						),
-					};
-				})
-			);
-		});
+						return {
+							...session,
+							aiTabs: session.aiTabs.map((tab) =>
+								tab.id === targetTab.id ? { ...tab, currentModel: trimmedModel } : tab
+							),
+						};
+					})
+				);
+			}) || (() => {});
 
 		// ================================================================
 		// onSlashCommands — Handle slash commands from Claude Code init

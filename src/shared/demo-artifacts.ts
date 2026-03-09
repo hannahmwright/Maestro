@@ -56,7 +56,12 @@ export interface DemoCaptureRequest {
 }
 
 export interface DemoCaptureEvent {
-	type: 'capture_started' | 'artifact_created' | 'step_created' | 'capture_completed' | 'capture_failed';
+	type:
+		| 'capture_started'
+		| 'artifact_created'
+		| 'step_created'
+		| 'capture_completed'
+		| 'capture_failed';
 	runId?: string;
 	title?: string;
 	summary?: string;

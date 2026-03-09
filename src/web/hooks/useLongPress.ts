@@ -92,19 +92,19 @@ export function useLongPress({ onLongPress, onTap }: UseLongPressOptions): UseLo
 
 	const onTouchEnd = useCallback(
 		(e: React.TouchEvent) => {
-		clearTimer();
-		if (isLongPressTriggeredRef.current) {
-			// Prevent the synthetic click fired on touch release from immediately
-			// activating whatever was rendered by the long-press callback.
-			e.preventDefault();
-			e.stopPropagation();
-		} else if (!isScrollingRef.current) {
-			triggerHaptic(HAPTIC_PATTERNS.tap);
-			onTap?.();
-		}
-		touchStartRef.current = null;
-		isScrollingRef.current = false;
-		isLongPressTriggeredRef.current = false;
+			clearTimer();
+			if (isLongPressTriggeredRef.current) {
+				// Prevent the synthetic click fired on touch release from immediately
+				// activating whatever was rendered by the long-press callback.
+				e.preventDefault();
+				e.stopPropagation();
+			} else if (!isScrollingRef.current) {
+				triggerHaptic(HAPTIC_PATTERNS.tap);
+				onTap?.();
+			}
+			touchStartRef.current = null;
+			isScrollingRef.current = false;
+			isLongPressTriggeredRef.current = false;
 		},
 		[clearTimer, onTap]
 	);

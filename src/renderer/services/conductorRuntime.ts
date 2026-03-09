@@ -41,14 +41,14 @@ export function evaluateConductorResourceGate(
 
 	const freeMemoryMB = snapshot?.availableMemoryMB ?? snapshot?.freeMemoryMB ?? null;
 	const oneMinuteLoad = snapshot?.loadAverage?.[0] ?? null;
-	const minFreeMemoryMB =
-		profile === 'conservative' ? 6144 : profile === 'balanced' ? 4096 : 3072;
+	const minFreeMemoryMB = profile === 'conservative' ? 6144 : profile === 'balanced' ? 4096 : 3072;
 
 	if (cores <= 1 && profile !== 'conservative') {
 		return {
 			allowed: false,
 			maxWorkers,
-			message: 'This machine reports only one hardware thread. Switch to Conservative or use a larger machine.',
+			message:
+				'This machine reports only one hardware thread. Switch to Conservative or use a larger machine.',
 		};
 	}
 
@@ -64,7 +64,8 @@ export function evaluateConductorResourceGate(
 		return {
 			allowed: false,
 			maxWorkers,
-			message: 'System load is currently high. Conductor is holding new work until the machine settles.',
+			message:
+				'System load is currently high. Conductor is holding new work until the machine settles.',
 		};
 	}
 
@@ -72,7 +73,11 @@ export function evaluateConductorResourceGate(
 }
 
 function normalizeScope(scopePath: string): string {
-	return scopePath.replace(/\\/g, '/').replace(/^\.?\//, '').replace(/\/+$/, '').toLowerCase();
+	return scopePath
+		.replace(/\\/g, '/')
+		.replace(/^\.?\//, '')
+		.replace(/\/+$/, '')
+		.toLowerCase();
 }
 
 function scopesOverlap(left: string, right: string): boolean {
@@ -95,7 +100,9 @@ export function tasksConflict(left: ConductorTask, right: ConductorTask): boolea
 		return true;
 	}
 
-	return leftScopes.some((leftScope) => rightScopes.some((rightScope) => scopesOverlap(leftScope, rightScope)));
+	return leftScopes.some((leftScope) =>
+		rightScopes.some((rightScope) => scopesOverlap(leftScope, rightScope))
+	);
 }
 
 export function buildConductorWorktreeTarget(

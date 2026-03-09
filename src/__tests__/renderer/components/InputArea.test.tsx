@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
 import { formatShortcutKeys, formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Theme } from '../../../renderer/types';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
@@ -213,9 +214,12 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof InputArea>[0]> 
 	};
 };
 
+const defaultUpdateSession = useSessionStore.getState().updateSession;
+
 describe('InputArea', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useSessionStore.setState({ updateSession: defaultUpdateSession } as any);
 	});
 
 	afterEach(() => {
@@ -427,17 +431,15 @@ describe('InputArea', () => {
 			expect(screen.queryByTitle(/Toggle read-only mode/)).not.toBeInTheDocument();
 		});
 
-		it('shows save to history toggle when onToggleTabSaveToHistory is provided', () => {
-			const onToggleTabSaveToHistory = vi.fn();
+		it('shows the demo capture toggle in AI mode', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
-				onToggleTabSaveToHistory,
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Save to History/);
+			const toggle = screen.getByTitle(/Capture a demo for the next agent run/);
 			expect(toggle).toBeInTheDocument();
-			expect(toggle).toHaveTextContent('History');
+			expect(toggle).toHaveTextContent('Demo');
 		});
 
 		it('renders ThinkingStatusPill when items are thinking', () => {
@@ -1601,17 +1603,47 @@ describe('InputArea', () => {
 			expect(onToggleTabReadOnlyMode).toHaveBeenCalled();
 		});
 
-		it('calls onToggleTabSaveToHistory when clicking history toggle', () => {
-			const onToggleTabSaveToHistory = vi.fn();
+		it('toggles demo capture for the active tab', () => {
+			const updateSession = vi.fn();
+			useSessionStore.setState({ updateSession } as any);
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				onToggleTabSaveToHistory,
+				session: createMockSession({
+					inputMode: 'ai',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							logs: [],
+							agentSessionId: null,
+							lastActivityAt: 0,
+							scrollTop: 0,
+							busyStartTime: null,
+							statusMessage: null,
+							contextUsage: null,
+							isStarred: false,
+							name: null,
+							readOnlyMode: false,
+							draftInput: '',
+							saveToHistory: false,
+							demoCaptureRequested: false,
+						},
+					],
+				}),
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(/Save to History/));
+			fireEvent.click(screen.getByTitle(/Capture a demo for the next agent run/));
 
-			expect(onToggleTabSaveToHistory).toHaveBeenCalled();
+			expect(updateSession).toHaveBeenCalledWith(
+				'session-1',
+				expect.objectContaining({
+					aiTabs: [
+						expect.objectContaining({
+							id: 'tab-1',
+							demoCaptureRequested: true,
+						}),
+					],
+				})
+			);
 		});
 
 		it('calls onOpenPromptComposer when clicking prompt composer button', () => {
@@ -1887,15 +1919,33 @@ describe('InputArea', () => {
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.warning });
 		});
 
-		it('applies active styling to history toggle when enabled', () => {
+		it('applies active styling to the demo capture toggle when enabled', () => {
 			const props = createDefaultProps({
-				session: createMockSession({ inputMode: 'ai' }),
-				tabSaveToHistory: true,
-				onToggleTabSaveToHistory: vi.fn(),
+				session: createMockSession({
+					inputMode: 'ai',
+					aiTabs: [
+						{
+							id: 'tab-1',
+							logs: [],
+							agentSessionId: null,
+							lastActivityAt: 0,
+							scrollTop: 0,
+							busyStartTime: null,
+							statusMessage: null,
+							contextUsage: null,
+							isStarred: false,
+							name: null,
+							readOnlyMode: false,
+							draftInput: '',
+							saveToHistory: false,
+							demoCaptureRequested: true,
+						},
+					],
+				}),
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Save to History/);
+			const toggle = screen.getByTitle(/Capture a demo for the next agent run/);
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.accent });
 		});
 	});

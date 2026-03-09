@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { AgentSessionsModal } from '../../../renderer/components/AgentSessionsModal';
+import { formatRelativeTime } from '../../../renderer/utils/formatters';
 import type { Theme, Session } from '../../../renderer/types';
 
 // Mock LayerStackContext
@@ -660,7 +661,7 @@ describe('AgentSessionsModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(screen.getByText('3d ago')).toBeInTheDocument();
+				expect(screen.getByText(formatRelativeTime(date.toISOString()))).toBeInTheDocument();
 			});
 		});
 

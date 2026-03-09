@@ -60,12 +60,9 @@ function createTask(): ConductorTask {
 
 describe('conductorWorker', () => {
 	it('builds a worker prompt with task details', () => {
-		const prompt = buildConductorWorkerPrompt(
-			'Maestro',
-			createTemplateSession(),
-			createTask(),
-			['Approve planning run']
-		);
+		const prompt = buildConductorWorkerPrompt('Maestro', createTemplateSession(), createTask(), [
+			'Approve planning run',
+		]);
 
 		expect(prompt).toContain('Implement execution lane');
 		expect(prompt).toContain('Approve planning run');

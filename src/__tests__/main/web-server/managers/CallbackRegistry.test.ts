@@ -44,8 +44,8 @@ describe('CallbackRegistry', () => {
 	// =========================================================================
 
 	describe('initial state', () => {
-		it('getSessions() returns empty array when no callback set', () => {
-			expect(registry.getSessions()).toEqual([]);
+		it('getSessions() returns empty array when no callback set', async () => {
+			expect(await registry.getSessions()).toEqual([]);
 		});
 
 		it('getSessionDetail() returns null when no callback set', () => {
@@ -226,7 +226,7 @@ describe('CallbackRegistry', () => {
 	// =========================================================================
 
 	describe('setGetSessionsCallback / getSessions()', () => {
-		it('returns the callback result', () => {
+		it('returns the callback result', async () => {
 			const sessions: SessionData[] = [
 				{
 					id: 'session-1',
@@ -241,16 +241,16 @@ describe('CallbackRegistry', () => {
 				},
 			];
 			registry.setGetSessionsCallback(() => sessions);
-			expect(registry.getSessions()).toEqual(sessions);
+			expect(await registry.getSessions()).toEqual(sessions);
 		});
 
-		it('calls the callback each time', () => {
+		it('calls the callback each time', async () => {
 			const callback = vi.fn().mockReturnValue([]);
 			registry.setGetSessionsCallback(callback);
 
-			registry.getSessions();
-			registry.getSessions();
-			registry.getSessions();
+			await registry.getSessions();
+			await registry.getSessions();
+			await registry.getSessions();
 
 			expect(callback).toHaveBeenCalledTimes(3);
 		});
@@ -367,7 +367,15 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'npm test');
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'npm test', undefined);
+			expect(callback).toHaveBeenCalledWith(
+				'session-5',
+				'npm test',
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined
+			);
 		});
 
 		it('passes inputMode argument to the callback', async () => {
@@ -376,7 +384,15 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'npm test', 'terminal');
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'npm test', 'terminal');
+			expect(callback).toHaveBeenCalledWith(
+				'session-5',
+				'npm test',
+				'terminal',
+				undefined,
+				undefined,
+				undefined,
+				undefined
+			);
 		});
 
 		it('passes ai inputMode argument to the callback', async () => {
@@ -385,7 +401,15 @@ describe('CallbackRegistry', () => {
 
 			await registry.executeCommand('session-5', 'explain this code', 'ai');
 
-			expect(callback).toHaveBeenCalledWith('session-5', 'explain this code', 'ai');
+			expect(callback).toHaveBeenCalledWith(
+				'session-5',
+				'explain this code',
+				'ai',
+				undefined,
+				undefined,
+				undefined,
+				undefined
+			);
 		});
 	});
 
@@ -606,15 +630,15 @@ describe('CallbackRegistry', () => {
 	// =========================================================================
 
 	describe('callback replacement', () => {
-		it('replaces a previously set callback with a new one', () => {
+		it('replaces a previously set callback with a new one', async () => {
 			const firstCallback = vi.fn().mockReturnValue([{ id: 'first' }]);
 			const secondCallback = vi.fn().mockReturnValue([{ id: 'second' }]);
 
 			registry.setGetSessionsCallback(firstCallback as any);
-			expect(registry.getSessions()).toEqual([{ id: 'first' }]);
+			expect(await registry.getSessions()).toEqual([{ id: 'first' }]);
 
 			registry.setGetSessionsCallback(secondCallback as any);
-			expect(registry.getSessions()).toEqual([{ id: 'second' }]);
+			expect(await registry.getSessions()).toEqual([{ id: 'second' }]);
 
 			// First callback should only have been called once
 			expect(firstCallback).toHaveBeenCalledTimes(1);
@@ -640,7 +664,7 @@ describe('CallbackRegistry', () => {
 	// =========================================================================
 
 	describe('independent callback registration', () => {
-		it('setting one callback does not affect others', () => {
+		it('setting one callback does not affect others', async () => {
 			const sessionsCallback = vi.fn().mockReturnValue([]);
 			registry.setGetSessionsCallback(sessionsCallback);
 
@@ -652,7 +676,7 @@ describe('CallbackRegistry', () => {
 			expect(registry.getHistory()).toEqual([]);
 
 			// The set callback should work
-			expect(registry.getSessions()).toEqual([]);
+			expect(await registry.getSessions()).toEqual([]);
 			expect(sessionsCallback).toHaveBeenCalledTimes(1);
 		});
 
@@ -665,7 +689,7 @@ describe('CallbackRegistry', () => {
 			registry.setGetThemeCallback(themeCallback as any);
 			registry.setExecuteCommandCallback(executeCallback);
 
-			expect(registry.getSessions()).toEqual([{ id: 's1' }]);
+			expect(await registry.getSessions()).toEqual([{ id: 's1' }]);
 			expect(registry.getTheme()).toEqual({ name: 'dark' });
 			expect(await registry.executeCommand('s1', 'test')).toBe(true);
 

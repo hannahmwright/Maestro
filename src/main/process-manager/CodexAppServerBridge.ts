@@ -3,12 +3,7 @@ import { EventEmitter } from 'events';
 import { WebSocket } from 'ws';
 import { logger } from '../utils/logger';
 import { buildChildProcessEnv } from './utils/envBuilder';
-import type {
-	CodexAppServerState,
-	ManagedProcess,
-	ProcessConfig,
-	SpawnResult,
-} from './types';
+import type { CodexAppServerState, ManagedProcess, ProcessConfig, SpawnResult } from './types';
 import type {
 	UserInputRequest,
 	UserInputRequestId,
@@ -115,7 +110,7 @@ export class CodexAppServerBridge {
 		const childProcess = spawn(config.command, ['app-server', '--listen', 'ws://127.0.0.1:0'], {
 			cwd: config.cwd,
 			env,
-			shell: config.runInShell ? (config.shell || true) : false,
+			shell: config.runInShell ? config.shell || true : false,
 		});
 
 		const codexAppServerState: CodexAppServerState = {
@@ -235,7 +230,11 @@ export class CodexAppServerBridge {
 		});
 	}
 
-	private connectWebSocket(managedProcess: ManagedProcess, config: ProcessConfig, wsUrl: string): void {
+	private connectWebSocket(
+		managedProcess: ManagedProcess,
+		config: ProcessConfig,
+		wsUrl: string
+	): void {
 		const state = managedProcess.codexAppServerState;
 		if (!state) return;
 
@@ -339,8 +338,7 @@ export class CodexAppServerBridge {
 			case 'turn/completed':
 				logger.info('[CodexAppServerBridge] Turn completed notification', LOG_CONTEXT, {
 					sessionId: managedProcess.sessionId,
-					hasPendingCorrection:
-						!!managedProcess.codexAppServerState?.pendingCorrectionPrompt,
+					hasPendingCorrection: !!managedProcess.codexAppServerState?.pendingCorrectionPrompt,
 					hadUserInputRequest:
 						managedProcess.codexAppServerState?.currentTurnHadUserInputRequest === true,
 				});

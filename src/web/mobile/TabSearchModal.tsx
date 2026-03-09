@@ -339,10 +339,10 @@ function Section({ title, description, targets, colors, onSelect }: SectionProps
 }
 
 export function TabSearchModal({
-	sessions,
+	sessions = [],
 	activeSessionId,
 	activeTabId,
-	recentTargets,
+	recentTargets = [],
 	onSelectTarget,
 	onClose,
 }: TabSearchModalProps) {

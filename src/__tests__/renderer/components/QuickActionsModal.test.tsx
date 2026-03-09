@@ -480,14 +480,14 @@ describe('QuickActionsModal', () => {
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
-		it('handles Go to History Tab action', () => {
+		it('handles Go to Processes Tab action', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Go to History Tab'));
+			fireEvent.click(screen.getByText('Go to Processes Tab'));
 
 			expect(props.setRightPanelOpen).toHaveBeenCalledWith(true);
-			expect(props.setActiveRightTab).toHaveBeenCalledWith('history');
+			expect(props.setActiveRightTab).toHaveBeenCalledWith('processes');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});
 
@@ -504,14 +504,13 @@ describe('QuickActionsModal', () => {
 	});
 
 	describe('Search actions', () => {
-		it('renders all four search actions', () => {
+		it('renders all three search actions', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Search: Agents')).toBeInTheDocument();
 			expect(screen.getByText('Search: Message History')).toBeInTheDocument();
 			expect(screen.getByText('Search: Files')).toBeInTheDocument();
-			expect(screen.getByText('Search: History')).toBeInTheDocument();
 		});
 
 		it('handles Search: Agents action', async () => {
@@ -566,24 +565,6 @@ describe('QuickActionsModal', () => {
 			vi.useRealTimers();
 		});
 
-		it('handles Search: History action', async () => {
-			vi.useFakeTimers();
-			const props = createDefaultProps();
-			render(<QuickActionsModal {...props} />);
-
-			fireEvent.click(screen.getByText('Search: History'));
-
-			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
-			expect(props.setRightPanelOpen).toHaveBeenCalledWith(true);
-			expect(props.setActiveRightTab).toHaveBeenCalledWith('history');
-			expect(useUIStore.getState().activeFocus).toBe('right');
-
-			vi.advanceTimersByTime(50);
-			expect(useUIStore.getState().historySearchFilterOpen).toBe(true);
-
-			vi.useRealTimers();
-		});
-
 		it('search actions appear when filtering for "search"', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
@@ -594,7 +575,6 @@ describe('QuickActionsModal', () => {
 			expect(screen.getByText('Search: Agents')).toBeInTheDocument();
 			expect(screen.getByText('Search: Message History')).toBeInTheDocument();
 			expect(screen.getByText('Search: Files')).toBeInTheDocument();
-			expect(screen.getByText('Search: History')).toBeInTheDocument();
 		});
 	});
 

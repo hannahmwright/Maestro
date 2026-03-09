@@ -349,23 +349,24 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
-		const unsubscribeSetSessionModel = window.maestro.process.onRemoteSetSessionModel(
-			(sessionId: string, model: string | null) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-						return {
-							...s,
-							customModel: model?.trim() ? model.trim() : undefined,
-						};
-					})
-				);
-			}
-		);
+		const unsubscribeSetSessionModel =
+			window.maestro.process.onRemoteSetSessionModel?.(
+				(sessionId: string, model: string | null) => {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+							return {
+								...s,
+								customModel: model?.trim() ? model.trim() : undefined,
+							};
+						})
+					);
+				}
+			) || (() => {});
 
 		// Handle remote new tab from web interface
-		const unsubscribeNewTab = window.maestro.process.onRemoteNewTab(
-			(sessionId: string, responseChannel: string) => {
+		const unsubscribeNewTab =
+			window.maestro.process.onRemoteNewTab?.((sessionId: string, responseChannel: string) => {
 				let newTabId: string | null = null;
 
 				setSessions((prev) =>
@@ -389,31 +390,31 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				} else {
 					window.maestro.process.sendRemoteNewTabResponse(responseChannel, null);
 				}
-			}
-		);
+			}) || (() => {});
 
-		const unsubscribeDeleteSession = window.maestro.process.onRemoteDeleteSession(
-			(sessionId: string, responseChannel: string) => {
-				const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
-				if (!session) {
-					window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, false);
-					return;
-				}
-
-				void performDeleteSession(session, false)
-					.then(() => {
-						window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, true);
-					})
-					.catch((error) => {
-						console.error('[Remote] Failed to delete session:', error);
+		const unsubscribeDeleteSession =
+			window.maestro.process.onRemoteDeleteSession?.(
+				(sessionId: string, responseChannel: string) => {
+					const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
+					if (!session) {
 						window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, false);
-					});
-			}
-		);
+						return;
+					}
+
+					void performDeleteSession(session, false)
+						.then(() => {
+							window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, true);
+						})
+						.catch((error) => {
+							console.error('[Remote] Failed to delete session:', error);
+							window.maestro.process.sendRemoteDeleteSessionResponse(responseChannel, false);
+						});
+				}
+			) || (() => {});
 
 		// Handle remote close tab from web interface
-		const unsubscribeCloseTab = window.maestro.process.onRemoteCloseTab(
-			(sessionId: string, tabId: string) => {
+		const unsubscribeCloseTab =
+			window.maestro.process.onRemoteCloseTab?.((sessionId: string, tabId: string) => {
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
@@ -423,107 +424,108 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						return result?.session ?? s;
 					})
 				);
-			}
-		);
+			}) || (() => {});
 
 		// Handle remote rename tab from web interface
-		const unsubscribeRenameTab = window.maestro.process.onRemoteRenameTab(
-			(sessionId: string, tabId: string, newName: string) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
+		const unsubscribeRenameTab =
+			window.maestro.process.onRemoteRenameTab?.(
+				(sessionId: string, tabId: string, newName: string) => {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
 
-						// Find the tab to get its agentSessionId for persistence
-						const tab = s.aiTabs.find((t) => t.id === tabId);
-						if (!tab) {
-							return s;
-						}
+							// Find the tab to get its agentSessionId for persistence
+							const tab = s.aiTabs.find((t) => t.id === tabId);
+							if (!tab) {
+								return s;
+							}
 
-						// Persist name to agent session metadata (async, fire and forget)
-						// Use projectRoot (not cwd) for consistent session storage access
-						if (tab.agentSessionId) {
+							// Persist name to agent session metadata (async, fire and forget)
+							// Use projectRoot (not cwd) for consistent session storage access
+							if (tab.agentSessionId) {
+								const agentId = s.toolType || 'claude-code';
+								if (agentId === 'claude-code') {
+									window.maestro.claude
+										.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
+										.catch((err) => console.error('Failed to persist tab name:', err));
+								} else {
+									window.maestro.agentSessions
+										.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
+										.catch((err) => console.error('Failed to persist tab name:', err));
+								}
+								// Also update past history entries with this agentSessionId
+								window.maestro.history
+									.updateSessionName(tab.agentSessionId, newName || '')
+									.catch((err) => console.error('Failed to update history session names:', err));
+							}
+
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, name: newName || null } : t)),
+							};
+						})
+					);
+				}
+			) || (() => {});
+
+		// Handle remote star tab from web interface
+		const unsubscribeStarTab =
+			window.maestro.process.onRemoteStarTab?.(
+				(sessionId: string, tabId: string, starred: boolean) => {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+
+							const tab = s.aiTabs.find((t) => t.id === tabId);
+							if (!tab?.agentSessionId) return s;
+
+							// Persist starred state (same logic as desktop handleTabStar)
 							const agentId = s.toolType || 'claude-code';
 							if (agentId === 'claude-code') {
 								window.maestro.claude
-									.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
-									.catch((err) => console.error('Failed to persist tab name:', err));
+									.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
+									.catch((err) => console.error('Failed to persist tab starred:', err));
 							} else {
 								window.maestro.agentSessions
-									.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
-									.catch((err) => console.error('Failed to persist tab name:', err));
+									.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
+									.catch((err) => console.error('Failed to persist tab starred:', err));
 							}
-							// Also update past history entries with this agentSessionId
-							window.maestro.history
-								.updateSessionName(tab.agentSessionId, newName || '')
-								.catch((err) => console.error('Failed to update history session names:', err));
-						}
 
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, name: newName || null } : t)),
-						};
-					})
-				);
-			}
-		);
-
-		// Handle remote star tab from web interface
-		const unsubscribeStarTab = window.maestro.process.onRemoteStarTab(
-			(sessionId: string, tabId: string, starred: boolean) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId) return s;
-
-						const tab = s.aiTabs.find((t) => t.id === tabId);
-						if (!tab?.agentSessionId) return s;
-
-						// Persist starred state (same logic as desktop handleTabStar)
-						const agentId = s.toolType || 'claude-code';
-						if (agentId === 'claude-code') {
-							window.maestro.claude
-								.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-								.catch((err) => console.error('Failed to persist tab starred:', err));
-						} else {
-							window.maestro.agentSessions
-								.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-								.catch((err) => console.error('Failed to persist tab starred:', err));
-						}
-
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, starred } : t)),
-						};
-					})
-				);
-			}
-		);
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, starred } : t)),
+							};
+						})
+					);
+				}
+			) || (() => {});
 
 		// Handle remote reorder tab from web interface
-		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
-			(sessionId: string, fromIndex: number, toIndex: number) => {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== sessionId || !s.aiTabs) return s;
-						const tabs = [...s.aiTabs];
-						const [movedTab] = tabs.splice(fromIndex, 1);
-						tabs.splice(toIndex, 0, movedTab);
-						return { ...s, aiTabs: tabs };
-					})
-				);
-			}
-		);
+		const unsubscribeReorderTab =
+			window.maestro.process.onRemoteReorderTab?.(
+				(sessionId: string, fromIndex: number, toIndex: number) => {
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId || !s.aiTabs) return s;
+							const tabs = [...s.aiTabs];
+							const [movedTab] = tabs.splice(fromIndex, 1);
+							tabs.splice(toIndex, 0, movedTab);
+							return { ...s, aiTabs: tabs };
+						})
+					);
+				}
+			) || (() => {});
 
 		// Handle remote bookmark toggle from web interface
-		const unsubscribeToggleBookmark = window.maestro.process.onRemoteToggleBookmark(
-			(sessionId: string) => {
+		const unsubscribeToggleBookmark =
+			window.maestro.process.onRemoteToggleBookmark?.((sessionId: string) => {
 				setSessions((prev) =>
 					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 						return { ...s, bookmarked: !s.bookmarked };
 					})
 				);
-			}
-		);
+			}) || (() => {});
 
 		return () => {
 			unsubscribeSelectSession();

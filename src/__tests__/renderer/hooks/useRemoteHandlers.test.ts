@@ -866,7 +866,7 @@ describe('useRemoteHandlers', () => {
 			);
 		});
 
-		it('rejects factory-droid agent type (not in supportedBatchAgents)', async () => {
+		it('supports factory-droid agent type for AI mode', async () => {
 			const session = createMockSession({ inputMode: 'ai', toolType: 'factory-droid' as any });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' } as any);
 			const deps = createMockDeps({ sessionsRef: { current: [session] } });
@@ -882,7 +882,9 @@ describe('useRemoteHandlers', () => {
 				);
 			});
 
-			expect(window.maestro.process.spawn).not.toHaveBeenCalled();
+			expect(window.maestro.process.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({ prompt: 'test', toolType: 'factory-droid' })
+			);
 		});
 
 		it('logs error and returns early for unknown slash commands', async () => {

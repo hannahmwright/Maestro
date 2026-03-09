@@ -403,7 +403,15 @@ export function createProcessApi() {
 					demoCaptureEnabled: demoCapture?.enabled ?? false,
 				});
 				try {
-					callback(sessionId, command, inputMode, images, textAttachments, attachments, demoCapture);
+					callback(
+						sessionId,
+						command,
+						inputMode,
+						images,
+						textAttachments,
+						attachments,
+						demoCapture
+					);
 				} catch (error) {
 					ipcRenderer.invoke(
 						'logger:log',

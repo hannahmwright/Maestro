@@ -113,7 +113,9 @@ describe('web handlers', () => {
 			expect(mockWebServer.broadcastUserInput).toHaveBeenCalledWith(
 				'session-123',
 				'test command',
-				'ai'
+				'ai',
+				undefined,
+				undefined
 			);
 			expect(result).toBe(true);
 		});

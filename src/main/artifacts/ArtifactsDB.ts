@@ -3,12 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import { logger } from '../utils/logger';
-import type {
-	ArtifactRecord,
-	CaptureRunRecord,
-	DemoRecord,
-	DemoStepRecord,
-} from './types';
+import type { ArtifactRecord, CaptureRunRecord, DemoRecord, DemoStepRecord } from './types';
 
 const LOG_CONTEXT = '[ArtifactsDB]';
 
@@ -381,15 +376,17 @@ export class ArtifactsDB {
 	}
 
 	listDemosForSession(sessionId: string, tabId?: string | null): DemoRecord[] {
-		const rows = (tabId
-			? this.database
-					.prepare(
-						`SELECT * FROM demos WHERE session_id = ? AND COALESCE(tab_id, '') = COALESCE(?, '') ORDER BY created_at DESC`
-					)
-					.all(sessionId, tabId)
-			: this.database
-					.prepare(`SELECT * FROM demos WHERE session_id = ? ORDER BY created_at DESC`)
-					.all(sessionId)) as any[];
+		const rows = (
+			tabId
+				? this.database
+						.prepare(
+							`SELECT * FROM demos WHERE session_id = ? AND COALESCE(tab_id, '') = COALESCE(?, '') ORDER BY created_at DESC`
+						)
+						.all(sessionId, tabId)
+				: this.database
+						.prepare(`SELECT * FROM demos WHERE session_id = ? ORDER BY created_at DESC`)
+						.all(sessionId)
+		) as any[];
 		return rows.map((row) => this.mapDemo(row));
 	}
 

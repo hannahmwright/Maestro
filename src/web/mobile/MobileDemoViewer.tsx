@@ -61,7 +61,10 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 	}, [demoId]);
 
 	const videoUrl = useMemo(() => artifactUrl(demo?.videoArtifact?.id), [demo?.videoArtifact?.id]);
-	const posterUrl = useMemo(() => artifactUrl(demo?.posterArtifact?.id), [demo?.posterArtifact?.id]);
+	const posterUrl = useMemo(
+		() => artifactUrl(demo?.posterArtifact?.id),
+		[demo?.posterArtifact?.id]
+	);
 
 	return (
 		<div
@@ -139,7 +142,16 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 					</button>
 				</div>
 
-				<div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+				<div
+					style={{
+						flex: 1,
+						overflowY: 'auto',
+						padding: '16px',
+						display: 'flex',
+						flexDirection: 'column',
+						gap: '16px',
+					}}
+				>
 					{isLoading && <div style={{ color: colors.textDim }}>Loading demo...</div>}
 					{error && <div style={{ color: colors.error }}>{error}</div>}
 					{demo && (
@@ -184,7 +196,9 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 								<span>{new Date(demo.createdAt).toLocaleString()}</span>
 							</div>
 
-							{demo.summary && <div style={{ fontSize: '14px', lineHeight: 1.5 }}>{demo.summary}</div>}
+							{demo.summary && (
+								<div style={{ fontSize: '14px', lineHeight: 1.5 }}>{demo.summary}</div>
+							)}
 
 							<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 								{demo.steps.map((step, index) => {

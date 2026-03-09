@@ -146,14 +146,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
 					customModel?: string;
-					reasoningEffort?:
-						| 'default'
-						| 'none'
-						| 'minimal'
-						| 'low'
-						| 'medium'
-						| 'high'
-						| 'xhigh';
+					reasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 				}
 			): Promise<string> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');

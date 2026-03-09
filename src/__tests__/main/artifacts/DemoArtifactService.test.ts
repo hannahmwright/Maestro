@@ -135,7 +135,9 @@ class InMemoryArtifactsDb {
 
 	listDemosForSession(sessionId: string, tabId?: string | null): DemoRecord[] {
 		return [...this.demos.values()]
-			.filter((demo) => demo.sessionId === sessionId && (tabId === undefined || demo.tabId === tabId))
+			.filter(
+				(demo) => demo.sessionId === sessionId && (tabId === undefined || demo.tabId === tabId)
+			)
 			.sort((left, right) => right.createdAt - left.createdAt)
 			.map((demo) => ({ ...demo }));
 	}

@@ -1,4 +1,9 @@
-import type { ArtifactKind, ArtifactStorageBackend, DemoCaptureEvent, DemoStatus } from '../../shared/demo-artifacts';
+import type {
+	ArtifactKind,
+	ArtifactStorageBackend,
+	DemoCaptureEvent,
+	DemoStatus,
+} from '../../shared/demo-artifacts';
 
 export interface CaptureRunRecord {
 	id: string;

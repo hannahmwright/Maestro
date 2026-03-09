@@ -209,11 +209,30 @@ describe('serviceWorker', () => {
 			);
 		});
 
-		it('should register service worker with security token path', async () => {
-			(window as unknown as { __MAESTRO_CONFIG__: { securityToken: string } }).__MAESTRO_CONFIG__ =
-				{
-					securityToken: 'abc123',
-				};
+		it('should ignore injected config and keep the stable app scope', async () => {
+			(
+				window as unknown as {
+					__MAESTRO_CONFIG__: {
+						basePath: string;
+						sessionId: null;
+						tabId: null;
+						apiBase: string;
+						wsUrl: string;
+						authMode: string;
+						clientInstanceId: string;
+						webPush: { enabled: boolean };
+					};
+				}
+			).__MAESTRO_CONFIG__ = {
+				basePath: '/custom',
+				sessionId: null,
+				tabId: null,
+				apiBase: '/custom/api',
+				wsUrl: '/custom/ws',
+				authMode: 'cloudflare-access',
+				clientInstanceId: 'client-1',
+				webPush: { enabled: false },
+			};
 
 			await registerServiceWorker();
 
@@ -807,11 +826,30 @@ describe('serviceWorker', () => {
 			);
 		});
 
-		it('should handle __MAESTRO_CONFIG__ with empty securityToken', async () => {
-			(window as unknown as { __MAESTRO_CONFIG__: { securityToken: string } }).__MAESTRO_CONFIG__ =
-				{
-					securityToken: '',
-				};
+		it('should keep the stable app scope even with malformed injected config values', async () => {
+			(
+				window as unknown as {
+					__MAESTRO_CONFIG__: {
+						basePath: string;
+						sessionId: null;
+						tabId: null;
+						apiBase: string;
+						wsUrl: string;
+						authMode: string;
+						clientInstanceId: string;
+						webPush: { enabled: boolean };
+					};
+				}
+			).__MAESTRO_CONFIG__ = {
+				basePath: '',
+				sessionId: null,
+				tabId: null,
+				apiBase: '',
+				wsUrl: '',
+				authMode: 'cloudflare-access',
+				clientInstanceId: 'client-2',
+				webPush: { enabled: false },
+			};
 
 			const mockRegistration: Partial<ServiceWorkerRegistration> = {
 				scope: '/test/',
@@ -835,7 +873,6 @@ describe('serviceWorker', () => {
 
 			await registerServiceWorker();
 
-			// Empty string is falsy, so should use default path
 			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith(
 				'/app/sw.js?v=dev-local-test',
 				{

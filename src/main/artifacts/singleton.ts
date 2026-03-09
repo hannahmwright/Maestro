@@ -7,7 +7,9 @@ let demoArtifactServiceOptions: DemoArtifactServiceOptions = {};
 
 export function configureArtifacts(options: DemoArtifactServiceOptions): void {
 	if (demoArtifactServiceInstance) {
-		throw new Error('configureArtifacts must be called before demo artifact service initialization');
+		throw new Error(
+			'configureArtifacts must be called before demo artifact service initialization'
+		);
 	}
 	demoArtifactServiceOptions = {
 		...demoArtifactServiceOptions,
@@ -24,7 +26,10 @@ export function getArtifactsDB(): ArtifactsDB {
 
 export function getDemoArtifactService(): DemoArtifactService {
 	if (!demoArtifactServiceInstance) {
-		demoArtifactServiceInstance = new DemoArtifactService(getArtifactsDB(), demoArtifactServiceOptions);
+		demoArtifactServiceInstance = new DemoArtifactService(
+			getArtifactsDB(),
+			demoArtifactServiceOptions
+		);
 	}
 	return demoArtifactServiceInstance;
 }

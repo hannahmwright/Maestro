@@ -330,14 +330,14 @@ describe('SessionList', () => {
 			expect(screen.getByText('New Agent')).toBeInTheDocument();
 		});
 
-		it('calls addNewSession when New Agent button clicked', () => {
-			const addNewSession = vi.fn();
+		it('calls openWizard when New Agent button clicked', () => {
+			const openWizard = vi.fn();
 			useUIStore.setState({ leftSidebarOpen: true });
-			const props = createDefaultProps({ addNewSession });
+			const props = createDefaultProps({ openWizard });
 			render(<SessionList {...props} />);
 
 			fireEvent.click(screen.getByText('New Agent'));
-			expect(addNewSession).toHaveBeenCalled();
+			expect(openWizard).toHaveBeenCalled();
 		});
 
 		it('toggles sidebar open/closed', () => {
@@ -2089,9 +2089,10 @@ describe('SessionList', () => {
 			});
 			const { container } = render(<SessionList {...props} />);
 
-			// Active session should have accent border color
+			// Active session row should use a non-transparent accent border
 			const activeSession = screen.getByText('Active Session').closest('[style*="border"]');
-			expect(activeSession).toHaveStyle({ borderColor: defaultTheme.colors.accent });
+			expect(activeSession?.getAttribute('style')).toContain('border-color');
+			expect(activeSession?.getAttribute('style')).not.toContain('transparent');
 		});
 
 		it('highlights active session in collapsed mode without ring', () => {

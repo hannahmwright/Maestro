@@ -15,8 +15,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { waitFor } from '@testing-library/react';
 import { WebSocket } from 'ws';
 import { WsRoute, type WsRouteCallbacks } from '../../../../main/web-server/routes/wsRoute';
+import { WEB_APP_WS_PATH } from '../../../../shared/remote-web';
 
 // Mock the logger
 vi.mock('../../../../main/utils/logger', () => ({
@@ -124,7 +126,7 @@ function createMockConnection() {
 function createMockRequest(sessionId?: string) {
 	const queryString = sessionId ? `?sessionId=${sessionId}` : '';
 	return {
-		url: `/test-token/ws${queryString}`,
+		url: `${WEB_APP_WS_PATH}${queryString}`,
 		headers: {
 			host: 'localhost:3000',
 		},
@@ -149,14 +151,12 @@ function createMockFastify() {
 }
 
 describe('WsRoute', () => {
-	const securityToken = 'test-token-123';
-
 	let wsRoute: WsRoute;
 	let callbacks: WsRouteCallbacks;
 	let mockFastify: ReturnType<typeof createMockFastify>;
 
 	beforeEach(() => {
-		wsRoute = new WsRoute(securityToken);
+		wsRoute = new WsRoute();
 		callbacks = createMockCallbacks();
 		wsRoute.setCallbacks(callbacks);
 		mockFastify = createMockFastify();
@@ -166,18 +166,18 @@ describe('WsRoute', () => {
 	describe('Route Registration', () => {
 		it('should register WebSocket route with correct path', () => {
 			expect(mockFastify.get).toHaveBeenCalledTimes(1);
-			expect(mockFastify.routes.has(`GET:/${securityToken}/ws`)).toBe(true);
+			expect(mockFastify.routes.has(`GET:${WEB_APP_WS_PATH}`)).toBe(true);
 		});
 
 		it('should register route with websocket option', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			expect(route?.options?.websocket).toBe(true);
 		});
 	});
 
 	describe('Connection Handling', () => {
 		it('should generate unique client IDs', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 
 			// Connect first client
 			const conn1 = createMockConnection();
@@ -197,7 +197,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should notify parent on client connect', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -211,7 +211,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should extract sessionId from query string', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest('session-123'));
 
@@ -223,7 +223,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should set subscribedSessionId to undefined when not in query', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -237,7 +237,7 @@ describe('WsRoute', () => {
 
 	describe('Initial Sync Messages', () => {
 		it('should send connected message', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest('session-123'));
 
@@ -252,25 +252,27 @@ describe('WsRoute', () => {
 			expect(connectedMsg.timestamp).toBeDefined();
 		});
 
-		it('should send sessions_list with enriched live info', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+		it('should send sessions_list with enriched live info', async () => {
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
-			const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
-				JSON.parse(call[0])
-			);
+			await waitFor(() => {
+				const sentMessages = (connection.socket.send as any).mock.calls.map((call: any[]) =>
+					JSON.parse(call[0])
+				);
 
-			const sessionsMsg = sentMessages.find((m: any) => m.type === 'sessions_list');
-			expect(sessionsMsg).toBeDefined();
-			expect(sessionsMsg.sessions).toHaveLength(2);
-			expect(sessionsMsg.sessions[0].agentSessionId).toBe('claude-agent-123');
-			expect(sessionsMsg.sessions[0].isLive).toBe(true);
-			expect(sessionsMsg.sessions[0].liveEnabledAt).toBeDefined();
+				const sessionsMsg = sentMessages.find((m: any) => m.type === 'sessions_list');
+				expect(sessionsMsg).toBeDefined();
+				expect(sessionsMsg.sessions).toHaveLength(2);
+				expect(sessionsMsg.sessions[0].agentSessionId).toBe('claude-agent-123');
+				expect(sessionsMsg.sessions[0].isLive).toBe(true);
+				expect(sessionsMsg.sessions[0].liveEnabledAt).toBeDefined();
+			});
 		});
 
 		it('should send theme', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -286,7 +288,7 @@ describe('WsRoute', () => {
 		it('should not send theme when null', () => {
 			(callbacks.getTheme as any).mockReturnValue(null);
 
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -299,7 +301,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send custom_commands', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -314,7 +316,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send autorun_state for running sessions', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -344,7 +346,7 @@ describe('WsRoute', () => {
 				])
 			);
 
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -359,7 +361,7 @@ describe('WsRoute', () => {
 
 	describe('Message Handling', () => {
 		it('should delegate messages to handleMessage callback', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -373,7 +375,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should send error for invalid JSON messages', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -392,7 +394,7 @@ describe('WsRoute', () => {
 
 	describe('Disconnection Handling', () => {
 		it('should notify parent on client disconnect', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -407,7 +409,7 @@ describe('WsRoute', () => {
 
 	describe('Error Handling', () => {
 		it('should notify parent on client error', () => {
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 
@@ -423,12 +425,12 @@ describe('WsRoute', () => {
 
 	describe('Callback Resilience', () => {
 		it('should handle missing callbacks gracefully', () => {
-			const emptyWsRoute = new WsRoute(securityToken);
+			const emptyWsRoute = new WsRoute();
 			// Don't set any callbacks
 			const emptyFastify = createMockFastify();
 			emptyWsRoute.registerRoute(emptyFastify as any);
 
-			const route = emptyFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = emptyFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 
 			// Should not throw
@@ -445,7 +447,7 @@ describe('WsRoute', () => {
 		});
 
 		it('should handle partial callbacks', () => {
-			const partialWsRoute = new WsRoute(securityToken);
+			const partialWsRoute = new WsRoute();
 			partialWsRoute.setCallbacks({
 				getSessions: vi.fn().mockReturnValue([]),
 				getTheme: vi.fn().mockReturnValue(null),
@@ -461,7 +463,7 @@ describe('WsRoute', () => {
 			const partialFastify = createMockFastify();
 			partialWsRoute.registerRoute(partialFastify as any);
 
-			const route = partialFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = partialFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 
 			// Should not throw
@@ -481,7 +483,7 @@ describe('WsRoute', () => {
 				])
 			);
 
-			const route = mockFastify.getRoute('GET', `/${securityToken}/ws`);
+			const route = mockFastify.getRoute('GET', WEB_APP_WS_PATH);
 			const connection = createMockConnection();
 			route!.handler(connection, createMockRequest());
 

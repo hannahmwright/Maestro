@@ -20,9 +20,7 @@ interface ConductorStoreActions {
 	setConductors: (v: Conductor[] | ((prev: Conductor[]) => Conductor[])) => void;
 	setTasks: (v: ConductorTask[] | ((prev: ConductorTask[]) => ConductorTask[])) => void;
 	setRuns: (v: ConductorRun[] | ((prev: ConductorRun[]) => ConductorRun[])) => void;
-	setActiveConductorGroupId: (
-		v: string | null | ((prev: string | null) => string | null)
-	) => void;
+	setActiveConductorGroupId: (v: string | null | ((prev: string | null) => string | null)) => void;
 	syncWithGroups: (groups: Group[]) => void;
 	setConductor: (groupId: string, updates: Partial<Conductor>) => void;
 	setTemplateSession: (groupId: string, sessionId: string) => void;
@@ -113,8 +111,10 @@ export const useConductorStore = create<ConductorStore>()((set) => ({
 			const conductorsUnchanged =
 				conductors.length === s.conductors.length &&
 				conductors.every((conductor, index) => conductor === s.conductors[index]);
-			const tasksUnchanged = tasks.length === s.tasks.length && tasks.every((task, index) => task === s.tasks[index]);
-			const runsUnchanged = runs.length === s.runs.length && runs.every((run, index) => run === s.runs[index]);
+			const tasksUnchanged =
+				tasks.length === s.tasks.length && tasks.every((task, index) => task === s.tasks[index]);
+			const runsUnchanged =
+				runs.length === s.runs.length && runs.every((run, index) => run === s.runs[index]);
 			const activeUnchanged = activeConductorGroupId === s.activeConductorGroupId;
 
 			if (conductorsUnchanged && tasksUnchanged && runsUnchanged && activeUnchanged) {

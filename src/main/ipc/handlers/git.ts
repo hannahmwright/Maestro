@@ -830,18 +830,24 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					return {
 						success: result.exitCode === 0,
 						conflicted,
-						error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Merge failed',
+						error:
+							result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Merge failed',
 					};
 				}
 
-				const result = await execFileNoThrow('git', ['merge', '--no-edit', branchName], worktreePath);
+				const result = await execFileNoThrow(
+					'git',
+					['merge', '--no-edit', branchName],
+					worktreePath
+				);
 				const output = `${result.stdout}\n${result.stderr}`;
 				const conflicted = /CONFLICT/i.test(output);
 
 				return {
 					success: result.exitCode === 0,
 					conflicted,
-					error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Merge failed',
+					error:
+						result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Merge failed',
 				};
 			}
 		)
@@ -949,66 +955,73 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	// Results are cached for 1 minute to avoid repeated subprocess calls
 	ipcMain.handle(
 		'git:checkGhCli',
-		withIpcErrorLogging(handlerOpts('checkGhCli'), async (ghPath?: string, sshRemoteId?: string) => {
-			const sshRemote = getSshRemoteById(sshRemoteId);
-			if (sshRemote) {
-				const remoteGhCommand = ghPath || 'gh';
-				const versionResult = await execRemoteCommand(remoteGhCommand, ['--version'], sshRemote);
-				if (versionResult.exitCode !== 0) {
-					return { installed: false, authenticated: false };
+		withIpcErrorLogging(
+			handlerOpts('checkGhCli'),
+			async (ghPath?: string, sshRemoteId?: string) => {
+				const sshRemote = getSshRemoteById(sshRemoteId);
+				if (sshRemote) {
+					const remoteGhCommand = ghPath || 'gh';
+					const versionResult = await execRemoteCommand(remoteGhCommand, ['--version'], sshRemote);
+					if (versionResult.exitCode !== 0) {
+						return { installed: false, authenticated: false };
+					}
+
+					const authResult = await execRemoteCommand(
+						remoteGhCommand,
+						['auth', 'status'],
+						sshRemote
+					);
+					return {
+						installed: true,
+						authenticated: authResult.exitCode === 0,
+					};
 				}
 
-				const authResult = await execRemoteCommand(remoteGhCommand, ['auth', 'status'], sshRemote);
-				return {
-					installed: true,
-					authenticated: authResult.exitCode === 0,
-				};
-			}
+				// Check cache first (skip if custom path provided)
+				if (!ghPath) {
+					const cached = getCachedGhStatus();
+					if (cached !== null) {
+						logger.debug(
+							`Using cached gh CLI status: installed=${cached.installed}, authenticated=${cached.authenticated}`,
+							LOG_CONTEXT
+						);
+						return cached;
+					}
+				}
 
-			// Check cache first (skip if custom path provided)
-			if (!ghPath) {
-				const cached = getCachedGhStatus();
-				if (cached !== null) {
-					logger.debug(
-						`Using cached gh CLI status: installed=${cached.installed}, authenticated=${cached.authenticated}`,
+				// Resolve gh CLI path (uses cached detection or custom path)
+				const ghCommand = await resolveGhPath(ghPath);
+				logger.debug(`Checking gh CLI at: ${ghCommand}`, LOG_CONTEXT);
+
+				// Check if gh is installed by running gh --version
+				const versionResult = await execFileNoThrow(ghCommand, ['--version']);
+				if (versionResult.exitCode !== 0) {
+					logger.warn(
+						`gh CLI not found at ${ghCommand}: exit=${versionResult.exitCode}, stderr=${versionResult.stderr}`,
 						LOG_CONTEXT
 					);
-					return cached;
+					const result = { installed: false, authenticated: false };
+					if (!ghPath) setCachedGhStatus(false, false);
+					return result;
 				}
-			}
+				logger.debug(`gh CLI found: ${versionResult.stdout.trim().split('\n')[0]}`, LOG_CONTEXT);
 
-			// Resolve gh CLI path (uses cached detection or custom path)
-			const ghCommand = await resolveGhPath(ghPath);
-			logger.debug(`Checking gh CLI at: ${ghCommand}`, LOG_CONTEXT);
-
-			// Check if gh is installed by running gh --version
-			const versionResult = await execFileNoThrow(ghCommand, ['--version']);
-			if (versionResult.exitCode !== 0) {
-				logger.warn(
-					`gh CLI not found at ${ghCommand}: exit=${versionResult.exitCode}, stderr=${versionResult.stderr}`,
+				// Check if gh is authenticated by running gh auth status
+				const authResult = await execFileNoThrow(ghCommand, ['auth', 'status']);
+				const authenticated = authResult.exitCode === 0;
+				logger.debug(
+					`gh auth status: ${authenticated ? 'authenticated' : 'not authenticated'}`,
 					LOG_CONTEXT
 				);
-				const result = { installed: false, authenticated: false };
-				if (!ghPath) setCachedGhStatus(false, false);
-				return result;
+
+				// Cache the result (only if not using custom path)
+				if (!ghPath) {
+					setCachedGhStatus(true, authenticated);
+				}
+
+				return { installed: true, authenticated };
 			}
-			logger.debug(`gh CLI found: ${versionResult.stdout.trim().split('\n')[0]}`, LOG_CONTEXT);
-
-			// Check if gh is authenticated by running gh auth status
-			const authResult = await execFileNoThrow(ghCommand, ['auth', 'status']);
-			const authenticated = authResult.exitCode === 0;
-			logger.debug(
-				`gh auth status: ${authenticated ? 'authenticated' : 'not authenticated'}`,
-				LOG_CONTEXT
-			);
-
-			// Cache the result (only if not using custom path)
-			if (!ghPath) {
-				setCachedGhStatus(true, authenticated);
-			}
-
-			return { installed: true, authenticated };
-		})
+		)
 	);
 
 	// Get the default branch name (main or master)
@@ -1512,14 +1525,20 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					const result = await execGit(args, cwd, sshRemote, cwd);
 					return {
 						success: result.exitCode === 0,
-						error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Branch delete failed',
+						error:
+							result.exitCode === 0
+								? undefined
+								: result.stderr || result.stdout || 'Branch delete failed',
 					};
 				}
 
 				const result = await execFileNoThrow('git', args, cwd);
 				return {
 					success: result.exitCode === 0,
-					error: result.exitCode === 0 ? undefined : result.stderr || result.stdout || 'Branch delete failed',
+					error:
+						result.exitCode === 0
+							? undefined
+							: result.stderr || result.stdout || 'Branch delete failed',
 				};
 			}
 		)
