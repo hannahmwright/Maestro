@@ -581,6 +581,69 @@ function AppControlsPanel({
 				: 'neutral';
 	const pushTone =
 		!isPushSupported || !isPushConfigured ? 'neutral' : isPushSubscribed ? 'success' : 'warning';
+	const alertsEnabled = notificationPermission === 'granted';
+	const closedAppPushEnabled = isPushSupported && isPushConfigured && isPushSubscribed;
+
+	const setupSummary = (() => {
+		if (closedAppPushEnabled) {
+			return {
+				tone: 'success' as const,
+				title: 'Closed-app notifications are active.',
+				body: 'This phone should still notify you after you fully close the PWA.',
+			};
+		}
+
+		if (!alertsEnabled) {
+			return {
+				tone: 'warning' as const,
+				title: 'Notifications are still blocked on this phone.',
+				body: 'Enable Alerts first. After that, turn on Closed-App Push if you want notifications after the PWA is fully closed.',
+			};
+		}
+
+		if (isPushSupported && isPushConfigured && !isPushSubscribed) {
+			return {
+				tone: 'accent' as const,
+				title: 'Alerts work only while the PWA is open or backgrounded.',
+				body: 'Turn on Closed-App Push below if you want notifications after the PWA is fully closed.',
+			};
+		}
+
+		return {
+			tone: 'neutral' as const,
+			title: 'Closed-app push is not available on this device.',
+			body: 'You can still get alerts while the PWA stays open or in the background on this phone.',
+		};
+	})();
+
+	const setupSummaryStyle = (() => {
+		switch (setupSummary.tone) {
+			case 'success':
+				return {
+					background: `${colors.success}12`,
+					border: `1px solid ${colors.success}24`,
+					titleColor: colors.success,
+				};
+			case 'warning':
+				return {
+					background: `${colors.warning}12`,
+					border: `1px solid ${colors.warning}24`,
+					titleColor: colors.warning,
+				};
+			case 'accent':
+				return {
+					background: `${colors.accent}10`,
+					border: `1px solid ${colors.accent}22`,
+					titleColor: colors.accent,
+				};
+			default:
+				return {
+					background: 'rgba(255, 255, 255, 0.06)',
+					border: '1px solid rgba(255, 255, 255, 0.08)',
+					titleColor: colors.textMain,
+				};
+		}
+	})();
 
 	return (
 		<section
@@ -702,6 +765,106 @@ function AppControlsPanel({
 					</div>
 				</div>
 			)}
+
+			<div
+				style={{
+					padding: '10px 11px',
+					borderRadius: '14px',
+					background: setupSummaryStyle.background,
+					border: setupSummaryStyle.border,
+					display: 'flex',
+					flexDirection: 'column',
+					gap: '4px',
+				}}
+			>
+				<div
+					style={{
+						fontSize: '12px',
+						fontWeight: 650,
+						color: setupSummaryStyle.titleColor,
+						lineHeight: 1.25,
+					}}
+				>
+					{setupSummary.title}
+				</div>
+				<div
+					style={{
+						fontSize: '11px',
+						color: colors.textDim,
+						lineHeight: 1.4,
+					}}
+				>
+					{setupSummary.body}
+				</div>
+			</div>
+
+			<div
+				style={{
+					display: 'grid',
+					gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+					gap: '8px',
+				}}
+			>
+				<div
+					style={{
+						padding: '9px 10px',
+						borderRadius: '14px',
+						border: '1px solid rgba(255, 255, 255, 0.08)',
+						background: 'rgba(255, 255, 255, 0.05)',
+					}}
+				>
+					<div
+						style={{
+							fontSize: '11px',
+							fontWeight: 600,
+							color: colors.textMain,
+							lineHeight: 1.25,
+						}}
+					>
+						Alerts
+					</div>
+					<div
+						style={{
+							marginTop: '4px',
+							fontSize: '10px',
+							color: colors.textDim,
+							lineHeight: 1.45,
+						}}
+					>
+						Works while Maestro is open or backgrounded on this phone.
+					</div>
+				</div>
+
+				<div
+					style={{
+						padding: '9px 10px',
+						borderRadius: '14px',
+						border: '1px solid rgba(255, 255, 255, 0.08)',
+						background: 'rgba(255, 255, 255, 0.05)',
+					}}
+				>
+					<div
+						style={{
+							fontSize: '11px',
+							fontWeight: 600,
+							color: colors.textMain,
+							lineHeight: 1.25,
+						}}
+					>
+						Closed-App Push
+					</div>
+					<div
+						style={{
+							marginTop: '4px',
+							fontSize: '10px',
+							color: colors.textDim,
+							lineHeight: 1.45,
+						}}
+					>
+						Keeps notifying after you fully close the PWA.
+					</div>
+				</div>
+			</div>
 
 			<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
 				{canInstall && (
