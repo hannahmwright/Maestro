@@ -353,6 +353,7 @@ export function createProcessApi() {
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
+				commandAction?: 'default' | 'queue',
 				images?: string[],
 				textAttachments?: Array<{
 					id?: string;
@@ -377,6 +378,7 @@ export function createProcessApi() {
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
+				commandAction?: 'default' | 'queue',
 				images?: string[],
 				textAttachments?: Array<{
 					id?: string;
@@ -398,6 +400,7 @@ export function createProcessApi() {
 					sessionId,
 					commandPreview: command?.substring(0, 50),
 					inputMode,
+					commandAction,
 					imageCount: images?.length ?? 0,
 					textAttachmentCount: textAttachments?.length ?? 0,
 					demoCaptureEnabled: demoCapture?.enabled ?? false,
@@ -407,6 +410,7 @@ export function createProcessApi() {
 						sessionId,
 						command,
 						inputMode,
+						commandAction,
 						images,
 						textAttachments,
 						attachments,
@@ -512,6 +516,36 @@ export function createProcessApi() {
 		 * Send response for remote new tab
 		 */
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		onRemoteNewThread: (
+			callback: (
+				sessionId: string,
+				options: { toolType?: string; model?: string | null },
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				sessionId: string,
+				options: { toolType?: string; model?: string | null } | string,
+				responseChannel?: string
+			) => {
+				if (typeof options === 'string') {
+					callback(sessionId, {}, options);
+					return;
+				}
+				callback(sessionId, options || {}, responseChannel || '');
+			};
+			ipcRenderer.on('remote:newThread', handler);
+			return () => ipcRenderer.removeListener('remote:newThread', handler);
+		},
+
+		sendRemoteNewThreadResponse: (
+			responseChannel: string,
+			result: { success: boolean; sessionId?: string | null } | boolean
+		): void => {
 			ipcRenderer.send(responseChannel, result);
 		},
 

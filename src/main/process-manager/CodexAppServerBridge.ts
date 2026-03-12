@@ -10,6 +10,10 @@ import type {
 	UserInputResponse,
 } from '../../shared/user-input-requests';
 import type { AgentError } from '../../shared/types';
+import type {
+	ConversationEvent,
+	ConversationInputItem,
+} from '../../shared/conversation';
 
 const LOG_CONTEXT = 'CodexAppServerBridge';
 const LISTENING_URL_RE = /listening on:\s*(ws:\/\/[^\s]+)/i;
@@ -96,6 +100,37 @@ export class CodexAppServerBridge {
 	) {}
 
 	spawn(config: ProcessConfig): SpawnResult {
+		return this.sendTurn({
+			...config,
+			conversationRuntime: config.conversationRuntime || 'batch',
+		});
+	}
+
+	sendTurn(config: ProcessConfig): SpawnResult {
+		const existingProcess = this.processes.get(config.sessionId);
+		if (existingProcess?.codexAppServerState?.ws && existingProcess.codexAppServerState.threadId) {
+			this.startTurn(
+				existingProcess,
+				config,
+				existingProcess.codexAppServerState.threadId,
+				this.buildUserInput(config),
+				existingProcess.currentModel || config.resolvedModel || 'gpt-5.4',
+				config.sessionReasoningEffort && config.sessionReasoningEffort !== 'default'
+					? config.sessionReasoningEffort
+					: null
+			);
+			existingProcess.startTime = Date.now();
+			existingProcess.querySource = config.querySource;
+			existingProcess.tabId = config.tabId;
+			existingProcess.projectPath = config.projectPath;
+			existingProcess.contextWindow = config.contextWindow;
+			existingProcess.conversationRuntime = config.conversationRuntime || 'batch';
+			return {
+				pid: existingProcess.pid,
+				success: true,
+			};
+		}
+
 		logger.info('[CodexAppServerBridge] Starting app-server bridge spawn', LOG_CONTEXT, {
 			sessionId: config.sessionId,
 			cwd: config.cwd,
@@ -117,6 +152,7 @@ export class CodexAppServerBridge {
 			nextClientRequestId: 1,
 			agentMessagePhases: new Map(),
 			currentTurnCorrectionCount: 0,
+			pendingRequests: new Map(),
 		};
 		const managedProcess: ManagedProcess = {
 			sessionId: config.sessionId,
@@ -135,6 +171,11 @@ export class CodexAppServerBridge {
 			command: config.command,
 			args: ['app-server', '--listen', 'ws://127.0.0.1:0'],
 			codexAppServerState,
+			conversationRuntime: config.conversationRuntime || 'batch',
+			demoCaptureEnabled: config.demoCapture?.enabled === true,
+			demoCaptureFinalized: false,
+			demoCaptureArtifactSeen: false,
+			demoCaptureFailed: false,
 		};
 
 		this.processes.set(config.sessionId, managedProcess);
@@ -182,6 +223,54 @@ export class CodexAppServerBridge {
 			pid: managedProcess.pid,
 			success: true,
 		};
+	}
+
+	steerTurn(sessionId: string, input: { text?: string; images?: string[] }): boolean {
+		const managedProcess = this.processes.get(sessionId);
+		const state = managedProcess?.codexAppServerState;
+		const ws = state?.ws;
+		if (!managedProcess || !state?.threadId || !state.turnId || !ws || ws.readyState !== WebSocket.OPEN) {
+			return false;
+		}
+
+		const items = this.buildConversationInput(input.text, input.images);
+		if (items.length === 0) {
+			return false;
+		}
+
+		const requestId = `steer-${state.nextClientRequestId++}`;
+		state.pendingRequests?.set(requestId, { type: 'steer' });
+		this.sendJson(ws, {
+			id: requestId,
+			method: 'turn/steer',
+			params: {
+				threadId: state.threadId,
+				expectedTurnId: state.turnId,
+				input: items,
+			},
+		});
+		return true;
+	}
+
+	interruptTurn(sessionId: string): boolean {
+		const managedProcess = this.processes.get(sessionId);
+		const state = managedProcess?.codexAppServerState;
+		const ws = state?.ws;
+		if (!managedProcess || !state?.threadId || !state.turnId || !ws || ws.readyState !== WebSocket.OPEN) {
+			return false;
+		}
+
+		const requestId = `interrupt-${state.nextClientRequestId++}`;
+		state.pendingRequests?.set(requestId, { type: 'interrupt' });
+		this.sendJson(ws, {
+			id: requestId,
+			method: 'turn/interrupt',
+			params: {
+				threadId: state.threadId,
+				turnId: state.turnId,
+			},
+		});
+		return true;
 	}
 
 	async respondToUserInput(
@@ -294,6 +383,15 @@ export class CodexAppServerBridge {
 			return;
 		}
 
+		const messageId =
+			typeof message.id === 'string' || typeof message.id === 'number'
+				? String(message.id)
+				: undefined;
+		if (messageId && managedProcess.codexAppServerState?.pendingRequests?.has(messageId)) {
+			this.handlePendingRequestResponse(managedProcess, messageId, message);
+			return;
+		}
+
 		if (message.id === 'initialize') {
 			this.handleInitializeResponse(managedProcess, config);
 			return;
@@ -310,6 +408,14 @@ export class CodexAppServerBridge {
 			const turnId = asString(turn?.id);
 			if (turnId && managedProcess.codexAppServerState) {
 				managedProcess.codexAppServerState.turnId = turnId;
+				this.emitConversationEvent(managedProcess, {
+					type: 'turn_started',
+					sessionId: managedProcess.sessionId,
+					runtimeKind: managedProcess.conversationRuntime || 'batch',
+					timestamp: Date.now(),
+					threadId: managedProcess.codexAppServerState.threadId || '',
+					turnId,
+				});
 			}
 			return;
 		}
@@ -343,6 +449,9 @@ export class CodexAppServerBridge {
 						managedProcess.codexAppServerState?.currentTurnHadUserInputRequest === true,
 				});
 				if (managedProcess.codexAppServerState) {
+					const completedParams = asRecord(message.params);
+					const completedTurn = asRecord(completedParams?.turn);
+					const turnStatus = asString(completedTurn?.status);
 					managedProcess.codexAppServerState.turnCompleted = true;
 					const pendingCorrectionPrompt =
 						managedProcess.codexAppServerState.pendingCorrectionPrompt;
@@ -368,8 +477,37 @@ export class CodexAppServerBridge {
 						);
 						return;
 					}
+					const completedTurnId = managedProcess.codexAppServerState.turnId || null;
+					managedProcess.codexAppServerState.turnId = undefined;
+					this.emitConversationEvent(managedProcess, {
+						type: 'turn_completed',
+						sessionId: managedProcess.sessionId,
+						runtimeKind: managedProcess.conversationRuntime || 'batch',
+						timestamp: Date.now(),
+						threadId: managedProcess.codexAppServerState.threadId,
+						turnId: completedTurnId,
+						status:
+							turnStatus === 'interrupted'
+								? 'interrupted'
+								: turnStatus === 'failed'
+									? 'failed'
+									: 'completed',
+					});
+					if (managedProcess.conversationRuntime === 'live') {
+						this.emitter.emit('query-complete', managedProcess.sessionId, {
+							sessionId: managedProcess.sessionId,
+							agentType: managedProcess.toolType,
+							source: managedProcess.querySource || 'user',
+							startTime: managedProcess.startTime,
+							duration: Date.now() - managedProcess.startTime,
+							projectPath: managedProcess.projectPath,
+							tabId: managedProcess.tabId,
+						});
+					}
 				}
-				this.killProcess(managedProcess);
+				if (managedProcess.conversationRuntime !== 'live') {
+					this.killProcess(managedProcess);
+				}
 				return;
 			case 'error':
 				this.emitAgentError(
@@ -377,6 +515,15 @@ export class CodexAppServerBridge {
 					'Codex app-server returned an error notification.',
 					message.params
 				);
+				this.emitConversationEvent(managedProcess, {
+					type: 'turn_failed',
+					sessionId: managedProcess.sessionId,
+					runtimeKind: managedProcess.conversationRuntime || 'batch',
+					timestamp: Date.now(),
+					threadId: managedProcess.codexAppServerState?.threadId,
+					turnId: managedProcess.codexAppServerState?.turnId || null,
+					message: 'Codex app-server returned an error notification.',
+				});
 				return;
 			default:
 				return;
@@ -387,6 +534,14 @@ export class CodexAppServerBridge {
 		const state = managedProcess.codexAppServerState;
 		const ws = state?.ws;
 		if (!state || !ws || ws.readyState !== WebSocket.OPEN) return;
+		const isReadOnly = config.readOnlyMode === true;
+		const approvalPolicy = isReadOnly ? 'never' : 'untrusted';
+		const sandbox =
+			managedProcess.conversationRuntime === 'live'
+				? isReadOnly
+					? 'read-only'
+					: 'workspace-write'
+				: 'read-only';
 
 		logger.info('[CodexAppServerBridge] Initialize complete', LOG_CONTEXT, {
 			sessionId: managedProcess.sessionId,
@@ -401,8 +556,8 @@ export class CodexAppServerBridge {
 					threadId: config.agentSessionId,
 					model: config.resolvedModel ?? null,
 					cwd: config.cwd,
-					approvalPolicy: 'never',
-					sandbox: 'read-only',
+					approvalPolicy,
+					sandbox,
 					persistExtendedHistory: false,
 				},
 			});
@@ -415,8 +570,8 @@ export class CodexAppServerBridge {
 			params: {
 				model: config.resolvedModel ?? null,
 				cwd: config.cwd,
-				approvalPolicy: 'never',
-				sandbox: 'read-only',
+				approvalPolicy,
+				sandbox,
 				experimentalRawEvents: false,
 				persistExtendedHistory: false,
 			},
@@ -456,6 +611,15 @@ export class CodexAppServerBridge {
 			this.emitter.emit('model', managedProcess.sessionId, result.model);
 		}
 		this.emitter.emit('session-id', managedProcess.sessionId, threadId);
+		if (managedProcess.conversationRuntime === 'live') {
+			this.emitConversationEvent(managedProcess, {
+				type: 'runtime_ready',
+				sessionId: managedProcess.sessionId,
+				runtimeKind: 'live',
+				timestamp: Date.now(),
+				threadId,
+			});
+		}
 
 		this.startTurn(
 			managedProcess,
@@ -470,15 +634,22 @@ export class CodexAppServerBridge {
 	}
 
 	private buildUserInput(config: ProcessConfig): Array<Record<string, unknown>> {
-		const inputs: Array<Record<string, unknown>> = [];
-		if (config.prompt) {
+		return this.buildConversationInput(config.prompt, config.images);
+	}
+
+	private buildConversationInput(
+		text?: string,
+		images?: string[]
+	): Array<ConversationInputItem & Record<string, unknown>> {
+		const inputs: Array<ConversationInputItem & Record<string, unknown>> = [];
+		if (text) {
 			inputs.push({
 				type: 'text',
-				text: config.prompt,
+				text,
 				text_elements: [],
 			});
 		}
-		for (const image of config.images || []) {
+		for (const image of images || []) {
 			inputs.push({
 				type: 'image',
 				url: image,
@@ -641,6 +812,54 @@ export class CodexAppServerBridge {
 		});
 	}
 
+	private handlePendingRequestResponse(
+		managedProcess: ManagedProcess,
+		messageId: string,
+		message: JsonRpcMessage
+	): void {
+		const pendingRequest = managedProcess.codexAppServerState?.pendingRequests?.get(messageId);
+		managedProcess.codexAppServerState?.pendingRequests?.delete(messageId);
+		if (!pendingRequest) {
+			return;
+		}
+
+		const error = asRecord(message.error);
+		if (error) {
+			const messageText =
+				asString(error.message) || 'Codex app-server rejected the conversation request.';
+			if (pendingRequest.type === 'steer') {
+				this.emitConversationEvent(managedProcess, {
+					type: 'steer_rejected',
+					sessionId: managedProcess.sessionId,
+					runtimeKind: managedProcess.conversationRuntime || 'batch',
+					timestamp: Date.now(),
+					threadId: managedProcess.codexAppServerState?.threadId,
+					turnId: managedProcess.codexAppServerState?.turnId || null,
+					message: messageText,
+				});
+			}
+			return;
+		}
+
+		if (pendingRequest.type === 'steer' && managedProcess.codexAppServerState?.threadId) {
+			this.emitConversationEvent(managedProcess, {
+				type: 'steer_accepted',
+				sessionId: managedProcess.sessionId,
+				runtimeKind: managedProcess.conversationRuntime || 'batch',
+				timestamp: Date.now(),
+				threadId: managedProcess.codexAppServerState.threadId,
+				turnId: managedProcess.codexAppServerState.turnId || '',
+			});
+		}
+	}
+
+	private emitConversationEvent(
+		managedProcess: ManagedProcess,
+		event: ConversationEvent
+	): void {
+		this.emitter.emit('conversation-event', managedProcess.sessionId, event);
+	}
+
 	private sendJson(ws: WebSocket, payload: JsonRpcMessage): void {
 		ws.send(JSON.stringify(payload));
 	}
@@ -669,6 +888,29 @@ export class CodexAppServerBridge {
 			inputCount: input.length,
 			correctionCount: state.currentTurnCorrectionCount || 0,
 		});
+		const isReadOnly = config.readOnlyMode === true;
+		const sandboxPolicy =
+			managedProcess.conversationRuntime === 'live'
+				? isReadOnly
+					? {
+							type: 'readOnly',
+							networkAccess: false,
+						}
+					: {
+							type: 'workspaceWrite',
+							writableRoots: [config.cwd],
+							networkAccess: true,
+						}
+				: {
+						type: 'readOnly',
+						networkAccess: false,
+					};
+		const approvalPolicy =
+			managedProcess.conversationRuntime === 'live'
+				? isReadOnly
+					? 'never'
+					: 'untrusted'
+				: 'never';
 		this.sendJson(ws, {
 			id: 'turn',
 			method: 'turn/start',
@@ -676,22 +918,20 @@ export class CodexAppServerBridge {
 				threadId,
 				input,
 				cwd: config.cwd,
-				approvalPolicy: 'never',
-				sandboxPolicy: {
-					type: 'readOnly',
-					access: {
-						type: 'fullAccess',
+				approvalPolicy,
+				sandboxPolicy,
+				model,
+				effort: reasoningEffort || undefined,
+				...(config.readOnlyMode === true && {
+					collaborationMode: {
+						mode: 'plan',
+						settings: {
+							model,
+							reasoning_effort: reasoningEffort || null,
+							developer_instructions: PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+						},
 					},
-					networkAccess: false,
-				},
-				collaborationMode: {
-					mode: 'plan',
-					settings: {
-						model,
-						reasoning_effort: reasoningEffort || null,
-						developer_instructions: PLAN_MODE_DEVELOPER_INSTRUCTIONS,
-					},
-				},
+				}),
 			},
 		});
 	}

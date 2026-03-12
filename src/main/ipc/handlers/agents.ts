@@ -7,6 +7,7 @@ import {
 	getAgentCapabilities,
 	type AgentConfigOption,
 } from '../../agents';
+import { buildAgentModelCatalogGroup } from '../../agents/model-catalog';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import {
@@ -17,6 +18,7 @@ import {
 import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-builder';
 import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
+import type { AgentModelCatalogGroup } from '../../../shared/agent-model-catalog';
 import { MaestroSettings } from './persistence';
 
 const LOG_CONTEXT = '[AgentDetector]';
@@ -857,6 +859,63 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 				const models = await agentDetector.discoverModels(agentId, forceRefresh ?? false);
 				return models;
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agents:getModelCatalog',
+		withIpcErrorLogging(
+			handlerOpts('getModelCatalog'),
+			async (
+				agentIds: string[],
+				forceRefresh?: boolean,
+				sshRemoteId?: string
+			): Promise<AgentModelCatalogGroup[]> => {
+				const normalizedIds = Array.from(
+					new Set(
+						agentIds.filter(
+							(
+								id
+							): id is 'codex' | 'claude-code' | 'opencode' | 'factory-droid' =>
+								typeof id === 'string' &&
+								(id === 'codex' ||
+									id === 'claude-code' ||
+									id === 'opencode' ||
+									id === 'factory-droid')
+						)
+					)
+				);
+
+				if (normalizedIds.length === 0) {
+					return [];
+				}
+
+				const sshConfig = sshRemoteId ? getSshRemoteById(settingsStore, sshRemoteId) : undefined;
+				if (sshRemoteId && !sshConfig) {
+					throw new Error(`SSH remote not found: ${sshRemoteId}`);
+				}
+
+				const agentDetector = sshConfig ? null : requireDependency(getAgentDetector, 'Agent detector');
+
+				return Promise.all(
+					normalizedIds.map(async (agentId) => {
+						const capabilities = getAgentCapabilities(agentId);
+						let discoveredModels: string[] = [];
+
+						if (capabilities.supportsModelSelection) {
+							discoveredModels = sshConfig
+								? await discoverModelsRemote(agentId, sshConfig, forceRefresh ?? false)
+								: await agentDetector!.discoverModels(agentId, forceRefresh ?? false);
+						}
+
+						return buildAgentModelCatalogGroup({
+							agentId,
+							capabilities,
+							discoveredModels,
+						});
+					})
+				);
 			}
 		)
 	);

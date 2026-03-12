@@ -68,6 +68,18 @@ export interface AgentCapabilities {
 
 	/** Agent can export its context for transfer to other sessions/agents */
 	supportsContextExport: boolean;
+
+	/** Agent supports Maestro's live interactive runtime */
+	supportsLiveRuntime: boolean;
+
+	/** Agent supports true mid-turn steering without interrupting */
+	supportsTrueSteer: boolean;
+
+	/** Agent supports queueing future turns while busy */
+	supportsQueueWhileBusy: boolean;
+
+	/** Agent's live runtime can operate over SSH */
+	supportsLiveRuntimeOverSsh: boolean;
 }
 
 /**
@@ -94,6 +106,10 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
+	supportsLiveRuntime: false,
+	supportsTrueSteer: false,
+	supportsQueueWhileBusy: false,
+	supportsLiveRuntimeOverSsh: false,
 };
 
 /**

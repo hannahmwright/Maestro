@@ -6,6 +6,15 @@
 import type { WebSocket } from 'ws';
 import type { Theme } from '../../shared/theme-types';
 import type { DemoCaptureRequest, DemoCard, DemoDetail } from '../../shared/demo-artifacts';
+import type { AgentModelCatalogGroup } from '../../shared/agent-model-catalog';
+import type { ProviderUsageSnapshot } from '../../shared/provider-usage';
+import type {
+	ConversationRuntimeKind,
+	ConversationSteerMode,
+	ConversationSteerStatus,
+	PendingSteerState,
+} from '../../shared/conversation';
+import type { ToolType } from '../../shared/types';
 import type {
 	PushStatusResponse,
 	PushSubscriptionRecord,
@@ -64,6 +73,12 @@ export interface AITabData {
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
 	currentModel?: string | null;
+	runtimeKind?: ConversationRuntimeKind;
+	steerMode?: ConversationSteerMode;
+	activeTurnId?: string | null;
+	pendingSteer?: PendingSteerState | null;
+	steerStatus?: ConversationSteerStatus;
+	lastCheckpointAt?: number | null;
 }
 
 /**
@@ -109,6 +124,8 @@ export interface RateLimitConfig {
 export interface SessionData {
 	id: string;
 	name: string;
+	threadTitle?: string | null;
+	lastTurnAt?: number | null;
 	toolType: string;
 	state: string;
 	inputMode: string;
@@ -142,6 +159,7 @@ export interface SessionData {
 export interface SessionDetail {
 	id: string;
 	name: string;
+	threadTitle?: string | null;
 	toolType: string;
 	state: string;
 	inputMode: string;
@@ -158,6 +176,10 @@ export interface SessionDetail {
 	activeTabId?: string;
 	customModel?: string | null;
 	supportsModelSelection?: boolean;
+}
+
+export interface SessionProviderUsage {
+	usage: ProviderUsageSnapshot | null;
 }
 
 /**
@@ -247,6 +269,7 @@ export interface WebClientMessage {
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
+	commandAction?: 'default' | 'queue';
 	mode?: 'ai' | 'terminal';
 	inputMode?: 'ai' | 'terminal';
 	newName?: string;
@@ -271,6 +294,14 @@ export type GetSessionModelsCallback = (
 	sessionId: string,
 	forceRefresh?: boolean
 ) => Promise<string[]> | string[];
+export type GetSessionModelCatalogCallback = (
+	sessionId: string,
+	forceRefresh?: boolean
+) => Promise<AgentModelCatalogGroup[]> | AgentModelCatalogGroup[];
+export type GetSessionProviderUsageCallback = (
+	sessionId: string,
+	forceRefresh?: boolean
+) => Promise<ProviderUsageSnapshot | null> | ProviderUsageSnapshot | null;
 export type TranscribeAudioCallback = (
 	request: WebVoiceTranscriptionRequest
 ) => Promise<WebVoiceTranscriptionResponse>;
@@ -284,6 +315,13 @@ export type SetSessionModelCallback = (
 	sessionId: string,
 	model: string | null
 ) => Promise<boolean> | boolean;
+export type ForkThreadFromSessionCallback = (
+	sessionId: string,
+	options?: {
+		toolType?: ToolType;
+		model?: string | null;
+	}
+) => Promise<{ success: boolean; sessionId?: string | null }>;
 
 /**
  * Callback type for sending commands to a session.
@@ -301,6 +339,7 @@ export type ExecuteCommandCallback = (
 	sessionId: string,
 	command: string,
 	inputMode?: 'ai' | 'terminal',
+	commandAction?: 'default' | 'queue',
 	images?: string[],
 	textAttachments?: Array<{
 		id?: string;
@@ -370,6 +409,8 @@ export type SelectSessionCallback = (sessionId: string, tabId?: string) => Promi
  */
 export type SelectTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type NewTabCallback = (sessionId: string) => Promise<{ tabId: string } | null>;
+export type NewThreadCallback = (sessionId: string) => Promise<boolean>;
+export type ForkThreadCallback = ForkThreadFromSessionCallback;
 export type DeleteSessionCallback = (sessionId: string) => Promise<boolean>;
 export type CloseTabCallback = (sessionId: string, tabId: string) => Promise<boolean>;
 export type RenameTabCallback = (

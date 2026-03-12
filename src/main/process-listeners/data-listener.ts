@@ -96,6 +96,17 @@ export function setupDataListener(
 		}
 
 		const managedProcess = getProcessManager()?.get(sessionId);
+		if (managedProcess) {
+			if (event.type === 'artifact_created' || event.type === 'step_created') {
+				managedProcess.demoCaptureArtifactSeen = true;
+			}
+			if (event.type === 'capture_completed' || event.type === 'capture_failed') {
+				managedProcess.demoCaptureFinalized = true;
+			}
+			if (event.type === 'capture_failed') {
+				managedProcess.demoCaptureFailed = true;
+			}
+		}
 
 		void getDemoArtifactService()
 			.handleCaptureEvent({
@@ -252,6 +263,16 @@ export function setupDataListener(
 				msgId,
 			});
 		}
+	});
+
+	processManager.on('exit', (sessionId: string) => {
+		const trailingLine = demoEventRemainders.get(sessionId);
+		if (!trailingLine) {
+			return;
+		}
+
+		demoEventRemainders.delete(sessionId);
+		maybeHandleDemoEventLine(sessionId, trailingLine, parseSessionContext(sessionId));
 	});
 
 	processManager.on('assistant-stream', (sessionId: string, event: AssistantStreamEvent) => {

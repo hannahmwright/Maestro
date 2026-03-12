@@ -82,6 +82,8 @@ export interface UseInputHandlersDeps {
 	sessionsRef: React.MutableRefObject<Session[]>;
 	/** Active session ID ref for non-reactive access */
 	activeSessionIdRef: React.MutableRefObject<string>;
+	/** Ref to latest interrupt handler for fallback steer */
+	interruptCurrentTurnRef: React.MutableRefObject<((sessionId?: string) => Promise<void>) | null>;
 }
 
 // ============================================================================
@@ -100,9 +102,13 @@ export interface UseInputHandlersReturn {
 	/** Set staged images for the current message */
 	setStagedImages: (images: string[] | ((prev: string[]) => string[])) => void;
 	/** Process and send the current input */
-	processInput: (text?: string) => void;
+	processInput: (text?: string, options?: { disposition?: 'default' | 'queue' }) => void;
+	/** Explicitly queue the current input as the next turn */
+	queueInput: (text?: string) => void;
 	/** Ref to latest processInput for use in memoized callbacks */
-	processInputRef: React.MutableRefObject<(text?: string) => void>;
+	processInputRef: React.MutableRefObject<
+		(text?: string, options?: { disposition?: 'default' | 'queue' }) => void
+	>;
 	/** Keyboard event handler for the input textarea */
 	handleInputKeyDown: (e: React.KeyboardEvent) => void;
 	/** Handler for input blur (persists input to session state) */
@@ -151,6 +157,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		allCustomCommands,
 		sessionsRef,
 		activeSessionIdRef,
+		interruptCurrentTurnRef,
 	} = deps;
 
 	// --- Store subscriptions (reactive) ---
@@ -392,7 +399,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// useInputProcessing (processes and sends input)
 	// ====================================================================
 
-	const { processInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
+	const { processInput, queueInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
 		activeSession,
 		activeSessionId,
 		setSessions,
@@ -418,10 +425,13 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		onSkillsCommand: handleSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
+		interruptCurrentTurnRef,
 	});
 
 	// processInputRef — maintained for access in memoized callbacks without stale closures
-	const processInputRef = useRef<(text?: string) => void>(() => {});
+	const processInputRef = useRef<
+		(text?: string, options?: { disposition?: 'default' | 'queue' }) => void
+	>(() => {});
 	useEffect(() => {
 		processInputRef.current = processInput;
 	}, [processInput]);
@@ -595,6 +605,7 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 		stagedImages,
 		setStagedImages,
 		processInput,
+		queueInput,
 		processInputRef,
 		handleInputKeyDown,
 		handleMainPanelInputBlur,

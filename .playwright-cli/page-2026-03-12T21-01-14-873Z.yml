@@ -1,0 +1,359 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - button "Close navigation" [active] [ref=e164] [cursor=pointer]:
+      - img [ref=e6]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - generic [ref=e11]: March 3 2026 Weekday
+        - generic [ref=e12]:
+          - generic [ref=e13]: 🎼
+          - generic [ref=e14]: MAESTRO
+      - button "8% provider usage" [ref=e163] [cursor=pointer]:
+        - img [ref=e17]
+        - generic [ref=e19]: 8%
+    - button "Search tabs" [ref=e20] [cursor=pointer]:
+      - img [ref=e21]
+  - generic [ref=e165]:
+    - complementary [ref=e166]:
+      - generic [ref=e167]:
+        - generic [ref=e168]:
+          - generic [ref=e169]:
+            - generic [ref=e170]: Maestro Remote
+            - generic [ref=e171]: Workspaces
+          - generic [ref=e172]:
+            - button "Open app controls" [ref=e173] [cursor=pointer]:
+              - img [ref=e174]
+            - button "Close drawer" [ref=e177] [cursor=pointer]: ×
+        - button "Threads" [ref=e179] [cursor=pointer]:
+          - img [ref=e181]
+          - generic [ref=e183]: Threads
+      - generic [ref=e185]:
+        - generic [ref=e186]:
+          - img [ref=e188]
+          - textbox "Search workspaces and threads" [ref=e191]
+        - generic [ref=e192]:
+          - generic [ref=e193]: Threads
+          - generic [ref=e194]: "16"
+        - generic [ref=e195]:
+          - generic [ref=e196]:
+            - generic [ref=e197]:
+              - generic [ref=e198]: Recent Threads
+              - generic [ref=e199]: Latest activity
+            - generic [ref=e200]:
+              - generic [ref=e202]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Node-It | Claude 📈 31" [ref=e203] [cursor=pointer]:
+                  - img [ref=e205]
+                  - generic [ref=e208]: Node-It | Claude
+                  - generic [ref=e209]:
+                    - generic "Workspace" [ref=e210]: 📈
+                    - generic "31 changed files" [ref=e211]:
+                      - img [ref=e212]
+                      - generic [ref=e216]: "31"
+              - generic [ref=e218]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Codex Thread 2 🎼" [ref=e219] [cursor=pointer]:
+                  - img [ref=e221]
+                  - generic [ref=e224]: Codex Thread 2
+                  - generic "Workspace" [ref=e226]: 🎼
+              - generic [ref=e228]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Codex Thread 📈 31" [ref=e229] [cursor=pointer]:
+                  - img [ref=e231]
+                  - generic [ref=e234]: Codex Thread
+                  - generic [ref=e235]:
+                    - generic "Workspace" [ref=e236]: 📈
+                    - generic "31 changed files" [ref=e237]:
+                      - img [ref=e238]
+                      - generic [ref=e242]: "31"
+              - generic [ref=e244]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Canvas UX Overhaul 📈 31" [ref=e245] [cursor=pointer]:
+                  - img [ref=e247]
+                  - generic [ref=e250]: Canvas UX Overhaul
+                  - generic [ref=e251]:
+                    - generic "Workspace" [ref=e252]: 📈
+                    - generic "31 changed files" [ref=e253]:
+                      - img [ref=e254]
+                      - generic [ref=e258]: "31"
+              - generic [ref=e260]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Wondrous Yawning Shamir 📈 31" [ref=e261] [cursor=pointer]:
+                  - img [ref=e263]
+                  - generic [ref=e266]: Wondrous Yawning Shamir
+                  - generic [ref=e267]:
+                    - generic "Workspace" [ref=e268]: 📈
+                    - generic "31 changed files" [ref=e269]:
+                      - img [ref=e270]
+                      - generic [ref=e274]: "31"
+          - generic [ref=e275]:
+            - generic [ref=e276]: Workspaces
+            - generic [ref=e277]: By repo
+          - generic [ref=e278]:
+            - generic [ref=e279]:
+              - generic [ref=e280]: 📈
+              - generic [ref=e281]: NODE-IT
+              - generic [ref=e282]: "5"
+            - generic [ref=e283]:
+              - generic [ref=e285]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Node-It | Claude 31" [ref=e286] [cursor=pointer]:
+                  - img [ref=e288]
+                  - generic [ref=e291]: Node-It | Claude
+                  - generic "31 changed files" [ref=e293]:
+                    - img [ref=e294]
+                    - generic [ref=e298]: "31"
+              - generic [ref=e300]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Codex Thread 31" [ref=e301] [cursor=pointer]:
+                  - img [ref=e303]
+                  - generic [ref=e306]: Codex Thread
+                  - generic "31 changed files" [ref=e308]:
+                    - img [ref=e309]
+                    - generic [ref=e313]: "31"
+              - generic [ref=e315]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Canvas UX Overhaul 31" [ref=e316] [cursor=pointer]:
+                  - img [ref=e318]
+                  - generic [ref=e321]: Canvas UX Overhaul
+                  - generic "31 changed files" [ref=e323]:
+                    - img [ref=e324]
+                    - generic [ref=e328]: "31"
+              - generic [ref=e330]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Wondrous Yawning Shamir 31" [ref=e331] [cursor=pointer]:
+                  - img [ref=e333]
+                  - generic [ref=e336]: Wondrous Yawning Shamir
+                  - generic "31 changed files" [ref=e338]:
+                    - img [ref=e339]
+                    - generic [ref=e343]: "31"
+              - generic [ref=e345]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Steady Floating Walrus 31" [ref=e346] [cursor=pointer]:
+                  - img [ref=e348]
+                  - generic [ref=e351]: Steady Floating Walrus
+                  - generic "31 changed files" [ref=e353]:
+                    - img [ref=e354]
+                    - generic [ref=e358]: "31"
+          - generic [ref=e359]:
+            - generic [ref=e360]:
+              - generic [ref=e361]: 🎼
+              - generic [ref=e362]: MAESTRO
+              - generic [ref=e363]: "2"
+            - generic [ref=e364]:
+              - generic [ref=e366]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Codex Thread 2" [ref=e367] [cursor=pointer]:
+                  - img [ref=e369]
+                  - generic [ref=e372]: Codex Thread 2
+              - generic [ref=e374]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "March 3 2026 Weekday 3" [ref=e375] [cursor=pointer]:
+                  - img [ref=e377]
+                  - generic [ref=e380]: March 3 2026 Weekday
+                  - generic "3 tabs" [ref=e382]: "3"
+          - generic [ref=e383]:
+            - generic [ref=e384]:
+              - generic [ref=e385]: 🗣️
+              - generic [ref=e386]: VOCE
+              - generic [ref=e387]: "4"
+            - generic [ref=e388]:
+              - generic [ref=e390]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Monet Glass UI 2" [ref=e391] [cursor=pointer]:
+                  - img [ref=e393]
+                  - generic [ref=e396]: Monet Glass UI
+                  - generic "2 changed files" [ref=e398]:
+                    - img [ref=e399]
+                    - generic [ref=e403]: "2"
+              - generic [ref=e405]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Adaptive Greeting Rocket 2" [ref=e406] [cursor=pointer]:
+                  - img [ref=e408]
+                  - generic [ref=e411]: Adaptive Greeting Rocket
+                  - generic "2 changed files" [ref=e413]:
+                    - img [ref=e414]
+                    - generic [ref=e418]: "2"
+              - generic [ref=e420]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Claude - Voce 2" [ref=e421] [cursor=pointer]:
+                  - img [ref=e423]
+                  - generic [ref=e426]: Claude - Voce
+                  - generic "2 changed files" [ref=e428]:
+                    - img [ref=e429]
+                    - generic [ref=e433]: "2"
+              - generic [ref=e435]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Dreamy Dancing Raven 2" [ref=e436] [cursor=pointer]:
+                  - img [ref=e438]
+                  - generic [ref=e441]: Dreamy Dancing Raven
+                  - generic "2 changed files" [ref=e443]:
+                    - img [ref=e444]
+                    - generic [ref=e448]: "2"
+          - generic [ref=e449]:
+            - generic [ref=e450]:
+              - generic [ref=e451]: 🌽
+              - generic [ref=e452]: MEAL PLANNER
+              - generic [ref=e453]: "3"
+            - generic [ref=e454]:
+              - generic [ref=e456]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Rippling Forging Oasis" [ref=e457] [cursor=pointer]:
+                  - img [ref=e459]
+                  - generic [ref=e462]: Rippling Forging Oasis
+              - generic [ref=e464]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Frolicking Discovering Nest" [ref=e465] [cursor=pointer]:
+                  - img [ref=e467]
+                  - generic [ref=e470]: Frolicking Discovering Nest
+              - generic [ref=e472]:
+                - button:
+                  - img
+                  - text: Delete
+                - button "Meal Planner - Main" [ref=e473] [cursor=pointer]:
+                  - img [ref=e475]
+                  - generic [ref=e478]: Meal Planner - Main
+          - generic [ref=e479]:
+            - generic [ref=e480]:
+              - generic [ref=e481]: 🧦
+              - generic [ref=e482]: Second Sprout | Web
+              - generic [ref=e483]: "1"
+            - generic [ref=e486]:
+              - button:
+                - img
+                - text: Delete
+              - button "Push To Main 3" [ref=e487] [cursor=pointer]:
+                - img [ref=e489]
+                - generic [ref=e492]: Push To Main
+                - generic "3 tabs" [ref=e494]: "3"
+          - generic [ref=e495]:
+            - generic [ref=e496]:
+              - generic [ref=e497]: 🧦
+              - generic [ref=e498]: Second Sprout | iOS
+              - generic [ref=e499]: "1"
+            - generic [ref=e502]:
+              - button:
+                - img
+                - text: Delete
+              - button "Main Branch Push" [ref=e503] [cursor=pointer]:
+                - img [ref=e505]
+                - generic [ref=e508]: Main Branch Push
+    - button "Close navigation drawer" [ref=e509] [cursor=pointer]
+  - main [ref=e24]:
+    - generic [ref=e26]:
+      - button "Pull down to open thread controls" [ref=e29] [cursor=pointer]
+      - generic [ref=e33]:
+        - generic [ref=e34]:
+          - generic [ref=e35]: Mar 3 03:39 PM
+          - generic [ref=e38]: "Use web search once and answer: what weekday is March 3, 2026? Include one source URL."
+        - generic [ref=e40]:
+          - generic [ref=e42]: Mar 3 03:39 PM
+          - paragraph [ref=e45]: web:search
+        - generic [ref=e47]:
+          - generic [ref=e49]: Mar 3 03:39 PM
+          - generic [ref=e51]:
+            - paragraph [ref=e52]:
+              - text: March 3, 2026 is a
+              - strong [ref=e53]: Tuesday
+              - text: .
+            - paragraph [ref=e54]:
+              - text: "Source:"
+              - link "https://en.wikipedia.org/wiki/March_2026_lunar_eclipse" [ref=e55] [cursor=pointer]:
+                - /url: https://en.wikipedia.org/wiki/March_2026_lunar_eclipse
+        - generic [ref=e56]:
+          - generic [ref=e57]: Mar 4 09:31 PM
+          - generic [ref=e60]: hi!
+        - generic [ref=e62]:
+          - generic [ref=e64]: Mar 4 09:31 PM
+          - paragraph [ref=e67]: Hi.
+        - generic [ref=e68]:
+          - generic [ref=e69]: 04:35 PM
+          - generic [ref=e72]: testingggg
+        - generic [ref=e74]:
+          - generic [ref=e75]:
+            - generic [ref=e76]: System
+            - generic [ref=e77]: 04:35 PM
+          - paragraph [ref=e80]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e81]:
+          - generic [ref=e82]: 04:38 PM
+          - generic [ref=e85]: Hi!
+        - generic [ref=e87]:
+          - generic [ref=e88]:
+            - generic [ref=e89]: System
+            - generic [ref=e90]: 04:38 PM
+          - paragraph [ref=e93]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e94]:
+          - generic [ref=e95]: 04:40 PM
+          - generic [ref=e98]: testing once again.
+        - generic [ref=e100]:
+          - generic [ref=e101]:
+            - generic [ref=e102]: System
+            - generic [ref=e103]: 04:40 PM
+          - paragraph [ref=e106]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata (request)."
+        - generic [ref=e107]:
+          - generic [ref=e108]: 04:42 PM
+          - generic [ref=e111]: Hi!!
+        - generic [ref=e113]:
+          - generic [ref=e115]: 04:42 PM
+          - paragraph [ref=e118]: Codex app-server did not return a thread id.
+        - generic [ref=e119]:
+          - generic [ref=e120]: 04:43 PM
+          - generic [ref=e123]: test
+        - generic [ref=e125]:
+          - generic [ref=e127]: 04:43 PM
+          - paragraph [ref=e130]: Codex app-server did not return a thread id.
+        - generic [ref=e131]:
+          - generic [ref=e132]: 04:46 PM
+          - generic [ref=e135]: Playwright verification message
+        - generic [ref=e136]:
+          - generic [ref=e137]: 04:49 PM
+          - generic [ref=e140]: Count slowly from 1 to 100, one number per line.
+        - generic [ref=e142]:
+          - generic [ref=e143]:
+            - generic [ref=e144]: System
+            - generic [ref=e145]: 04:49 PM
+          - paragraph [ref=e148]: Canceled by user
+  - generic [ref=e152]:
+    - button "Open composer actions" [ref=e154] [cursor=pointer]:
+      - img [ref=e155]
+    - generic [ref=e156]:
+      - textbox "Message input. Type slash commands directly if needed." [ref=e157]:
+        - /placeholder: Message
+      - button "Start voice recording" [ref=e159] [cursor=pointer]:
+        - img [ref=e160]

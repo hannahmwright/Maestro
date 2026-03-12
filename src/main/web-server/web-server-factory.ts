@@ -8,6 +8,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { WebServer } from './WebServer';
+import { buildAgentModelCatalogGroup } from '../agents/model-catalog';
+import { ProviderUsageService } from '../agents/provider-usage';
 import { getAgentCapabilities, type AgentDetector } from '../agents';
 import { getThemeById } from '../themes';
 import { getHistoryManager } from '../history-manager';
@@ -24,8 +26,7 @@ import type { ProcessManager } from '../process-manager';
 import type { StoredSession } from '../stores/types';
 import { CODEX_DEFAULT_FONT_STACK } from '../../shared/fonts';
 import type { Theme } from '../../shared/theme-types';
-import type { Group } from '../../shared/types';
-import type { SshRemoteConfig } from '../../shared/types';
+import type { Group, Thread, SshRemoteConfig, ToolType } from '../../shared/types';
 import { countUncommittedChanges } from '../../shared/gitUtils';
 import { VoiceTranscriptionManager } from '../voice-transcription-manager';
 import { getDemoArtifactService } from '../artifacts';
@@ -64,6 +65,11 @@ interface GroupsStore {
 	get<T>(key: string, defaultValue?: T): T;
 }
 
+/** Store interface for threads */
+interface ThreadsStore {
+	get<T>(key: string, defaultValue?: T): T;
+}
+
 /** Dependencies required for creating the web server */
 export interface WebServerFactoryDependencies {
 	/** Settings store for reading web interface configuration */
@@ -72,6 +78,8 @@ export interface WebServerFactoryDependencies {
 	sessionsStore: SessionsStore;
 	/** Groups store for reading group data */
 	groupsStore: GroupsStore;
+	/** Threads store for reading thread data */
+	threadsStore: ThreadsStore;
 	/** Function to get the main window reference */
 	getMainWindow: () => BrowserWindow | null;
 	/** Function to get the process manager reference */
@@ -93,6 +101,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		settingsStore,
 		sessionsStore,
 		groupsStore,
+		threadsStore,
 		getMainWindow,
 		getProcessManager,
 		getAgentDetector,
@@ -104,6 +113,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 	const effectiveModelCache = new Map<string, { model: string | null; updatedAt: number }>();
 	const EFFECTIVE_MODEL_TTL_MS = 30000;
 	const voiceTranscriptionManager = new VoiceTranscriptionManager(getUserDataPath());
+	const providerUsageService = new ProviderUsageService(() => getAgentDetector());
 
 	function inferHomeFromPath(candidate: unknown): string | null {
 		if (typeof candidate !== 'string' || !candidate.startsWith('/')) {
@@ -424,8 +434,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		server.setGetSessionsCallback(async () => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
 			const groups = groupsStore.get<Group[]>('groups', []);
+			const threads = threadsStore.get<Thread[]>('threads', []);
+			const threadBySessionId = new Map(threads.map((thread) => [thread.sessionId, thread]));
 			return Promise.all(
 				sessions.map(async (s) => {
+					const thread = threadBySessionId.get(s.id);
 					// Find the group for this session
 					const group = s.groupId ? groups.find((g) => g.id === s.groupId) : null;
 					const gitFileCount = await getGitFileCount(s);
@@ -463,6 +476,25 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						}
 					}
 
+					const lastTurnAt =
+						s.aiTabs?.reduce((latest: number, tab: any) => {
+							const latestTurnTimestamp =
+								tab.logs?.reduce((tabLatest: number, log: any) => {
+									if (
+										log?.timestamp &&
+										(log.source === 'user' ||
+											log.source === 'stdout' ||
+											log.source === 'stderr' ||
+											log.source === 'ai')
+									) {
+										return Math.max(tabLatest, log.timestamp);
+									}
+									return tabLatest;
+								}, 0) ?? 0;
+
+							return Math.max(latest, latestTurnTimestamp);
+						}, 0) ?? 0;
+
 					// Map aiTabs to web-safe format (strip logs to reduce payload)
 					const aiTabs =
 						s.aiTabs?.map((tab: any) => ({
@@ -477,6 +509,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 							state: tab.state || 'idle',
 							thinkingStartTime: tab.thinkingStartTime || null,
 							currentModel: tab.currentModel || null,
+							runtimeKind: tab.runtimeKind || 'batch',
+							steerMode: tab.steerMode || 'none',
+							activeTurnId: tab.activeTurnId || null,
+							pendingSteer: tab.pendingSteer || null,
+							steerStatus: tab.steerStatus || 'idle',
+							lastCheckpointAt: tab.lastCheckpointAt || null,
 						})) || [];
 					const activeTabId = s.activeTabId || (aiTabs.length > 0 ? aiTabs[0].id : undefined);
 					const activeTabSummary = activeTabId
@@ -494,6 +532,8 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					return {
 						id: s.id,
 						name: s.name,
+						threadTitle: thread?.title || null,
+						lastTurnAt: lastTurnAt || null,
 						toolType: s.toolType,
 						state: s.state,
 						inputMode: s.inputMode,
@@ -527,8 +567,10 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		// Optional tabId param allows fetching logs for a specific tab (avoids race conditions)
 		server.setGetSessionDetailCallback((sessionId: string, tabId?: string) => {
 			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const threads = threadsStore.get<Thread[]>('threads', []);
 			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) return null;
+			const thread = threads.find((candidate) => candidate.sessionId === sessionId);
 
 			// Get the requested tab's logs (or active tab if no tabId provided)
 			// Tabs are the source of truth for AI conversation history
@@ -551,6 +593,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return {
 				id: session.id,
 				name: session.name,
+				threadTitle: thread?.title || null,
 				toolType: session.toolType,
 				state: session.state,
 				inputMode: session.inputMode,
@@ -584,6 +627,73 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			}
 
 			return agentDetector.discoverModels(session.toolType, forceRefresh ?? false);
+		});
+
+		server.setGetSessionModelCatalogCallback(async (sessionId: string, forceRefresh?: boolean) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((s) => s.id === sessionId);
+			if (!session) {
+				return [];
+			}
+
+			const agentDetector = getAgentDetector();
+			if (!agentDetector) {
+				logger.warn('agentDetector is null for getSessionModelCatalog', 'WebServer');
+				return [];
+			}
+
+			const detectedAgents = await agentDetector.detectAgents();
+			const selectableAgentIds = detectedAgents
+				.filter(
+					(agent) =>
+						agent.available &&
+						agent.id !== 'terminal' &&
+						(agent.id === 'codex' ||
+							agent.id === 'claude-code' ||
+							agent.id === 'opencode' ||
+							agent.id === 'factory-droid')
+				)
+				.map((agent) => agent.id as ToolType);
+
+			const catalogGroups = await Promise.all(
+				selectableAgentIds.map(async (agentId) => {
+					const capabilities = getAgentCapabilities(agentId);
+					const discoveredModels = capabilities.supportsModelSelection
+						? await agentDetector.discoverModels(agentId, forceRefresh ?? false)
+						: [];
+
+					return buildAgentModelCatalogGroup({
+						agentId,
+						capabilities,
+						discoveredModels,
+					});
+				})
+			);
+
+			return catalogGroups;
+		});
+
+		server.setGetSessionProviderUsageCallback(async (sessionId: string, forceRefresh?: boolean) => {
+			const sessions = sessionsStore.get<StoredSession[]>('sessions', []);
+			const session = sessions.find((candidate) => candidate.id === sessionId);
+			if (!session) {
+				return null;
+			}
+
+			if (session.toolType !== 'codex' && session.toolType !== 'claude-code') {
+				return null;
+			}
+
+			const agentConfig = getAgentConfig(session.toolType);
+			const customEnvVars =
+				agentConfig && typeof agentConfig.customEnvVars === 'object'
+					? (agentConfig.customEnvVars as Record<string, string>)
+					: undefined;
+
+			return providerUsageService.getUsageSnapshot(session.toolType, {
+				forceRefresh,
+				customEnvVars,
+			});
 		});
 
 		server.setSetSessionModelCallback(async (sessionId: string, model: string | null) => {
@@ -689,6 +799,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
+				commandAction?: 'default' | 'queue',
 				images?: string[],
 				textAttachments?: Array<{
 					id?: string;
@@ -721,7 +832,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				// This ensures web commands go through exact same code path as desktop commands
 				// Pass inputMode so renderer uses the web's intended mode (avoids sync issues)
 				logger.info(
-					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Command: ${command.substring(0, 100)}`,
+					`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Action: ${commandAction || 'default'} | Command: ${command.substring(0, 100)}`,
 					'WebServer'
 				);
 				if (!isWebContentsAvailable(mainWindow)) {
@@ -733,6 +844,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 					sessionId,
 					command,
 					inputMode,
+					commandAction,
 					images,
 					textAttachments,
 					attachments,
@@ -887,6 +999,124 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 				}, 5000);
 			});
 		});
+
+		server.setNewThreadCallback(async (sessionId: string) => {
+			logger.info(`[Web→Desktop] New thread callback invoked: session=${sessionId}`, 'WebServer');
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for newThread', 'WebServer');
+				return false;
+			}
+
+			const defaultThreadProvider = settingsStore.get<ToolType>('defaultThreadProvider', 'codex');
+			const providerForNewThread: ToolType =
+				defaultThreadProvider === 'claude-code' ||
+				defaultThreadProvider === 'opencode' ||
+				defaultThreadProvider === 'factory-droid'
+					? defaultThreadProvider
+					: 'codex';
+
+			return new Promise((resolve) => {
+				const responseChannel = `remote:newThread:response:${Date.now()}`;
+				let resolved = false;
+
+				const handleResponse = (
+					_event: Electron.IpcMainEvent,
+					result: { success: boolean; sessionId?: string | null } | boolean | null
+				) => {
+					if (resolved) return;
+					resolved = true;
+					clearTimeout(timeoutId);
+					if (typeof result === 'boolean') {
+						resolve(result);
+						return;
+					}
+					resolve(result?.success ?? false);
+				};
+
+				ipcMain.once(responseChannel, handleResponse);
+				if (!isWebContentsAvailable(mainWindow)) {
+					logger.warn('webContents is not available for newThread', 'WebServer');
+					ipcMain.removeListener(responseChannel, handleResponse);
+					resolve(false);
+					return;
+				}
+				mainWindow.webContents.send(
+					'remote:newThread',
+					sessionId,
+					{
+						toolType: providerForNewThread,
+						model: null,
+					},
+					responseChannel
+				);
+
+				const timeoutId = setTimeout(() => {
+					if (resolved) return;
+					resolved = true;
+					ipcMain.removeListener(responseChannel, handleResponse);
+					logger.warn(`newThread callback timed out for session ${sessionId}`, 'WebServer');
+					resolve(false);
+				}, 5000);
+			});
+		});
+
+		server.setForkThreadCallback(
+			async (
+				sessionId: string,
+				options?: {
+					toolType?: ToolType;
+					model?: string | null;
+				}
+			) => {
+				logger.info(
+					`[Web→Desktop] Fork thread callback invoked: session=${sessionId}, toolType=${options?.toolType || 'inherit'}, model=${options?.model || 'default'}`,
+					'WebServer'
+				);
+				const mainWindow = getMainWindow();
+				if (!mainWindow) {
+					logger.warn('mainWindow is null for forkThread', 'WebServer');
+					return { success: false };
+				}
+
+				return new Promise<{ success: boolean; sessionId?: string | null }>((resolve) => {
+					const responseChannel = `remote:newThread:response:${Date.now()}`;
+					let resolved = false;
+
+					const handleResponse = (
+						_event: Electron.IpcMainEvent,
+						result: { success: boolean; sessionId?: string | null } | boolean | null
+					) => {
+						if (resolved) return;
+						resolved = true;
+						clearTimeout(timeoutId);
+						if (typeof result === 'boolean') {
+							resolve({ success: result });
+							return;
+						}
+						resolve(result || { success: false });
+					};
+
+					ipcMain.once(responseChannel, handleResponse);
+					if (!isWebContentsAvailable(mainWindow)) {
+						logger.warn('webContents is not available for forkThread', 'WebServer');
+						ipcMain.removeListener(responseChannel, handleResponse);
+						resolve({ success: false });
+						return;
+					}
+
+					mainWindow.webContents.send('remote:newThread', sessionId, options || {}, responseChannel);
+
+					const timeoutId = setTimeout(() => {
+						if (resolved) return;
+						resolved = true;
+						ipcMain.removeListener(responseChannel, handleResponse);
+						logger.warn(`forkThread callback timed out for session ${sessionId}`, 'WebServer');
+						resolve({ success: false });
+					}, 5000);
+				});
+			}
+		);
 
 		server.setDeleteSessionCallback(async (sessionId: string) => {
 			logger.info(

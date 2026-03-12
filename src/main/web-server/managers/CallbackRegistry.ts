@@ -6,10 +6,13 @@
  */
 
 import { logger } from '../../utils/logger';
+import type { ToolType } from '../../../shared/types';
 import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
 	GetSessionModelsCallback,
+	GetSessionModelCatalogCallback,
+	GetSessionProviderUsageCallback,
 	GetSessionDemosCallback,
 	GetDemoDetailCallback,
 	GetArtifactContentCallback,
@@ -25,6 +28,8 @@ import type {
 	SelectSessionCallback,
 	SelectTabCallback,
 	NewTabCallback,
+	NewThreadCallback,
+	ForkThreadCallback,
 	DeleteSessionCallback,
 	CloseTabCallback,
 	RenameTabCallback,
@@ -45,6 +50,8 @@ export interface WebServerCallbacks {
 	getSessions: GetSessionsCallback | null;
 	getSessionDetail: GetSessionDetailCallback | null;
 	getSessionModels: GetSessionModelsCallback | null;
+	getSessionModelCatalog: GetSessionModelCatalogCallback | null;
+	getSessionProviderUsage: GetSessionProviderUsageCallback | null;
 	getSessionDemos: GetSessionDemosCallback | null;
 	getDemoDetail: GetDemoDetailCallback | null;
 	getArtifactContent: GetArtifactContentCallback | null;
@@ -62,6 +69,8 @@ export interface WebServerCallbacks {
 	selectSession: SelectSessionCallback | null;
 	selectTab: SelectTabCallback | null;
 	newTab: NewTabCallback | null;
+	newThread: NewThreadCallback | null;
+	forkThread: ForkThreadCallback | null;
 	deleteSession: DeleteSessionCallback | null;
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
@@ -76,6 +85,8 @@ export class CallbackRegistry {
 		getSessions: null,
 		getSessionDetail: null,
 		getSessionModels: null,
+		getSessionModelCatalog: null,
+		getSessionProviderUsage: null,
 		getSessionDemos: null,
 		getDemoDetail: null,
 		getArtifactContent: null,
@@ -93,6 +104,8 @@ export class CallbackRegistry {
 		selectSession: null,
 		selectTab: null,
 		newTab: null,
+		newThread: null,
+		forkThread: null,
 		deleteSession: null,
 		closeTab: null,
 		renameTab: null,
@@ -117,6 +130,20 @@ export class CallbackRegistry {
 		forceRefresh?: boolean
 	): Promise<Awaited<ReturnType<GetSessionModelsCallback>> | []> {
 		return (await this.callbacks.getSessionModels?.(sessionId, forceRefresh)) ?? [];
+	}
+
+	async getSessionModelCatalog(
+		sessionId: string,
+		forceRefresh?: boolean
+	): Promise<Awaited<ReturnType<GetSessionModelCatalogCallback>> | []> {
+		return (await this.callbacks.getSessionModelCatalog?.(sessionId, forceRefresh)) ?? [];
+	}
+
+	async getSessionProviderUsage(
+		sessionId: string,
+		forceRefresh?: boolean
+	): Promise<Awaited<ReturnType<GetSessionProviderUsageCallback>> | null> {
+		return (await this.callbacks.getSessionProviderUsage?.(sessionId, forceRefresh)) ?? null;
 	}
 
 	async getSessionDemos(sessionId: string, tabId?: string | null) {
@@ -177,6 +204,7 @@ export class CallbackRegistry {
 		sessionId: string,
 		command: string,
 		inputMode?: 'ai' | 'terminal',
+		commandAction?: 'default' | 'queue',
 		images?: string[],
 		textAttachments?: Array<{
 			id?: string;
@@ -199,6 +227,7 @@ export class CallbackRegistry {
 			sessionId,
 			command,
 			inputMode,
+			commandAction,
 			images,
 			textAttachments,
 			attachments,
@@ -233,6 +262,22 @@ export class CallbackRegistry {
 	async newTab(sessionId: string): Promise<{ tabId: string } | null> {
 		if (!this.callbacks.newTab) return null;
 		return this.callbacks.newTab(sessionId);
+	}
+
+	async newThread(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.newThread) return false;
+		return this.callbacks.newThread(sessionId);
+	}
+
+	async forkThread(
+		sessionId: string,
+		options?: {
+			toolType?: ToolType;
+			model?: string | null;
+		}
+	): Promise<{ success: boolean; sessionId?: string | null }> {
+		if (!this.callbacks.forkThread) return { success: false };
+		return this.callbacks.forkThread(sessionId, options);
 	}
 
 	async deleteSession(sessionId: string): Promise<boolean> {
@@ -281,6 +326,14 @@ export class CallbackRegistry {
 
 	setGetSessionModelsCallback(callback: GetSessionModelsCallback): void {
 		this.callbacks.getSessionModels = callback;
+	}
+
+	setGetSessionModelCatalogCallback(callback: GetSessionModelCatalogCallback): void {
+		this.callbacks.getSessionModelCatalog = callback;
+	}
+
+	setGetSessionProviderUsageCallback(callback: GetSessionProviderUsageCallback): void {
+		this.callbacks.getSessionProviderUsage = callback;
 	}
 
 	setGetSessionDemosCallback(callback: GetSessionDemosCallback): void {
@@ -353,6 +406,15 @@ export class CallbackRegistry {
 	setNewTabCallback(callback: NewTabCallback): void {
 		logger.info('[CallbackRegistry] setNewTabCallback called', LOG_CONTEXT);
 		this.callbacks.newTab = callback;
+	}
+
+	setNewThreadCallback(callback: NewThreadCallback): void {
+		logger.info('[CallbackRegistry] setNewThreadCallback called', LOG_CONTEXT);
+		this.callbacks.newThread = callback;
+	}
+
+	setForkThreadCallback(callback: ForkThreadCallback): void {
+		this.callbacks.forkThread = callback;
 	}
 
 	setDeleteSessionCallback(callback: DeleteSessionCallback): void {

@@ -14,7 +14,7 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group, LogEntry } from '../types';
+import type { Session, Group, Thread, LogEntry } from '../types';
 import { generateId } from '../utils/ids';
 import { getActiveTab } from '../utils/tabHelpers';
 
@@ -26,6 +26,7 @@ export interface SessionStoreState {
 	// Core entities
 	sessions: Session[];
 	groups: Group[];
+	threads: Thread[];
 
 	// Active session
 	activeSessionId: string;
@@ -95,6 +96,13 @@ export interface SessionStoreActions {
 	/** Toggle a group's collapsed state. */
 	toggleGroupCollapsed: (id: string) => void;
 
+	// === Threads ===
+
+	setThreads: (threads: Thread[] | ((prev: Thread[]) => Thread[])) => void;
+	addThread: (thread: Thread) => void;
+	removeThread: (id: string) => void;
+	updateThread: (id: string, updates: Partial<Thread>) => void;
+
 	// === Initialization ===
 
 	setSessionsLoaded: (loaded: boolean | ((prev: boolean) => boolean)) => void;
@@ -152,6 +160,7 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	// --- State ---
 	sessions: [],
 	groups: [],
+	threads: [],
 	activeSessionId: '',
 	sessionsLoaded: false,
 	initialLoadComplete: false,
@@ -236,6 +245,37 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 			groups: s.groups.map((g) => (g.id === id ? { ...g, collapsed: !g.collapsed } : g)),
 		})),
 
+	// Threads
+	setThreads: (v) =>
+		set((s) => {
+			const newThreads = resolve(v, s.threads);
+			if (newThreads === s.threads) return s;
+			return { threads: newThreads };
+		}),
+
+	addThread: (thread) => set((s) => ({ threads: [...s.threads, thread] })),
+
+	removeThread: (id) =>
+		set((s) => {
+			const filtered = s.threads.filter((thread) => thread.id !== id);
+			if (filtered.length === s.threads.length) return s;
+			return { threads: filtered };
+		}),
+
+	updateThread: (id, updates) =>
+		set((s) => {
+			let found = false;
+			const newThreads = s.threads.map((thread) => {
+				if (thread.id === id) {
+					found = true;
+					return { ...thread, ...updates };
+				}
+				return thread;
+			});
+			if (!found) return s;
+			return { threads: newThreads };
+		}),
+
 	// Initialization
 	setSessionsLoaded: (v) => set((s) => ({ sessionsLoaded: resolve(v, s.sessionsLoaded) })),
 	setInitialLoadComplete: (v) =>
@@ -276,6 +316,8 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 				text: logEntry.text,
 				...(logEntry.images && { images: logEntry.images }),
 				...(logEntry.delivered !== undefined && { delivered: logEntry.delivered }),
+				...(logEntry.interactionKind && { interactionKind: logEntry.interactionKind }),
+				...(logEntry.deliveryState && { deliveryState: logEntry.deliveryState }),
 				...('aiCommand' in logEntry && logEntry.aiCommand && { aiCommand: logEntry.aiCommand }),
 			};
 
@@ -338,6 +380,8 @@ export const selectSessionById =
  */
 export const selectBookmarkedSessions = (state: SessionStore): Session[] =>
 	state.sessions.filter((s) => s.bookmarked);
+
+export const selectThreads = (state: SessionStore): Thread[] => state.threads;
 
 /**
  * Select sessions belonging to a specific group.

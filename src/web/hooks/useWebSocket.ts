@@ -10,6 +10,12 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
+	ConversationRuntimeKind,
+	ConversationSteerMode,
+	ConversationSteerStatus,
+	PendingSteerState,
+} from '../../shared/conversation';
+import type {
 	WebAssistantStreamEvent,
 	ResponseCompletedEvent,
 	WebAttachmentSummary,
@@ -58,6 +64,12 @@ export interface AITabData {
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
 	currentModel?: string | null;
+	runtimeKind?: ConversationRuntimeKind;
+	steerMode?: ConversationSteerMode;
+	activeTurnId?: string | null;
+	pendingSteer?: PendingSteerState | null;
+	steerStatus?: ConversationSteerStatus;
+	lastCheckpointAt?: number | null;
 }
 
 /**
@@ -77,6 +89,8 @@ export interface LastResponsePreview {
 export interface SessionData {
 	id: string;
 	name: string;
+	threadTitle?: string | null;
+	lastTurnAt?: number | null;
 	toolType: string;
 	state: string;
 	inputMode: string;
@@ -140,6 +154,7 @@ export type ServerMessageType =
 	| 'autorun_state'
 	| 'tabs_changed'
 	| 'new_tab_result'
+	| 'new_thread_result'
 	| 'delete_session_result'
 	| 'session_log_entry'
 	| 'assistant_stream'
@@ -329,6 +344,12 @@ export interface NewTabResultMessage extends ServerMessage {
 	tabId?: string;
 }
 
+export interface NewThreadResultMessage extends ServerMessage {
+	type: 'new_thread_result';
+	success: boolean;
+	sessionId: string;
+}
+
 export interface DeleteSessionResultMessage extends ServerMessage {
 	type: 'delete_session_result';
 	success: boolean;
@@ -377,6 +398,7 @@ export type TypedServerMessage =
 	| AutoRunStateMessage
 	| TabsChangedMessage
 	| NewTabResultMessage
+	| NewThreadResultMessage
 	| DeleteSessionResultMessage
 	| SessionLogEntryMessage
 	| AssistantStreamMessage
@@ -429,6 +451,8 @@ export interface WebSocketEventHandlers {
 	onTabsChanged?: (sessionId: string, aiTabs: AITabData[], activeTabId: string) => void;
 	/** Called when a new tab request completes */
 	onNewTabResult?: (sessionId: string, success: boolean, tabId?: string) => void;
+	/** Called when a new thread request completes */
+	onNewThreadResult?: (sessionId: string, success: boolean) => void;
 	/** Called when a delete session request completes */
 	onDeleteSessionResult?: (sessionId: string, success: boolean) => void;
 	/** Called when a structured session log entry is upserted */
@@ -798,6 +822,15 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 							newTabMsg.sessionId,
 							newTabMsg.success,
 							newTabMsg.tabId
+						);
+						break;
+					}
+
+					case 'new_thread_result': {
+						const newThreadMsg = message as NewThreadResultMessage;
+						handlersRef.current?.onNewThreadResult?.(
+							newThreadMsg.sessionId,
+							newThreadMsg.success
 						);
 						break;
 					}

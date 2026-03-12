@@ -1,0 +1,104 @@
+- generic [ref=e6]:
+  - banner [ref=e7]:
+    - button "Open navigation" [ref=e8] [cursor=pointer]:
+      - img [ref=e9]
+    - generic [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]: March 3 2026 Weekday
+        - generic [ref=e15]:
+          - generic [ref=e16]: 🎼
+          - generic [ref=e17]: MAESTRO
+      - button "9% provider usage" [ref=e19] [cursor=pointer]:
+        - img [ref=e20]
+        - generic [ref=e22]: 9%
+    - button "Search tabs" [ref=e23] [cursor=pointer]:
+      - img [ref=e24]
+  - main [ref=e27]:
+    - generic [ref=e29]:
+      - button "Pull down to open thread controls" [ref=e32] [cursor=pointer]
+      - generic [ref=e36]:
+        - generic [ref=e37]:
+          - generic [ref=e38]: Mar 3 03:39 PM
+          - generic [ref=e41]: "Use web search once and answer: what weekday is March 3, 2026? Include one source URL."
+        - generic [ref=e43]:
+          - generic [ref=e45]: Mar 3 03:39 PM
+          - paragraph [ref=e48]: web:search
+        - generic [ref=e50]:
+          - generic [ref=e52]: Mar 3 03:39 PM
+          - generic [ref=e54]:
+            - paragraph [ref=e55]:
+              - text: March 3, 2026 is a
+              - strong [ref=e56]: Tuesday
+              - text: .
+            - paragraph [ref=e57]:
+              - text: "Source:"
+              - link "https://en.wikipedia.org/wiki/March_2026_lunar_eclipse" [ref=e58] [cursor=pointer]:
+                - /url: https://en.wikipedia.org/wiki/March_2026_lunar_eclipse
+        - generic [ref=e59]:
+          - generic [ref=e60]: Mar 4 09:31 PM
+          - generic [ref=e63]: hi!
+        - generic [ref=e65]:
+          - generic [ref=e67]: Mar 4 09:31 PM
+          - paragraph [ref=e70]: Hi.
+        - generic [ref=e71]:
+          - generic [ref=e72]: 04:35 PM
+          - generic [ref=e75]: testingggg
+        - generic [ref=e77]:
+          - generic [ref=e78]:
+            - generic [ref=e79]: System
+            - generic [ref=e80]: 04:35 PM
+          - paragraph [ref=e83]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e84]:
+          - generic [ref=e85]: 04:38 PM
+          - generic [ref=e88]: Hi!
+        - generic [ref=e90]:
+          - generic [ref=e91]:
+            - generic [ref=e92]: System
+            - generic [ref=e93]: 04:38 PM
+          - paragraph [ref=e96]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e97]:
+          - generic [ref=e98]: 04:40 PM
+          - generic [ref=e101]: testing once again.
+        - generic [ref=e103]:
+          - generic [ref=e104]:
+            - generic [ref=e105]: System
+            - generic [ref=e106]: 04:40 PM
+          - paragraph [ref=e109]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata (request)."
+        - generic [ref=e110]:
+          - generic [ref=e111]: 04:42 PM
+          - generic [ref=e114]: Hi!!
+        - generic [ref=e116]:
+          - generic [ref=e118]: 04:42 PM
+          - paragraph [ref=e121]: Codex app-server did not return a thread id.
+        - generic [ref=e122]:
+          - generic [ref=e123]: 04:43 PM
+          - generic [ref=e126]: test
+        - generic [ref=e128]:
+          - generic [ref=e130]: 04:43 PM
+          - paragraph [ref=e133]: Codex app-server did not return a thread id.
+        - generic [ref=e134]:
+          - generic [ref=e135]: 04:46 PM
+          - generic [ref=e138]: Playwright verification message
+        - generic [ref=e139]:
+          - generic [ref=e140]: 04:49 PM
+          - generic [ref=e143]: Count slowly from 1 to 100, one number per line.
+        - generic [ref=e145]:
+          - generic [ref=e146]:
+            - generic [ref=e147]: System
+            - generic [ref=e148]: 04:49 PM
+          - paragraph [ref=e151]: Canceled by user
+        - generic [ref=e176]:
+          - generic [ref=e177]: 05:14 PM
+          - generic [ref=e180]: Count slowly from 1 to 50, one number per line.
+        - generic "Assistant is thinking" [ref=e181]:
+          - generic [ref=e187]: Thinking
+  - generic [ref=e154]:
+    - generic [ref=e188]:
+      - button "Stop" [ref=e189] [cursor=pointer]
+      - generic [ref=e190]: Type your next message to steer or queue it.
+    - button "Actions" [ref=e167] [cursor=pointer]:
+      - img [ref=e168]
+      - generic [ref=e169]: Actions
+    - textbox "AI message input. Press the send button to submit." [active] [ref=e170]:
+      - /placeholder: AI thinking... type to steer or queue next
+    - generic [ref=e171]: Enter adds a new line here. Use Send when you are ready.

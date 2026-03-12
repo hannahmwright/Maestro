@@ -1,18 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import {
-	ChevronRight,
 	Settings,
 	Copy,
 	Bookmark,
-	FolderInput,
-	FolderPlus,
-	Folder,
+	Archive,
 	GitBranch,
 	GitPullRequest,
 	Trash2,
 	Edit3,
+	PanelRightClose,
 } from 'lucide-react';
-import type { Group, Session, Theme } from '../../types';
+import type { Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 
 interface SessionContextMenuProps {
@@ -20,20 +18,21 @@ interface SessionContextMenuProps {
 	y: number;
 	theme: Theme;
 	session: Session;
-	groups: Group[];
+	isPinned: boolean;
+	isArchived: boolean;
 	hasWorktreeChildren: boolean;
 	onRename: () => void;
 	onEdit: () => void;
 	onDuplicate: () => void;
-	onToggleBookmark: () => void;
-	onMoveToGroup: (groupId: string) => void;
+	onTogglePinned: () => void;
+	onCloseThread: () => void;
+	onToggleArchived: () => void;
 	onDelete: () => void;
 	onDismiss: () => void;
 	onCreatePR?: () => void;
 	onQuickCreateWorktree?: () => void;
 	onConfigureWorktrees?: () => void;
 	onDeleteWorktree?: () => void;
-	onCreateGroup?: () => void;
 }
 
 export function SessionContextMenu({
@@ -41,30 +40,23 @@ export function SessionContextMenu({
 	y,
 	theme,
 	session,
-	groups,
+	isPinned,
+	isArchived,
 	hasWorktreeChildren,
 	onRename,
 	onEdit,
 	onDuplicate,
-	onToggleBookmark,
-	onMoveToGroup,
+	onTogglePinned,
+	onCloseThread,
+	onToggleArchived,
 	onDelete,
 	onDismiss,
 	onCreatePR,
 	onQuickCreateWorktree,
 	onConfigureWorktrees,
 	onDeleteWorktree,
-	onCreateGroup,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
-	const moveToGroupRef = useRef<HTMLDivElement>(null);
-	const submenuTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const [showMoveSubmenu, setShowMoveSubmenu] = useState(false);
-	const [submenuPosition, setSubmenuPosition] = useState<{
-		vertical: 'below' | 'above';
-		horizontal: 'right' | 'left';
-	}>({ vertical: 'below', horizontal: 'right' });
-
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
@@ -80,51 +72,8 @@ export function SessionContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	// Cleanup submenu timeout on unmount
-	useEffect(() => {
-		return () => {
-			if (submenuTimeoutRef.current) {
-				clearTimeout(submenuTimeoutRef.current);
-				submenuTimeoutRef.current = null;
-			}
-		};
-	}, []);
-
 	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
 
-	const handleMoveToGroupHover = () => {
-		if (submenuTimeoutRef.current) {
-			clearTimeout(submenuTimeoutRef.current);
-			submenuTimeoutRef.current = null;
-		}
-		setShowMoveSubmenu(true);
-
-		if (moveToGroupRef.current) {
-			const rect = moveToGroupRef.current.getBoundingClientRect();
-			const itemHeight = 28;
-			const submenuHeight = (groups.length + 1) * itemHeight + 16 + (groups.length > 0 ? 8 : 0);
-			const submenuWidth = 160;
-			const spaceBelow = window.innerHeight - rect.top;
-			const spaceRight = window.innerWidth - rect.right;
-
-			const vertical = spaceBelow < submenuHeight && rect.top > submenuHeight ? 'above' : 'below';
-			const horizontal = spaceRight < submenuWidth && rect.left > submenuWidth ? 'left' : 'right';
-
-			setSubmenuPosition({ vertical, horizontal });
-		}
-	};
-
-	const handleMoveToGroupLeave = () => {
-		if (submenuTimeoutRef.current) {
-			clearTimeout(submenuTimeoutRef.current);
-		}
-		submenuTimeoutRef.current = setTimeout(() => {
-			setShowMoveSubmenu(false);
-			submenuTimeoutRef.current = null;
-		}, 300);
-	};
-
-	// Compute visibility for worktree sections to avoid rendering dividers without buttons
 	const showWorktreeParentSection =
 		(hasWorktreeChildren || session.isGitRepo) &&
 		!session.parentSessionId &&
@@ -143,7 +92,7 @@ export function SessionContextMenu({
 				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
-				minWidth: '160px',
+				minWidth: '180px',
 			}}
 		>
 			<button
@@ -156,7 +105,7 @@ export function SessionContextMenu({
 				style={{ color: theme.colors.textMain }}
 			>
 				<Edit3 className="w-3.5 h-3.5" />
-				Rename
+				Rename Thread
 			</button>
 
 			<button
@@ -182,128 +131,50 @@ export function SessionContextMenu({
 				style={{ color: theme.colors.textMain }}
 			>
 				<Copy className="w-3.5 h-3.5" />
-				Duplicate...
+				Fork Thread...
 			</button>
 
 			{!session.parentSessionId && (
-				<button
-					type="button"
-					onClick={() => {
-						onToggleBookmark();
-						onDismiss();
-					}}
-					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
-				>
-					<Bookmark className="w-3.5 h-3.5" fill={session.bookmarked ? 'currentColor' : 'none'} />
-					{session.bookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
-				</button>
-			)}
-
-			{!session.parentSessionId && (
-				<div
-					ref={moveToGroupRef}
-					className="relative"
-					tabIndex={0}
-					onMouseEnter={handleMoveToGroupHover}
-					onMouseLeave={handleMoveToGroupLeave}
-					onFocus={handleMoveToGroupHover}
-					onBlur={handleMoveToGroupLeave}
-					onKeyDown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							handleMoveToGroupHover();
-						} else if (e.key === 'Escape' && showMoveSubmenu) {
-							e.stopPropagation();
-							setShowMoveSubmenu(false);
-						}
-					}}
-				>
+				<>
 					<button
 						type="button"
-						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between"
+						onClick={() => {
+							onTogglePinned();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						<span className="flex items-center gap-2">
-							<FolderInput className="w-3.5 h-3.5" />
-							Move to Group
-						</span>
-						<ChevronRight className="w-3 h-3" />
+						<Bookmark className="w-3.5 h-3.5" fill={isPinned ? 'currentColor' : 'none'} />
+						{isPinned ? 'Unpin Thread' : 'Pin Thread'}
 					</button>
 
-					{showMoveSubmenu && (
-						<div
-							className="absolute py-1 rounded-md shadow-xl border"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
-								minWidth: '140px',
-								...(submenuPosition.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
-								...(submenuPosition.horizontal === 'left'
-									? { right: '100%', marginRight: 4 }
-									: { left: '100%', marginLeft: 4 }),
-							}}
-						>
-							<button
-								type="button"
-								onClick={() => {
-									onMoveToGroup('');
-									onDismiss();
-								}}
-								className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 ${!session.groupId ? 'opacity-50' : ''}`}
-								style={{ color: theme.colors.textMain }}
-								disabled={!session.groupId}
-							>
-								<Folder className="w-3.5 h-3.5" />
-								Ungrouped
-								{!session.groupId && <span className="text-[10px] opacity-50">(current)</span>}
-							</button>
+					<button
+						type="button"
+						onClick={() => {
+							onCloseThread();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						<PanelRightClose className="w-3.5 h-3.5" />
+						Close Thread
+					</button>
 
-							{groups.length > 0 && (
-								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-							)}
-
-							{groups.map((group) => (
-								<button
-									type="button"
-									key={group.id}
-									onClick={() => {
-										onMoveToGroup(group.id);
-										onDismiss();
-									}}
-									className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 ${session.groupId === group.id ? 'opacity-50' : ''}`}
-									style={{ color: theme.colors.textMain }}
-									disabled={session.groupId === group.id}
-								>
-									<span>{group.emoji}</span>
-									<span className="truncate">{group.name}</span>
-									{session.groupId === group.id && (
-										<span className="text-[10px] opacity-50">(current)</span>
-									)}
-								</button>
-							))}
-
-							{onCreateGroup && (
-								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-							)}
-
-							{onCreateGroup && (
-								<button
-									type="button"
-									onClick={() => {
-										onCreateGroup();
-										onDismiss();
-									}}
-									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-									style={{ color: theme.colors.accent }}
-								>
-									<FolderPlus className="w-3.5 h-3.5" />
-									Create New Group
-								</button>
-							)}
-						</div>
-					)}
-				</div>
+					<button
+						type="button"
+						onClick={() => {
+							onToggleArchived();
+							onDismiss();
+						}}
+						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+						style={{ color: theme.colors.textMain }}
+					>
+						<Archive className="w-3.5 h-3.5" />
+						{isArchived ? 'Unarchive Thread' : 'Archive Thread'}
+					</button>
+				</>
 			)}
 
 			{showWorktreeParentSection && (
@@ -387,7 +258,7 @@ export function SessionContextMenu({
 						style={{ color: theme.colors.error }}
 					>
 						<Trash2 className="w-3.5 h-3.5" />
-						Remove Agent
+						Delete Thread
 					</button>
 				</>
 			)}

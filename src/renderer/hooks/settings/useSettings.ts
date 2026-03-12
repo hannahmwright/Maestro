@@ -26,6 +26,7 @@ import type {
 	ThinkingMode,
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
+	ToolType,
 } from '../../types';
 import {
 	useSettingsStore,
@@ -87,6 +88,8 @@ export interface UseSettingsReturn {
 	// Default thinking toggle (three states: 'off' | 'on' | 'sticky')
 	defaultShowThinking: ThinkingMode;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	defaultThreadProvider: ToolType;
+	setDefaultThreadProvider: (value: ToolType) => void;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	markdownEditMode: boolean;

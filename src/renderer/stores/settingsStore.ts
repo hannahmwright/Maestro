@@ -30,6 +30,8 @@ import type {
 	ThinkingMode,
 	DirectorNotesSettings,
 	EncoreFeatureFlags,
+	WorkspaceSortMode,
+	ToolType,
 } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
@@ -197,7 +199,9 @@ export interface SettingsStoreState {
 	enterToSendTerminal: boolean;
 	defaultSaveToHistory: boolean;
 	defaultShowThinking: ThinkingMode;
+	defaultThreadProvider: ToolType;
 	leftSidebarWidth: number;
+	workspaceSortMode: WorkspaceSortMode;
 	rightPanelWidth: number;
 	markdownEditMode: boolean;
 	chatRawTextMode: boolean;
@@ -277,7 +281,9 @@ export interface SettingsStoreActions {
 	setEnterToSendTerminal: (value: boolean) => void;
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
+	setDefaultThreadProvider: (value: ToolType) => void;
 	setLeftSidebarWidth: (value: number) => void;
+	setWorkspaceSortMode: (value: WorkspaceSortMode) => void;
 	setRightPanelWidth: (value: number) => void;
 	setMarkdownEditMode: (value: boolean) => void;
 	setChatRawTextMode: (value: boolean) => void;
@@ -415,7 +421,9 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	enterToSendTerminal: true,
 	defaultSaveToHistory: true,
 	defaultShowThinking: 'sticky',
+	defaultThreadProvider: 'codex',
 	leftSidebarWidth: 256,
+	workspaceSortMode: 'recent',
 	rightPanelWidth: 384,
 	markdownEditMode: false,
 	chatRawTextMode: false,
@@ -569,10 +577,20 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 		window.maestro.settings.set('defaultShowThinking', value);
 	},
 
+	setDefaultThreadProvider: (value) => {
+		set({ defaultThreadProvider: value });
+		window.maestro.settings.set('defaultThreadProvider', value);
+	},
+
 	setLeftSidebarWidth: (value) => {
 		const clamped = Math.max(256, Math.min(600, value));
 		set({ leftSidebarWidth: clamped });
 		window.maestro.settings.set('leftSidebarWidth', clamped);
+	},
+
+	setWorkspaceSortMode: (value) => {
+		set({ workspaceSortMode: value });
+		window.maestro.settings.set('workspaceSortMode', value);
 	},
 
 	setRightPanelWidth: (value) => {
@@ -1394,12 +1412,31 @@ export async function loadAllSettings(): Promise<void> {
 				typeof raw === 'boolean' ? (raw ? 'on' : 'off') : (raw as ThinkingMode);
 		}
 
+		if (allSettings['defaultThreadProvider'] !== undefined) {
+			const provider = allSettings['defaultThreadProvider'] as string;
+			if (
+				provider === 'codex' ||
+				provider === 'claude-code' ||
+				provider === 'opencode' ||
+				provider === 'factory-droid'
+			) {
+				patch.defaultThreadProvider = provider;
+			}
+		}
+
 		// leftSidebarWidth: clamp on load
 		if (allSettings['leftSidebarWidth'] !== undefined)
 			patch.leftSidebarWidth = Math.max(
 				256,
 				Math.min(600, allSettings['leftSidebarWidth'] as number)
 			);
+
+		if (allSettings['workspaceSortMode'] !== undefined) {
+			const sortMode = allSettings['workspaceSortMode'] as string;
+			if (sortMode === 'recent' || sortMode === 'alpha') {
+				patch.workspaceSortMode = sortMode;
+			}
+		}
 
 		if (allSettings['rightPanelWidth'] !== undefined)
 			patch.rightPanelWidth = allSettings['rightPanelWidth'] as number;

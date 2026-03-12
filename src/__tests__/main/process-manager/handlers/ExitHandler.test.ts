@@ -72,6 +72,10 @@ function createMockProcess(overrides: Partial<ManagedProcess> = {}): ManagedProc
 		sshRemoteId: undefined,
 		sshRemoteHost: undefined,
 		streamedText: '',
+		demoCaptureEnabled: false,
+		demoCaptureFinalized: false,
+		demoCaptureArtifactSeen: false,
+		demoCaptureFailed: false,
 		...overrides,
 	} as ManagedProcess;
 }
@@ -303,6 +307,98 @@ describe('ExitHandler', () => {
 	});
 
 	describe('process cleanup', () => {
+		it('should emit an agent error when demo capture was requested but never finalized', () => {
+			const proc = createMockProcess({
+				isBatchMode: true,
+				demoCaptureEnabled: true,
+				demoCaptureFinalized: false,
+			});
+			processes.set('test-session', proc);
+
+			const agentErrors: Array<{ sessionId: string; message: string }> = [];
+			emitter.on('agent-error', (sid: string, error: { message: string }) =>
+				agentErrors.push({ sessionId: sid, message: error.message })
+			);
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(agentErrors).toEqual([
+				{
+					sessionId: 'test-session',
+					message:
+						'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.',
+				},
+			]);
+		});
+
+		it('should not emit a demo-capture error when demo capture was finalized', () => {
+			const proc = createMockProcess({
+				isBatchMode: true,
+				demoCaptureEnabled: true,
+				demoCaptureFinalized: true,
+				demoCaptureArtifactSeen: true,
+			});
+			processes.set('test-session', proc);
+
+			const agentErrors: Array<{ sessionId: string; message: string }> = [];
+			emitter.on('agent-error', (sid: string, error: { message: string }) =>
+				agentErrors.push({ sessionId: sid, message: error.message })
+			);
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(agentErrors).toEqual([]);
+		});
+
+		it('should emit an agent error when demo capture finalized without artifacts', () => {
+			const proc = createMockProcess({
+				isBatchMode: true,
+				demoCaptureEnabled: true,
+				demoCaptureFinalized: true,
+				demoCaptureArtifactSeen: false,
+			});
+			processes.set('test-session', proc);
+
+			const agentErrors: Array<{ sessionId: string; message: string }> = [];
+			emitter.on('agent-error', (sid: string, error: { message: string }) =>
+				agentErrors.push({ sessionId: sid, message: error.message })
+			);
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(agentErrors).toEqual([
+				{
+					sessionId: 'test-session',
+					message:
+						'Demo capture was requested for this run, but no screenshot or video artifacts were produced.',
+				},
+			]);
+		});
+
+		it('should emit an agent error when demo capture emits a failure event', () => {
+			const proc = createMockProcess({
+				isBatchMode: true,
+				demoCaptureEnabled: true,
+				demoCaptureFinalized: true,
+				demoCaptureFailed: true,
+			});
+			processes.set('test-session', proc);
+
+			const agentErrors: Array<{ sessionId: string; message: string }> = [];
+			emitter.on('agent-error', (sid: string, error: { message: string }) =>
+				agentErrors.push({ sessionId: sid, message: error.message })
+			);
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(agentErrors).toEqual([
+				{
+					sessionId: 'test-session',
+					message: 'Demo capture failed for this run.',
+				},
+			]);
+		});
+
 		it('should remove process from map after exit', () => {
 			const proc = createMockProcess();
 			processes.set('test-session', proc);

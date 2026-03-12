@@ -402,10 +402,15 @@ export interface AppSessionModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		workspaceId?: string
 	) => void;
 	existingSessions: Session[];
 	sourceSession?: Session; // For agent duplication
+	newInstanceMode?: 'workspace' | 'thread';
+	newInstanceWorkspaceId?: string | null;
+	newInstanceFixedWorkingDir?: string | null;
+	newInstanceDefaultAgentId?: string | null;
 
 	// EditAgentModal
 	editAgentModalOpen: boolean;
@@ -465,6 +470,10 @@ export const AppSessionModals = memo(function AppSessionModals({
 	onCreateSession,
 	existingSessions,
 	sourceSession,
+	newInstanceMode,
+	newInstanceWorkspaceId,
+	newInstanceFixedWorkingDir,
+	newInstanceDefaultAgentId,
 	// EditAgentModal
 	editAgentModalOpen,
 	onCloseEditAgentModal,
@@ -496,6 +505,10 @@ export const AppSessionModals = memo(function AppSessionModals({
 					theme={theme}
 					existingSessions={existingSessions}
 					sourceSession={sourceSession}
+					mode={newInstanceMode}
+					workspaceId={newInstanceWorkspaceId}
+					fixedWorkingDir={newInstanceFixedWorkingDir}
+					defaultAgentId={newInstanceDefaultAgentId}
 				/>
 			)}
 
@@ -1823,10 +1836,15 @@ export interface AppModalsProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		workspaceId?: string
 	) => void;
 	existingSessions: Session[];
 	duplicatingSessionId?: string | null; // Session ID to duplicate from
+	newInstanceMode?: 'workspace' | 'thread';
+	newInstanceWorkspaceId?: string | null;
+	newInstanceFixedWorkingDir?: string | null;
+	newInstanceDefaultAgentId?: string | null;
 	onCloseEditAgentModal: () => void;
 	onSaveEditAgent: (
 		sessionId: string,
@@ -2221,6 +2239,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCreateSession,
 		existingSessions,
 		duplicatingSessionId,
+		newInstanceMode,
+		newInstanceWorkspaceId,
+		newInstanceFixedWorkingDir,
+		newInstanceDefaultAgentId,
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
@@ -2492,6 +2514,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCreateSession={onCreateSession}
 				existingSessions={existingSessions}
 				sourceSession={sourceSession}
+				newInstanceMode={newInstanceMode}
+				newInstanceWorkspaceId={newInstanceWorkspaceId}
+				newInstanceFixedWorkingDir={newInstanceFixedWorkingDir}
+				newInstanceDefaultAgentId={newInstanceDefaultAgentId}
 				editAgentModalOpen={editAgentModalOpen}
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}

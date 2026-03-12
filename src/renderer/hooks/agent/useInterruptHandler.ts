@@ -16,6 +16,7 @@ import type { Session, LogEntry, QueuedItem, SessionState } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { generateId } from '../../utils/ids';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { conversationService } from '../../services/conversation';
 
 // ============================================================================
 // Dependencies interface
@@ -35,8 +36,8 @@ export interface UseInterruptHandlerDeps {
 // ============================================================================
 
 export interface UseInterruptHandlerReturn {
-	/** Interrupt the active session's running process */
-	handleInterrupt: () => Promise<void>;
+	/** Interrupt a running process, defaulting to the active session */
+	handleInterrupt: (sessionId?: string) => Promise<void>;
 }
 
 // ============================================================================
@@ -52,40 +53,96 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 	// --- Store actions (stable via getState) ---
 	const { setSessions } = useSessionStore.getState();
 
+	const markInterruptedUserTurn = useCallback((logs: LogEntry[]): LogEntry[] => {
+		for (let index = logs.length - 1; index >= 0; index -= 1) {
+			const log = logs[index];
+			if (log.source !== 'user') {
+				continue;
+			}
+
+			return logs.map((entry, entryIndex) =>
+				entryIndex === index
+					? {
+							...entry,
+							interactionKind: entry.interactionKind || ('turn' as const),
+							deliveryState: 'canceled' as const,
+							delivered: false,
+						}
+					: entry
+			);
+		}
+
+		return logs;
+	}, []);
+
 	// ========================================================================
 	// handleInterrupt — interrupt the active process
 	// ========================================================================
-	const handleInterrupt = useCallback(async () => {
-		if (!activeSession) return;
+	const handleInterrupt = useCallback(async (sessionId?: string) => {
+		const targetSession =
+			(sessionId ? sessionsRef.current?.find((session) => session.id === sessionId) : null) ||
+			activeSession;
+		if (!targetSession) return;
 
-		const currentMode = activeSession.inputMode;
-		const activeTab = getActiveTab(activeSession);
+		const currentMode = targetSession.inputMode;
+		const activeTab = getActiveTab(targetSession);
 		const targetSessionId =
 			currentMode === 'ai'
-				? `${activeSession.id}-ai-${activeTab?.id || 'default'}`
-				: `${activeSession.id}-terminal`;
+				? `${targetSession.id}-ai-${activeTab?.id || 'default'}`
+				: `${targetSession.id}-terminal`;
 
 		// Cancel any pending synopsis processes (non-critical, shouldn't block interrupt)
 		try {
-			await cancelPendingSynopsis(activeSession.id);
+			await cancelPendingSynopsis(targetSession.id);
 		} catch (synopsisErr) {
 			console.warn('[useInterruptHandler] Failed to cancel pending synopsis:', synopsisErr);
 		}
 
 		try {
 			// Send interrupt signal (Ctrl+C)
-			await (window as any).maestro.process.interrupt(targetSessionId);
+			await conversationService.interruptTurn(targetSessionId, targetSession.toolType);
 
 			// Check if there are queued items to process after interrupt
-			const currentSession = sessionsRef.current?.find((s) => s.id === activeSession.id);
+			const currentSession = sessionsRef.current?.find((s) => s.id === targetSession.id);
 			let queuedItemToProcess: {
 				sessionId: string;
 				item: QueuedItem;
 			} | null = null;
+			let pendingSteerToProcess:
+				| {
+						tabId: string;
+						logEntryId: string;
+						text: string;
+						images?: string[];
+				  }
+				| null = null;
 
-			if (currentSession && currentSession.executionQueue.length > 0) {
+			const currentActiveTab = currentSession ? getActiveTab(currentSession) : null;
+			if (
+				currentActiveTab?.pendingSteer &&
+				currentActiveTab.pendingSteer.deliveryState === 'fallback_interrupt'
+			) {
+				pendingSteerToProcess = {
+					tabId: currentActiveTab.id,
+					logEntryId: currentActiveTab.pendingSteer.logEntryId,
+					text: currentActiveTab.pendingSteer.text,
+					images: currentActiveTab.pendingSteer.images,
+				};
 				queuedItemToProcess = {
-					sessionId: activeSession.id,
+					sessionId: targetSession.id,
+					item: {
+						id: generateId(),
+						timestamp: Date.now(),
+						tabId: currentActiveTab.id,
+						type: 'message',
+						text: currentActiveTab.pendingSteer.text,
+						images: currentActiveTab.pendingSteer.images,
+						readOnlyMode: currentActiveTab.readOnlyMode,
+					},
+				};
+			} else if (currentSession && currentSession.executionQueue.length > 0) {
+				queuedItemToProcess = {
+					sessionId: targetSession.id,
 					item: currentSession.executionQueue[0],
 				};
 			}
@@ -104,11 +161,15 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 			// Set state to idle with full cleanup, or process next queued item
 			setSessions((prev) =>
 				prev.map((s) => {
-					if (s.id !== activeSession.id) return s;
+					if (s.id !== targetSession.id) return s;
 
-					// If there are queued items, start processing the next one
-					if (s.executionQueue.length > 0) {
-						const [nextItem, ...remainingQueue] = s.executionQueue;
+					// If there are queued items or a pending fallback steer, start processing the next one
+					if (queuedItemToProcess) {
+						const nextItem = queuedItemToProcess.item;
+						const remainingQueue =
+							pendingSteerToProcess && s.executionQueue.length > 0
+								? s.executionQueue
+								: s.executionQueue.slice(1);
 						const targetTab = s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 
 						if (!targetTab) {
@@ -127,10 +188,24 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						// Also add the canceled log to the interrupted tab
 						let updatedAiTabs = s.aiTabs.map((tab) => {
 							if (tab.id === targetTab.id) {
+								const logsWithFallbackSteerDelivered = pendingSteerToProcess
+									? tab.logs.map((log) =>
+											log.id === pendingSteerToProcess!.logEntryId
+												? {
+														...log,
+														delivered: true,
+														deliveryState: 'fallback_interrupt' as const,
+													}
+												: log
+										)
+									: tab.logs;
 								return {
 									...tab,
 									state: 'busy' as const,
 									thinkingStartTime: Date.now(),
+									logs: logsWithFallbackSteerDelivered,
+									pendingSteer: null,
+									steerStatus: 'idle' as const,
 								};
 							}
 							// Set any other busy tabs to idle (they were interrupted) and add canceled log
@@ -139,21 +214,24 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								const logsWithoutThinkingOrTools = tab.logs.filter(
 									(log) => log.source !== 'thinking' && log.source !== 'tool'
 								);
+								const logsWithCanceledTurn = markInterruptedUserTurn(logsWithoutThinkingOrTools);
 								const updatedLogs = canceledLog
-									? [...logsWithoutThinkingOrTools, canceledLog]
-									: logsWithoutThinkingOrTools;
+									? [...logsWithCanceledTurn, canceledLog]
+									: logsWithCanceledTurn;
 								return {
 									...tab,
 									state: 'idle' as const,
 									thinkingStartTime: undefined,
 									logs: updatedLogs,
+									pendingSteer: null,
+									steerStatus: 'idle' as const,
 								};
 							}
 							return tab;
 						});
 
 						// For message items, add a log entry to the target tab
-						if (nextItem.type === 'message' && nextItem.text) {
+						if (nextItem.type === 'message' && nextItem.text && !pendingSteerToProcess) {
 							const logEntry: LogEntry = {
 								id: generateId(),
 								timestamp: Date.now(),
@@ -169,10 +247,10 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						return {
 							...s,
 							state: 'busy' as SessionState,
-							busySource: 'ai',
-							aiTabs: updatedAiTabs,
-							executionQueue: remainingQueue,
-							thinkingStartTime: Date.now(),
+								busySource: 'ai',
+								aiTabs: updatedAiTabs,
+								executionQueue: remainingQueue,
+								thinkingStartTime: Date.now(),
 							currentCycleTokens: 0,
 							currentCycleBytes: 0,
 						};
@@ -186,14 +264,17 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 							const logsWithoutThinkingOrTools = tab.logs.filter(
 								(log) => log.source !== 'thinking' && log.source !== 'tool'
 							);
+							const logsWithCanceledTurn = markInterruptedUserTurn(logsWithoutThinkingOrTools);
 							return {
 								...tab,
 								state: 'idle' as const,
 								thinkingStartTime: undefined,
 								logs:
 									canceledLog && tab.id === activeTabForCancel?.id
-										? [...logsWithoutThinkingOrTools, canceledLog]
-										: logsWithoutThinkingOrTools,
+										? [...logsWithCanceledTurn, canceledLog]
+										: logsWithCanceledTurn,
+								pendingSteer: null,
+								steerStatus: 'idle' as const,
 							};
 						}
 						return tab;
@@ -238,22 +319,51 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 					};
 
 					// Check if there are queued items to process after kill
-					const currentSessionForKill = sessionsRef.current?.find((s) => s.id === activeSession.id);
+					const currentSessionForKill = sessionsRef.current?.find((s) => s.id === targetSession.id);
 					let queuedItemAfterKill: {
 						sessionId: string;
 						item: QueuedItem;
 					} | null = null;
+					let pendingSteerAfterKill:
+						| {
+								tabId: string;
+								logEntryId: string;
+						  }
+						| null = null;
 
-					if (currentSessionForKill && currentSessionForKill.executionQueue.length > 0) {
+					const currentActiveTabForKill = currentSessionForKill
+						? getActiveTab(currentSessionForKill)
+						: null;
+					if (
+						currentActiveTabForKill?.pendingSteer &&
+						currentActiveTabForKill.pendingSteer.deliveryState === 'fallback_interrupt'
+					) {
+						pendingSteerAfterKill = {
+							tabId: currentActiveTabForKill.id,
+							logEntryId: currentActiveTabForKill.pendingSteer.logEntryId,
+						};
 						queuedItemAfterKill = {
-							sessionId: activeSession.id,
+							sessionId: targetSession.id,
+							item: {
+								id: generateId(),
+								timestamp: Date.now(),
+								tabId: currentActiveTabForKill.id,
+								type: 'message',
+								text: currentActiveTabForKill.pendingSteer.text,
+								images: currentActiveTabForKill.pendingSteer.images,
+								readOnlyMode: currentActiveTabForKill.readOnlyMode,
+							},
+						};
+					} else if (currentSessionForKill && currentSessionForKill.executionQueue.length > 0) {
+						queuedItemAfterKill = {
+							sessionId: targetSession.id,
 							item: currentSessionForKill.executionQueue[0],
 						};
 					}
 
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSession.id) return s;
+							if (s.id !== targetSession.id) return s;
 
 							// Add kill log to the appropriate place and clear thinking/tool logs
 							const updatedSession = { ...s };
@@ -277,9 +387,12 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								updatedSession.shellLogs = [...s.shellLogs, killLog];
 							}
 
-							// If there are queued items, start processing the next one
-							if (s.executionQueue.length > 0) {
-								const [nextItem, ...remainingQueue] = s.executionQueue;
+							// If there are queued items or a fallback steer replacement, start the next one
+							if (queuedItemAfterKill) {
+								const nextItem = queuedItemAfterKill.item;
+								const remainingQueue = pendingSteerAfterKill
+									? s.executionQueue
+									: s.executionQueue.slice(1);
 								const targetTab =
 									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 
@@ -298,28 +411,46 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 								// Set tabs appropriately and clear thinking/tool logs from interrupted tabs
 								let updatedAiTabs = updatedSession.aiTabs.map((tab) => {
 									if (tab.id === targetTab.id) {
+										const logsWithFallbackSteerDelivered = pendingSteerAfterKill
+											? tab.logs.map((log) =>
+													log.id === pendingSteerAfterKill!.logEntryId
+														? {
+																...log,
+																delivered: true,
+																deliveryState: 'fallback_interrupt' as const,
+															}
+														: log
+												)
+											: tab.logs;
 										return {
 											...tab,
 											state: 'busy' as const,
 											thinkingStartTime: Date.now(),
+											logs: logsWithFallbackSteerDelivered,
+											pendingSteer: null,
+											steerStatus: 'idle' as const,
 										};
 									}
-									if (tab.state === 'busy') {
-										const logsWithoutThinkingOrTools = tab.logs.filter(
-											(log) => log.source !== 'thinking' && log.source !== 'tool'
-										);
-										return {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-											logs: logsWithoutThinkingOrTools,
-										};
+										if (tab.state === 'busy') {
+											const logsWithoutThinkingOrTools = tab.logs.filter(
+												(log) => log.source !== 'thinking' && log.source !== 'tool'
+											);
+											const logsWithCanceledTurn =
+												markInterruptedUserTurn(logsWithoutThinkingOrTools);
+											return {
+												...tab,
+												state: 'idle' as const,
+												thinkingStartTime: undefined,
+												logs: logsWithCanceledTurn,
+												pendingSteer: null,
+												steerStatus: 'idle' as const,
+											};
 									}
 									return tab;
 								});
 
 								// For message items, add a log entry to the target tab
-								if (nextItem.type === 'message' && nextItem.text) {
+								if (nextItem.type === 'message' && nextItem.text && !pendingSteerAfterKill) {
 									const logEntry: LogEntry = {
 										id: generateId(),
 										timestamp: Date.now(),
@@ -361,6 +492,8 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
 												logs: logsWithoutThinkingOrTools,
+												pendingSteer: null,
+												steerStatus: 'idle' as const,
 											};
 										}
 										return t;
@@ -400,7 +533,7 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 					};
 					setSessions((prev) =>
 						prev.map((s) => {
-							if (s.id !== activeSession.id) return s;
+							if (s.id !== targetSession.id) return s;
 							if (currentMode === 'ai') {
 								const activeTabForError = getActiveTab(s);
 								return {

@@ -8,6 +8,7 @@
 import type {
 	SshRemoteConfig,
 	Group,
+	Thread,
 	Conductor,
 	ConductorTask,
 	ConductorRun,
@@ -54,9 +55,11 @@ export interface MaestroSettings {
 	llmProvider: string;
 	modelSlug: string;
 	apiKey: string;
+	defaultThreadProvider: string;
 	shortcuts: Record<string, any>;
 	fontSize: number;
 	fontFamily: string;
+	workspaceSortMode: 'recent' | 'alpha';
 	customFonts: string[];
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
@@ -100,6 +103,14 @@ export interface SessionsData {
 
 export interface GroupsData {
 	groups: Group[];
+}
+
+// ============================================================================
+// Threads Store
+// ============================================================================
+
+export interface ThreadsData {
+	threads: Thread[];
 }
 
 // ============================================================================

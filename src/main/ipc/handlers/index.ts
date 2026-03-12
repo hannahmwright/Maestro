@@ -15,12 +15,14 @@ import { registerPlaybooksHandlers } from './playbooks';
 import { registerHistoryHandlers } from './history';
 import { registerAgentsHandlers, AgentsHandlerDependencies } from './agents';
 import { registerProcessHandlers, ProcessHandlerDependencies } from './process';
+import { registerConversationHandlers, ConversationHandlerDependencies } from './conversation';
 import {
 	registerPersistenceHandlers,
 	PersistenceHandlerDependencies,
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
+	ThreadsData,
 	ConductorsData,
 } from './persistence';
 import {
@@ -70,6 +72,7 @@ export { registerPlaybooksHandlers };
 export { registerHistoryHandlers };
 export { registerAgentsHandlers };
 export { registerProcessHandlers };
+export { registerConversationHandlers };
 export { registerPersistenceHandlers };
 export { registerSystemHandlers, setupLoggerEventForwarding };
 export { registerClaudeHandlers };
@@ -102,6 +105,7 @@ export type { DirectorNotesHandlerDependencies };
 export { registerWakatimeHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
+export type { ConversationHandlerDependencies };
 export type { PersistenceHandlerDependencies };
 export type { SystemHandlerDependencies };
 export type { ClaudeHandlerDependencies };
@@ -153,6 +157,7 @@ export interface HandlerDependencies {
 	// Persistence-specific dependencies
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
+	threadsStore: Store<ThreadsData>;
 	conductorsStore: Store<ConductorsData>;
 	getWebServer: () => WebServer | null;
 	// System-specific dependencies
@@ -190,10 +195,18 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		sessionsStore: deps.sessionsStore,
 	});
+	registerConversationHandlers({
+		getProcessManager: deps.getProcessManager,
+		getAgentDetector: deps.getAgentDetector,
+		agentConfigsStore: deps.agentConfigsStore,
+		settingsStore: deps.settingsStore,
+		getMainWindow: deps.getMainWindow,
+	});
 	registerPersistenceHandlers({
 		settingsStore: deps.settingsStore,
 		sessionsStore: deps.sessionsStore,
 		groupsStore: deps.groupsStore,
+		threadsStore: deps.threadsStore,
 		conductorsStore: deps.conductorsStore,
 		getWebServer: deps.getWebServer,
 	});

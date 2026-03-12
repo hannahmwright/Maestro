@@ -107,20 +107,29 @@ export function usePushSubscription(
 	const config = useMemo(() => getMaestroConfig(), []);
 	const supported = isPushSupported();
 	const publicKey = config.webPush?.publicKey ?? null;
+	const isConfigured = Boolean(config.webPush?.enabled && publicKey);
 	const [isSubscribed, setIsSubscribed] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 
-	const waitForServiceWorkerRegistration =
-		useCallback(async (): Promise<ServiceWorkerRegistration> => {
+	const getServiceWorkerRegistration = useCallback(
+		async (
+			options: {
+				waitForReady?: boolean;
+			} = {}
+		): Promise<ServiceWorkerRegistration | null> => {
 			const existingRegistration = await navigator.serviceWorker.getRegistration?.();
-			if (existingRegistration?.active) {
-				return existingRegistration;
+			if (existingRegistration?.active || navigator.serviceWorker.controller) {
+				return existingRegistration ?? null;
 			}
 
-			return await new Promise<ServiceWorkerRegistration>((resolve, reject) => {
+			if (!options.waitForReady) {
+				return null;
+			}
+
+			return await new Promise<ServiceWorkerRegistration | null>((resolve, reject) => {
 				const timeoutId = window.setTimeout(() => {
-					reject(new Error('Service worker is still starting. Reload the app and try again.'));
+					resolve(null);
 				}, SERVICE_WORKER_READY_TIMEOUT_MS);
 
 				navigator.serviceWorker.ready.then(
@@ -134,7 +143,9 @@ export function usePushSubscription(
 					}
 				);
 			});
-		}, []);
+		},
+		[]
+	);
 
 	const persistSubscription = useCallback(async (subscription: PushSubscription): Promise<void> => {
 		const response = await fetch(buildApiUrl('/push/subscribe'), {
@@ -154,13 +165,19 @@ export function usePushSubscription(
 	}, []);
 
 	const refresh = useCallback(async () => {
-		if (!supported) {
+		if (!supported || !isConfigured) {
 			setIsSubscribed(false);
+			setError(null);
 			return;
 		}
 
 		try {
-			const registration = await waitForServiceWorkerRegistration();
+			const registration = await getServiceWorkerRegistration();
+			if (!registration) {
+				setIsSubscribed(false);
+				setError(null);
+				return;
+			}
 			const subscription = await registration.pushManager.getSubscription();
 			if (!subscription) {
 				setIsSubscribed(false);
@@ -190,16 +207,20 @@ export function usePushSubscription(
 			);
 			setIsSubscribed(false);
 		}
-	}, [persistSubscription, supported, waitForServiceWorkerRegistration]);
+	}, [getServiceWorkerRegistration, isConfigured, persistSubscription, supported]);
 
 	useEffect(() => {
+		if (!isConfigured) {
+			return;
+		}
+
 		refresh().catch((refreshError) => {
 			webLogger.error('Initial push subscription refresh failed', 'PushSubscription', refreshError);
 		});
-	}, [refresh]);
+	}, [isConfigured, refresh]);
 
 	const subscribe = useCallback(async (): Promise<boolean> => {
-		if (!supported || !publicKey) {
+		if (!supported || !publicKey || !isConfigured) {
 			setError('Push notifications are not available in this browser.');
 			return false;
 		}
@@ -222,7 +243,10 @@ export function usePushSubscription(
 				return false;
 			}
 
-			const registration = await waitForServiceWorkerRegistration();
+			const registration = await getServiceWorkerRegistration({ waitForReady: true });
+			if (!registration) {
+				throw new Error('Service worker is still starting. Reload the app and try again.');
+			}
 			let subscription = await registration.pushManager.getSubscription();
 			if (!subscription) {
 				subscription = await registration.pushManager.subscribe({
@@ -247,10 +271,16 @@ export function usePushSubscription(
 		} finally {
 			setIsLoading(false);
 		}
-	}, [notificationPermission, publicKey, requestNotificationPermission, supported]);
+	}, [
+		getServiceWorkerRegistration,
+		notificationPermission,
+		publicKey,
+		requestNotificationPermission,
+		supported,
+	]);
 
 	const unsubscribe = useCallback(async (): Promise<boolean> => {
-		if (!supported) {
+		if (!supported || !isConfigured) {
 			return false;
 		}
 
@@ -258,7 +288,10 @@ export function usePushSubscription(
 		setError(null);
 
 		try {
-			const registration = await waitForServiceWorkerRegistration();
+			const registration = await getServiceWorkerRegistration({ waitForReady: true });
+			if (!registration) {
+				throw new Error('Service worker is still starting. Reload the app and try again.');
+			}
 			const subscription = await registration.pushManager.getSubscription();
 			if (!subscription) {
 				setIsSubscribed(false);
@@ -290,10 +323,10 @@ export function usePushSubscription(
 		} finally {
 			setIsLoading(false);
 		}
-	}, [supported, waitForServiceWorkerRegistration]);
+	}, [getServiceWorkerRegistration, supported]);
 
 	const sendTestNotification = useCallback(async (): Promise<boolean> => {
-		if (!supported) {
+		if (!supported || !isConfigured) {
 			return false;
 		}
 
@@ -301,7 +334,10 @@ export function usePushSubscription(
 		setError(null);
 
 		try {
-			const registration = await waitForServiceWorkerRegistration();
+			const registration = await getServiceWorkerRegistration({ waitForReady: true });
+			if (!registration) {
+				throw new Error('Service worker is still starting. Reload the app and try again.');
+			}
 			const subscription = await registration.pushManager.getSubscription();
 			if (!subscription) {
 				setError('Enable push notifications first.');
@@ -331,11 +367,11 @@ export function usePushSubscription(
 		} finally {
 			setIsLoading(false);
 		}
-	}, [supported, waitForServiceWorkerRegistration]);
+	}, [getServiceWorkerRegistration, supported]);
 
 	return {
 		isSupported: supported,
-		isConfigured: Boolean(config.webPush?.enabled && publicKey),
+		isConfigured,
 		isSubscribed,
 		isLoading,
 		error,

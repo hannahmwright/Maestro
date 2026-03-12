@@ -587,6 +587,14 @@ export function App() {
 }
 
 export function AppRoot() {
+	const isLocalDevelopment =
+		typeof window !== 'undefined' &&
+		(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+	if (isLocalDevelopment) {
+		return <App />;
+	}
+
 	return (
 		<StrictMode>
 			<App />

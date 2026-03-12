@@ -9,6 +9,7 @@ import type {
 	DemoRecord,
 	DemoStepRecord,
 } from '../../../main/artifacts/types';
+import { MAESTRO_DEMO_EVENT_PREFIX } from '../../../shared/demo-artifacts';
 import type { SshRemoteConfig } from '../../../shared/types';
 
 const { mockLogger, mockCaptureMessage } = vi.hoisted(() => ({
@@ -435,6 +436,53 @@ describe('DemoArtifactService', () => {
 		const posterRecord = service.getArtifactRecord(detail!.posterArtifact!.id);
 		expect(posterRecord?.originalPath).toBe('/remote/output/step.png');
 		expect(posterRecord?.storedPath).toContain(artifactsDir);
+	});
+
+	it('harvests local artifact paths from agent output into a completed demo', async () => {
+		await writeArtifactFile('output/playwright/path-demo.png', createPngBuffer());
+		const { service } = createService();
+		await service.initialize();
+
+		const card = await service.harvestFromLogText({
+			sessionId: 'session-path',
+			tabId: 'tab-path',
+			text: 'Saved proof to output/playwright/path-demo.png after the browser finished loading.',
+			sourceLogId: 'log-path-1',
+			projectRoots: [tempDir],
+			demoCaptureRequested: true,
+		});
+
+		expect(card?.status).toBe('completed');
+		expect(card?.posterArtifact?.filename).toBe('path-demo.png');
+		const detail = service.getDemo(card!.demoId);
+		expect(detail?.stepCount).toBe(1);
+		expect(detail?.steps[0].title).toBe('Path Demo');
+	});
+
+	it('harvests raw Maestro demo event lines from log text', async () => {
+		const screenshotPath = await writeArtifactFile('output/playwright/event-demo.png', createPngBuffer());
+		const { service } = createService();
+		await service.initialize();
+
+		const card = await service.harvestFromLogText({
+			sessionId: 'session-event',
+			tabId: 'tab-event',
+			text: [
+				'Tool output before the sentinel',
+				`${MAESTRO_DEMO_EVENT_PREFIX} {"type":"capture_started","runId":"log-run-1","title":"Recovered event demo"}`,
+				`${MAESTRO_DEMO_EVENT_PREFIX} {"type":"step_created","runId":"log-run-1","title":"Example Domain loaded","path":"output/playwright/event-demo.png","filename":"event-demo.png"}`,
+				`${MAESTRO_DEMO_EVENT_PREFIX} {"type":"capture_completed","runId":"log-run-1","title":"Recovered event demo"}`,
+			].join('\n'),
+			sourceLogId: 'log-event-1',
+			projectRoots: [tempDir],
+			demoCaptureRequested: true,
+		});
+
+		expect(card?.status).toBe('completed');
+		expect(card?.posterArtifact?.filename).toBe('event-demo.png');
+		const detail = service.getDemo(card!.demoId);
+		const posterRecord = service.getArtifactRecord(detail!.posterArtifact!.id);
+		expect(posterRecord?.originalPath).toBe(screenshotPath);
 	});
 
 	it('cleans up expired artifacts and database records', async () => {

@@ -32,350 +32,13 @@ import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { DemoCardPanel } from './DemoCardPanel';
 import { DemoViewerModal } from './DemoViewerModal';
+import { ToolActivityBlock } from './ToolActivityBlock';
+import { ToolActivityPanel } from './ToolActivityPanel';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { parseMultipleChoiceQuestions } from '../utils/multipleChoiceQuestions';
+import { normalizeToolStatus } from '../../shared/tool-display';
 import type { UserInputRequest, UserInputResponse } from '../../shared/user-input-requests';
-
-// ============================================================================
-// Tool display helpers (pure functions, hoisted out of render path)
-// ============================================================================
-
-/** Type-safe string extraction — returns null for non-strings */
-const safeStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
-
-/** Handle command values that may be strings or string arrays (Codex uses arrays) */
-const safeCommand = (v: unknown): string | null => {
-	if (typeof v === 'string') return v;
-	if (Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')) {
-		return v.join(' ');
-	}
-	return null;
-};
-
-/** Truncate a value to max length with ellipsis, returns null for non-strings */
-const truncateStr = (v: unknown, max: number): string | null => {
-	const s = safeStr(v);
-	if (!s) return null;
-	return s.length > max ? s.substring(0, max) + '\u2026' : s;
-};
-
-/** Summarize TodoWrite todos array — shows in-progress task and progress count */
-const summarizeTodos = (v: unknown): string | null => {
-	if (!Array.isArray(v) || v.length === 0) return null;
-	const todos = v as Array<{ content?: string; status?: string; activeForm?: string }>;
-	const completed = todos.filter((t) => t.status === 'completed').length;
-	const inProgress = todos.find((t) => t.status === 'in_progress');
-	const label = inProgress?.activeForm || inProgress?.content || todos[0]?.content;
-	if (!label) return `${todos.length} tasks`;
-	return `${label} (${completed}/${todos.length})`;
-};
-
-/** Normalize status aliases from different providers into shared UI states. */
-const normalizeToolStatus = (status: unknown): 'running' | 'completed' | 'error' => {
-	if (status === 'completed' || status === 'success') return 'completed';
-	if (status === 'error' || status === 'failed') return 'error';
-	return 'running';
-};
-
-/** Compact preview for tool output values (string/object/array). */
-const summarizeToolOutput = (v: unknown): string | null => {
-	if (v === null || v === undefined) return null;
-	if (typeof v === 'string') {
-		const compact = v.replace(/\s+/g, ' ').trim();
-		return compact.length > 140 ? compact.substring(0, 140) + '\u2026' : compact;
-	}
-	try {
-		const json = JSON.stringify(v);
-		if (!json) return null;
-		return json.length > 140 ? json.substring(0, 140) + '\u2026' : json;
-	} catch {
-		return null;
-	}
-};
-
-/** Convert tool values to a compact one-line representation. */
-const summarizeToolValue = (v: unknown, max = 160): string | null => {
-	if (v === null || v === undefined) return null;
-	if (typeof v === 'string') {
-		const compact = v.replace(/\s+/g, ' ').trim();
-		if (!compact) return null;
-		return compact.length > max ? compact.substring(0, max) + '\u2026' : compact;
-	}
-	if (typeof v === 'number' || typeof v === 'boolean') return String(v);
-	if (Array.isArray(v)) {
-		const asCommand = safeCommand(v);
-		if (asCommand) return summarizeToolValue(asCommand, max);
-		try {
-			const json = JSON.stringify(v);
-			return json.length > max ? json.substring(0, max) + '\u2026' : json;
-		} catch {
-			return null;
-		}
-	}
-	try {
-		const json = JSON.stringify(v);
-		if (!json) return null;
-		return json.length > max ? json.substring(0, max) + '\u2026' : json;
-	} catch {
-		return null;
-	}
-};
-
-/** Convert tool values to multiline detail text for expanded display. */
-const formatToolDetailValue = (v: unknown, max = 2400): string | null => {
-	if (v === null || v === undefined) return null;
-	let text: string;
-	if (typeof v === 'string') {
-		text = v.trim();
-		if (!text) return null;
-	} else if (typeof v === 'number' || typeof v === 'boolean') {
-		text = String(v);
-	} else if (Array.isArray(v)) {
-		const asCommand = safeCommand(v);
-		if (asCommand) {
-			text = asCommand;
-		} else {
-			try {
-				text = JSON.stringify(v, null, 2);
-			} catch {
-				return null;
-			}
-		}
-	} else {
-		try {
-			text = JSON.stringify(v, null, 2);
-		} catch {
-			return null;
-		}
-	}
-
-	return text.length > max
-		? text.substring(0, max) + `\n... [truncated ${text.length - max} chars]`
-		: text;
-};
-
-interface ToolDetailRow {
-	label: string;
-	value: string;
-}
-
-interface ToolDisplayData {
-	summary: string | null;
-	detailRows: ToolDetailRow[];
-	outputDetail: string | null;
-}
-
-/** Build detail rows + summary from tool state so RUN cards can show live context. */
-const buildToolDisplayData = (
-	toolState: NonNullable<LogEntry['metadata']>['toolState'] | undefined
-): ToolDisplayData => {
-	const detailRows: ToolDetailRow[] = [];
-	const input = toolState?.input as Record<string, unknown> | undefined;
-
-	const pushDetail = (label: string, value: string | null) => {
-		if (!value) return;
-		const duplicate = detailRows.some((row) => row.label === label && row.value === value);
-		if (!duplicate) {
-			detailRows.push({ label, value });
-		}
-	};
-
-	if (input) {
-		pushDetail('command', safeCommand(input.command) || safeCommand(input.cmd));
-		pushDetail('query', safeStr(input.query) || safeStr(input.pattern));
-		pushDetail('path', safeStr(input.path) || safeStr(input.file_path) || safeStr(input.filePath));
-		pushDetail(
-			'task',
-			safeStr(input.description) || safeStr(input.prompt) || safeStr(input.task_id)
-		);
-		pushDetail('todos', summarizeTodos(input.todos));
-		pushDetail('code', truncateStr(input.code, 140));
-		pushDetail('content', truncateStr(input.content, 120));
-
-		const consumedKeys = new Set([
-			'command',
-			'cmd',
-			'query',
-			'pattern',
-			'path',
-			'file_path',
-			'filePath',
-			'description',
-			'prompt',
-			'task_id',
-			'todos',
-			'code',
-			'content',
-		]);
-
-		for (const [key, value] of Object.entries(input)) {
-			if (consumedKeys.has(key)) continue;
-			pushDetail(key, summarizeToolValue(value, 120));
-			if (detailRows.length >= 6) break;
-		}
-	}
-
-	const outputDetail = formatToolDetailValue(toolState?.output);
-	const outputSummary = summarizeToolOutput(toolState?.output);
-	const pathSummary = detailRows.find((row) => row.label === 'path')?.value;
-	const summary = (pathSummary ? `file: ${pathSummary}` : detailRows[0]?.value) || outputSummary;
-
-	return {
-		summary,
-		detailRows,
-		outputDetail,
-	};
-};
-
-const normalizeToolName = (toolName: string): string => toolName.toLowerCase().replace(/_/g, ':');
-const isWebSearchTool = (toolName: string): boolean => normalizeToolName(toolName) === 'web:search';
-
-const asRecord = (value: unknown): Record<string, unknown> | null => {
-	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-	return value as Record<string, unknown>;
-};
-
-const asStringArray = (value: unknown): string[] => {
-	if (!Array.isArray(value)) return [];
-	return value.filter(
-		(entry): entry is string => typeof entry === 'string' && entry.trim().length > 0
-	);
-};
-
-interface WebSearchTimelineItem {
-	id: string;
-	query: string;
-	status: 'running' | 'completed' | 'error';
-	timestamp?: number;
-	responseDomains: string[];
-	sourceUrls: string[];
-	resultCount: number;
-	latestResponseDomain?: string;
-	responsePreview?: string;
-}
-
-const extractWebSearchTimelineItems = (
-	toolState: NonNullable<LogEntry['metadata']>['toolState'] | undefined
-): WebSearchTimelineItem[] => {
-	if (!toolState) return [];
-	const items: WebSearchTimelineItem[] = [];
-	const stateRecord = toolState as Record<string, unknown>;
-	const fallbackResponseDomains = extractDomainsFromUnknown(stateRecord.output, 8);
-	for (const domain of extractDomainsFromUnknown(stateRecord.result, 8)) {
-		if (!fallbackResponseDomains.includes(domain)) fallbackResponseDomains.push(domain);
-	}
-	const fallbackSourceUrls = extractUrlsFromUnknown(stateRecord.output, 32);
-	for (const url of extractUrlsFromUnknown(stateRecord.result, 32)) {
-		if (!fallbackSourceUrls.includes(url)) fallbackSourceUrls.push(url);
-	}
-	const push = (
-		queryValue: unknown,
-		status: unknown,
-		id: string,
-		timestamp?: number,
-		responseDomains: string[] = fallbackResponseDomains,
-		latestResponseDomain?: string,
-		sourceUrls: string[] = fallbackSourceUrls,
-		responsePreview?: string
-	) => {
-		if (typeof queryValue !== 'string') return;
-		const query = queryValue.trim();
-		if (!query) return;
-		if (items.some((item) => item.query === query && item.id === id)) return;
-		const resultCount = sourceUrls.length > 0 ? sourceUrls.length : responseDomains.length;
-		items.push({
-			id,
-			query,
-			status: normalizeToolStatus(status),
-			timestamp,
-			responseDomains,
-			sourceUrls,
-			resultCount,
-			latestResponseDomain,
-			responsePreview,
-		});
-	};
-
-	if (Array.isArray(stateRecord.searches)) {
-		for (const raw of stateRecord.searches) {
-			const entry = asRecord(raw);
-			if (!entry) continue;
-			const id =
-				typeof entry.id === 'string' && entry.id.trim()
-					? entry.id
-					: `search-${String(entry.query || '')}`;
-			const timestamp = typeof entry.timestamp === 'number' ? entry.timestamp : undefined;
-			const responseDomains = Array.isArray(entry.domains)
-				? entry.domains.filter(
-						(value): value is string => typeof value === 'string' && value.trim().length > 0
-					)
-				: [];
-			const latestResponseDomain =
-				typeof entry.latestResponseDomain === 'string' && entry.latestResponseDomain.trim()
-					? entry.latestResponseDomain.trim()
-					: responseDomains[responseDomains.length - 1];
-			const sourceUrls = Array.isArray(entry.sourceUrls)
-				? entry.sourceUrls.filter(
-						(value): value is string => typeof value === 'string' && value.trim().length > 0
-					)
-				: Array.isArray(entry.urls)
-					? entry.urls.filter(
-							(value): value is string => typeof value === 'string' && value.trim().length > 0
-						)
-					: [];
-			const responsePreview =
-				typeof entry.responsePreview === 'string' && entry.responsePreview.trim()
-					? entry.responsePreview.trim()
-					: undefined;
-			push(
-				entry.query,
-				entry.status,
-				id,
-				timestamp,
-				responseDomains,
-				latestResponseDomain,
-				sourceUrls,
-				responsePreview
-			);
-		}
-	}
-
-	// Fallback for non-aggregated web_search tool states.
-	if (items.length === 0) {
-		const input = asRecord(stateRecord.input);
-		const output = asRecord(stateRecord.output);
-		const action = asRecord(input?.action);
-		const outputAction = asRecord(output?.action);
-		const status = stateRecord.status;
-
-		push(input?.query, status, 'input-query');
-		push(stateRecord.query, status, 'state-query');
-		push(action?.query, status, 'action-query');
-		push(output?.query, status, 'output-query');
-		push(outputAction?.query, status, 'output-action-query');
-
-		for (const query of asStringArray(action?.queries)) {
-			push(query, status, `action-list:${query}`);
-		}
-		for (const query of asStringArray(output?.queries)) {
-			push(query, status, `output-list:${query}`);
-		}
-		for (const query of asStringArray(outputAction?.queries)) {
-			push(query, status, `output-action-list:${query}`);
-		}
-	}
-
-	return items.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-};
-
-const extractSiteFilter = (query: string): string | null => {
-	const match = query.match(/\bsite:([^\s]+)/i);
-	return match?.[1] || null;
-};
-
-const URL_DOMAIN_RE = /https?:\/\/[^\s<>"'`)\]]+/gi;
-const SITE_FILTER_GLOBAL_RE = /\bsite:([^\s]+)/gi;
 
 const normalizeDomain = (value: string): string | null => {
 	const cleaned = value.trim().replace(/[),.;:!?]+$/, '');
@@ -427,222 +90,6 @@ const SourceFaviconBadge = memo(
 		);
 	}
 );
-
-const cleanDetectedUrl = (value: string): string => value.trim().replace(/[),.;:!?]+$/, '');
-
-const extractUrlsFromUnknown = (value: unknown, maxUrls = 32): string[] => {
-	const urls: string[] = [];
-	const seen = new Set<string>();
-
-	const pushUrl = (raw: string) => {
-		const cleaned = cleanDetectedUrl(raw);
-		if (!cleaned || seen.has(cleaned)) return;
-		seen.add(cleaned);
-		urls.push(cleaned);
-	};
-
-	const visit = (input: unknown, depth = 0) => {
-		if (!input || depth > 3 || urls.length >= maxUrls) return;
-		if (typeof input === 'string') {
-			URL_DOMAIN_RE.lastIndex = 0;
-			let urlMatch: RegExpExecArray | null = null;
-			while ((urlMatch = URL_DOMAIN_RE.exec(input)) !== null) {
-				pushUrl(urlMatch[0]);
-				if (urls.length >= maxUrls) return;
-			}
-			return;
-		}
-
-		if (Array.isArray(input)) {
-			for (const entry of input) {
-				visit(entry, depth + 1);
-				if (urls.length >= maxUrls) break;
-			}
-			return;
-		}
-
-		if (typeof input === 'object') {
-			for (const entry of Object.values(input as Record<string, unknown>)) {
-				visit(entry, depth + 1);
-				if (urls.length >= maxUrls) break;
-			}
-		}
-	};
-
-	visit(value);
-	return urls;
-};
-
-const extractDomainsFromUnknown = (value: unknown, maxDomains = 8): string[] => {
-	const domains: string[] = [];
-	const seen = new Set<string>();
-	const pushDomain = (raw: string) => {
-		const normalized = normalizeDomain(raw);
-		if (!normalized || seen.has(normalized)) return;
-		seen.add(normalized);
-		domains.push(normalized);
-	};
-
-	const visit = (input: unknown, depth = 0) => {
-		if (!input || depth > 3 || domains.length >= maxDomains) return;
-		if (typeof input === 'string') {
-			SITE_FILTER_GLOBAL_RE.lastIndex = 0;
-			let siteMatch: RegExpExecArray | null = null;
-			while ((siteMatch = SITE_FILTER_GLOBAL_RE.exec(input)) !== null) {
-				pushDomain(siteMatch[1]);
-				if (domains.length >= maxDomains) return;
-			}
-
-			URL_DOMAIN_RE.lastIndex = 0;
-			let urlMatch: RegExpExecArray | null = null;
-			while ((urlMatch = URL_DOMAIN_RE.exec(input)) !== null) {
-				pushDomain(urlMatch[0]);
-				if (domains.length >= maxDomains) return;
-			}
-			return;
-		}
-
-		if (Array.isArray(input)) {
-			for (const entry of input) {
-				visit(entry, depth + 1);
-				if (domains.length >= maxDomains) break;
-			}
-			return;
-		}
-
-		if (typeof input === 'object') {
-			for (const entry of Object.values(input as Record<string, unknown>)) {
-				visit(entry, depth + 1);
-				if (domains.length >= maxDomains) break;
-			}
-		}
-	};
-
-	visit(value);
-	return domains;
-};
-
-const collectSearchSourceDomains = (
-	toolState: NonNullable<LogEntry['metadata']>['toolState'] | undefined,
-	webSearchItems: WebSearchTimelineItem[]
-): string[] => {
-	const domains: string[] = [];
-	const seen = new Set<string>();
-	const pushDomain = (raw: string) => {
-		const normalized = normalizeDomain(raw);
-		if (!normalized || seen.has(normalized)) return;
-		seen.add(normalized);
-		domains.push(normalized);
-	};
-
-	for (const item of webSearchItems) {
-		for (const url of item.sourceUrls) {
-			pushDomain(url);
-		}
-		for (const domain of item.responseDomains) {
-			pushDomain(domain);
-		}
-		const site = extractSiteFilter(item.query);
-		if (site) pushDomain(site);
-	}
-
-	for (const domain of extractDomainsFromUnknown(toolState?.output, Number.MAX_SAFE_INTEGER)) {
-		pushDomain(domain);
-	}
-	for (const domain of extractDomainsFromUnknown(
-		(toolState as Record<string, unknown> | undefined)?.result,
-		Number.MAX_SAFE_INTEGER
-	)) {
-		pushDomain(domain);
-	}
-	return domains;
-};
-
-const getWebSearchResponseDomains = (item: WebSearchTimelineItem): string[] => {
-	const domains: string[] = [];
-	const seen = new Set<string>();
-	const pushDomain = (raw: string) => {
-		const normalized = normalizeDomain(raw);
-		if (!normalized || seen.has(normalized)) return;
-		seen.add(normalized);
-		domains.push(normalized);
-	};
-
-	for (const url of item.sourceUrls) {
-		pushDomain(url);
-	}
-	for (const domain of item.responseDomains) {
-		pushDomain(domain);
-	}
-	if (domains.length === 0) {
-		const site = extractSiteFilter(item.query);
-		if (site) pushDomain(site);
-	}
-	return domains;
-};
-
-const asFiniteNumber = (value: unknown): number | null => {
-	if (typeof value === 'number' && Number.isFinite(value)) return value;
-	if (typeof value === 'string' && value.trim()) {
-		const parsed = Number(value);
-		if (Number.isFinite(parsed)) return parsed;
-	}
-	return null;
-};
-
-const formatDurationMs = (durationMs: number): string => {
-	if (durationMs < 1000) return `${Math.round(durationMs)}ms`;
-	const totalSeconds = Math.round(durationMs / 1000);
-	if (totalSeconds < 60) {
-		const seconds = durationMs / 1000;
-		return `${seconds >= 10 ? Math.round(seconds) : seconds.toFixed(1)}s`;
-	}
-	const totalMinutes = Math.floor(totalSeconds / 60);
-	const secondsRemainder = totalSeconds % 60;
-	if (totalMinutes < 60) {
-		return `${totalMinutes}m ${secondsRemainder.toString().padStart(2, '0')}s`;
-	}
-	const hours = Math.floor(totalMinutes / 60);
-	const minutesRemainder = totalMinutes % 60;
-	return `${hours}h ${minutesRemainder.toString().padStart(2, '0')}m`;
-};
-
-const getToolDurationMs = (log: LogEntry): number | null => {
-	if (log.source !== 'tool') return null;
-	const toolState = asRecord(log.metadata?.toolState);
-	if (!toolState) return null;
-
-	const explicitDurationCandidates = [
-		toolState.durationMs,
-		toolState.duration_ms,
-		toolState.elapsedMs,
-		toolState.elapsed_ms,
-		toolState.executionTimeMs,
-	];
-
-	for (const candidate of explicitDurationCandidates) {
-		const duration = asFiniteNumber(candidate);
-		if (duration !== null && duration >= 0) return duration;
-	}
-
-	const timing = asRecord(toolState.timing);
-	const startTimestamp =
-		asFiniteNumber(toolState.startTimestamp) ??
-		asFiniteNumber(toolState.startedAt) ??
-		asFiniteNumber(timing?.startTimestamp) ??
-		asFiniteNumber(timing?.startedAt);
-	const endTimestamp =
-		asFiniteNumber(toolState.endTimestamp) ??
-		asFiniteNumber(toolState.completedAt) ??
-		asFiniteNumber(timing?.endTimestamp) ??
-		asFiniteNumber(timing?.completedAt);
-	const status = normalizeToolStatus(toolState.status);
-
-	if (startTimestamp === null) return null;
-	const resolvedEnd = endTimestamp ?? (status === 'running' ? Date.now() : log.timestamp);
-	if (!Number.isFinite(resolvedEnd) || resolvedEnd < startTimestamp) return null;
-	return resolvedEnd - startTimestamp;
-};
 
 interface SourceLink {
 	url: string;
@@ -781,6 +228,13 @@ const formatChatDateSeparator = (timestamp: number): string => {
 		: `${weekday} ${month} ${day}, ${year}`;
 };
 
+const summarizeTurnLabel = (text: string | null | undefined): string => {
+	const normalized = (text || '').replace(/\s+/g, ' ').trim();
+	if (!normalized) return 'Untitled turn';
+	if (normalized.length <= 48) return normalized;
+	return `${normalized.slice(0, 45).trimEnd()}...`;
+};
+
 // ============================================================================
 // LogItem - Memoized component for individual log entries
 // ============================================================================
@@ -888,7 +342,6 @@ const LogItemComponent = memo(
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
-		const previousToolStatusRef = useRef<'running' | 'completed' | 'error' | null>(null);
 		const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
 		const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
 		const [manualAnswer, setManualAnswer] = useState('');
@@ -923,28 +376,6 @@ const LogItemComponent = memo(
 				}, 50); // Small delay to allow React to re-render
 			}
 		}, [isExpanded, log.id, onToggleExpanded, scrollContainerRef]);
-
-		useEffect(() => {
-			if (log.source !== 'tool') return;
-			const isSearchTool = normalizeToolName(log.text).includes('search');
-			if (!isSearchTool) return;
-			const currentStatus = normalizeToolStatus(log.metadata?.toolState?.status);
-			const previousStatus = previousToolStatusRef.current;
-
-			// Auto-collapse expanded running search cards once they complete/fail.
-			if (isExpanded && previousStatus === 'running' && currentStatus !== 'running') {
-				onToggleExpanded(log.id);
-			}
-
-			previousToolStatusRef.current = currentStatus;
-		}, [
-			isExpanded,
-			log.id,
-			log.metadata?.toolState?.status,
-			log.source,
-			log.text,
-			onToggleExpanded,
-		]);
 
 		// Helper function to highlight search matches in text
 		const highlightMatches = (text: string, query: string): React.ReactNode => {
@@ -1154,9 +585,6 @@ const LogItemComponent = memo(
 		const hideBubbleBorder = isToolLog || isModelResponseMessage || isUserAiMessage;
 		const useStackedTimestampLayout = isAIMode && !isThinkingLog;
 		const showActionButtons = !isToolLog && !isThinkingLog;
-		const toolDurationMs = isToolLog ? getToolDurationMs(log) : null;
-		const toolDurationLabel =
-			toolDurationMs !== null && toolDurationMs >= 0 ? formatDurationMs(toolDurationMs) : null;
 		const showDeliveredAtTimestamp = isUserAiMessage && !!log.delivered;
 		const showDateSeparator =
 			isAIMode &&
@@ -1166,11 +594,10 @@ const LogItemComponent = memo(
 		const rowContainerClass = useStackedTimestampLayout
 			? `group px-6 py-2 flex flex-col gap-1 ${isReversed ? 'items-end' : 'items-start'}`
 			: `flex gap-4 group ${isReversed ? 'flex-row-reverse' : ''} px-6 py-2`;
-		const timestampTimeLine = (() => {
-			const logDate = new Date(log.timestamp);
-			const time = logDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-			return isToolLog && toolDurationLabel ? `${time} • ${toolDurationLabel}` : time;
-		})();
+		const timestampTimeLine = new Date(log.timestamp).toLocaleTimeString([], {
+			hour: '2-digit',
+			minute: '2-digit',
+		});
 		const timestampClass = useStackedTimestampLayout
 			? `text-[10px] px-1 ${isReversed ? 'text-right' : 'text-left'}`
 			: `w-20 shrink-0 text-[10px] pt-2 ${isReversed ? 'text-right' : 'text-left'}`;
@@ -1279,7 +706,12 @@ const LogItemComponent = memo(
 						</div>
 					</div>
 				)}
-				<div ref={logItemRef} className={rowContainerClass} data-log-index={index}>
+				<div
+					ref={logItemRef}
+					className={rowContainerClass}
+					data-log-id={log.id}
+					data-log-index={index}
+				>
 					<div
 						className={timestampClass}
 						style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
@@ -1449,342 +881,14 @@ const LogItemComponent = memo(
 								</div>
 							)}
 							{/* Special rendering for tool execution events (shown alongside thinking) */}
-							{log.source === 'tool' &&
-								(() => {
-									const toolState = log.metadata?.toolState;
-									const toolStatus = normalizeToolStatus(toolState?.status);
-									const normalizedToolName = normalizeToolName(log.text);
-									const isSearchTool = normalizedToolName.includes('search');
-									const webSearchItems =
-										isWebSearchTool(log.text) || isSearchTool
-											? extractWebSearchTimelineItems(toolState)
-											: [];
-									const hasWebSearchItems = webSearchItems.length > 0;
-									const runningSearches = webSearchItems.filter(
-										(item) => item.status === 'running'
-									).length;
-									const failedSearches = webSearchItems.filter(
-										(item) => item.status === 'error'
-									).length;
-									const totalResults = webSearchItems.reduce(
-										(total, item) => total + item.resultCount,
-										0
-									);
-									const toolDisplay = buildToolDisplayData(toolState);
-									const suppressRawSearchDetails =
-										isSearchTool && toolStatus === 'running' && !hasWebSearchItems;
-									const showToolDetails = toolStatus === 'running' || isExpanded;
-									const collapsedSourceDomains = hasWebSearchItems
-										? collectSearchSourceDomains(toolState, webSearchItems)
-										: [];
-									const collapsedSourceBadgeDomains = collapsedSourceDomains;
-									const showCollapsedSourceBadges =
-										!showToolDetails && collapsedSourceBadgeDomains.length > 0;
-									const canToggleToolDetails =
-										toolStatus !== 'running' &&
-										(hasWebSearchItems ||
-											toolDisplay.detailRows.length > 0 ||
-											!!toolDisplay.outputDetail);
-									const toolSummary = hasWebSearchItems
-										? `${totalResults} result${totalResults === 1 ? '' : 's'} from ${webSearchItems.length} search${
-												webSearchItems.length === 1 ? '' : 'es'
-											}${
-												runningSearches > 0
-													? ` • ${runningSearches} running`
-													: failedSearches > 0
-														? ` • ${failedSearches} failed`
-														: ''
-											}`
-										: suppressRawSearchDetails
-											? 'Searching web…'
-											: toolDisplay.summary;
-									const statusLabel =
-										toolStatus === 'completed'
-											? '[DONE]'
-											: toolStatus === 'error'
-												? '[ERROR]'
-												: '[RUN]';
-									const statusColor =
-										toolStatus === 'completed'
-											? theme.colors.success
-											: toolStatus === 'error'
-												? theme.colors.error
-												: theme.colors.warning;
-
-									return (
-										<div
-											className="rounded-md px-2 py-1.5 text-[11px] font-mono"
-											style={{
-												color: theme.colors.textMain,
-												backgroundColor: `${theme.colors.bgMain}66`,
-											}}
-										>
-											<div className="flex items-center gap-1.5">
-												<span
-													className="shrink-0"
-													style={{ color: statusColor }}
-													aria-hidden="true"
-												>
-													{toolStatus === 'running' ? '◐' : '●'}
-												</span>
-												<span
-													className="shrink-0 text-[11px] font-semibold"
-													style={{ color: theme.colors.textMain }}
-												>
-													{log.text}
-												</span>
-												<span
-													className="shrink-0 text-[10px] tracking-wide font-semibold uppercase"
-													style={{ color: statusColor }}
-												>
-													{statusLabel}
-												</span>
-												{toolStatus === 'running' && (
-													<span
-														className="animate-pulse shrink-0 text-[10px]"
-														style={{ color: statusColor }}
-														aria-label="Tool running"
-													>
-														●
-													</span>
-												)}
-												{showCollapsedSourceBadges && (
-													<div className="shrink-0 flex items-center ml-1 max-w-[220px] overflow-x-auto scrollbar-thin pr-1">
-														{collapsedSourceBadgeDomains.map((domain, idx) => (
-															<SourceFaviconBadge
-																key={`${log.id}-source-badge-${domain}`}
-																domain={domain}
-																overlap={idx > 0}
-																theme={theme}
-															/>
-														))}
-													</div>
-												)}
-												{!showToolDetails && toolSummary && (
-													<span
-														className="min-w-0 flex-1 truncate text-[11px]"
-														style={{ color: theme.colors.textDim }}
-														title={toolSummary}
-													>
-														{toolSummary}
-													</span>
-												)}
-												{canToggleToolDetails && (
-													<button
-														type="button"
-														onClick={handleExpandToggle}
-														className="ml-auto flex items-center justify-center w-5 h-5 rounded border hover:opacity-80 transition-opacity"
-														style={{
-															color: theme.colors.textDim,
-															borderColor: `${theme.colors.border}80`,
-															backgroundColor: `${theme.colors.bgMain}50`,
-														}}
-														aria-label={
-															showToolDetails ? 'Collapse tool details' : 'Expand tool details'
-														}
-														title={showToolDetails ? 'Collapse' : 'Expand'}
-													>
-														{showToolDetails ? (
-															<ChevronUp className="w-3 h-3" />
-														) : (
-															<ChevronDown className="w-3 h-3" />
-														)}
-														<span className="sr-only">
-															{showToolDetails ? 'Collapse tool details' : 'Expand tool details'}
-														</span>
-													</button>
-												)}
-											</div>
-											{showToolDetails && (
-												<div className="mt-2 space-y-1.5">
-													{suppressRawSearchDetails && (
-														<div
-															className="text-[10px] italic"
-															style={{ color: theme.colors.textDim, opacity: 0.85 }}
-														>
-															Searching web...
-														</div>
-													)}
-													{hasWebSearchItems && (
-														<div className="space-y-2">
-															<div
-																className="flex items-center justify-between text-[10px] uppercase tracking-wide"
-																style={{ color: theme.colors.textDim, opacity: 0.9 }}
-															>
-																<span>Web Search Timeline</span>
-																<span>
-																	{totalResults} result{totalResults === 1 ? '' : 's'} •{' '}
-																	{webSearchItems.length} search
-																	{webSearchItems.length === 1 ? '' : 'es'}
-																	{runningSearches > 0 ? ` • ${runningSearches} running` : ''}
-																	{failedSearches > 0 ? ` • ${failedSearches} failed` : ''}
-																</span>
-															</div>
-															<div className="space-y-1.5 max-h-64 overflow-auto pr-1">
-																{webSearchItems.map((item, idx) => {
-																	const searchStatusColor =
-																		item.status === 'completed'
-																			? theme.colors.success
-																			: item.status === 'error'
-																				? theme.colors.error
-																				: theme.colors.warning;
-																	const responseDomains = getWebSearchResponseDomains(item);
-																	return (
-																		<div
-																			key={`${item.id}-${idx}`}
-																			className="rounded border px-2 py-1.5"
-																			style={{
-																				borderColor: `${theme.colors.border}90`,
-																				backgroundColor: `${theme.colors.bgMain}55`,
-																			}}
-																		>
-																			<div className="flex items-start justify-between gap-3">
-																				<div className="min-w-0 flex-1">
-																					<div
-																						className="text-[10px] font-semibold uppercase tracking-wide"
-																						style={{ color: searchStatusColor }}
-																					>
-																						{item.status === 'completed'
-																							? 'Completed'
-																							: item.status === 'error'
-																								? 'Failed'
-																								: 'Running'}
-																					</div>
-																					<div
-																						className="mt-1 text-[11px] break-words"
-																						style={{ color: theme.colors.textMain }}
-																					>
-																						{item.query}
-																					</div>
-																				</div>
-																				<div
-																					className="shrink-0 text-[10px] font-semibold"
-																					style={{ color: theme.colors.textDim }}
-																				>
-																					{item.resultCount} result
-																					{item.resultCount === 1 ? '' : 's'}
-																				</div>
-																			</div>
-																			{item.responsePreview && (
-																				<div
-																					className="mt-2 rounded border px-2 py-1.5 text-[10px] whitespace-pre-wrap break-words"
-																					style={{
-																						borderColor: `${theme.colors.border}80`,
-																						backgroundColor: `${theme.colors.bgMain}45`,
-																						color: theme.colors.textDim,
-																					}}
-																				>
-																					{item.responsePreview}
-																				</div>
-																			)}
-																			{responseDomains.length > 0 ? (
-																				<div className="mt-2 space-y-1.5">
-																					<div
-																						className="text-[10px] uppercase tracking-wide"
-																						style={{ color: theme.colors.textDim, opacity: 0.9 }}
-																					>
-																						Response Sources
-																					</div>
-																					<div className="max-w-full overflow-x-auto scrollbar-thin pr-1">
-																						<div className="flex items-center min-w-max">
-																							{responseDomains.map((domain, domainIdx) => (
-																								<SourceFaviconBadge
-																									key={`${item.id}-response-badge-${domain}`}
-																									domain={domain}
-																									overlap={domainIdx > 0}
-																									theme={theme}
-																								/>
-																							))}
-																						</div>
-																					</div>
-																					<div className="flex flex-wrap gap-1">
-																						{responseDomains.map((domain) => (
-																							<span
-																								key={`${item.id}-response-domain-${domain}`}
-																								className="px-1.5 py-0.5 rounded border text-[10px]"
-																								style={{
-																									borderColor: `${theme.colors.border}80`,
-																									backgroundColor: `${theme.colors.bgMain}40`,
-																									color: theme.colors.textDim,
-																								}}
-																							>
-																								{domain}
-																							</span>
-																						))}
-																					</div>
-																				</div>
-																			) : item.status === 'running' ? (
-																				<div
-																					className="mt-2 text-[10px] italic"
-																					style={{ color: theme.colors.textDim, opacity: 0.8 }}
-																				>
-																					waiting for response sources...
-																				</div>
-																			) : null}
-																		</div>
-																	);
-																})}
-															</div>
-														</div>
-													)}
-													{!hasWebSearchItems &&
-														!suppressRawSearchDetails &&
-														toolDisplay.detailRows.map((row) => (
-															<div
-																key={`${log.id}-${row.label}-${row.value}`}
-																className="flex gap-2"
-															>
-																<span
-																	className="shrink-0 uppercase tracking-wide text-[10px]"
-																	style={{ color: theme.colors.textDim, opacity: 0.85 }}
-																>
-																	{row.label}
-																</span>
-																<span
-																	className="break-words whitespace-pre-wrap text-[11px]"
-																	style={{ color: theme.colors.textMain, opacity: 0.92 }}
-																>
-																	{row.value}
-																</span>
-															</div>
-														))}
-													{!hasWebSearchItems &&
-														!suppressRawSearchDetails &&
-														toolDisplay.outputDetail && (
-															<div className="pt-1">
-																<div
-																	className="uppercase tracking-wide text-[10px] mb-1"
-																	style={{ color: theme.colors.textDim, opacity: 0.85 }}
-																>
-																	output
-																</div>
-																<div
-																	className="rounded border px-2 py-1.5 whitespace-pre-wrap break-words text-[11px] max-h-52 overflow-auto"
-																	style={{
-																		backgroundColor: `${theme.colors.bgMain}55`,
-																		borderColor: `${theme.colors.border}80`,
-																		color: theme.colors.textMain,
-																	}}
-																>
-																	{toolDisplay.outputDetail}
-																</div>
-															</div>
-														)}
-													{toolStatus === 'running' &&
-														!toolDisplay.outputDetail &&
-														!suppressRawSearchDetails && (
-															<div
-																className="text-[10px] italic"
-																style={{ color: theme.colors.textDim, opacity: 0.8 }}
-															>
-																Waiting for tool output...
-															</div>
-														)}
-												</div>
-											)}
-										</div>
-									);
-								})()}
+							{log.source === 'tool' && (
+								<ToolActivityBlock
+									log={log}
+									theme={theme}
+									expanded={isExpanded}
+									onToggleExpanded={handleExpandToggle}
+								/>
+							)}
 							{log.source !== 'error' &&
 								log.source !== 'thinking' &&
 								log.source !== 'tool' &&
@@ -2431,6 +1535,8 @@ interface TerminalOutputProps {
 	onScrollPositionChange?: (scrollTop: number) => void; // Callback to save scroll position
 	onAtBottomChange?: (isAtBottom: boolean) => void; // Callback when user scrolls to/away from bottom
 	initialScrollTop?: number; // Initial scroll position to restore
+	jumpToLogId?: string | null; // Scroll to a specific log entry on demand
+	onJumpToLogHandled?: (logId: string) => void; // Called after a jump request has been processed
 	markdownEditMode: boolean; // Whether to show raw markdown or rendered markdown for AI responses
 	setMarkdownEditMode: (value: boolean) => void; // Toggle markdown mode
 	onReplayMessage?: (text: string, images?: string[]) => void; // Replay a user message
@@ -2453,6 +1559,13 @@ interface TerminalOutputProps {
 		content: string;
 		sshRemoteId?: string;
 	}) => void; // Callback to open saved file in a tab
+}
+
+interface UserTurnMarker {
+	id: string;
+	offsetTop: number;
+	ratio: number;
+	label: string;
 }
 
 // PERFORMANCE: Wrap in React.memo to prevent re-renders when parent re-renders
@@ -2480,6 +1593,8 @@ export const TerminalOutput = memo(
 			onScrollPositionChange,
 			onAtBottomChange,
 			initialScrollTop,
+			jumpToLogId,
+			onJumpToLogHandled,
 			markdownEditMode,
 			setMarkdownEditMode,
 			onReplayMessage,
@@ -2502,6 +1617,7 @@ export const TerminalOutput = memo(
 
 		// Scroll container ref for native scrolling
 		const scrollContainerRef = useRef<HTMLDivElement>(null);
+		const userTurnMeasureFrameRef = useRef<number | null>(null);
 
 		// Track which log entries are expanded (by log ID)
 		const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
@@ -2546,6 +1662,10 @@ export const TerminalOutput = memo(
 		const [isAtBottom, setIsAtBottom] = useState(true);
 		const [hasNewMessages, setHasNewMessages] = useState(false);
 		const [newMessageCount, setNewMessageCount] = useState(0);
+		const [userTurnMarkers, setUserTurnMarkers] = useState<UserTurnMarker[]>([]);
+		const userTurnMarkersRef = useRef<UserTurnMarker[]>([]);
+		userTurnMarkersRef.current = userTurnMarkers;
+		const [activeUserTurnId, setActiveUserTurnId] = useState<string | null>(null);
 		const lastLogCountRef = useRef(0);
 		// Track previous isAtBottom to detect changes for callback
 		const prevIsAtBottomRef = useRef(true);
@@ -2745,6 +1865,59 @@ export const TerminalOutput = memo(
 			(): LogEntry[] => (session.inputMode === 'ai' ? (activeTab?.logs ?? []) : session.shellLogs),
 			[session.inputMode, activeTab?.logs, session.shellLogs]
 		);
+		const latestTurnToolLogs = useMemo(() => {
+			if (session.inputMode !== 'ai') return [];
+
+			let latestUserIndex = -1;
+			for (let index = activeLogs.length - 1; index >= 0; index -= 1) {
+				if (activeLogs[index]?.source === 'user') {
+					latestUserIndex = index;
+					break;
+				}
+			}
+
+			return activeLogs
+				.slice(latestUserIndex >= 0 ? latestUserIndex + 1 : 0)
+				.filter((log) => log.source === 'tool');
+		}, [activeLogs, session.inputMode]);
+		const latestTurnToolLogRefs = useMemo(() => new Set(latestTurnToolLogs), [latestTurnToolLogs]);
+		const displayLogs = useMemo(() => {
+			if (session.inputMode !== 'ai' || latestTurnToolLogs.length === 0) {
+				return activeLogs;
+			}
+
+			return activeLogs.filter((log) => !latestTurnToolLogRefs.has(log));
+		}, [activeLogs, latestTurnToolLogRefs, latestTurnToolLogs.length, session.inputMode]);
+		const toolPanelInsertLogId = useMemo(() => {
+			if (session.inputMode !== 'ai' || latestTurnToolLogs.length === 0) {
+				return null;
+			}
+
+			let latestUserIndex = -1;
+			for (let index = displayLogs.length - 1; index >= 0; index -= 1) {
+				if (displayLogs[index]?.source === 'user') {
+					latestUserIndex = index;
+					break;
+				}
+			}
+
+			for (let index = latestUserIndex + 1; index < displayLogs.length; index += 1) {
+				const entry = displayLogs[index];
+				if (entry?.source !== 'user') {
+					return entry.id;
+				}
+			}
+
+			return null;
+		}, [displayLogs, latestTurnToolLogs.length, session.inputMode]);
+		const isToolPanelBusy = useMemo(
+			() =>
+				latestTurnToolLogs.some(
+					(log) => normalizeToolStatus(log.metadata?.toolState?.status) === 'running'
+				) ||
+				(session.inputMode === 'ai' && session.state === 'busy'),
+			[latestTurnToolLogs, session.inputMode, session.state]
+		);
 
 		useEffect(() => {
 			setPendingQuestionIndex(0);
@@ -2817,7 +1990,7 @@ export const TerminalOutput = memo(
 		// Tool and thinking entries are kept separate (not collapsed)
 		const collapsedLogs = useMemo(() => {
 			// Only collapse in AI mode
-			if (session.inputMode !== 'ai') return activeLogs;
+			if (session.inputMode !== 'ai') return displayLogs;
 
 			const result: LogEntry[] = [];
 			let currentResponseGroup: LogEntry[] = [];
@@ -2836,7 +2009,7 @@ export const TerminalOutput = memo(
 				}
 			};
 
-			for (const log of activeLogs) {
+			for (const log of displayLogs) {
 				if (log.source === 'user') {
 					// Flush any accumulated response group before user message
 					flushResponseGroup();
@@ -2855,7 +2028,7 @@ export const TerminalOutput = memo(
 			flushResponseGroup();
 
 			return result;
-		}, [activeLogs, session.inputMode]);
+		}, [displayLogs, session.inputMode]);
 
 		// PERF: Debounce search query to avoid filtering on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
@@ -2867,6 +2040,152 @@ export const TerminalOutput = memo(
 			const lowerQuery = debouncedSearchQuery.toLowerCase();
 			return collapsedLogs.filter((log) => log.text.toLowerCase().includes(lowerQuery));
 		}, [collapsedLogs, debouncedSearchQuery]);
+
+		const showToolActivityPanel =
+			session.inputMode === 'ai' && latestTurnToolLogs.length > 0 && !debouncedSearchQuery;
+
+		const syncActiveUserTurn = useCallback(() => {
+			const markers = userTurnMarkersRef.current;
+			const container = scrollContainerRef.current;
+			if (!container || markers.length === 0) {
+				setActiveUserTurnId(null);
+				return;
+			}
+
+			const referenceTop = container.scrollTop + Math.min(96, container.clientHeight * 0.2);
+			let nextActiveId = markers[0].id;
+			for (const marker of markers) {
+				if (marker.offsetTop <= referenceTop) {
+					nextActiveId = marker.id;
+				} else {
+					break;
+				}
+			}
+			setActiveUserTurnId(nextActiveId);
+		}, []);
+
+		const recomputeUserTurnMarkers = useCallback(() => {
+			const container = scrollContainerRef.current;
+			if (!container || session.inputMode !== 'ai') {
+				setUserTurnMarkers([]);
+				setActiveUserTurnId(null);
+				return;
+			}
+
+			const userLogs = filteredLogs.filter((log) => log.source === 'user');
+			if (userLogs.length === 0) {
+				setUserTurnMarkers([]);
+				setActiveUserTurnId(null);
+				return;
+			}
+
+			const elements = Array.from(container.querySelectorAll<HTMLElement>('[data-log-id]'));
+			const elementById = new Map(
+				elements
+					.map((element) => {
+						const logId = element.dataset.logId;
+						return logId ? ([logId, element] as const) : null;
+					})
+					.filter((entry): entry is readonly [string, HTMLElement] => Boolean(entry))
+			);
+			const maxScrollable = Math.max(container.scrollHeight - container.clientHeight, 1);
+			const nextMarkers = userLogs
+				.map((log) => {
+					const element = elementById.get(log.id);
+					if (!element) {
+						return null;
+					}
+
+					return {
+						id: log.id,
+						offsetTop: element.offsetTop,
+						ratio: Math.max(0, Math.min(1, element.offsetTop / maxScrollable)),
+						label: summarizeTurnLabel(log.text),
+					} satisfies UserTurnMarker;
+				})
+				.filter((marker): marker is UserTurnMarker => Boolean(marker));
+
+			setUserTurnMarkers(nextMarkers);
+			requestAnimationFrame(() => {
+				syncActiveUserTurn();
+			});
+		}, [filteredLogs, session.inputMode, syncActiveUserTurn]);
+
+		const scheduleUserTurnMeasurement = useCallback(() => {
+			if (userTurnMeasureFrameRef.current !== null) {
+				cancelAnimationFrame(userTurnMeasureFrameRef.current);
+			}
+			userTurnMeasureFrameRef.current = requestAnimationFrame(() => {
+				userTurnMeasureFrameRef.current = null;
+				recomputeUserTurnMarkers();
+			});
+		}, [recomputeUserTurnMarkers]);
+
+		const scrollToLog = useCallback(
+			(logId: string, onHandled?: (handledLogId: string) => void) => {
+				const container = scrollContainerRef.current;
+				const target = Array.from(
+					container?.querySelectorAll<HTMLElement>('[data-log-id]') || []
+				).find((element) => element.dataset.logId === logId);
+
+				if (session.inputMode === 'ai' && autoScrollAiMode) {
+					setAutoScrollPaused(true);
+				}
+
+				if (target) {
+					setActiveUserTurnId(logId);
+					target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+				}
+
+				onHandled?.(logId);
+			},
+			[autoScrollAiMode, session.inputMode]
+		);
+
+		useEffect(() => {
+			if (!jumpToLogId) {
+				return;
+			}
+
+			const frameId = requestAnimationFrame(() => {
+				scrollToLog(jumpToLogId, onJumpToLogHandled);
+			});
+
+			return () => cancelAnimationFrame(frameId);
+		}, [jumpToLogId, filteredLogs, onJumpToLogHandled, scrollToLog]);
+
+		useEffect(() => {
+			const container = scrollContainerRef.current;
+			if (!container) {
+				return;
+			}
+
+			scheduleUserTurnMeasurement();
+			const observer = new MutationObserver(() => {
+				scheduleUserTurnMeasurement();
+			});
+
+			observer.observe(container, {
+				childList: true,
+				subtree: true,
+				characterData: true,
+			});
+
+			const handleWindowResize = () => {
+				scheduleUserTurnMeasurement();
+			};
+
+			window.addEventListener('resize', handleWindowResize);
+
+			return () => {
+				if (userTurnMeasureFrameRef.current !== null) {
+					cancelAnimationFrame(userTurnMeasureFrameRef.current);
+					userTurnMeasureFrameRef.current = null;
+				}
+				observer.disconnect();
+				window.removeEventListener('resize', handleWindowResize);
+			};
+		}, [scheduleUserTurnMeasurement]);
 
 		// PERF: Throttle scroll handler to reduce state updates (4ms = ~240fps for smooth scrollbar)
 		// The actual logic is in handleScrollInner, wrapped with useThrottledCallback
@@ -2916,12 +2235,14 @@ export const TerminalOutput = memo(
 					scrollSaveTimerRef.current = null;
 				}, 200);
 			}
+			syncActiveUserTurn();
 		}, [
 			activeTabId,
 			filteredLogs.length,
 			onScrollPositionChange,
 			onAtBottomChange,
 			autoScrollAiMode,
+			syncActiveUserTurn,
 		]);
 
 		// PERF: Throttle at 16ms (60fps) instead of 4ms to reduce state updates during scroll
@@ -3228,51 +2549,66 @@ export const TerminalOutput = memo(
 				>
 					{/* Log entries */}
 					{filteredLogs.map((log, index) => (
-						<LogItemComponent
-							key={log.id}
-							log={log}
-							index={index}
-							previousLogTimestamp={index > 0 ? filteredLogs[index - 1].timestamp : undefined}
-							hasLaterUserResponse={filteredLogs
-								.slice(index + 1)
-								.some((entry) => entry.source === 'user')}
-							isTerminal={isTerminal}
-							isAIMode={isAIMode}
-							theme={theme}
-							fontFamily={fontFamily}
-							maxOutputLines={maxOutputLines}
-							outputSearchQuery={outputSearchQuery}
-							lastUserCommand={
-								isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
-							}
-							isExpanded={expandedLogs.has(log.id)}
-							onToggleExpanded={toggleExpanded}
-							localFilterQuery={localFilters.get(log.id) || ''}
-							filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
-							activeLocalFilter={activeLocalFilter}
-							onToggleLocalFilter={toggleLocalFilter}
-							onSetLocalFilterQuery={setLocalFilterQuery}
-							onSetFilterMode={setFilterModeForLog}
-							onClearLocalFilter={clearLocalFilter}
-							deleteConfirmLogId={deleteConfirmLogId}
-							onDeleteLog={onDeleteLog}
-							onSetDeleteConfirmLogId={setDeleteConfirmLogId}
-							scrollContainerRef={scrollContainerRef}
-							setLightboxImage={setLightboxImage}
-							copyToClipboard={copyToClipboard}
-							ansiConverter={ansiConverter}
-							markdownEditMode={markdownEditMode}
-							onToggleMarkdownEditMode={toggleMarkdownEditMode}
-							onReplayMessage={onReplayMessage}
-							fileTree={fileTree}
-							cwd={cwd}
-							projectRoot={projectRoot}
-							onFileClick={onFileClick}
-							onShowErrorDetails={onShowErrorDetails}
-							onSaveToFile={handleSaveToFile}
-							userMessageAlignment={userMessageAlignment}
-						/>
+						<React.Fragment key={log.id}>
+							{showToolActivityPanel && toolPanelInsertLogId === log.id && (
+								<ToolActivityPanel
+									logs={latestTurnToolLogs}
+									theme={theme}
+									isSessionBusy={isToolPanelBusy}
+								/>
+							)}
+							<LogItemComponent
+								log={log}
+								index={index}
+								previousLogTimestamp={index > 0 ? filteredLogs[index - 1].timestamp : undefined}
+								hasLaterUserResponse={filteredLogs
+									.slice(index + 1)
+									.some((entry) => entry.source === 'user')}
+								isTerminal={isTerminal}
+								isAIMode={isAIMode}
+								theme={theme}
+								fontFamily={fontFamily}
+								maxOutputLines={maxOutputLines}
+								outputSearchQuery={outputSearchQuery}
+								lastUserCommand={
+									isTerminal && log.source !== 'user' ? getLastUserCommand(index) : undefined
+								}
+								isExpanded={expandedLogs.has(log.id)}
+								onToggleExpanded={toggleExpanded}
+								localFilterQuery={localFilters.get(log.id) || ''}
+								filterMode={filterModes.get(log.id) || { mode: 'include', regex: false }}
+								activeLocalFilter={activeLocalFilter}
+								onToggleLocalFilter={toggleLocalFilter}
+								onSetLocalFilterQuery={setLocalFilterQuery}
+								onSetFilterMode={setFilterModeForLog}
+								onClearLocalFilter={clearLocalFilter}
+								deleteConfirmLogId={deleteConfirmLogId}
+								onDeleteLog={onDeleteLog}
+								onSetDeleteConfirmLogId={setDeleteConfirmLogId}
+								scrollContainerRef={scrollContainerRef}
+								setLightboxImage={setLightboxImage}
+								copyToClipboard={copyToClipboard}
+								ansiConverter={ansiConverter}
+								markdownEditMode={markdownEditMode}
+								onToggleMarkdownEditMode={toggleMarkdownEditMode}
+								onReplayMessage={onReplayMessage}
+								fileTree={fileTree}
+								cwd={cwd}
+								projectRoot={projectRoot}
+								onFileClick={onFileClick}
+								onShowErrorDetails={onShowErrorDetails}
+								onSaveToFile={handleSaveToFile}
+								userMessageAlignment={userMessageAlignment}
+							/>
+						</React.Fragment>
 					))}
+					{showToolActivityPanel && toolPanelInsertLogId === null && (
+						<ToolActivityPanel
+							logs={latestTurnToolLogs}
+							theme={theme}
+							isSessionBusy={isToolPanelBusy}
+						/>
+					)}
 
 					{/* Terminal busy indicator - only show for terminal commands (AI thinking moved to ThinkingStatusPill) */}
 					{session.state === 'busy' &&
@@ -3423,6 +2759,49 @@ export const TerminalOutput = memo(
 					{/* End ref for scrolling - always rendered so Cmd+Shift+J works even when busy */}
 					<div ref={logsEndRef} />
 				</div>
+
+				{/* User turn minimap for quick in-scroll navigation */}
+				{session.inputMode === 'ai' && userTurnMarkers.length > 0 && (
+					<div
+						className="absolute right-2 top-20 bottom-20 w-8 pointer-events-none z-20"
+						data-testid="turn-minimap"
+						aria-label="User turn minimap"
+					>
+						<div
+							className="absolute left-1/2 top-0 bottom-0 -translate-x-1/2 rounded-full"
+							style={{
+								width: '2px',
+								backgroundColor: `${theme.colors.border}cc`,
+							}}
+						/>
+						{userTurnMarkers.map((marker, index) => {
+							const isActive = marker.id === activeUserTurnId;
+							const topPercent = Math.max(4, Math.min(96, marker.ratio * 100));
+							return (
+								<button
+									key={marker.id}
+									type="button"
+									onClick={() => scrollToLog(marker.id)}
+									className="absolute left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full pointer-events-auto transition-all"
+									style={{
+										top: `${topPercent}%`,
+										width: isActive ? '12px' : '9px',
+										height: isActive ? '12px' : '9px',
+										backgroundColor: isActive ? theme.colors.accent : theme.colors.textDim,
+										border: `1px solid ${isActive ? `${theme.colors.accent}55` : theme.colors.border}`,
+										boxShadow: isActive
+											? `0 0 0 3px ${theme.colors.accent}18`
+											: `0 0 0 2px ${theme.colors.bgMain}`,
+										opacity: isActive ? 1 : 0.82,
+									}}
+									title={`Turn ${index + 1}: ${marker.label}`}
+									aria-label={`Jump to turn ${index + 1}: ${marker.label}`}
+									data-testid={`scroll-turn-marker-${marker.id}`}
+								/>
+							);
+						})}
+					</div>
+				)}
 
 				{/* Auto-scroll toggle — positioned opposite AI response side (AI mode only) */}
 				{/* Visible when: has content AND (not at bottom (dimmed, click to pin) OR pinned at bottom (accent, click to unpin)) */}

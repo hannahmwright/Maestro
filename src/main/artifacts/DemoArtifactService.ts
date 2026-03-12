@@ -1,3 +1,4 @@
+import * as fsSync from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { createHash, randomUUID } from 'crypto';
@@ -13,6 +14,7 @@ import { logger } from '../utils/logger';
 import { captureMessage } from '../utils/sentry';
 import type { SshRemoteConfig } from '../../shared/types';
 import type {
+	DemoArtifactHarvestRequest,
 	ArtifactRef,
 	DemoCard,
 	DemoCaptureEvent,
@@ -20,6 +22,7 @@ import type {
 	DemoStep,
 	DemoStatus,
 } from '../../shared/demo-artifacts';
+import { MAESTRO_DEMO_EVENT_PREFIX } from '../../shared/demo-artifacts';
 import { ArtifactsDB } from './ArtifactsDB';
 import type {
 	ArtifactRecord,
@@ -35,6 +38,21 @@ const ARTIFACTS_DIRNAME = 'artifacts';
 const DEFAULT_MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const DEFAULT_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 const DEFAULT_STALE_CAPTURE_MS = 30 * 60 * 1000;
+const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/;
+const SUPPORTED_HARVEST_EXTENSIONS = new Set([
+	'.png',
+	'.jpg',
+	'.jpeg',
+	'.webp',
+	'.gif',
+	'.svg',
+	'.mp4',
+	'.webm',
+]);
+const PROJECT_RELATIVE_ARTIFACT_PATTERN =
+	/^(?:\.{1,2}\/)?(?:output\/playwright\/|screenshots\/|artifacts\/).+\.[a-z0-9]+$/i;
+const LOCAL_ARTIFACT_TEXT_PATTERN =
+	/(?:file:\/\/[^\s)]+|\/(?:Users|home)\/[^\n]+?\.(?:png|jpe?g|webp|gif|svg|mp4|webm)|[a-zA-Z]:[\\/][^\n]+?\.(?:png|jpe?g|webp|gif|svg|mp4|webm)|(?:\.{1,2}\/)?(?:output\/playwright|screenshots|artifacts)\/[^\s)]+)/g;
 
 export interface DemoArtifactServiceOptions {
 	artifactsRoot?: string;
@@ -82,6 +100,84 @@ function guessMimeType(
 function sanitizeFilename(filename: string): string {
 	const base = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '-');
 	return base.length > 0 ? base : 'artifact';
+}
+
+function hasSupportedHarvestExtension(candidate: string): boolean {
+	return SUPPORTED_HARVEST_EXTENSIONS.has(path.extname(candidate).toLowerCase());
+}
+
+function normalizeAbsoluteArtifactPath(candidate: string): string | null {
+	if (candidate.startsWith('/Users/') || candidate.startsWith('/home/')) {
+		return candidate;
+	}
+
+	if (WINDOWS_ABSOLUTE_PATH_PATTERN.test(candidate)) {
+		return candidate.replace(/\//g, '\\');
+	}
+
+	return null;
+}
+
+function extractArtifactPathCandidate(rawValue: string): string | null {
+	const trimmedValue = rawValue.trim();
+	if (!trimmedValue) {
+		return null;
+	}
+
+	const decodedValue = decodeURIComponent(trimmedValue.replace(/[)>.,]+$/, ''));
+	if (!decodedValue) {
+		return null;
+	}
+
+	if (decodedValue.startsWith('file://')) {
+		const decodedFilePath = decodeURIComponent(decodedValue.replace(/^file:\/\//, ''));
+		const normalizedFilePath = normalizeAbsoluteArtifactPath(decodedFilePath);
+		return normalizedFilePath && hasSupportedHarvestExtension(normalizedFilePath)
+			? normalizedFilePath
+			: null;
+	}
+
+	const absoluteCandidate = normalizeAbsoluteArtifactPath(decodedValue);
+	if (absoluteCandidate) {
+		return hasSupportedHarvestExtension(absoluteCandidate) ? absoluteCandidate : null;
+	}
+
+	if (
+		PROJECT_RELATIVE_ARTIFACT_PATTERN.test(decodedValue) &&
+		hasSupportedHarvestExtension(decodedValue) &&
+		!decodedValue.includes('://')
+	) {
+		return decodedValue.replace(/^\.\//, '');
+	}
+
+	return null;
+}
+
+function findArtifactPathCandidatesInText(text: string): string[] {
+	if (!text.trim()) {
+		return [];
+	}
+
+	const matches = text.match(LOCAL_ARTIFACT_TEXT_PATTERN) || [];
+	const uniquePaths = new Set<string>();
+	for (const match of matches) {
+		const filePath = extractArtifactPathCandidate(match);
+		if (filePath) {
+			uniquePaths.add(filePath);
+		}
+	}
+	return Array.from(uniquePaths);
+}
+
+function humanizeArtifactLabel(filename: string): string {
+	const baseName = path.parse(filename).name.replace(/[-_]+/g, ' ').trim();
+	if (!baseName) {
+		return 'Recovered artifact';
+	}
+	return baseName
+		.split(/\s+/)
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(' ');
 }
 
 export class DemoArtifactService {
@@ -330,6 +426,106 @@ export class DemoArtifactService {
 	): string {
 		const ext = path.extname(filename) || path.extname(sourcePath);
 		return path.join(this.artifactsRoot, `${artifactId}${ext}`);
+	}
+
+	private resolveLocalArtifactPath(
+		requestedPath: string,
+		projectRoots: string[] = [],
+		allowMissing = false
+	): string | null {
+		const trimmedPath = requestedPath.trim();
+		if (!trimmedPath) {
+			return null;
+		}
+
+		const normalizedRoots = Array.from(
+			new Set(
+				projectRoots
+					.map((candidate) => candidate.trim())
+					.filter(Boolean)
+					.map((candidate) => path.resolve(candidate))
+			)
+		);
+		const normalizedRequest = trimmedPath.replace(/^file:\/\//i, '');
+		const candidatePaths = path.isAbsolute(normalizedRequest)
+			? [path.resolve(normalizedRequest)]
+			: normalizedRoots.length > 0
+				? normalizedRoots.map((rootPath) => path.resolve(rootPath, normalizedRequest))
+				: [path.resolve(normalizedRequest)];
+
+		for (const candidatePath of candidatePaths) {
+			if (
+				normalizedRoots.length > 0 &&
+				!normalizedRoots.some((rootPath) => {
+					const relativePath = path.relative(rootPath, candidatePath);
+					return (
+						relativePath === '' ||
+						(!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+					);
+				})
+			) {
+				continue;
+			}
+
+			if (allowMissing) {
+				return candidatePath;
+			}
+
+			try {
+				const stat = fsSync.statSync(candidatePath);
+				if (stat.isFile()) {
+					return candidatePath;
+				}
+			} catch {
+				// Try the next candidate path.
+			}
+		}
+
+		return null;
+	}
+
+	private normalizeHarvestEvent(
+		event: DemoCaptureEvent,
+		context: DemoArtifactHarvestRequest
+	): DemoCaptureEvent {
+		if (context.sshRemoteId) {
+			return event;
+		}
+
+		const normalizedEvent = { ...event };
+		if (normalizedEvent.path) {
+			normalizedEvent.path =
+				this.resolveLocalArtifactPath(normalizedEvent.path, context.projectRoots, true) ||
+				normalizedEvent.path;
+		}
+		if (normalizedEvent.artifactPath) {
+			normalizedEvent.artifactPath =
+				this.resolveLocalArtifactPath(normalizedEvent.artifactPath, context.projectRoots, true) ||
+				normalizedEvent.artifactPath;
+		}
+		return normalizedEvent;
+	}
+
+	private extractDemoEventsFromText(text: string): DemoCaptureEvent[] {
+		const events: DemoCaptureEvent[] = [];
+		for (const line of text.split(/\r?\n/)) {
+			const trimmedLine = line.trim();
+			if (!trimmedLine.startsWith(MAESTRO_DEMO_EVENT_PREFIX)) {
+				continue;
+			}
+
+			const rawJson = trimmedLine.slice(MAESTRO_DEMO_EVENT_PREFIX.length).trim();
+			if (!rawJson) {
+				continue;
+			}
+
+			try {
+				events.push(JSON.parse(rawJson) as DemoCaptureEvent);
+			} catch {
+				// Ignore malformed lines and keep scanning the rest of the output.
+			}
+		}
+		return events;
 	}
 
 	private async createMp4Derivative(source: ArtifactRecord): Promise<ArtifactRecord | null> {
@@ -883,6 +1079,143 @@ export class DemoArtifactService {
 		}
 
 		return null;
+	}
+
+	async harvestFromLogText(request: DemoArtifactHarvestRequest): Promise<DemoCard | null> {
+		const trimmedText = request.text.trim();
+		if (!trimmedText) {
+			return null;
+		}
+
+		const context = {
+			sessionId: request.sessionId,
+			tabId: request.tabId || null,
+			sshRemoteId: request.sshRemoteId ?? null,
+			sshRemoteHost: request.sshRemoteHost ?? null,
+		};
+		const eventLines = this.extractDemoEventsFromText(trimmedText);
+		if (eventLines.length > 0) {
+			let finalCard: DemoCard | null = null;
+			for (const event of eventLines) {
+				finalCard =
+					(await this.handleCaptureEvent({
+						context,
+						event: this.normalizeHarvestEvent(event, request),
+					})) || finalCard;
+			}
+			return finalCard;
+		}
+
+		if (!request.demoCaptureRequested || context.sshRemoteId) {
+			return null;
+		}
+
+		const candidatePaths = findArtifactPathCandidatesInText(trimmedText);
+		if (candidatePaths.length === 0) {
+			return null;
+		}
+
+		const resolvedPaths: string[] = [];
+		const seenPaths = new Set<string>();
+		for (const candidatePath of candidatePaths) {
+			const resolvedPath = this.resolveLocalArtifactPath(candidatePath, request.projectRoots);
+			if (!resolvedPath || seenPaths.has(resolvedPath)) {
+				continue;
+			}
+			try {
+				const stat = await fs.stat(resolvedPath);
+				if (
+					!stat.isFile() ||
+					stat.size <= 0 ||
+					stat.size > this.maxArtifactBytes ||
+					!hasSupportedHarvestExtension(resolvedPath)
+				) {
+					continue;
+				}
+				seenPaths.add(resolvedPath);
+				resolvedPaths.push(resolvedPath);
+			} catch {
+				// Ignore files that disappeared before harvest.
+			}
+		}
+
+		if (resolvedPaths.length === 0) {
+			return null;
+		}
+
+		const runId = `log-harvest-${request.sourceLogId}`;
+		const imagePaths = resolvedPaths.filter(
+			(candidatePath) => !guessMimeType(candidatePath).startsWith('video/')
+		);
+		const videoPaths = resolvedPaths.filter((candidatePath) =>
+			guessMimeType(candidatePath).startsWith('video/')
+		);
+		const title =
+			resolvedPaths.length === 1
+				? humanizeArtifactLabel(path.basename(resolvedPaths[0]))
+				: 'Recovered demo artifacts';
+		const summaryParts: string[] = [];
+		if (imagePaths.length > 0) {
+			summaryParts.push(
+				`${imagePaths.length} screenshot${imagePaths.length === 1 ? '' : 's'} recovered`
+			);
+		}
+		if (videoPaths.length > 0) {
+			summaryParts.push(`${videoPaths.length} video${videoPaths.length === 1 ? '' : 's'} recovered`);
+		}
+		const summary =
+			summaryParts.length > 0
+				? `${summaryParts.join(', ')} from agent output.`
+				: 'Recovered demo artifacts from agent output.';
+
+		await this.handleCaptureEvent({
+			context,
+			event: {
+				type: 'capture_started',
+				runId,
+				title,
+				summary,
+			},
+		});
+
+		for (const [index, imagePath] of imagePaths.entries()) {
+			await this.handleCaptureEvent({
+				context,
+				event: {
+					type: 'step_created',
+					runId,
+					title: humanizeArtifactLabel(path.basename(imagePath)),
+					description: 'Recovered from agent output',
+					path: imagePath,
+					filename: path.basename(imagePath),
+					orderIndex: index,
+				},
+			});
+		}
+
+		for (const [index, videoPath] of videoPaths.entries()) {
+			await this.handleCaptureEvent({
+				context,
+				event: {
+					type: 'artifact_created',
+					runId,
+					kind: 'video',
+					role: index === 0 ? 'video' : 'supporting',
+					path: videoPath,
+					filename: path.basename(videoPath),
+				},
+			});
+		}
+
+		return this.handleCaptureEvent({
+			context,
+			event: {
+				type: 'capture_completed',
+				runId,
+				title,
+				summary,
+			},
+		});
 	}
 
 	listSessionDemos(sessionId: string, tabId?: string | null): DemoCard[] {

@@ -94,7 +94,7 @@ describe('viewState', () => {
 			expect(state.historySearchQuery).toBe('test query');
 		});
 
-		it('should return default state when saved state is stale (> 5 minutes)', () => {
+		it('should keep session selection when saved state is stale (> 5 minutes)', () => {
 			const fiveMinutesAgo = Date.now() - (5 * 60 * 1000 + 1); // 5 minutes + 1ms ago
 			const staleState: ViewState = {
 				showAllSessions: true,
@@ -112,9 +112,13 @@ describe('viewState', () => {
 
 			const state = loadViewState();
 
-			// Should return defaults because state is stale
+			// Transient UI resets, but the last selected session/tab should still restore.
 			expect(state.showAllSessions).toBe(false);
-			expect(state.activeSessionId).toBe(null);
+			expect(state.showHistoryPanel).toBe(false);
+			expect(state.showTabSearch).toBe(false);
+			expect(state.activeSessionId).toBe('old-session');
+			expect(state.activeTabId).toBe('old-tab');
+			expect(state.historyFilter).toBe('all');
 		});
 
 		it('should return saved state when within 5 minutes', () => {
@@ -175,9 +179,11 @@ describe('viewState', () => {
 			expect(state.inputMode).toBe('ai');
 		});
 
-		it('should handle state with missing savedAt (treats as stale)', () => {
+		it('should handle state with missing savedAt (treats as stale but keeps selection)', () => {
 			const stateWithoutSavedAt = {
 				showAllSessions: true,
+				activeSessionId: 'session-without-saved-at',
+				activeTabId: 'tab-without-saved-at',
 				// savedAt is undefined
 			};
 			localStorageMock['maestro-web-view-state'] = JSON.stringify(stateWithoutSavedAt);
@@ -185,7 +191,9 @@ describe('viewState', () => {
 			const state = loadViewState();
 
 			// savedAt is undefined/0, age calculation should result in large age
-			expect(state.showAllSessions).toBe(false); // Defaults because stale
+			expect(state.showAllSessions).toBe(false); // Transient UI resets because stale
+			expect(state.activeSessionId).toBe('session-without-saved-at');
+			expect(state.activeTabId).toBe('tab-without-saved-at');
 		});
 	});
 

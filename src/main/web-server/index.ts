@@ -41,6 +41,7 @@ export type {
 	SelectSessionCallback,
 	SelectTabCallback,
 	NewTabCallback,
+	NewThreadCallback,
 	CloseTabCallback,
 	RenameTabCallback,
 	GetThemeCallback,

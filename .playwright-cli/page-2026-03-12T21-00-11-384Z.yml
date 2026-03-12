@@ -1,0 +1,27 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - button "Open navigation" [ref=e5] [cursor=pointer]:
+      - img [ref=e6]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - generic [ref=e11]: March 3 2026 Weekday
+        - generic [ref=e12]:
+          - generic [ref=e13]: 🎼
+          - generic [ref=e14]: MAESTRO
+      - button "Provider usage unavailable" [ref=e16] [cursor=pointer]:
+        - img [ref=e17]
+        - generic [ref=e19]: "--"
+    - button "Search tabs" [ref=e20] [cursor=pointer]:
+      - img [ref=e21]
+  - main [ref=e24]:
+    - generic [ref=e26]:
+      - button "Pull down to open thread controls" [ref=e29] [cursor=pointer]
+      - generic [ref=e31]: Loading conversation...
+  - generic [ref=e34]:
+    - button "Open composer actions" [ref=e36] [cursor=pointer]:
+      - img [ref=e37]
+    - generic [ref=e38]:
+      - textbox "Message input. Type slash commands directly if needed." [ref=e39]:
+        - /placeholder: Message
+      - button "Start voice recording" [ref=e41] [cursor=pointer]:
+        - img [ref=e42]

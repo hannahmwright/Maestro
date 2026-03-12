@@ -15,6 +15,7 @@ import { DataBufferManager } from './handlers/DataBufferManager';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { CodexAppServerBridge } from './CodexAppServerBridge';
+import { ClaudeSdkBridge } from './ClaudeSdkBridge';
 import { logger } from '../utils/logger';
 import type { SshRemoteConfig } from '../../shared/types';
 import type { UserInputRequestId, UserInputResponse } from '../../shared/user-input-requests';
@@ -36,6 +37,7 @@ export class ProcessManager extends EventEmitter {
 	private localCommandRunner: LocalCommandRunner;
 	private sshCommandRunner: SshCommandRunner;
 	private codexAppServerBridge: CodexAppServerBridge;
+	private claudeSdkBridge: ClaudeSdkBridge;
 
 	constructor() {
 		super();
@@ -45,6 +47,7 @@ export class ProcessManager extends EventEmitter {
 		this.localCommandRunner = new LocalCommandRunner(this);
 		this.sshCommandRunner = new SshCommandRunner(this);
 		this.codexAppServerBridge = new CodexAppServerBridge(this.processes, this);
+		this.claudeSdkBridge = new ClaudeSdkBridge(this.processes, this);
 	}
 
 	/**
@@ -62,6 +65,36 @@ export class ProcessManager extends EventEmitter {
 
 	spawnCodexAppServer(config: ProcessConfig): SpawnResult {
 		return this.codexAppServerBridge.spawn(config);
+	}
+
+	sendCodexLiveTurn(config: ProcessConfig): SpawnResult {
+		return this.codexAppServerBridge.sendTurn({
+			...config,
+			conversationRuntime: 'live',
+		});
+	}
+
+	steerCodexLiveTurn(sessionId: string, input: { text?: string; images?: string[] }): boolean {
+		return this.codexAppServerBridge.steerTurn(sessionId, input);
+	}
+
+	interruptCodexLiveTurn(sessionId: string): boolean {
+		return this.codexAppServerBridge.interruptTurn(sessionId);
+	}
+
+	sendClaudeLiveTurn(config: ProcessConfig): SpawnResult {
+		return this.claudeSdkBridge.sendTurn({
+			...config,
+			conversationRuntime: 'live',
+		});
+	}
+
+	steerClaudeLiveTurn(sessionId: string, input: { text?: string; images?: string[] }): boolean {
+		return this.claudeSdkBridge.steerTurn(sessionId, input);
+	}
+
+	interruptClaudeLiveTurn(sessionId: string): boolean {
+		return this.claudeSdkBridge.interruptTurn(sessionId);
 	}
 
 	private shouldUsePty(config: ProcessConfig): boolean {
@@ -103,12 +136,15 @@ export class ProcessManager extends EventEmitter {
 		}
 	}
 
-	respondToUserInput(
+	async respondToUserInput(
 		sessionId: string,
 		requestId: UserInputRequestId,
 		response: UserInputResponse
 	) {
-		return this.codexAppServerBridge.respondToUserInput(sessionId, requestId, response);
+		if (await this.codexAppServerBridge.respondToUserInput(sessionId, requestId, response)) {
+			return true;
+		}
+		return this.claudeSdkBridge.respondToUserInput(sessionId, requestId, response);
 	}
 
 	/**
@@ -140,6 +176,9 @@ export class ProcessManager extends EventEmitter {
 		if (!process) return false;
 
 		try {
+			if (process.claudeSdkState) {
+				return this.claudeSdkBridge.interruptTurn(sessionId);
+			}
 			if (process.isTerminal && process.ptyProcess) {
 				process.ptyProcess.write('\x03');
 				return true;
@@ -186,6 +225,9 @@ export class ProcessManager extends EventEmitter {
 		if (!process) return false;
 
 		try {
+			if (process.claudeSdkState) {
+				return this.claudeSdkBridge.closeSession(sessionId);
+			}
 			if (process.dataBufferTimeout) {
 				clearTimeout(process.dataBufferTimeout);
 			}

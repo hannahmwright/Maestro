@@ -12,6 +12,7 @@ import type {
 import { gitService } from '../../../renderer/services/git';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
@@ -107,6 +108,7 @@ vi.mock('../../../renderer/components/TabBar', () => ({
 		tabs: Array<{ id: string; name?: string }>;
 		onTabSelect: (id: string) => void;
 		onNewTab: () => void;
+		showNewTabButton?: boolean;
 	}) => {
 		return React.createElement(
 			'div',
@@ -122,13 +124,45 @@ vi.mock('../../../renderer/components/TabBar', () => ({
 					tab.name || tab.id
 				)
 			),
-			React.createElement(
-				'button',
-				{ onClick: props.onNewTab, 'data-testid': 'new-tab-btn' },
-				'New Tab'
-			)
+			props.showNewTabButton !== false &&
+				React.createElement(
+					'button',
+					{ onClick: props.onNewTab, 'data-testid': 'new-tab-btn' },
+					'New Tab'
+				)
 		);
 	},
+}));
+
+vi.mock('../../../renderer/components/ThreadBar', () => ({
+	ThreadBar: (props: {
+		threadTitle: string;
+		onNewThread?: () => void;
+		turnMarkers?: Array<{ key: string; label: string }>;
+		onSelectTurnMarker?: (id: string) => void;
+	}) =>
+		React.createElement(
+			'div',
+			{ 'data-testid': 'thread-bar' },
+			React.createElement('span', { 'data-testid': 'thread-title' }, props.threadTitle),
+			props.turnMarkers?.map((marker) =>
+				React.createElement(
+					'button',
+					{
+						key: marker.key,
+						onClick: () => props.onSelectTurnMarker?.(marker.key),
+						'data-testid': `turn-marker-${marker.key}`,
+					},
+					marker.label
+				)
+			),
+			props.onNewThread &&
+				React.createElement(
+					'button',
+					{ onClick: props.onNewThread, 'data-testid': 'new-thread-btn' },
+					'New Chat'
+				)
+		),
 }));
 
 vi.mock('../../../renderer/components/ErrorBoundary', () => ({
@@ -397,6 +431,7 @@ describe('MainPanel', () => {
 		onTabSelect: vi.fn(),
 		onTabClose: vi.fn(),
 		onNewTab: vi.fn(),
+		onNewThread: vi.fn(),
 	};
 
 	beforeEach(() => {
@@ -411,6 +446,7 @@ describe('MainPanel', () => {
 			outputSearchQuery: '',
 			showUnreadOnly: false,
 		});
+		useSessionStore.setState({ threads: [] });
 		useSettingsStore.setState({
 			fontFamily: 'monospace',
 			enterToSendAI: true,
@@ -530,7 +566,7 @@ describe('MainPanel', () => {
 			const session = createSession({ name: 'My Test Session' });
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			expect(screen.getByText('My Test Session')).toBeInTheDocument();
+			expect(screen.getByText('My Test Session', { selector: '.header-session-name' })).toBeInTheDocument();
 		});
 
 		it('should display LOCAL badge for non-git repos', () => {
@@ -600,7 +636,8 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} isMobileLandscape={true} />);
 
 			// Header should not be visible
-			expect(screen.queryByText('Test Session')).not.toBeInTheDocument();
+			expect(screen.queryByText('Test Session', { selector: '.header-session-name' })).not.toBeInTheDocument();
+			expect(screen.queryByTestId('thread-bar')).not.toBeInTheDocument();
 		});
 
 		it('should show Agent Sessions button in header', () => {
@@ -740,12 +777,33 @@ describe('MainPanel', () => {
 
 		it('should show TabBar when file preview tab is active (tabs remain visible)', () => {
 			const activeFileTab = createFileTab();
+			const session = createSession({
+				filePreviewTabs: [activeFileTab],
+			} as Partial<Session>);
 			render(
-				<MainPanel {...defaultProps} activeFileTabId="file-tab-1" activeFileTab={activeFileTab} />
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					activeFileTabId="file-tab-1"
+					activeFileTab={activeFileTab}
+					unifiedTabs={[
+						{
+							type: 'ai',
+							id: 'tab-1',
+							data: session.aiTabs?.[0] as any,
+						},
+						{
+							type: 'file',
+							id: 'file-tab-1',
+							data: activeFileTab,
+						},
+					]}
+				/>
 			);
 
 			// In the new tab system, TabBar remains visible when file tab is active
 			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
+			expect(screen.getByTestId('thread-bar')).toBeInTheDocument();
 		});
 
 		it('should call onFileTabClose when closing preview', () => {
@@ -767,8 +825,8 @@ describe('MainPanel', () => {
 		});
 	});
 
-	describe('Tab Bar', () => {
-		it('should render TabBar in AI mode with tabs', () => {
+	describe('Thread Bar', () => {
+		it('should render ThreadBar in AI mode', () => {
 			const session = createSession({
 				inputMode: 'ai',
 				aiTabs: [
@@ -779,44 +837,58 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
-			expect(screen.getByTestId('tab-tab-1')).toBeInTheDocument();
-			expect(screen.getByTestId('tab-tab-2')).toBeInTheDocument();
+			expect(screen.getByTestId('thread-bar')).toBeInTheDocument();
+			expect(screen.getByTestId('thread-title')).toHaveTextContent('Test Session');
+			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
 		});
 
-		it('should not render TabBar in terminal mode', () => {
+		it('should not render ThreadBar in terminal mode', () => {
 			const session = createSession({ inputMode: 'terminal' });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
+			expect(screen.queryByTestId('thread-bar')).not.toBeInTheDocument();
 			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
 		});
 
-		it('should call onTabSelect when tab is clicked', () => {
-			const onTabSelect = vi.fn();
+		it('should call onNewThread when new chat button is clicked', () => {
+			const onNewThread = vi.fn();
+			const session = createSession();
+
+			render(<MainPanel {...defaultProps} activeSession={session} onNewThread={onNewThread} />);
+
+			fireEvent.click(screen.getByTestId('new-thread-btn'));
+
+			expect(onNewThread).toHaveBeenCalled();
+		});
+
+		it('should prefer thread title over agent name when available', () => {
 			const session = createSession({
-				aiTabs: [
-					{ id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: Date.now() },
-					{ id: 'tab-2', name: 'Tab 2', isUnread: false, createdAt: Date.now() },
+				name: 'Claude Code',
+				aiTabs: [{ id: 'tab-1', name: '', isUnread: false, createdAt: Date.now() }],
+			});
+			useSessionStore.setState({
+				threads: [
+					{
+						id: 'thread-1',
+						workspaceId: 'workspace-1',
+						sessionId: session.id,
+						runtimeId: session.id,
+						title: 'Fix auth redirect',
+						agentId: session.toolType,
+						projectRoot: session.projectRoot,
+						pinned: false,
+						archived: false,
+						isOpen: true,
+						createdAt: Date.now(),
+						lastUsedAt: Date.now(),
+					},
 				],
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} onTabSelect={onTabSelect} />);
+			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			fireEvent.click(screen.getByTestId('tab-tab-2'));
-
-			expect(onTabSelect).toHaveBeenCalledWith('tab-2');
-		});
-
-		it('should call onNewTab when new tab button is clicked', () => {
-			const onNewTab = vi.fn();
-			const session = createSession();
-
-			render(<MainPanel {...defaultProps} activeSession={session} onNewTab={onNewTab} />);
-
-			fireEvent.click(screen.getByTestId('new-tab-btn'));
-
-			expect(onNewTab).toHaveBeenCalled();
+			expect(screen.getAllByText('Fix auth redirect').length).toBeGreaterThan(0);
 		});
 	});
 
@@ -2133,7 +2205,7 @@ describe('MainPanel', () => {
 			// Wait for the effect to run and ResizeObserver to be set up
 			await waitFor(() => {
 				// Check that header exists (which triggers the ResizeObserver setup)
-				expect(screen.getByText('Test Session')).toBeInTheDocument();
+				expect(screen.getByText('Test Session', { selector: '.header-session-name' })).toBeInTheDocument();
 			});
 		});
 	});
@@ -3050,7 +3122,7 @@ describe('MainPanel', () => {
 			expect(screen.queryByText('Error message')).not.toBeInTheDocument();
 		});
 
-		it('should display error banner below tab bar in AI mode', () => {
+		it('should display error banner below thread bar in AI mode', () => {
 			const session = createSession({
 				inputMode: 'ai',
 				aiTabs: [
@@ -3067,8 +3139,8 @@ describe('MainPanel', () => {
 
 			const { container } = render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Tab bar should exist
-			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
+			// Thread bar should exist
+			expect(screen.getByTestId('thread-bar')).toBeInTheDocument();
 
 			// Error banner should exist
 			const errorMessage = screen.getByText(
@@ -3076,15 +3148,15 @@ describe('MainPanel', () => {
 			);
 			expect(errorMessage).toBeInTheDocument();
 
-			// Verify DOM order: tab-bar comes before error banner
-			const tabBar = screen.getByTestId('tab-bar');
+			// Verify DOM order: thread-bar comes before error banner
+			const threadBar = screen.getByTestId('thread-bar');
 			const errorBanner = errorMessage.closest('div.flex.items-center');
 
 			// Both should be siblings in the DOM tree
 			const mainPanel = container.querySelector('[style*="backgroundColor"]');
-			if (mainPanel && tabBar && errorBanner) {
+			if (mainPanel && threadBar && errorBanner) {
 				const children = Array.from(mainPanel.children);
-				const tabBarIndex = children.indexOf(tabBar);
+				const tabBarIndex = children.indexOf(threadBar);
 				const errorBannerIndex = children.indexOf(errorBanner as Element);
 
 				// Tab bar should come before error banner (smaller index)
@@ -3281,7 +3353,7 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('wizard-loading')).toBeInTheDocument();
 		});
 
-		it('should still render header and tabs when wizard is active', () => {
+		it('should still render header and thread bar when wizard is active', () => {
 			const session = createSessionWithTabWizardState({
 				isActive: true,
 				mode: 'new',
@@ -3297,9 +3369,9 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
 			// Header elements should still be visible
-			expect(screen.getByText('Test Session')).toBeInTheDocument();
-			// Tab bar should still be visible
-			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
+			expect(screen.getByText('Test Session', { selector: '.header-session-name' })).toBeInTheDocument();
+			// Thread bar should still be visible
+			expect(screen.getByTestId('thread-bar')).toBeInTheDocument();
 			// Wizard conversation view should be visible
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
 		});

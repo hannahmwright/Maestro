@@ -14,6 +14,7 @@
  * - get_sessions: Request updated sessions list
  * - select_tab: Select a tab within a session
  * - new_tab: Create a new tab within a session
+ * - new_thread: Create a new thread from the current session context
  * - close_tab: Close a tab within a session
  * - rename_tab: Rename a tab within a session
  */
@@ -33,6 +34,7 @@ export interface WebClientMessage {
 	sessionId?: string;
 	tabId?: string;
 	command?: string;
+	commandAction?: 'default' | 'queue';
 	images?: string[];
 	textAttachments?: Array<{
 		id?: string;
@@ -92,6 +94,7 @@ export interface MessageHandlerCallbacks {
 		sessionId: string,
 		command: string,
 		inputMode?: 'ai' | 'terminal',
+		commandAction?: 'default' | 'queue',
 		images?: string[],
 		textAttachments?: Array<{
 			id?: string;
@@ -113,6 +116,7 @@ export interface MessageHandlerCallbacks {
 	selectSession: (sessionId: string, tabId?: string) => Promise<boolean>;
 	selectTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	newTab: (sessionId: string) => Promise<{ tabId: string } | null>;
+	newThread: (sessionId: string) => Promise<boolean>;
 	deleteSession: (sessionId: string) => Promise<boolean>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (sessionId: string, tabId: string, newName: string) => Promise<boolean>;
@@ -220,6 +224,10 @@ export class WebSocketMessageHandler {
 				this.handleNewTab(client, message);
 				break;
 
+			case 'new_thread':
+				this.handleNewThread(client, message);
+				break;
+
 			case 'delete_session':
 				this.handleDeleteSession(client, message);
 				break;
@@ -277,6 +285,8 @@ export class WebSocketMessageHandler {
 			? message.textAttachments
 			: undefined;
 		const attachments = Array.isArray(message.attachments) ? message.attachments : undefined;
+		const commandAction =
+			message.commandAction === 'queue' ? ('queue' as const) : ('default' as const);
 		const demoCapture =
 			message.demoCapture && typeof message.demoCapture === 'object'
 				? (message.demoCapture as DemoCaptureRequest)
@@ -305,19 +315,6 @@ export class WebSocketMessageHandler {
 			return;
 		}
 
-		// Check if session is busy - prevent race conditions between desktop and web
-		if (sessionDetail.state === 'busy') {
-			this.sendError(
-				client,
-				'Session is busy - please wait for the current operation to complete',
-				{
-					sessionId,
-				}
-			);
-			logger.debug(`Command rejected - session ${sessionId} is busy`, LOG_CONTEXT);
-			return;
-		}
-
 		// Use client's inputMode if provided, otherwise fall back to server state
 		const effectiveMode = clientInputMode || sessionDetail.inputMode;
 		const isAiMode = effectiveMode === 'ai';
@@ -339,6 +336,7 @@ export class WebSocketMessageHandler {
 					sessionId,
 					command,
 					clientInputMode,
+					commandAction,
 					images,
 					textAttachments,
 					attachments,
@@ -532,6 +530,37 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to create tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle new_thread message - create a sibling thread from the current session context
+	 */
+	private handleNewThread(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received new_thread message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.newThread) {
+			this.sendError(client, 'Thread creation not configured');
+			return;
+		}
+
+		this.callbacks
+			.newThread(sessionId)
+			.then((success) => {
+				this.send(client, {
+					type: 'new_thread_result',
+					success,
+					sessionId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to create thread: ${error.message}`);
 			});
 	}
 

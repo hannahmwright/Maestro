@@ -136,6 +136,23 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		],
 		resumeArgs: (sessionId: string) => ['--resume', sessionId], // Resume with session ID
 		readOnlyArgs: ['--permission-mode', 'plan'], // Read-only/plan mode
+		modelArgs: (modelId: string) => ['--model', modelId], // Model selection: claude --model sonnet
+		configOptions: [
+			{
+				key: 'model',
+				type: 'text',
+				label: 'Model',
+				description:
+					'Model override (for example: sonnet, opus, haiku, claude-sonnet-4-5). Leave empty to use the account default.',
+				default: '',
+				argBuilder: (value: string) => {
+					if (value && value.trim()) {
+						return ['--model', value.trim()];
+					}
+					return [];
+				},
+			},
+		],
 	},
 	{
 		id: 'codex',

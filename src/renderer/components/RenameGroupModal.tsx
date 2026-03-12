@@ -34,7 +34,7 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 		if (groupName.trim() && groupId) {
 			setGroups((prev) =>
 				prev.map((g) =>
-					g.id === groupId ? { ...g, name: groupName.trim().toUpperCase(), emoji: groupEmoji } : g
+					g.id === groupId ? { ...g, name: groupName.trim(), emoji: groupEmoji } : g
 				)
 			);
 			onClose();
@@ -44,7 +44,7 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 	return (
 		<Modal
 			theme={theme}
-			title="Rename Group"
+			title="Rename Workspace"
 			priority={MODAL_PRIORITIES.RENAME_GROUP}
 			onClose={onClose}
 			initialFocusRef={inputRef}
@@ -67,16 +67,16 @@ export function RenameGroupModal(props: RenameGroupModalProps) {
 					restoreFocusRef={inputRef}
 				/>
 
-				{/* Group Name Input - Right Side */}
+				{/* Workspace Name Input - Right Side */}
 				<div className="flex-1">
 					<FormInput
 						ref={inputRef}
 						theme={theme}
-						label="Group Name"
+						label="Workspace Name"
 						value={groupName}
 						onChange={setGroupName}
 						onSubmit={handleRename}
-						placeholder="Enter group name..."
+						placeholder="Enter workspace name..."
 						heightClass="h-[52px]"
 						autoFocus
 					/>

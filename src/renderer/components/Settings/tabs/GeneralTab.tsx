@@ -35,12 +35,14 @@ import {
 	Trash2,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
-import type { Theme, ShellInfo } from '../../../types';
+import type { Theme, ShellInfo, ToolType } from '../../../types';
 import { formatMetaKey, formatEnterToSend } from '../../../utils/shortcutFormatter';
 import { getOpenInLabel } from '../../../utils/platformUtils';
+import { getProviderDisplayName } from '../../../utils/sessionValidation';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
 import { EnvVarsEditor } from '../EnvVarsEditor';
+import { ProviderModelIcon } from '../../shared/ProviderModelIcon';
 
 export interface GeneralTabProps {
 	theme: Theme;
@@ -73,6 +75,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setEnterToSendTerminal,
 		defaultShowThinking,
 		setDefaultShowThinking,
+		defaultThreadProvider,
+		setDefaultThreadProvider,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
 		// Tab naming
@@ -141,6 +145,12 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	} | null>(null);
 	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
 	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
+	const threadProviderOptions: ToolType[] = [
+		'codex',
+		'claude-code',
+		'opencode',
+		'factory-droid',
+	];
 	const handleWakatimeApiKeyChange = useCallback(
 		(value: string) => {
 			setWakatimeApiKey(value);
@@ -739,6 +749,54 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				onChange={setAutomaticTabNamingEnabled}
 				theme={theme}
 			/>
+
+			<div>
+				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+					<Keyboard className="w-3 h-3" />
+					New Threads
+				</div>
+				<div
+					className="p-3 rounded border space-y-3"
+					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+				>
+					<div>
+						<div className="font-medium" style={{ color: theme.colors.textMain }}>
+							Default provider
+						</div>
+						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+							New workspace threads start instantly with this provider. You can still switch it
+							from the composer before sending the first message.
+						</div>
+					</div>
+					<div className="grid grid-cols-2 gap-2">
+						{threadProviderOptions.map((provider) => {
+							const isSelected = defaultThreadProvider === provider;
+
+							return (
+								<button
+									key={provider}
+									type="button"
+									onClick={() => setDefaultThreadProvider(provider)}
+									className="flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors"
+									style={{
+										borderColor: isSelected ? theme.colors.accent : theme.colors.border,
+										backgroundColor: isSelected ? theme.colors.accentDim : 'transparent',
+										color: theme.colors.textMain,
+									}}
+								>
+									<span
+										className="flex h-8 w-8 items-center justify-center rounded-md"
+										style={{ backgroundColor: `${theme.colors.bgSidebar}80` }}
+									>
+										<ProviderModelIcon toolType={provider} color={theme.colors.textMain} size={16} />
+									</span>
+									<span className="text-sm font-medium">{getProviderDisplayName(provider)}</span>
+								</button>
+							);
+						})}
+					</div>
+				</div>
+			</div>
 
 			{/* Auto-scroll AI Output */}
 			<SettingCheckbox

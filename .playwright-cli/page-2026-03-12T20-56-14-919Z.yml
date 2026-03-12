@@ -1,0 +1,97 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - button "Open navigation" [ref=e5] [cursor=pointer]:
+      - img [ref=e6]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - generic [ref=e11]: March 3 2026 Weekday
+        - generic [ref=e12]:
+          - generic [ref=e13]: 🎼
+          - generic [ref=e14]: MAESTRO
+      - button "Provider usage unavailable" [ref=e16] [cursor=pointer]:
+        - img [ref=e17]
+        - generic [ref=e19]: "--"
+    - button "Search tabs" [ref=e20] [cursor=pointer]:
+      - img [ref=e21]
+  - main [ref=e24]:
+    - generic [ref=e26]:
+      - button "Pull down to open thread controls" [ref=e29] [cursor=pointer]
+      - generic [ref=e33]:
+        - generic [ref=e34]:
+          - generic [ref=e35]: Mar 3 03:39 PM
+          - generic [ref=e38]: "Use web search once and answer: what weekday is March 3, 2026? Include one source URL."
+        - generic [ref=e40]:
+          - generic [ref=e42]: Mar 3 03:39 PM
+          - paragraph [ref=e45]: web:search
+        - generic [ref=e47]:
+          - generic [ref=e49]: Mar 3 03:39 PM
+          - generic [ref=e51]:
+            - paragraph [ref=e52]:
+              - text: March 3, 2026 is a
+              - strong [ref=e53]: Tuesday
+              - text: .
+            - paragraph [ref=e54]:
+              - text: "Source:"
+              - link "https://en.wikipedia.org/wiki/March_2026_lunar_eclipse" [ref=e55] [cursor=pointer]:
+                - /url: https://en.wikipedia.org/wiki/March_2026_lunar_eclipse
+        - generic [ref=e56]:
+          - generic [ref=e57]: Mar 4 09:31 PM
+          - generic [ref=e60]: hi!
+        - generic [ref=e62]:
+          - generic [ref=e64]: Mar 4 09:31 PM
+          - paragraph [ref=e67]: Hi.
+        - generic [ref=e68]:
+          - generic [ref=e69]: 04:35 PM
+          - generic [ref=e72]: testingggg
+        - generic [ref=e74]:
+          - generic [ref=e75]:
+            - generic [ref=e76]: System
+            - generic [ref=e77]: 04:35 PM
+          - paragraph [ref=e80]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e81]:
+          - generic [ref=e82]: 04:38 PM
+          - generic [ref=e85]: Hi!
+        - generic [ref=e87]:
+          - generic [ref=e88]:
+            - generic [ref=e89]: System
+            - generic [ref=e90]: 04:38 PM
+          - paragraph [ref=e93]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e94]:
+          - generic [ref=e95]: 04:40 PM
+          - generic [ref=e98]: testing once again.
+        - generic [ref=e100]:
+          - generic [ref=e101]:
+            - generic [ref=e102]: System
+            - generic [ref=e103]: 04:40 PM
+          - paragraph [ref=e106]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata (request)."
+        - generic [ref=e107]:
+          - generic [ref=e108]: 04:42 PM
+          - generic [ref=e111]: Hi!!
+        - generic [ref=e113]:
+          - generic [ref=e115]: 04:42 PM
+          - paragraph [ref=e118]: Codex app-server did not return a thread id.
+        - generic [ref=e119]:
+          - generic [ref=e120]: 04:43 PM
+          - generic [ref=e123]: test
+        - generic [ref=e125]:
+          - generic [ref=e127]: 04:43 PM
+          - paragraph [ref=e130]: Codex app-server did not return a thread id.
+        - generic [ref=e131]:
+          - generic [ref=e132]: 04:46 PM
+          - generic [ref=e135]: Playwright verification message
+        - generic [ref=e136]:
+          - generic [ref=e137]: 04:49 PM
+          - generic [ref=e140]: Count slowly from 1 to 100, one number per line.
+        - generic [ref=e142]:
+          - generic [ref=e143]:
+            - generic [ref=e144]: System
+            - generic [ref=e145]: 04:49 PM
+          - paragraph [ref=e148]: Canceled by user
+  - generic [ref=e152]:
+    - button "Open composer actions" [ref=e154] [cursor=pointer]:
+      - img [ref=e155]
+    - generic [ref=e156]:
+      - textbox "Message input. Type slash commands directly if needed." [ref=e157]:
+        - /placeholder: Message
+      - button "Start voice recording" [ref=e159] [cursor=pointer]:
+        - img [ref=e160]

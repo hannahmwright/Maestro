@@ -14,6 +14,7 @@ export type {
 	AgentErrorRecovery,
 	ToolType,
 	Group,
+	Thread,
 	Conductor,
 	ConductorTask,
 	ConductorRun,
@@ -29,6 +30,7 @@ export type {
 	ThinkingMode,
 	ReasoningEffort,
 	WorktreeRunTarget,
+	WorkspaceSortMode,
 } from '../../shared/types';
 
 // Re-export Symphony types for session metadata
@@ -57,6 +59,15 @@ import type {
 import type { WebAttachmentSummary } from '../../shared/remote-web';
 import type { DemoCard, DemoCaptureRequest } from '../../shared/demo-artifacts';
 import type { UserInputRequest } from '../../shared/user-input-requests';
+import type {
+	ConversationCapabilities,
+	ConversationDeliveryState,
+	ConversationInteractionKind,
+	ConversationRuntimeKind,
+	ConversationSteerMode,
+	ConversationSteerStatus,
+	PendingSteerState,
+} from '../../shared/conversation';
 
 // Re-export group chat types from shared location
 export type {
@@ -213,6 +224,8 @@ export interface LogEntry {
 	};
 	// For user messages - tracks if message was successfully delivered to the agent
 	delivered?: boolean;
+	interactionKind?: ConversationInteractionKind;
+	deliveryState?: ConversationDeliveryState;
 	// For user messages - tracks if message was sent in read-only mode
 	readOnly?: boolean;
 	// For error entries - stores the full AgentError for "View Details" functionality
@@ -458,7 +471,13 @@ export interface AITab {
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
 	pendingUserInputRequest?: UserInputRequest | null; // Active Codex request_user_input questionnaire for this tab
-	demoCaptureRequested?: boolean; // Next-send scoped demo capture toggle for this tab
+	demoCaptureRequested?: boolean; // When true, demo capture remains required for this tab until cleared or satisfied
+	runtimeKind?: ConversationRuntimeKind;
+	steerMode?: ConversationSteerMode;
+	activeTurnId?: string | null;
+	pendingSteer?: PendingSteerState | null;
+	steerStatus?: ConversationSteerStatus;
+	lastCheckpointAt?: number | null;
 }
 
 // A single "thinking item" — one busy tab within a session.
@@ -538,7 +557,10 @@ export type ClosedTabEntry =
 
 export interface Session {
 	id: string;
+	runtimeId?: string; // Hidden runtime container ID (defaults to session.id for legacy sessions)
 	groupId?: string;
+	workspaceId?: string;
+	threadId?: string;
 	name: string;
 	toolType: ToolType;
 	state: SessionState;
@@ -772,6 +794,10 @@ export interface AgentCapabilities {
 	supportsThinkingDisplay?: boolean;
 	supportsContextMerge?: boolean;
 	supportsContextExport?: boolean;
+	supportsLiveRuntime?: boolean;
+	supportsTrueSteer?: boolean;
+	supportsQueueWhileBusy?: boolean;
+	supportsLiveRuntimeOverSsh?: boolean;
 }
 
 export interface AgentConfig {

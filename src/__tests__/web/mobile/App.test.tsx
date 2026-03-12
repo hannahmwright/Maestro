@@ -285,6 +285,8 @@ vi.mock('../../../web/mobile/CommandInputBar', () => ({
 		value,
 		onChange,
 		onSubmit,
+		demoCaptureEnabled,
+		onToggleDemoCapture,
 		placeholder,
 		disabled,
 		inputMode,
@@ -296,6 +298,8 @@ vi.mock('../../../web/mobile/CommandInputBar', () => ({
 		value: string;
 		onChange: (value: string) => void;
 		onSubmit: (value: string) => void;
+		demoCaptureEnabled?: boolean;
+		onToggleDemoCapture?: () => void;
 		placeholder: string;
 		disabled: boolean;
 		inputMode: string;
@@ -313,6 +317,9 @@ vi.mock('../../../web/mobile/CommandInputBar', () => ({
 			<button data-testid="submit-command" onClick={() => onSubmit(value)}>
 				Send
 			</button>
+			<button data-testid="toggle-demo-capture" onClick={onToggleDemoCapture}>
+				Toggle Demo
+			</button>
 			{isSessionBusy && (
 				<button data-testid="interrupt-button" onClick={onInterrupt}>
 					Interrupt
@@ -321,6 +328,7 @@ vi.mock('../../../web/mobile/CommandInputBar', () => ({
 			<span data-testid="input-mode">{inputMode}</span>
 			<span data-testid="is-offline">{isOffline ? 'offline' : 'online'}</span>
 			<span data-testid="is-connected">{isConnected ? 'connected' : 'disconnected'}</span>
+			<span data-testid="demo-capture-enabled">{demoCaptureEnabled ? 'on' : 'off'}</span>
 		</div>
 	),
 }));
@@ -562,6 +570,20 @@ describe('MobileApp', () => {
 		expect(mockConnect).toHaveBeenCalledTimes(2);
 	});
 
+	it('reconnects when the app becomes visible even if the prior socket state still looks authenticated', () => {
+		mockWebSocketState = 'authenticated';
+		setVisibilityState('hidden');
+
+		render(<MobileApp />);
+
+		expect(mockConnect).toHaveBeenCalledTimes(1);
+
+		setVisibilityState('visible');
+		fireEvent(document, new Event('visibilitychange'));
+
+		expect(mockConnect).toHaveBeenCalledTimes(2);
+	});
+
 	it('opens the navigation drawer and selects a session', async () => {
 		render(<MobileApp />);
 
@@ -602,6 +624,68 @@ describe('MobileApp', () => {
 				inputMode: 'ai',
 			})
 		);
+	});
+
+	it('keeps demo capture enabled across follow-up turns until a successful demo log arrives', async () => {
+		render(<MobileApp />);
+		await pushSessions([createMockSession({ id: 'session-1', inputMode: 'ai' })]);
+
+		fireEvent.click(screen.getByTestId('toggle-demo-capture'));
+		expect(screen.getByTestId('demo-capture-enabled')).toHaveTextContent('on');
+
+		mockSend.mockClear();
+		fireEvent.change(screen.getByTestId('command-input'), {
+			target: { value: 'first turn' },
+		});
+		fireEvent.click(screen.getByTestId('submit-command'));
+
+		expect(mockSend).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'first turn',
+				demoCapture: { enabled: true },
+			})
+		);
+		expect(screen.getByTestId('demo-capture-enabled')).toHaveTextContent('on');
+
+		fireEvent.change(screen.getByTestId('command-input'), {
+			target: { value: 'follow up' },
+		});
+		fireEvent.click(screen.getByTestId('submit-command'));
+
+		expect(mockSend).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				type: 'send_command',
+				sessionId: 'session-1',
+				command: 'follow up',
+				demoCapture: { enabled: true },
+			})
+		);
+
+		await act(async () => {
+			mockHandlers.onSessionLogEntry?.('session-1', null, 'ai', {
+				id: 'demo-log-1',
+				timestamp: Date.now(),
+				source: 'system',
+				text: 'Demo ready',
+				metadata: {
+					demoCard: {
+						demoId: 'demo-1',
+						captureRunId: 'capture-1',
+						title: 'Demo',
+						status: 'completed',
+						createdAt: Date.now(),
+						updatedAt: Date.now(),
+						stepCount: 1,
+						posterArtifact: null,
+						videoArtifact: null,
+					},
+				},
+			});
+		});
+
+		expect(screen.getByTestId('demo-capture-enabled')).toHaveTextContent('off');
 	});
 
 	it('queues a command while offline', async () => {

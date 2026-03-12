@@ -15,6 +15,7 @@ import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { appendDemoCaptureInstructions } from '../../utils/demoCapturePrompt';
 import { useSessionStore } from '../../stores/sessionStore';
 import { gitService } from '../../services/git';
+import { conversationService } from '../../services/conversation';
 import { imageOnlyDefaultPrompt } from '../../../prompts';
 import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 import { getAgentSystemPromptTemplate } from '../../utils/agentSystemPrompt';
@@ -86,6 +87,10 @@ export interface UseInputProcessingDeps {
 	automaticTabNamingEnabled?: boolean;
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
+	/** Interrupt the current active turn when fallback steer needs interrupt+replace */
+	interruptCurrentTurnRef?: React.MutableRefObject<
+		((sessionId?: string) => Promise<void>) | null
+	>;
 }
 
 /**
@@ -98,9 +103,16 @@ export type BatchState = BatchRunState;
  */
 export interface UseInputProcessingReturn {
 	/** Process the current input (send message or execute command) */
-	processInput: (overrideInputValue?: string) => Promise<void>;
+	processInput: (
+		overrideInputValue?: string,
+		options?: { disposition?: 'default' | 'queue' }
+	) => Promise<void>;
+	/** Explicitly queue the current input as the next turn */
+	queueInput: (overrideInputValue?: string) => Promise<void>;
 	/** Ref to processInput for use in callbacks that need latest version */
-	processInputRef: React.MutableRefObject<((overrideInputValue?: string) => Promise<void>) | null>;
+	processInputRef: React.MutableRefObject<
+		((overrideInputValue?: string, options?: { disposition?: 'default' | 'queue' }) => Promise<void>) | null
+	>;
 }
 
 /**
@@ -143,20 +155,27 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		onSkillsCommand,
 		automaticTabNamingEnabled,
 		conductorProfile,
+		interruptCurrentTurnRef,
 	} = deps;
 
 	// Ref for the processInput function so external code can access the latest version
-	const processInputRef = useRef<((overrideInputValue?: string) => Promise<void>) | null>(null);
+	const processInputRef = useRef<
+		((overrideInputValue?: string, options?: { disposition?: 'default' | 'queue' }) => Promise<void>) | null
+	>(null);
 
 	/**
 	 * Process user input - handles slash commands, queuing, and message sending.
 	 */
 	const processInput = useCallback(
-		async (overrideInputValue?: string) => {
+		async (
+			overrideInputValue?: string,
+			options?: { disposition?: 'default' | 'queue' }
+		) => {
 			// Flush any pending batched updates before processing user input
 			// This ensures AI output appears before the user's new message
 			flushBatchedUpdates?.();
 
+			const disposition = options?.disposition ?? 'default';
 			const effectiveInputValue = overrideInputValue ?? inputValue;
 			if (!activeSession || (!effectiveInputValue.trim() && stagedImages.length === 0)) {
 				return;
@@ -388,6 +407,156 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				const demoCapture: DemoCaptureRequest | undefined = activeTab?.demoCaptureRequested
 					? { enabled: true }
 					: undefined;
+				const hasDraftContent =
+					effectiveInputValue.trim().length > 0 || stagedImages.length > 0;
+
+				if (
+					disposition !== 'queue' &&
+					activeTab?.state === 'busy' &&
+					activeTab.steerMode === 'true-steer' &&
+					hasDraftContent
+				) {
+					const steerLogId = generateId();
+					const steerText = effectiveInputValue.trim();
+					const steerImages = [...stagedImages];
+
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== activeSessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((tab) => {
+									if (tab.id !== activeTab.id) return tab;
+
+									const existingPending = tab.pendingSteer;
+									const nextLogId = existingPending?.logEntryId || steerLogId;
+									const previousLog = tab.logs.find((log) => log.id === nextLogId);
+									const mergedText = existingPending?.text
+										? [existingPending.text, steerText].filter(Boolean).join('\n\n')
+										: steerText;
+									const mergedImages = [...(existingPending?.images || []), ...steerImages];
+									const steerLog: LogEntry = {
+										id: nextLogId,
+										timestamp: Date.now(),
+										source: 'user',
+										text: mergedText,
+										images: mergedImages.length > 0 ? mergedImages : undefined,
+										delivered: false,
+										interactionKind: 'steer',
+										deliveryState: 'pending',
+										...(isReadOnlyMode && { readOnly: true }),
+									};
+
+									const nextLogs = previousLog
+										? tab.logs.map((log) => (log.id === nextLogId ? steerLog : log))
+										: [...tab.logs, steerLog];
+
+									return {
+										...tab,
+										logs: nextLogs,
+										pendingSteer: {
+											logEntryId: nextLogId,
+											text: mergedText,
+											images: mergedImages.length > 0 ? mergedImages : undefined,
+											submittedAt: Date.now(),
+											deliveryState: 'pending',
+										},
+											steerStatus: 'pending' as const,
+									};
+								}),
+							};
+						})
+					);
+
+					setInputValue('');
+					setStagedImages([]);
+					syncAiInputToSession('');
+					if (inputRef.current) inputRef.current.style.height = 'auto';
+
+					conversationService
+						.steerTurn({
+							sessionId: `${activeSessionId}-ai-${activeTab.id}`,
+							toolType: activeSession.toolType,
+							text: steerText,
+							images: steerImages,
+						})
+						.catch((error) => {
+							console.error('[processInput] Failed to steer active turn:', error);
+						});
+					return;
+				}
+
+				if (
+					disposition !== 'queue' &&
+					activeTab?.state === 'busy' &&
+					activeTab.steerMode !== 'true-steer' &&
+					hasDraftContent
+				) {
+					const steerLogId = generateId();
+					const steerText = effectiveInputValue.trim();
+					const steerImages = [...stagedImages];
+					const hasExistingPendingSteer = !!activeTab.pendingSteer;
+
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== activeSessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((tab) => {
+									if (tab.id !== activeTab.id) return tab;
+
+									const existingPending = tab.pendingSteer;
+									const nextLogId = existingPending?.logEntryId || steerLogId;
+									const previousLog = tab.logs.find((log) => log.id === nextLogId);
+									const mergedText = existingPending?.text
+										? [existingPending.text, steerText].filter(Boolean).join('\n\n')
+										: steerText;
+									const mergedImages = [...(existingPending?.images || []), ...steerImages];
+									const steerLog: LogEntry = {
+										id: nextLogId,
+										timestamp: Date.now(),
+										source: 'user',
+										text: mergedText,
+										images: mergedImages.length > 0 ? mergedImages : undefined,
+										delivered: false,
+										interactionKind: 'steer',
+										deliveryState: 'fallback_interrupt',
+										...(isReadOnlyMode && { readOnly: true }),
+									};
+
+									const nextLogs = previousLog
+										? tab.logs.map((log) => (log.id === nextLogId ? steerLog : log))
+										: [...tab.logs, steerLog];
+
+									return {
+										...tab,
+										logs: nextLogs,
+										pendingSteer: {
+											logEntryId: nextLogId,
+											text: mergedText,
+											images: mergedImages.length > 0 ? mergedImages : undefined,
+											submittedAt: Date.now(),
+											deliveryState: 'fallback_interrupt',
+										},
+											steerStatus: 'pending' as const,
+									};
+								}),
+							};
+						})
+					);
+
+					setInputValue('');
+					setStagedImages([]);
+					syncAiInputToSession('');
+					if (inputRef.current) inputRef.current.style.height = 'auto';
+
+					if (!hasExistingPendingSteer) {
+						interruptCurrentTurnRef?.current?.().catch((error) => {
+							console.error('[processInput] Failed to interrupt for fallback steer:', error);
+						});
+					}
+					return;
+				}
 
 				// Check if write command can bypass queue (all running/queued items are read-only)
 				const canWriteBypassQueue = (): boolean => {
@@ -456,6 +625,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						text: effectiveInputValue,
 						images: [...stagedImages],
 						delivered: false,
+						interactionKind: 'queued',
+						deliveryState: 'pending',
 						...(isReadOnlyMode && { readOnly: true }),
 					};
 
@@ -474,11 +645,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								executionQueue: [...s.executionQueue, queuedItem],
 								aiTabs: s.aiTabs.map((tab) =>
 									tab.id === targetTabId
-										? {
-												...tab,
-												logs: [...tab.logs, queuedLogEntry],
-												demoCaptureRequested: false,
-											}
+											? {
+													...tab,
+													logs: [...tab.logs, queuedLogEntry],
+												}
 										: tab
 								),
 							};
@@ -510,6 +680,13 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 				source: 'user',
 				text: effectiveInputValue,
 				images: [...stagedImages],
+				...(currentMode === 'ai'
+					? {
+							delivered: false,
+							interactionKind: 'turn' as const,
+							deliveryState: 'pending' as const,
+						}
+					: {}),
 				...(isReadOnlyEntry && { readOnly: true }),
 			};
 
@@ -665,13 +842,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					const isNewSession = !activeTab.agentSessionId;
 					const updatedAiTabs = updatedSessionForTabSelection.aiTabs.map((tab) =>
 						tab.id === activeTab.id
-							? {
-									...tab,
-									logs: [...tab.logs, newEntry],
-									state: 'busy' as const,
-									thinkingStartTime: Date.now(),
-									demoCaptureRequested: false,
-									// Mark this tab as awaiting session ID so we can assign it correctly
+								? {
+										...tab,
+										logs: [...tab.logs, newEntry],
+										state: 'busy' as const,
+										thinkingStartTime: Date.now(),
+										// Mark this tab as awaiting session ID so we can assign it correctly
 									// when the session ID comes back (prevents cross-tab assignment)
 									awaitingSessionId: isNewSession ? true : tab.awaitingSessionId,
 								}
@@ -1124,7 +1300,21 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			flushBatchedUpdates,
 			onHistoryCommand,
 			onWizardCommand,
+			onWizardSendMessage,
+			isWizardActive,
+			onSkillsCommand,
+			automaticTabNamingEnabled,
+			conductorProfile,
+			interruptCurrentTurnRef,
 		]
+	);
+
+	const queueInput = useCallback(
+		async (overrideInputValue?: string) =>
+			processInput(overrideInputValue, {
+				disposition: 'queue',
+			}),
+		[processInput]
 	);
 
 	// Update ref for external access
@@ -1132,6 +1322,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 	return {
 		processInput,
+		queueInput,
 		processInputRef,
 	};
 }

@@ -25,7 +25,7 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 			const newGroupId = `group-${generateId()}`;
 			const newGroup: Group = {
 				id: newGroupId,
-				name: groupName.trim().toUpperCase(),
+				name: groupName.trim(),
 				emoji: groupEmoji,
 				collapsed: false,
 			};
@@ -45,7 +45,7 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 	return (
 		<Modal
 			theme={theme}
-			title="Create New Group"
+			title="Create New Workspace"
 			priority={MODAL_PRIORITIES.CREATE_GROUP}
 			onClose={onClose}
 			initialFocusRef={inputRef}
@@ -68,16 +68,16 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 					restoreFocusRef={inputRef}
 				/>
 
-				{/* Group Name Input - Right Side */}
+				{/* Workspace Name Input - Right Side */}
 				<div className="flex-1">
 					<FormInput
 						ref={inputRef}
 						theme={theme}
-						label="Group Name"
+						label="Workspace Name"
 						value={groupName}
 						onChange={setGroupName}
 						onSubmit={groupName.trim() ? handleCreate : undefined}
-						placeholder="Enter group name..."
+						placeholder="Enter workspace name..."
 						heightClass="h-[52px]"
 						autoFocus
 					/>

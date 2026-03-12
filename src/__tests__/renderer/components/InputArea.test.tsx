@@ -437,7 +437,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Capture a demo for the next agent run/);
+			const toggle = screen.getByTitle(/Require demo capture until this tab produces proof/);
 			expect(toggle).toBeInTheDocument();
 			expect(toggle).toHaveTextContent('Demo');
 		});
@@ -1631,7 +1631,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(/Capture a demo for the next agent run/));
+			fireEvent.click(screen.getByTitle(/Require demo capture until this tab produces proof/));
 
 			expect(updateSession).toHaveBeenCalledWith(
 				'session-1',
@@ -1945,7 +1945,7 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const toggle = screen.getByTitle(/Capture a demo for the next agent run/);
+			const toggle = screen.getByTitle(/Require demo capture until this tab produces proof/);
 			expect(toggle).toHaveStyle({ color: mockTheme.colors.accent });
 		});
 	});

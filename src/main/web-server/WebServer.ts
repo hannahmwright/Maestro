@@ -59,6 +59,8 @@ import type {
 	GetSessionsCallback,
 	GetSessionDetailCallback,
 	GetSessionModelsCallback,
+	GetSessionModelCatalogCallback,
+	GetSessionProviderUsageCallback,
 	GetSessionDemosCallback,
 	GetDemoDetailCallback,
 	GetArtifactContentCallback,
@@ -74,6 +76,8 @@ import type {
 	SelectSessionCallback,
 	SelectTabCallback,
 	NewTabCallback,
+	NewThreadCallback,
+	ForkThreadCallback,
 	DeleteSessionCallback,
 	CloseTabCallback,
 	RenameTabCallback,
@@ -272,6 +276,14 @@ export class WebServer {
 		this.callbackRegistry.setGetSessionModelsCallback(callback);
 	}
 
+	setGetSessionModelCatalogCallback(callback: GetSessionModelCatalogCallback): void {
+		this.callbackRegistry.setGetSessionModelCatalogCallback(callback);
+	}
+
+	setGetSessionProviderUsageCallback(callback: GetSessionProviderUsageCallback): void {
+		this.callbackRegistry.setGetSessionProviderUsageCallback(callback);
+	}
+
 	setGetSessionDemosCallback(callback: GetSessionDemosCallback): void {
 		this.callbackRegistry.setGetSessionDemosCallback(callback);
 	}
@@ -338,6 +350,14 @@ export class WebServer {
 
 	setNewTabCallback(callback: NewTabCallback): void {
 		this.callbackRegistry.setNewTabCallback(callback);
+	}
+
+	setNewThreadCallback(callback: NewThreadCallback): void {
+		this.callbackRegistry.setNewThreadCallback(callback);
+	}
+
+	setForkThreadCallback(callback: ForkThreadCallback): void {
+		this.callbackRegistry.setForkThreadCallback(callback);
 	}
 
 	setDeleteSessionCallback(callback: DeleteSessionCallback): void {
@@ -452,6 +472,10 @@ export class WebServer {
 				this.callbackRegistry.getSessionDetail(sessionId, tabId),
 			getSessionModels: (sessionId, forceRefresh) =>
 				this.callbackRegistry.getSessionModels(sessionId, forceRefresh),
+			getSessionModelCatalog: (sessionId, forceRefresh) =>
+				this.callbackRegistry.getSessionModelCatalog(sessionId, forceRefresh),
+			getSessionProviderUsage: (sessionId, forceRefresh) =>
+				this.callbackRegistry.getSessionProviderUsage(sessionId, forceRefresh),
 			getSessionDemos: (sessionId, tabId) =>
 				this.callbackRegistry.getSessionDemos(sessionId, tabId),
 			getDemoDetail: (demoId) => this.callbackRegistry.getDemoDetail(demoId),
@@ -466,6 +490,8 @@ export class WebServer {
 			interruptSession: async (sessionId) => this.callbackRegistry.interruptSession(sessionId),
 			setSessionModel: async (sessionId, model) =>
 				this.callbackRegistry.setSessionModel(sessionId, model),
+			forkThread: async (sessionId, options) =>
+				this.callbackRegistry.forkThread(sessionId, options),
 			getHistory: (projectPath, sessionId) =>
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -520,6 +546,7 @@ export class WebServer {
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
+				commandAction?: 'default' | 'queue',
 				images?: string[],
 				textAttachments?: Array<{
 					id?: string;
@@ -540,6 +567,7 @@ export class WebServer {
 					sessionId,
 					command,
 					inputMode,
+					commandAction,
 					images,
 					textAttachments,
 					attachments
@@ -551,6 +579,7 @@ export class WebServer {
 			selectTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.selectTab(sessionId, tabId),
 			newTab: async (sessionId: string) => this.callbackRegistry.newTab(sessionId),
+			newThread: async (sessionId: string) => this.callbackRegistry.newThread(sessionId),
 			deleteSession: async (sessionId: string) => this.callbackRegistry.deleteSession(sessionId),
 			closeTab: async (sessionId: string, tabId: string) =>
 				this.callbackRegistry.closeTab(sessionId, tabId),

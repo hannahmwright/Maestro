@@ -210,6 +210,94 @@ export class ExitHandler {
 			}
 		}
 
+		if (
+			!managedProcess.errorEmitted &&
+			code === 0 &&
+			managedProcess.demoCaptureEnabled &&
+			managedProcess.demoCaptureFailed
+		) {
+			managedProcess.errorEmitted = true;
+			const agentError: AgentError = {
+				type: 'unknown',
+				message: 'Demo capture failed for this run.',
+				recoverable: false,
+				agentId: toolType,
+				sessionId,
+				timestamp: Date.now(),
+				raw: {
+					exitCode: code,
+					stderr: managedProcess.stderrBuffer || '',
+					stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
+				},
+			};
+			logger.warn('[ProcessManager] Demo capture emitted a failure event', 'ProcessManager', {
+				sessionId,
+				toolType,
+			});
+			this.emitter.emit('agent-error', sessionId, agentError);
+		}
+
+		if (
+			!managedProcess.errorEmitted &&
+			code === 0 &&
+			managedProcess.demoCaptureEnabled &&
+			!managedProcess.demoCaptureFinalized
+		) {
+			managedProcess.errorEmitted = true;
+			const agentError: AgentError = {
+				type: 'unknown',
+				message:
+					'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.',
+				recoverable: false,
+				agentId: toolType,
+				sessionId,
+				timestamp: Date.now(),
+				raw: {
+					exitCode: code,
+					stderr: managedProcess.stderrBuffer || '',
+					stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
+				},
+			};
+			logger.warn('[ProcessManager] Demo capture requested but no final demo event was emitted', 'ProcessManager', {
+				sessionId,
+				toolType,
+			});
+			this.emitter.emit('agent-error', sessionId, agentError);
+		}
+
+		if (
+			!managedProcess.errorEmitted &&
+			code === 0 &&
+			managedProcess.demoCaptureEnabled &&
+			managedProcess.demoCaptureFinalized &&
+			!managedProcess.demoCaptureArtifactSeen
+		) {
+			managedProcess.errorEmitted = true;
+			const agentError: AgentError = {
+				type: 'unknown',
+				message:
+					'Demo capture was requested for this run, but no screenshot or video artifacts were produced.',
+				recoverable: false,
+				agentId: toolType,
+				sessionId,
+				timestamp: Date.now(),
+				raw: {
+					exitCode: code,
+					stderr: managedProcess.stderrBuffer || '',
+					stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
+				},
+			};
+			logger.warn(
+				'[ProcessManager] Demo capture finalized without any screenshot or video artifacts',
+				'ProcessManager',
+				{
+					sessionId,
+					toolType,
+				}
+			);
+			this.emitter.emit('agent-error', sessionId, agentError);
+		}
+
 		// Clean up temp image files if any
 		if (managedProcess.tempImageFiles && managedProcess.tempImageFiles.length > 0) {
 			cleanupTempFiles(managedProcess.tempImageFiles);

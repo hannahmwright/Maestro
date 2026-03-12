@@ -152,6 +152,7 @@ export interface UseMainPanelPropsDeps {
 	handleNewAgentSession: () => void;
 	toggleInputMode: () => void;
 	processInput: () => void;
+	queueInput: () => void;
 	handleInterrupt: () => void;
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -167,6 +168,7 @@ export interface UseMainPanelPropsDeps {
 	handleTabSelect: (tabId: string) => void;
 	handleTabClose: (tabId: string) => void;
 	handleNewTab: () => void;
+	handleNewThread: () => void;
 	handleRequestTabRename: (tabId: string) => void;
 	handleTabReorder: (fromIndex: number, toIndex: number) => void;
 	handleUnifiedTabReorder: (fromIndex: number, toIndex: number) => void;
@@ -341,6 +343,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			terminalOutputRef: deps.terminalOutputRef,
 			toggleInputMode: deps.toggleInputMode,
 			processInput: deps.processInput,
+			queueInput: deps.queueInput,
 			handleInterrupt: deps.handleInterrupt,
 			handleInputKeyDown: deps.handleInputKeyDown,
 			handlePaste: deps.handlePaste,
@@ -356,6 +359,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onTabSelect: deps.handleTabSelect,
 			onTabClose: deps.handleTabClose,
 			onNewTab: deps.handleNewTab,
+			onNewThread: deps.handleNewThread,
 			onRequestTabRename: deps.handleRequestTabRename,
 			onTabReorder: deps.handleTabReorder,
 			onUnifiedTabReorder: deps.handleUnifiedTabReorder,
@@ -558,6 +562,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleTabSelect,
 			deps.handleTabClose,
 			deps.handleNewTab,
+			deps.handleNewThread,
 			deps.handleRequestTabRename,
 			deps.handleTabReorder,
 			deps.handleUnifiedTabReorder,

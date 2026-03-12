@@ -3,8 +3,13 @@ import type { IPty } from 'node-pty';
 import type { WebSocket } from 'ws';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
-import type { UserInputRequest, UserInputResponse } from '../../shared/user-input-requests';
+import type {
+	UserInputRequest,
+	UserInputRequestId,
+	UserInputResponse,
+} from '../../shared/user-input-requests';
 import type { DemoCaptureRequest } from '../../shared/demo-artifacts';
+import type { ConversationEvent, ConversationRuntimeKind } from '../../shared/conversation';
 import type {
 	TaskContract,
 	TaskContractInput,
@@ -31,6 +36,7 @@ export interface ProcessConfig {
 	imageArgs?: (imagePath: string) => string[];
 	promptArgs?: (prompt: string) => string[];
 	contextWindow?: number;
+	readOnlyMode?: boolean;
 	customEnvVars?: Record<string, string>;
 	noPromptSeparator?: boolean;
 	sshRemoteId?: string;
@@ -54,6 +60,7 @@ export interface ProcessConfig {
 	resolvedModel?: string;
 	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 	demoCapture?: DemoCaptureRequest;
+	conversationRuntime?: ConversationRuntimeKind;
 }
 
 export interface CodexAppServerState {
@@ -71,6 +78,32 @@ export interface CodexAppServerState {
 	suppressedFinalAnswerText?: string;
 	startupTimeout?: NodeJS.Timeout;
 	turnCompleted?: boolean;
+	pendingRequests?: Map<string, { type: 'steer' | 'interrupt' }>;
+}
+
+export interface ClaudeSdkState {
+	query?: unknown;
+	inputQueue?: {
+		push: (message: any) => boolean;
+		close: () => void;
+	};
+	sdkSessionId?: string;
+	activeTurnId?: string;
+	nextTurnSequence: number;
+	pendingInterrupt?: boolean;
+	currentTurnStartedAt?: number;
+	runtimeReady?: boolean;
+	turnStartedEmitted?: boolean;
+	queryClosed?: boolean;
+	pendingUserInput?:
+		| {
+				requestId: UserInputRequestId;
+				resolve: (result: unknown) => void;
+				cleanup: () => void;
+				mode: 'form' | 'url';
+				requestedSchema?: Record<string, unknown>;
+		  }
+		| undefined;
 }
 
 /**
@@ -112,6 +145,12 @@ export interface ManagedProcess {
 	dataBufferTimeout?: NodeJS.Timeout;
 	taskContract?: TaskContract;
 	codexAppServerState?: CodexAppServerState;
+	claudeSdkState?: ClaudeSdkState;
+	conversationRuntime?: ConversationRuntimeKind;
+	demoCaptureEnabled?: boolean;
+	demoCaptureFinalized?: boolean;
+	demoCaptureArtifactSeen?: boolean;
+	demoCaptureFailed?: boolean;
 }
 
 export interface UsageTotals {
@@ -164,6 +203,7 @@ export interface ProcessManagerEvents {
 	'task-lifecycle': (sessionId: string, event: TaskLifecycleEvent) => void;
 	'task-status': (sessionId: string, status: TaskDiagnosticsSummary) => void;
 	'user-input-request': (sessionId: string, request: UserInputRequest) => void;
+	'conversation-event': (sessionId: string, event: ConversationEvent) => void;
 }
 
 export interface ToolExecution {

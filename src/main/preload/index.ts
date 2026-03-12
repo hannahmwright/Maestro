@@ -14,6 +14,7 @@ import {
 	createSettingsApi,
 	createSessionsApi,
 	createGroupsApi,
+	createThreadsApi,
 	createConductorsApi,
 	createAgentErrorApi,
 } from './settings';
@@ -46,6 +47,7 @@ import { createLeaderboardApi } from './leaderboard';
 import { createAttachmentsApi } from './attachments';
 import { createArtifactsApi } from './artifacts';
 import { createProcessApi } from './process';
+import { createConversationApi } from './conversation';
 import { createGitApi } from './git';
 import { createFsApi } from './fs';
 import { createAgentsApi } from './agents';
@@ -67,11 +69,17 @@ contextBridge.exposeInMainWorld('maestro', {
 	// Groups persistence API
 	groups: createGroupsApi(),
 
+	// Threads persistence API
+	threads: createThreadsApi(),
+
 	// Conductors persistence API
 	conductors: createConductorsApi(),
 
 	// Process/Session API
 	process: createProcessApi(),
+
+	// Semantic conversation runtime API
+	conversation: createConversationApi(),
 
 	// Core orchestrator API (task contract creation)
 	orchestrator: createOrchestratorApi(),
@@ -268,6 +276,7 @@ export {
 	createArtifactsApi,
 	// Process
 	createProcessApi,
+	createConversationApi,
 	// Git
 	createGitApi,
 	// Filesystem

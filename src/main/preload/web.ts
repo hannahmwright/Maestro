@@ -9,6 +9,12 @@
 
 import { ipcRenderer } from 'electron';
 import type {
+	ConversationRuntimeKind,
+	ConversationSteerMode,
+	ConversationSteerStatus,
+	PendingSteerState,
+} from '../../shared/conversation';
+import type {
 	ResponseCompletedEvent,
 	WebAttachmentSummary,
 	WebRemoteLogEntry,
@@ -42,6 +48,13 @@ export interface AiTabState {
 	createdAt: number;
 	state: 'idle' | 'busy';
 	thinkingStartTime?: number | null;
+	currentModel?: string | null;
+	runtimeKind?: ConversationRuntimeKind;
+	steerMode?: ConversationSteerMode;
+	activeTurnId?: string | null;
+	pendingSteer?: PendingSteerState | null;
+	steerStatus?: ConversationSteerStatus;
+	lastCheckpointAt?: number | null;
 }
 
 /**

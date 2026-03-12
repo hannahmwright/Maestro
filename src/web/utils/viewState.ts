@@ -52,6 +52,8 @@ export interface RecentSessionTarget {
 	viewedAt: number;
 }
 
+type PersistedSessionSelection = Pick<ViewState, 'activeSessionId' | 'activeTabId'>;
+
 /**
  * Default view state
  */
@@ -81,6 +83,19 @@ const DEFAULT_SCROLL_STATE: ScrollState = {
  * Maximum age of saved state before it's considered stale (5 minutes)
  */
 const MAX_STATE_AGE_MS = 5 * 60 * 1000;
+
+function getPersistedSessionSelection(state: Partial<ViewState>): PersistedSessionSelection {
+	return {
+		activeSessionId:
+			typeof state.activeSessionId === 'string' || state.activeSessionId === null
+				? state.activeSessionId
+				: DEFAULT_VIEW_STATE.activeSessionId,
+		activeTabId:
+			typeof state.activeTabId === 'string' || state.activeTabId === null
+				? state.activeTabId
+				: DEFAULT_VIEW_STATE.activeTabId,
+	};
+}
 
 /**
  * Save view state to localStorage
@@ -116,7 +131,10 @@ export function loadViewState(): ViewState {
 		const age = Date.now() - (state.savedAt || 0);
 		if (age > MAX_STATE_AGE_MS) {
 			webLogger.debug('View state is stale, using defaults', 'ViewState');
-			return DEFAULT_VIEW_STATE;
+			return {
+				...DEFAULT_VIEW_STATE,
+				...getPersistedSessionSelection(state),
+			};
 		}
 
 		return { ...DEFAULT_VIEW_STATE, ...state };

@@ -32,6 +32,7 @@ import { DEFAULT_IMAGE_ONLY_PROMPT } from '../hooks/input/useInputProcessing';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { appendDemoCaptureInstructions } from '../utils/demoCapturePrompt';
 import { gitService } from '../services/git';
+import { conversationService } from '../services/conversation';
 import { getAgentSystemPromptTemplate } from '../utils/agentSystemPrompt';
 
 const PLAN_MODE_PROMPT_PREFIX = `# Mode: Plan
@@ -146,6 +147,27 @@ function updateSession(sessionId: string, updater: (s: Session) => Session): voi
 	useSessionStore
 		.getState()
 		.setSessions((prev) => prev.map((s) => (s.id === sessionId ? updater(s) : s)));
+}
+
+function updateTabConversationState(
+	sessionId: string,
+	tabId: string,
+	runtimeKind: 'batch' | 'live',
+	steerMode: 'true-steer' | 'interrupt-fallback' | 'none'
+): void {
+	updateSession(sessionId, (s) => ({
+		...s,
+		aiTabs: s.aiTabs.map((tab) =>
+			tab.id === tabId
+				? {
+						...tab,
+						runtimeKind,
+						steerMode,
+						steerStatus: tab.steerStatus || 'idle',
+					}
+				: tab
+		),
+	}));
 }
 
 // ============================================================================
@@ -353,7 +375,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					args: spawnArgs,
 				});
 
-				await window.maestro.process.spawn({
+				const dispatchResult = await conversationService.sendTurn({
 					sessionId: targetSessionId,
 					toolType: session.toolType,
 					cwd: session.cwd,
@@ -372,6 +394,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					demoCapture: item.demoCapture,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
+				updateTabConversationState(
+					sessionId,
+					targetTab.id,
+					dispatchResult.runtimeKind,
+					dispatchResult.steerMode
+				);
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find matching command
 				const matchingCommand =
@@ -448,7 +476,7 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 					}));
 
 					// Spawn agent with the prompt
-					await window.maestro.process.spawn({
+					const dispatchResult = await conversationService.sendTurn({
 						sessionId: targetSessionId,
 						toolType: session.toolType,
 						cwd: session.cwd,
@@ -465,6 +493,12 @@ export const useAgentStore = create<AgentStore>()((set, get) => ({
 						sessionReasoningEffort: targetTab.reasoningEffort ?? 'default',
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
+					updateTabConversationState(
+						sessionId,
+						targetTab.id,
+						dispatchResult.runtimeKind,
+						dispatchResult.steerMode
+					);
 				} else {
 					// Unknown command - add error log and reset to idle
 					useSessionStore.getState().addLogToTab(sessionId, {

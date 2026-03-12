@@ -1,6 +1,7 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Loader2 } from 'lucide-react';
+import { GitBranch, Bot, Bookmark, AlertCircle, Loader2 } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
+import { ProviderModelIcon, getProviderBrandColor } from './shared/ProviderModelIcon';
 
 function getSidebarRowStyle(
 	theme: Theme,
@@ -35,6 +36,13 @@ function getSidebarPillStyle(theme: Theme, background: string, color: string): R
 	};
 }
 
+function getThreadTitleStyle(theme: Theme, isActive: boolean): React.CSSProperties {
+	return {
+		color: isActive ? theme.colors.textDim : theme.colors.textDim,
+		opacity: isActive ? 0.96 : 0.88,
+	};
+}
+
 // ============================================================================
 // SessionItem - Unified session item component for all list contexts
 // ============================================================================
@@ -53,6 +61,9 @@ export interface SessionItemProps {
 	session: Session;
 	variant: SessionItemVariant;
 	theme: Theme;
+	displayName?: string;
+	providerAgentId?: Session['toolType'];
+	workspaceEmoji?: string;
 
 	// State
 	isActive: boolean;
@@ -64,7 +75,6 @@ export interface SessionItemProps {
 	// Optional data
 	group?: Group; // The group this session belongs to (for bookmark variant to show group badge)
 	groupId?: string; // The group ID context for generating editing key
-	gitFileCount?: number;
 	isInBatch?: boolean;
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
 
@@ -97,6 +107,9 @@ export const SessionItem = memo(function SessionItem({
 	session,
 	variant,
 	theme,
+	displayName,
+	providerAgentId,
+	workspaceEmoji,
 	isActive,
 	isKeyboardSelected,
 	isDragging,
@@ -104,7 +117,6 @@ export const SessionItem = memo(function SessionItem({
 	leftSidebarOpen,
 	group,
 	groupId,
-	gitFileCount,
 	isInBatch = false,
 	jumpNumber,
 	onSelect,
@@ -118,10 +130,8 @@ export const SessionItem = memo(function SessionItem({
 }: SessionItemProps) {
 	const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
 	const isWorking = session.state === 'busy' || isInBatch;
-
-	// Determine if we show the GIT/LOCAL badge (not shown in bookmark variant, terminal sessions, or worktree variant)
-	const showGitLocalBadge =
-		variant !== 'bookmark' && variant !== 'worktree' && session.toolType !== 'terminal';
+	const resolvedDisplayName = displayName || session.name;
+	const resolvedProviderAgentId = providerAgentId || session.toolType;
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
@@ -156,7 +166,7 @@ export const SessionItem = memo(function SessionItem({
 						autoFocus
 						className="bg-transparent text-sm font-medium outline-none w-full border-b"
 						style={{ borderColor: theme.colors.accent }}
-						defaultValue={session.name}
+						defaultValue={resolvedDisplayName}
 						onClick={(e) => e.stopPropagation()}
 						onBlur={(e) => onFinishRename(e.target.value)}
 						onKeyDown={(e) => {
@@ -178,11 +188,25 @@ export const SessionItem = memo(function SessionItem({
 						{variant === 'worktree' && (
 							<GitBranch className="w-3 h-3 shrink-0" style={{ color: theme.colors.accent }} />
 						)}
+						{variant !== 'worktree' && (
+							<div className="shrink-0" title={resolvedProviderAgentId}>
+								<ProviderModelIcon
+									toolType={resolvedProviderAgentId}
+									color={getProviderBrandColor(resolvedProviderAgentId, theme.colors.textDim)}
+									size={14}
+								/>
+							</div>
+						)}
+						{workspaceEmoji && variant !== 'group' && variant !== 'worktree' && (
+							<span className="text-xs shrink-0" title="Workspace">
+								{workspaceEmoji}
+							</span>
+						)}
 						<span
 							className={`font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
-							style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
+							style={getThreadTitleStyle(theme, isActive)}
 						>
-							{session.name}
+							{resolvedDisplayName}
 						</span>
 					</div>
 				)}
@@ -190,7 +214,6 @@ export const SessionItem = memo(function SessionItem({
 				{/* Session metadata row (hidden for compact worktree variant) */}
 				{variant !== 'worktree' && (
 					<div className="flex items-center gap-2 text-[10px] mt-0.5 opacity-70">
-						{/* Session Jump Number Badge (Opt+Cmd+NUMBER) */}
 						{jumpNumber && (
 							<div
 								className="w-4 h-4 rounded flex items-center justify-center text-[10px] font-bold shrink-0"
@@ -202,8 +225,6 @@ export const SessionItem = memo(function SessionItem({
 								{jumpNumber}
 							</div>
 						)}
-						<Activity className="w-3 h-3" /> {session.toolType}
-						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 						{/* Group badge (only in bookmark variant when session belongs to a group) */}
 						{variant === 'bookmark' && group && (
 							<span
@@ -219,66 +240,6 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
-				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
-				{leftSidebarOpen && session.isGitRepo && gitFileCount !== undefined && gitFileCount > 0 && (
-					<div
-						className="flex items-center gap-0.5 text-[10px]"
-						style={{ color: theme.colors.warning }}
-					>
-						<GitBranch className="w-2.5 h-2.5" />
-						<span>{gitFileCount}</span>
-					</div>
-				)}
-
-				{/* Location Indicator Pills */}
-				{showGitLocalBadge &&
-					(session.isGitRepo ? (
-						/* Git repo: Show server icon pill (if remote) + GIT pill */
-						<>
-							{session.sessionSshRemoteConfig?.enabled && (
-								<div
-									className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center"
-									style={getSidebarPillStyle(
-										theme,
-										`${theme.colors.warning}30`,
-										theme.colors.warning
-									)}
-									title="Running on remote host via SSH"
-								>
-									<Server className="w-3 h-3" />
-								</div>
-							)}
-							<div
-								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-								style={getSidebarPillStyle(theme, `${theme.colors.accent}30`, theme.colors.accent)}
-								title="Git repository"
-							>
-								GIT
-							</div>
-						</>
-					) : (
-						/* Plain directory: Show REMOTE or LOCAL (not both) */
-						<div
-							className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-							style={getSidebarPillStyle(
-								theme,
-								session.sessionSshRemoteConfig?.enabled
-									? `${theme.colors.warning}30`
-									: `${theme.colors.textDim}20`,
-								session.sessionSshRemoteConfig?.enabled
-									? theme.colors.warning
-									: theme.colors.textDim
-							)}
-							title={
-								session.sessionSshRemoteConfig?.enabled
-									? 'Running on remote host via SSH'
-									: 'Local directory (not a git repo)'
-							}
-						>
-							{session.sessionSshRemoteConfig?.enabled ? 'REMOTE' : 'LOCAL'}
-						</div>
-					))}
-
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
 					<div

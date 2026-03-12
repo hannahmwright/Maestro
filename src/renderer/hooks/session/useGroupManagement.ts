@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { Session, Group } from '../../types';
+import { getModalActions } from '../../stores/modalStore';
 
 /**
  * State returned from useGroupManagement for modal management
@@ -75,6 +76,12 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 
 	// Modal state for create group dialog
 	const [createGroupModalOpen, setCreateGroupModalOpen] = useState(false);
+	const {
+		setRenameGroupModalOpen,
+		setRenameGroupId,
+		setRenameGroupValue,
+		setRenameGroupEmoji,
+	} = getModalActions();
 
 	/**
 	 * Toggle group collapse/expand state
@@ -93,9 +100,15 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 	 */
 	const startRenamingGroup = useCallback(
 		(groupId: string) => {
-			setEditingGroupId(groupId);
+			const group = _groups.find((entry) => entry.id === groupId);
+			if (!group) return;
+			setEditingGroupId(null);
+			setRenameGroupId(group.id);
+			setRenameGroupValue(group.name);
+			setRenameGroupEmoji(group.emoji);
+			setRenameGroupModalOpen(true);
 		},
-		[setEditingGroupId]
+		[_groups, setEditingGroupId, setRenameGroupEmoji, setRenameGroupId, setRenameGroupModalOpen, setRenameGroupValue]
 	);
 
 	/**
@@ -109,7 +122,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 				return;
 			}
 			setGroups((prev) =>
-				prev.map((g) => (g.id === groupId ? { ...g, name: trimmedName.toUpperCase() } : g))
+				prev.map((g) => (g.id === groupId ? { ...g, name: trimmedName } : g))
 			);
 			setEditingGroupId(null);
 		},

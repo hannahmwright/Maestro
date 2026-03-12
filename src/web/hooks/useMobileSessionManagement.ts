@@ -20,7 +20,7 @@
  *   isLoadingLogs,
  *   handleSelectSession,
  *   handleSelectTab,
- *   handleNewTab,
+ *   handleNewThread,
  *   handleCloseTab,
  *   sessionsHandlers,
  * } = useMobileSessionManagement({
@@ -87,6 +87,13 @@ export interface UseMobileSessionManagementDeps {
 	onCustomCommands?: (commands: CustomCommand[]) => void;
 	/** Callback when AutoRun state changes */
 	onAutoRunStateChange?: (sessionId: string, state: AutoRunState | null) => void;
+	/** Callback when a live session log entry is received over the websocket */
+	onLiveSessionLogEntry?: (
+		sessionId: string,
+		tabId: string | null,
+		inputMode: 'ai' | 'terminal',
+		logEntry: LogEntry
+	) => void;
 }
 
 /**
@@ -124,6 +131,7 @@ export interface MobileSessionHandlers {
 	onAutoRunStateChange: (sessionId: string, state: AutoRunState | null) => void;
 	onTabsChanged: (sessionId: string, aiTabs: AITabData[], newActiveTabId: string) => void;
 	onNewTabResult: (sessionId: string, success: boolean, tabId?: string) => void;
+	onNewThreadResult: (sessionId: string, success: boolean) => void;
 	onDeleteSessionResult: (sessionId: string, success: boolean) => void;
 	onSessionLogEntry: (
 		sessionId: string,
@@ -171,8 +179,8 @@ export interface UseMobileSessionManagementReturn {
 	handleSelectSessionTab: (sessionId: string, tabId: string | null) => void;
 	/** Handler to select a tab within the active session */
 	handleSelectTab: (tabId: string) => void;
-	/** Handler to create a new tab in the active session */
-	handleNewTab: () => void;
+	/** Handler to create a new thread in the active workspace */
+	handleNewThread: () => void;
 	/** Handler to delete a session/agent */
 	handleDeleteSession: (sessionId: string) => void;
 	/** Handler to close a tab in the active session */
@@ -190,7 +198,8 @@ export interface UseMobileSessionManagementReturn {
 		text: string,
 		inputMode: 'ai' | 'terminal',
 		images?: string[],
-		attachments?: WebAttachmentSummary[]
+		attachments?: WebAttachmentSummary[],
+		metadata?: Pick<LogEntry, 'interactionKind' | 'deliveryState' | 'delivered'>
 	) => void;
 	/** WebSocket handlers for session state updates */
 	sessionsHandlers: MobileSessionHandlers;
@@ -232,6 +241,7 @@ export function useMobileSessionManagement(
 		onThemeUpdate,
 		onCustomCommands,
 		onAutoRunStateChange,
+		onLiveSessionLogEntry,
 	} = deps;
 
 	// Get URL-based session/tab from config (takes precedence over localStorage)
@@ -696,48 +706,11 @@ export function useMobileSessionManagement(
 		[activeSessionId, sendRef, switchActiveTarget, triggerHaptic, hapticTapPattern]
 	);
 
-	// Handle creating a new tab
-	const handleNewTab = useCallback(() => {
+	// Handle creating a sibling thread that keeps the current workspace/provider/model context
+	const handleNewThread = useCallback(() => {
 		if (!activeSessionId) return;
 		triggerHaptic(hapticTapPattern);
-		const currentSession = sessionsRef.current.find((session) => session.id === activeSessionId);
-		const currentTabCount = currentSession?.aiTabs?.length || 0;
-		const optimisticTabId = `pending-tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-		pendingNewTabIdRef.current.set(activeSessionId, optimisticTabId);
-		pendingMinimumTabCountRef.current.set(activeSessionId, currentTabCount + 1);
-
-		activeTabIdRef.current = optimisticTabId;
-		setActiveTabId(optimisticTabId);
-		setSessionLogs({ aiLogs: [], shellLogs: [] });
-		setSessions((prev) =>
-			prev.map((session) => {
-				if (session.id !== activeSessionId) {
-					return session;
-				}
-
-				const optimisticTabs = [
-					...(session.aiTabs || []),
-					{
-						id: optimisticTabId,
-						agentSessionId: null,
-						name: null,
-						starred: false,
-						inputValue: '',
-						createdAt: Date.now(),
-						state: 'idle' as const,
-					},
-				];
-
-				return {
-					...session,
-					aiTabs: optimisticTabs,
-					activeTabId: optimisticTabId,
-				};
-			})
-		);
-
-		// Notify desktop to create a new tab
-		sendRef.current?.({ type: 'new_tab', sessionId: activeSessionId });
+		sendRef.current?.({ type: 'new_thread', sessionId: activeSessionId });
 	}, [activeSessionId, hapticTapPattern, sendRef, triggerHaptic]);
 
 	const handleDeleteSession = useCallback(
@@ -886,7 +859,8 @@ export function useMobileSessionManagement(
 			text: string,
 			inputMode: 'ai' | 'terminal',
 			images?: string[],
-			attachments?: WebAttachmentSummary[]
+			attachments?: WebAttachmentSummary[],
+			metadata?: Pick<LogEntry, 'interactionKind' | 'deliveryState' | 'delivered'>
 		) => {
 			const userLogEntry: LogEntry = {
 				id: `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -895,6 +869,7 @@ export function useMobileSessionManagement(
 				source: 'user',
 				images,
 				attachments,
+				...metadata,
 			};
 			setSessionLogs((prev) => {
 				const logKey = inputMode === 'ai' ? 'aiLogs' : 'shellLogs';
@@ -1420,6 +1395,14 @@ export function useMobileSessionManagement(
 					void fetchSessionLogs(sessionId, tabId);
 				}
 			},
+			onNewThreadResult: (sessionId: string, success: boolean) => {
+				if (success) {
+					return;
+				}
+
+				webLogger.warn(`New thread request failed for session ${sessionId}`, 'Mobile');
+				void refreshSessionsList(activeSessionIdRef.current || undefined, activeTabIdRef.current);
+			},
 			onDeleteSessionResult: (sessionId: string, success: boolean) => {
 				if (success) {
 					return;
@@ -1434,6 +1417,7 @@ export function useMobileSessionManagement(
 				inputMode: 'ai' | 'terminal',
 				logEntry: LogEntry
 			) => {
+				onLiveSessionLogEntry?.(sessionId, tabId, inputMode, logEntry);
 				upsertSessionLogEntry(sessionId, tabId, inputMode, logEntry);
 			},
 			onAssistantStream: (
@@ -1455,6 +1439,7 @@ export function useMobileSessionManagement(
 			onThemeUpdate,
 			onCustomCommands,
 			onAutoRunStateChange,
+			onLiveSessionLogEntry,
 			upsertSessionLogEntry,
 			applyAssistantStreamEvent,
 			fetchSessionLogs,
@@ -1482,7 +1467,7 @@ export function useMobileSessionManagement(
 		handleSelectSession,
 		handleSelectSessionTab,
 		handleSelectTab,
-		handleNewTab,
+		handleNewThread,
 		handleDeleteSession,
 		handleCloseTab,
 		handleRenameTab,

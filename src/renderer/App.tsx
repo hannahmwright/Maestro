@@ -184,6 +184,11 @@ import { useUIStore } from './stores/uiStore';
 import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 import type { UserInputRequest, UserInputResponse } from '../shared/user-input-requests';
+import {
+	reconcileThreadsWithSessions,
+	reconcileWorkspacesWithThreads,
+} from './utils/workspaceThreads';
+import { buildDefaultThreadName } from './utils/sessionValidation';
 
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
@@ -199,6 +204,10 @@ function MaestroConsoleInner() {
 		// New Instance Modal
 		newInstanceModalOpen,
 		duplicatingSessionId,
+		newInstanceMode,
+		newInstanceWorkspaceId,
+		newInstanceFixedWorkingDir,
+		newInstanceDefaultAgentId,
 		// Edit Agent Modal
 		setEditAgentModalOpen,
 		editAgentSession,
@@ -428,6 +437,7 @@ function MaestroConsoleInner() {
 	// Reactive values — each selector triggers re-render only when its specific value changes
 	const sessions = useSessionStore((s) => s.sessions);
 	const groups = useSessionStore((s) => s.groups);
+	const threads = useSessionStore((s) => s.threads);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// sessionsLoaded moved to useQueueProcessing hook
 	const activeSession = useSessionStore(selectActiveSession);
@@ -437,6 +447,7 @@ function MaestroConsoleInner() {
 	const {
 		setSessions,
 		setGroups,
+		setThreads,
 		setActiveSessionId: storeSetActiveSessionId,
 		setRemovedWorktreePaths,
 	} = useMemo(() => useSessionStore.getState(), []);
@@ -754,6 +765,22 @@ function MaestroConsoleInner() {
 
 	// --- SESSION RESTORATION (extracted hook, Phase 2E) ---
 	const { initialLoadComplete } = useSessionRestoration();
+
+	useEffect(() => {
+		if (!initialLoadComplete.current) return;
+		setThreads((prev) => {
+			const next = reconcileThreadsWithSessions(prev, useSessionStore.getState().sessions, activeSessionId);
+			return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+		});
+	}, [sessions, activeSessionId, initialLoadComplete, setThreads]);
+
+	useEffect(() => {
+		if (!initialLoadComplete.current) return;
+		setGroups((prev) => {
+			const next = reconcileWorkspacesWithThreads(prev, useSessionStore.getState().threads);
+			return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+		});
+	}, [threads, initialLoadComplete, setGroups]);
 
 	// --- TAB HANDLERS (extracted hook) ---
 	const {
@@ -1322,6 +1349,8 @@ function MaestroConsoleInner() {
 		inputRef,
 	});
 
+	const interruptCurrentTurnRef = useRef<((sessionId?: string) => Promise<void>) | null>(null);
+
 	// --- INPUT HANDLERS (state, completion, processing, keyboard, paste/drop) ---
 	const {
 		inputValue,
@@ -1330,6 +1359,7 @@ function MaestroConsoleInner() {
 		stagedImages,
 		setStagedImages,
 		processInput,
+		queueInput,
 		handleInputKeyDown,
 		handleMainPanelInputBlur,
 		handleReplayMessage,
@@ -1356,6 +1386,7 @@ function MaestroConsoleInner() {
 		allCustomCommands,
 		sessionsRef,
 		activeSessionIdRef,
+		interruptCurrentTurnRef,
 	});
 
 	const handleSubmitUserInputRequest = useCallback(
@@ -1607,6 +1638,7 @@ function MaestroConsoleInner() {
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
 	const { flushNow: flushSessionPersistence } = useDebouncedPersistence(
 		sessions,
+		threads,
 		initialLoadComplete
 	);
 
@@ -1624,19 +1656,6 @@ function MaestroConsoleInner() {
 		flushSessionPersistence,
 		setRemovedWorktreePaths,
 		pushNavigation,
-	});
-
-	// Remote integration hook - handles web interface communication
-	useRemoteIntegration({
-		activeSessionId,
-		isLiveMode,
-		sessionsRef,
-		activeSessionIdRef,
-		setSessions,
-		setActiveSessionId,
-		defaultSaveToHistory,
-		defaultShowThinking,
-		performDeleteSession,
 	});
 
 	// NOTE: Theme CSS variables and scrollbar fade animations are now handled by useThemeStyles hook
@@ -1710,6 +1729,7 @@ function MaestroConsoleInner() {
 		cancelPendingSynopsis,
 		processQueuedItem,
 	});
+	interruptCurrentTurnRef.current = handleInterrupt;
 
 	// --- FILE TREE MANAGEMENT ---
 	// Extracted hook for file tree operations (refresh, git state, filtering)
@@ -1782,6 +1802,43 @@ function MaestroConsoleInner() {
 		showConfirmation,
 		inputRef,
 		setCreateGroupModalOpen,
+	});
+
+	const handleNewThread = useCallback(() => {
+		if (!activeSession || activeSession.toolType === 'terminal') {
+			return;
+		}
+
+		const nextName = buildDefaultThreadName(activeSession.toolType, sessions);
+		void createNewSession(
+			activeSession.toolType,
+			activeSession.projectRoot || activeSession.cwd,
+			nextName,
+			activeSession.nudgeMessage,
+			activeSession.customPath,
+			activeSession.customArgs,
+			activeSession.customEnvVars,
+			activeSession.customModel,
+			activeSession.customContextWindow,
+			activeSession.customProviderPath,
+			activeSession.sessionSshRemoteConfig,
+			activeSession.workspaceId || activeSession.groupId
+		);
+	}, [activeSession, createNewSession, sessions]);
+
+	// Remote integration hook - handles web interface communication
+	useRemoteIntegration({
+		activeSessionId,
+		isLiveMode,
+		sessionsRef,
+		activeSessionIdRef,
+		setSessions,
+		setActiveSessionId,
+		defaultSaveToHistory,
+		defaultShowThinking,
+		performDeleteSession,
+		createNewSession,
+		interruptCurrentTurnRef,
 	});
 
 	// Group Modal Handlers (stable callbacks for AppGroupModals)
@@ -2219,6 +2276,7 @@ function MaestroConsoleInner() {
 		handleNewAgentSession,
 		toggleInputMode,
 		processInput,
+		queueInput,
 		handleInterrupt,
 		handleInputKeyDown,
 		handlePaste,
@@ -2234,6 +2292,7 @@ function MaestroConsoleInner() {
 		handleTabSelect,
 		handleTabClose,
 		handleNewTab,
+		handleNewThread,
 		handleRequestTabRename,
 		handleTabReorder,
 		handleUnifiedTabReorder,
@@ -2353,7 +2412,12 @@ function MaestroConsoleInner() {
 		createNewGroup,
 		handleCreateGroupAndMove,
 		addNewSession,
-		deleteSession,
+		createNewSession,
+		deleteSession: (id: string) => {
+			const sessionToDelete = sessions.find((session) => session.id === id);
+			if (!sessionToDelete) return;
+			void performDeleteSession(sessionToDelete, false);
+		},
 		deleteWorktreeGroup,
 		handleEditAgent,
 		handleOpenCreatePRSession,
@@ -2578,6 +2642,10 @@ function MaestroConsoleInner() {
 					onCreateSession={createNewSession}
 					existingSessions={sessionsForValidation}
 					duplicatingSessionId={duplicatingSessionId}
+					newInstanceMode={newInstanceMode}
+					newInstanceWorkspaceId={newInstanceWorkspaceId}
+					newInstanceFixedWorkingDir={newInstanceFixedWorkingDir}
+					newInstanceDefaultAgentId={newInstanceDefaultAgentId}
 					onCloseEditAgentModal={handleCloseEditAgentModal}
 					onSaveEditAgent={handleSaveEditAgent}
 					editAgentSession={editAgentSession}

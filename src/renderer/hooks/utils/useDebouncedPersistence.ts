@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import type { Session } from '../../types';
+import type { Session, Thread } from '../../types';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
@@ -154,6 +154,7 @@ export const DEFAULT_DEBOUNCE_DELAY = 2000;
  */
 export function useDebouncedPersistence(
 	sessions: Session[],
+	threads: Thread[],
 	initialLoadComplete: React.MutableRefObject<boolean>,
 	delay: number = DEFAULT_DEBOUNCE_DELAY
 ): UseDebouncedPersistenceReturn {
@@ -163,6 +164,8 @@ export function useDebouncedPersistence(
 	// Store the latest sessions in a ref for access in flush callbacks
 	const sessionsRef = useRef<Session[]>(sessions);
 	sessionsRef.current = sessions;
+	const threadsRef = useRef<Thread[]>(threads);
+	threadsRef.current = threads;
 
 	// Store the timer ID for cleanup
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -181,6 +184,7 @@ export function useDebouncedPersistence(
 		try {
 			const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
 			window.maestro.sessions.setAll(sessionsForPersistence);
+			window.maestro.threads.setAll(threadsRef.current);
 			setIsPending(false);
 		} finally {
 			flushingRef.current = false;
@@ -237,7 +241,7 @@ export function useDebouncedPersistence(
 				clearTimeout(timerRef.current);
 			}
 		};
-	}, [sessions, delay, initialLoadComplete, persistSessions]);
+	}, [sessions, threads, delay, initialLoadComplete, persistSessions]);
 
 	// Flush on unmount to prevent data loss
 	useEffect(() => {
@@ -252,6 +256,7 @@ export function useDebouncedPersistence(
 			if (initialLoadComplete.current) {
 				const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
 				window.maestro.sessions.setAll(sessionsForPersistence);
+				window.maestro.threads.setAll(threadsRef.current);
 			}
 		};
 	}, []);
@@ -278,6 +283,7 @@ export function useDebouncedPersistence(
 				// Synchronous flush for beforeunload
 				const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
 				window.maestro.sessions.setAll(sessionsForPersistence);
+				window.maestro.threads.setAll(threadsRef.current);
 			}
 		};
 

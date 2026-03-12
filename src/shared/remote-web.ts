@@ -1,4 +1,8 @@
 import type { DemoCard, DemoCaptureRequest } from './demo-artifacts';
+import type {
+	ConversationDeliveryState,
+	ConversationInteractionKind,
+} from './conversation';
 
 export const WEB_APP_BASE_PATH = '/app';
 export const WEB_APP_API_BASE_PATH = `${WEB_APP_BASE_PATH}/api`;
@@ -75,6 +79,9 @@ export interface WebRemoteLogEntry {
 		toolState?: WebRemoteToolState;
 		demoCard?: DemoCard;
 	};
+	interactionKind?: ConversationInteractionKind;
+	deliveryState?: ConversationDeliveryState;
+	delivered?: boolean;
 }
 
 export interface WebDemoCaptureRequest extends DemoCaptureRequest {}

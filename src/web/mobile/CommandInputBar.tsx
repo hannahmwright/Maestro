@@ -79,6 +79,8 @@ const MOBILE_COMPOSER_SAFE_ZONE_ATTR = 'data-mobile-composer-safe-zone';
 
 const TEXT_ATTACHMENT_MAX_BYTES = 180 * 1024;
 
+const MOBILE_PORTAL_ROOT_ID = 'maestro-mobile-portal-root';
+
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
 	'txt',
 	'md',
@@ -124,6 +126,26 @@ function createAttachmentId(): string {
 		return crypto.randomUUID();
 	}
 	return `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getMobilePortalRoot(): HTMLElement | null {
+	if (typeof document === 'undefined') {
+		return null;
+	}
+
+	const existingRoot = document.getElementById(MOBILE_PORTAL_ROOT_ID);
+	if (existingRoot) {
+		return existingRoot;
+	}
+
+	const root = document.createElement('div');
+	root.id = MOBILE_PORTAL_ROOT_ID;
+	root.style.position = 'fixed';
+	root.style.inset = '0';
+	root.style.pointerEvents = 'none';
+	root.style.zIndex = '220';
+	document.body.appendChild(root);
+	return root;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -213,7 +235,7 @@ export interface CommandInputBarProps {
 	/** Placeholder text for the input */
 	placeholder?: string;
 	/** Callback when command is submitted */
-	onSubmit?: (command: string) => void;
+	onSubmit?: (command: string, options?: { disposition?: 'default' | 'queue' }) => void;
 	/** Callback when input value changes */
 	onChange?: (value: string) => void;
 	/** Current input value (controlled) */
@@ -226,6 +248,8 @@ export interface CommandInputBarProps {
 	isSessionBusy?: boolean;
 	/** Callback when interrupt button is pressed */
 	onInterrupt?: () => void;
+	/** Label for the busy-state primary action */
+	busyPrimaryLabel?: string;
 	/** Callback when history drawer should open (swipe up) */
 	onHistoryOpen?: () => void;
 	/** Recent unique commands for quick-tap chips */
@@ -267,9 +291,9 @@ export interface CommandInputBarProps {
 	onRemoveImage?: (index: number) => void;
 	/** Remove a staged text attachment by id */
 	onRemoveTextAttachment?: (attachmentId: string) => void;
-	/** Whether demo capture is enabled for the next send */
+	/** Whether demo capture is required for the active target */
 	demoCaptureEnabled?: boolean;
-	/** Toggle next-send demo capture */
+	/** Toggle required demo capture for the active target */
 	onToggleDemoCapture?: () => void;
 }
 
@@ -290,6 +314,7 @@ export function CommandInputBar({
 	inputMode = 'ai',
 	isSessionBusy = false,
 	onInterrupt,
+	busyPrimaryLabel = 'Steer',
 	onHistoryOpen,
 	recentCommands,
 	onSelectRecentCommand,
@@ -321,7 +346,8 @@ export function CommandInputBar({
 	const lastComposerInteractionAtRef = useRef(0);
 	const modelMenuRef = useRef<HTMLDivElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const actionsMenuRef = useRef<HTMLDivElement>(null);
+	const actionsMenuAnchorRef = useRef<HTMLDivElement>(null);
+	const actionsMenuPanelRef = useRef<HTMLDivElement>(null);
 	const setTextareaElementRef = useCallback((node: HTMLTextAreaElement | null) => {
 		textareaRef.current = node;
 	}, []);
@@ -353,10 +379,16 @@ export function CommandInputBar({
 	const [attachmentError, setAttachmentError] = useState<string | null>(null);
 	const [stagedPreviewIndex, setStagedPreviewIndex] = useState<number | null>(null);
 	const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+	const [actionsMenuAnchorRect, setActionsMenuAnchorRect] = useState<DOMRect | null>(null);
+	const [mobilePortalRoot, setMobilePortalRoot] = useState<HTMLElement | null>(null);
 
 	// Internal state for uncontrolled mode
 	const [internalValue, setInternalValue] = useState('');
 	const value = controlledValue !== undefined ? controlledValue : internalValue;
+
+	useEffect(() => {
+		setMobilePortalRoot(getMobilePortalRoot());
+	}, []);
 
 	// Determine if input should be disabled (must be before hooks that use it)
 	// In AI mode: NEVER disable the input - user can always prep next message
@@ -432,11 +464,12 @@ export function CommandInputBar({
 
 	// Separate flag for whether send is blocked (AI thinking)
 	// When true, shows X button instead of send button
-	const isSendBlocked = inputMode === 'ai' && isSessionBusy;
 	const smartTypingEnabled = inputMode === 'ai';
 	const trimmedValue = value.trim();
 	const hasStagedAttachments = stagedImages.length > 0 || stagedTextAttachments.length > 0;
 	const hasDraft = trimmedValue.length > 0 || hasStagedAttachments;
+	const showBusyControls = inputMode === 'ai' && isSessionBusy;
+	const isSendBlocked = inputMode === 'ai' && isSessionBusy && !hasDraft;
 	const hasActiveVoiceControls =
 		inputMode === 'ai' &&
 		(voiceState === 'recording' || voiceState === 'requesting' || voiceState === 'transcribing');
@@ -468,7 +501,9 @@ export function CommandInputBar({
 		if (voiceState === 'recording') return 'Listening... stop to review or send now';
 		if (voiceState === 'transcribing') return 'Transcribing voice note...';
 		// In AI mode when busy, show helpful hint that user can still type
-		if (inputMode === 'ai' && isSessionBusy) return 'AI thinking... (type your next message)';
+		if (inputMode === 'ai' && isSessionBusy) {
+			return 'AI thinking... type to steer or queue next';
+		}
 		return placeholder || 'Message agent...';
 	};
 
@@ -540,6 +575,10 @@ export function CommandInputBar({
 		lastComposerInteractionAtRef.current = Date.now();
 	}, []);
 
+	const updateActionsMenuAnchorRect = useCallback(() => {
+		setActionsMenuAnchorRect(actionsMenuAnchorRef.current?.getBoundingClientRect() ?? null);
+	}, []);
+
 	const shouldKeepExpandedComposerOpen = useCallback((relatedTarget?: EventTarget | null) => {
 		const container = containerRef.current;
 		if (!container) {
@@ -569,25 +608,67 @@ export function CommandInputBar({
 	/**
 	 * Handle form submission
 	 */
-	const handleSubmit = useCallback(
-		(e: React.FormEvent) => {
-			e.preventDefault();
+	const submitDraft = useCallback(
+		(
+			disposition: 'default' | 'queue',
+			options?: {
+				collapseAiComposer?: boolean;
+				keepFocus?: boolean;
+				keepComposerOpen?: boolean;
+			}
+		) => {
 			if ((!value.trim() && !hasStagedAttachments) || isDisabled) return;
 
-			// Trigger haptic feedback on successful send
 			triggerHaptic(25);
+			if (disposition === 'queue') {
+				onSubmit?.(value.trim(), { disposition: 'queue' });
+			} else {
+				onSubmit?.(value.trim());
+			}
 
-			onSubmit?.(value.trim());
-
-			// Clear input after submit (for uncontrolled mode)
 			if (controlledValue === undefined) {
 				setInternalValue('');
 			}
 
-			// Keep focus on textarea after submit without bouncing the viewport
-			focusTextarea(true);
+			onChange?.('');
+			if (!options?.keepComposerOpen) {
+				setIsInputFocused(false);
+			}
+
+			if (options?.collapseAiComposer && isMobilePhone && inputMode === 'ai') {
+				setIsExpanded(false);
+			}
+
+			if (options?.keepFocus) {
+				setIsInputFocused(true);
+				focusTextarea(true);
+			}
 		},
-		[value, isDisabled, onSubmit, controlledValue, focusTextarea, hasStagedAttachments]
+		[
+			value,
+			hasStagedAttachments,
+			isDisabled,
+			onSubmit,
+			controlledValue,
+			onChange,
+			isMobilePhone,
+			inputMode,
+			focusTextarea,
+		]
+	);
+
+	const handleSubmit = useCallback(
+		(e: React.FormEvent) => {
+			e.preventDefault();
+			if (showBusyControls) {
+				return;
+			}
+			submitDraft('default', {
+				keepComposerOpen: inputMode === 'ai',
+				keepFocus: inputMode === 'ai',
+			});
+		},
+		[inputMode, showBusyControls, submitDraft]
 	);
 
 	/**
@@ -598,6 +679,10 @@ export function CommandInputBar({
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
 			if (e.key === 'Enter' && !e.shiftKey) {
+				if (inputMode === 'ai' && isSessionBusy) {
+					e.preventDefault();
+					return;
+				}
 				if (inputMode === 'ai' && isExpanded) {
 					return;
 				}
@@ -605,7 +690,7 @@ export function CommandInputBar({
 				handleSubmit(e);
 			}
 		},
-		[handleSubmit, inputMode, isExpanded]
+		[handleSubmit, inputMode, isExpanded, isSessionBusy]
 	);
 
 	/**
@@ -614,6 +699,20 @@ export function CommandInputBar({
 	const handleInterrupt = useCallback(() => {
 		onInterrupt?.();
 	}, [onInterrupt]);
+
+	const handleQueueNext = useCallback(() => {
+		submitDraft('queue', {
+			keepComposerOpen: true,
+			keepFocus: true,
+		});
+	}, [submitDraft]);
+
+	const handleSteer = useCallback(() => {
+		submitDraft('default', {
+			keepComposerOpen: true,
+			keepFocus: true,
+		});
+	}, [submitDraft]);
 
 	/**
 	 * Handle click outside to collapse expanded input on mobile
@@ -746,40 +845,13 @@ export function CommandInputBar({
 	const handleMobileSubmit = useCallback(
 		(e: React.FormEvent) => {
 			e.preventDefault();
-			if ((!value.trim() && !hasStagedAttachments) || isDisabled || isSendBlocked) return;
-
-			// Trigger haptic feedback on successful send
-			triggerHaptic(25);
-
-			onSubmit?.(value.trim());
-
-			// Clear input after submit (for uncontrolled mode)
-			if (controlledValue === undefined) {
-				setInternalValue('');
-			}
-			setIsInputFocused(false);
-
-			// Collapse on mobile after submit
-			if (isMobilePhone && inputMode === 'ai') {
-				setIsExpanded(false);
-			}
-
-			// Keep focus on textarea after submit (unless mobile where we collapse)
-			if (!isMobilePhone) {
-				focusTextarea(true);
-			}
+			if (isSendBlocked || showBusyControls) return;
+			submitDraft('default', {
+				keepComposerOpen: inputMode === 'ai',
+				keepFocus: inputMode === 'ai' || !isMobilePhone,
+			});
 		},
-		[
-			value,
-			isDisabled,
-			isSendBlocked,
-			onSubmit,
-			controlledValue,
-			isMobilePhone,
-			inputMode,
-			focusTextarea,
-			hasStagedAttachments,
-		]
+		[inputMode, isMobilePhone, isSendBlocked, showBusyControls, submitDraft]
 	);
 
 	// Calculate textarea height for mobile expanded mode
@@ -788,9 +860,15 @@ export function CommandInputBar({
 			? `${MOBILE_EXPANDED_HEIGHT_VH}vh`
 			: undefined;
 	const showInlineVoiceAction =
-		inputMode === 'ai' && !hasActiveVoiceControls && !isSendBlocked && !hasDraft && voiceSupported;
+		inputMode === 'ai' &&
+		!showBusyControls &&
+		!hasActiveVoiceControls &&
+		!isSendBlocked &&
+		!hasDraft &&
+		voiceSupported;
 	const showInlineSendAction =
 		inputMode === 'ai' &&
+		!showBusyControls &&
 		!hasActiveVoiceControls &&
 		(hasDraft || (isSendBlocked && isInputFocused));
 	const showVoiceReviewAction =
@@ -801,6 +879,108 @@ export function CommandInputBar({
 		supportsModelSelection &&
 		(isActivelyComposing || modelMenuOpen) &&
 		!showVoiceReviewAction;
+	const busyActionRow =
+		showBusyControls ? (
+			<div
+				style={{
+					display: 'flex',
+					gap: '8px',
+					width: '100%',
+					alignItems: 'stretch',
+				}}
+			>
+				<button
+					type="button"
+					onClick={handleInterrupt}
+					style={{
+						flex: hasDraft ? '0 0 auto' : 1,
+						padding: '10px 12px',
+						borderRadius: '14px',
+						border: 'none',
+						background: 'linear-gradient(180deg, #f87171 0%, #ef4444 100%)',
+						color: '#ffffff',
+						fontSize: '13px',
+						fontWeight: 700,
+						boxShadow: '0 8px 18px rgba(15, 23, 42, 0.14)',
+					}}
+				>
+					Stop
+				</button>
+				{hasDraft ? (
+					<>
+						<button
+							type="button"
+							onClick={handleSteer}
+							style={{
+								flex: 1,
+								padding: '10px 12px',
+								borderRadius: '14px',
+								border: 'none',
+								background: `linear-gradient(180deg, ${colors.accent} 0%, ${colors.accent}dd 100%)`,
+								color: '#ffffff',
+								fontSize: '13px',
+								fontWeight: 700,
+								boxShadow: '0 8px 18px rgba(15, 23, 42, 0.14)',
+							}}
+						>
+							{busyPrimaryLabel}
+						</button>
+						<button
+							type="button"
+							onClick={handleQueueNext}
+							style={{
+								padding: '10px 12px',
+								borderRadius: '14px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: `${colors.bgMain}cc`,
+								color: colors.textMain,
+								fontSize: '13px',
+								fontWeight: 700,
+								boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
+							}}
+						>
+							Queue Next
+						</button>
+					</>
+				) : (
+					<div
+						style={{
+							flex: 1,
+							display: 'flex',
+							alignItems: 'center',
+							padding: '0 4px',
+							color: colors.textDim,
+							fontSize: '12px',
+							fontWeight: 600,
+						}}
+					>
+						Type your next message to steer or queue it.
+					</div>
+				)}
+			</div>
+		) : null;
+	const demoCaptureNotice =
+		inputMode === 'ai' && demoCaptureEnabled ? (
+			<div
+				style={{
+					display: 'inline-flex',
+					alignItems: 'center',
+					gap: '8px',
+					alignSelf: 'flex-start',
+					padding: '8px 12px',
+					borderRadius: '999px',
+					border: `1px solid ${colors.accent}44`,
+					background: `linear-gradient(180deg, ${colors.accent}16 0%, rgba(255, 255, 255, 0.08) 100%)`,
+					color: colors.accent,
+					fontSize: '12px',
+					fontWeight: 700,
+					boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
+				}}
+			>
+				<FileText size={14} />
+				<span>Demo/screenshots required</span>
+			</div>
+		) : null;
 
 	useEffect(() => {
 		if (!attachmentError) {
@@ -838,8 +1018,14 @@ export function CommandInputBar({
 		if (!hasComposerActions || isDisabled) {
 			return;
 		}
-		setActionsMenuOpen((prev) => !prev);
-	}, [hasComposerActions, isDisabled]);
+		setActionsMenuOpen((prev) => {
+			const nextOpen = !prev;
+			if (nextOpen) {
+				updateActionsMenuAnchorRect();
+			}
+			return nextOpen;
+		});
+	}, [hasComposerActions, isDisabled, updateActionsMenuAnchorRect]);
 
 	useEffect(() => {
 		if (!actionsMenuOpen) {
@@ -848,7 +1034,11 @@ export function CommandInputBar({
 
 		const handlePointerDown = (event: MouseEvent | TouchEvent) => {
 			const target = event.target as Node | null;
-			if (!target || actionsMenuRef.current?.contains(target)) {
+			if (
+				!target ||
+				actionsMenuAnchorRef.current?.contains(target) ||
+				actionsMenuPanelRef.current?.contains(target)
+			) {
 				return;
 			}
 			setActionsMenuOpen(false);
@@ -861,6 +1051,30 @@ export function CommandInputBar({
 			document.removeEventListener('touchstart', handlePointerDown);
 		};
 	}, [actionsMenuOpen]);
+
+	useEffect(() => {
+		if (!actionsMenuOpen) {
+			return;
+		}
+
+		const handleLayoutChange = () => {
+			updateActionsMenuAnchorRect();
+		};
+
+		window.addEventListener('resize', handleLayoutChange);
+		window.addEventListener('scroll', handleLayoutChange, true);
+		window.visualViewport?.addEventListener('resize', handleLayoutChange);
+		window.visualViewport?.addEventListener('scroll', handleLayoutChange);
+
+		handleLayoutChange();
+
+		return () => {
+			window.removeEventListener('resize', handleLayoutChange);
+			window.removeEventListener('scroll', handleLayoutChange, true);
+			window.visualViewport?.removeEventListener('resize', handleLayoutChange);
+			window.visualViewport?.removeEventListener('scroll', handleLayoutChange);
+		};
+	}, [actionsMenuOpen, updateActionsMenuAnchorRect]);
 
 	const processAttachmentFiles = useCallback(
 		async (files: File[]) => {
@@ -973,7 +1187,7 @@ export function CommandInputBar({
 						height: '56px',
 						borderRadius: '16px',
 						flexShrink: 0,
-						overflow: 'hidden',
+						overflow: 'visible',
 						border: `1px solid ${colors.border}`,
 						boxShadow: '0 10px 18px rgba(15, 23, 42, 0.10)',
 						cursor: 'zoom-in',
@@ -1124,78 +1338,88 @@ export function CommandInputBar({
 		</div>
 	);
 
-	const actionsMenu = actionsMenuOpen && (
-		<div
-			{...{ [MOBILE_COMPOSER_SAFE_ZONE_ATTR]: 'true' }}
-			style={{
-				position: 'absolute',
-				bottom: 'calc(100% + 10px)',
-				left: 0,
-				minWidth: '196px',
-				padding: '8px',
-				borderRadius: '20px',
-				border: `1px solid ${colors.border}`,
-				background: `linear-gradient(180deg, ${colors.bgSidebar}fb 0%, ${colors.bgMain}f6 100%)`,
-				boxShadow: '0 18px 32px rgba(15, 23, 42, 0.18)',
-				backdropFilter: 'blur(20px)',
-				WebkitBackdropFilter: 'blur(20px)',
-				zIndex: 20,
-			}}
-		>
-			{canStageAttachments && (
-				<button
-					type="button"
-					onClick={() => {
-						setActionsMenuOpen(false);
-						handleAttachmentPickerOpen();
-					}}
-					style={{
-						width: '100%',
-						display: 'flex',
-						alignItems: 'center',
-						gap: '10px',
-						padding: '11px 12px',
-						border: 'none',
-						borderRadius: '14px',
-						background: 'transparent',
-						color: colors.textMain,
-						cursor: 'pointer',
-						textAlign: 'left',
-					}}
-				>
-					<Paperclip size={15} />
-					<span style={{ fontSize: '13px', fontWeight: 600 }}>Attach photos or files</span>
-				</button>
-			)}
-			{inputMode === 'ai' && onToggleDemoCapture && (
-				<button
-					type="button"
-					onClick={() => {
-						setActionsMenuOpen(false);
-						onToggleDemoCapture();
-					}}
-					style={{
-						width: '100%',
-						display: 'flex',
-						alignItems: 'center',
-						gap: '10px',
-						padding: '11px 12px',
-						border: 'none',
-						borderRadius: '14px',
-						background: demoCaptureEnabled ? `${colors.accent}14` : 'transparent',
-						color: demoCaptureEnabled ? colors.accent : colors.textMain,
-						cursor: 'pointer',
-						textAlign: 'left',
-					}}
-				>
-					<FileText size={15} />
-					<span style={{ fontSize: '13px', fontWeight: 600 }}>
-						{demoCaptureEnabled ? 'Demo requested for next run' : 'Request demo/screenshots'}
-					</span>
-				</button>
-			)}
-		</div>
-	);
+	const actionsMenu =
+		actionsMenuOpen && actionsMenuAnchorRect && mobilePortalRoot
+			? createPortal(
+					<div
+						ref={actionsMenuPanelRef}
+						{...{ [MOBILE_COMPOSER_SAFE_ZONE_ATTR]: 'true' }}
+						style={{
+							position: 'fixed',
+							left: `${Math.max(
+								12,
+								Math.min(actionsMenuAnchorRect.left, window.innerWidth - 232)
+							)}px`,
+							bottom: `${Math.max(84, window.innerHeight - actionsMenuAnchorRect.top + 10)}px`,
+							minWidth: '196px',
+							maxWidth: 'min(240px, calc(100vw - 24px))',
+							padding: '8px',
+							borderRadius: '20px',
+							border: `1px solid ${colors.border}`,
+							background: `linear-gradient(180deg, ${colors.bgSidebar}fb 0%, ${colors.bgMain}f6 100%)`,
+							boxShadow: '0 18px 32px rgba(15, 23, 42, 0.18)',
+							backdropFilter: 'blur(20px)',
+							WebkitBackdropFilter: 'blur(20px)',
+							zIndex: 1,
+							pointerEvents: 'auto',
+						}}
+					>
+						{canStageAttachments && (
+							<button
+								type="button"
+								onClick={() => {
+									setActionsMenuOpen(false);
+									handleAttachmentPickerOpen();
+								}}
+								style={{
+									width: '100%',
+									display: 'flex',
+									alignItems: 'center',
+									gap: '10px',
+									padding: '11px 12px',
+									border: 'none',
+									borderRadius: '14px',
+									background: 'transparent',
+									color: colors.textMain,
+									cursor: 'pointer',
+									textAlign: 'left',
+								}}
+							>
+								<Paperclip size={15} />
+								<span style={{ fontSize: '13px', fontWeight: 600 }}>Attach photos or files</span>
+							</button>
+						)}
+						{inputMode === 'ai' && onToggleDemoCapture && (
+							<button
+								type="button"
+								onClick={() => {
+									setActionsMenuOpen(false);
+									onToggleDemoCapture();
+								}}
+								style={{
+									width: '100%',
+									display: 'flex',
+									alignItems: 'center',
+									gap: '10px',
+									padding: '11px 12px',
+									border: 'none',
+									borderRadius: '14px',
+									background: demoCaptureEnabled ? `${colors.accent}14` : 'transparent',
+									color: demoCaptureEnabled ? colors.accent : colors.textMain,
+									cursor: 'pointer',
+									textAlign: 'left',
+								}}
+							>
+								<FileText size={15} />
+								<span style={{ fontSize: '13px', fontWeight: 600 }}>
+									{demoCaptureEnabled ? 'Demo/screenshots required' : 'Require demo/screenshots'}
+								</span>
+							</button>
+						)}
+					</div>,
+					mobilePortalRoot
+				)
+			: null;
 
 	const closeStagedPreview = useCallback(() => {
 		setStagedPreviewIndex(null);
@@ -1235,13 +1459,14 @@ export function CommandInputBar({
 	const stagedPreviewOverlay =
 		stagedPreviewIndex !== null &&
 		stagedImages[stagedPreviewIndex] &&
-		typeof document !== 'undefined'
+		mobilePortalRoot
 			? createPortal(
 					<div
 						style={{
 							position: 'fixed',
 							inset: 0,
-							zIndex: 220,
+							zIndex: 2,
+							pointerEvents: 'auto',
 							background: 'rgba(2, 6, 23, 0.88)',
 							display: 'flex',
 							alignItems: 'center',
@@ -1366,7 +1591,7 @@ export function CommandInputBar({
 							</button>
 						</div>
 					</div>,
-					document.body
+					mobilePortalRoot
 				)
 			: null;
 
@@ -1677,9 +1902,14 @@ export function CommandInputBar({
 							{attachmentError}
 						</div>
 					)}
+					{demoCaptureNotice}
+					{busyActionRow}
 
 					{hasComposerActions && (
-						<div style={{ position: 'relative', alignSelf: 'flex-start' }} ref={actionsMenuRef}>
+						<div
+							style={{ position: 'relative', alignSelf: 'flex-start' }}
+							ref={actionsMenuAnchorRef}
+						>
 							<button
 								type="button"
 								onClick={handleComposerActionsToggle}
@@ -1776,11 +2006,13 @@ export function CommandInputBar({
 					</div>
 
 					{/* Full-width send button below textarea */}
-					<ExpandedModeSendInterruptButton
-						isInterruptMode={inputMode === 'ai' && isSessionBusy}
-						isSendDisabled={isDisabled || !hasDraft}
-						onInterrupt={handleInterrupt}
-					/>
+					{!showBusyControls && (
+						<ExpandedModeSendInterruptButton
+							isInterruptMode={false}
+							isSendDisabled={isDisabled || !hasDraft}
+							onInterrupt={handleInterrupt}
+						/>
+					)}
 				</form>
 			) : (
 				/* NORMAL MODE - Original layout with side buttons */
@@ -1795,7 +2027,7 @@ export function CommandInputBar({
 						padding: isIdleCompactAiComposer ? '7px 10px 9px' : '8px 10px 10px',
 						// Ensure form doesn't overflow screen width
 						maxWidth: '100%',
-						overflow: 'hidden',
+						overflow: 'visible',
 						margin: '0 12px',
 						borderRadius: isIdleCompactAiComposer ? '26px' : '22px',
 						background:
@@ -1819,6 +2051,8 @@ export function CommandInputBar({
 							{attachmentError}
 						</div>
 					)}
+					{demoCaptureNotice}
+					{busyActionRow}
 
 					{voiceStatusText && (
 						<div
@@ -1863,11 +2097,14 @@ export function CommandInputBar({
 							gap: '8px',
 							alignItems: 'center',
 							maxWidth: '100%',
-							overflow: 'hidden',
+							overflow: 'visible',
 						}}
 					>
 						{hasComposerActions && (
-							<div style={{ position: 'relative', flexShrink: 0 }} ref={actionsMenuRef}>
+							<div
+								style={{ position: 'relative', flexShrink: 0 }}
+								ref={actionsMenuAnchorRef}
+							>
 								<button
 									type="button"
 									onClick={handleComposerActionsToggle}

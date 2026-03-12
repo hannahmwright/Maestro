@@ -387,6 +387,10 @@ export class ChildProcessSpawner {
 				sshRemoteHost: config.sshRemoteHost,
 				currentModel: config.resolvedModel,
 				taskContract: config.taskContract,
+				demoCaptureEnabled: config.demoCapture?.enabled === true,
+				demoCaptureFinalized: false,
+				demoCaptureArtifactSeen: false,
+				demoCaptureFailed: false,
 			};
 
 			this.processes.set(sessionId, managedProcess);

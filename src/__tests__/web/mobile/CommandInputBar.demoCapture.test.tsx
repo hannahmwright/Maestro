@@ -92,7 +92,7 @@ describe('CommandInputBar demo capture action', () => {
 		renderBar({ onToggleDemoCapture });
 
 		fireEvent.click(screen.getByRole('button', { name: /actions/i }));
-		fireEvent.click(screen.getByRole('button', { name: /request demo\/screenshots/i }));
+		fireEvent.click(screen.getByRole('button', { name: /require demo\/screenshots/i }));
 
 		expect(onToggleDemoCapture).toHaveBeenCalledTimes(1);
 	});
@@ -102,6 +102,6 @@ describe('CommandInputBar demo capture action', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: /actions/i }));
 
-		expect(screen.getByText('Demo requested for next run')).toBeInTheDocument();
+		expect(screen.getByText('Demo/screenshots required')).toBeInTheDocument();
 	});
 });

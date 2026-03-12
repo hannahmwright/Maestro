@@ -12,6 +12,7 @@ import type {
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
+	ThreadsData,
 	ConductorsData,
 	AgentConfigsData,
 	WindowState,
@@ -57,6 +58,11 @@ export function getSessionsStore(): Store<SessionsData> {
 export function getGroupsStore(): Store<GroupsData> {
 	ensureInitialized();
 	return getStoreInstances().groupsStore!;
+}
+
+export function getThreadsStore(): Store<ThreadsData> {
+	ensureInitialized();
+	return getStoreInstances().threadsStore!;
 }
 
 export function getConductorsStore(): Store<ConductorsData> {

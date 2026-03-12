@@ -1,569 +1,320 @@
 /**
- * TabBar component for web interface
+ * Mobile thread navigation strip for the web interface.
  *
- * Displays Claude Code session tabs within a Maestro session.
- * Styled like browser tabs (Safari/Chrome) where active tab connects to content.
- * Long-press on a tab shows a popover with rename, star, and move actions.
+ * This replaces the legacy multi-tab UI with compact turn markers plus
+ * quick actions for model switching and starting a new thread.
  */
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { AgentModelCatalogGroup } from '../../shared/agent-model-catalog';
 import { useThemeColors } from '../components/ThemeProvider';
-import { useLongPress } from '../hooks/useLongPress';
-import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
-import type { AITabData } from '../hooks/useWebSocket';
+import { ModelSelectorButton } from './CommandInputButtons';
+
+interface TurnMarker {
+	key: string;
+	label: string;
+	timestamp: number;
+}
 
 interface TabBarProps {
-	tabs: AITabData[];
-	activeTabId: string;
-	onSelectTab: (tabId: string) => void;
-	onNewTab: () => void;
-	onCloseTab: (tabId: string) => void;
-	onRenameTab?: (tabId: string, newName: string) => void;
-	onStarTab?: (tabId: string, starred: boolean) => void;
-	onReorderTab?: (fromIndex: number, toIndex: number) => void;
+	sessionKey?: string | null;
+	onNewThread: () => void;
+	supportsModelSelection?: boolean;
+	modelLabel?: string;
+	modelToolType?: string | null;
+	loadModels?: (forceRefresh?: boolean) => Promise<string[]>;
+	onSelectModel?: (model: string | null) => Promise<void> | void;
+	canChooseProviderModels?: boolean;
+	loadProviderModels?: (forceRefresh?: boolean) => Promise<AgentModelCatalogGroup[]>;
+	onSelectProviderModel?: (provider: string, model: string | null) => Promise<void> | void;
+	contextUsagePercentage?: number | null;
+	contextUsageColor?: string;
 }
 
-interface TabProps {
-	tab: AITabData;
-	tabIndex: number;
-	isActive: boolean;
-	canClose: boolean;
-	colors: ReturnType<typeof useThemeColors>;
-	onSelect: () => void;
-	onClose: () => void;
-	onLongPress: (tab: AITabData, tabIndex: number, rect: DOMRect) => void;
-}
-
-function Tab({
-	tab,
-	tabIndex,
-	isActive,
-	canClose,
-	colors,
-	onSelect,
-	onClose,
-	onLongPress,
-}: TabProps) {
-	const [isHovered, setIsHovered] = useState(false);
-	const [isCloseHovered, setIsCloseHovered] = useState(false);
-
-	const handleLongPress = useCallback(
-		(rect: DOMRect) => onLongPress(tab, tabIndex, rect),
-		[tab, tabIndex, onLongPress]
-	);
-
-	const { elementRef, handlers, handleClick, handleContextMenu } = useLongPress({
-		onLongPress: handleLongPress,
-		onTap: onSelect,
-	});
-
-	const displayName =
-		tab.name || (tab.agentSessionId ? tab.agentSessionId.split('-')[0].toUpperCase() : 'New');
-
-	return (
-		<div
-			style={{
-				display: 'flex',
-				alignItems: 'center',
-				position: 'relative',
-				flexShrink: 0,
-			}}
-		>
-			<button
-				ref={elementRef as React.RefObject<HTMLButtonElement>}
-				{...handlers}
-				onClick={handleClick}
-				onContextMenu={handleContextMenu}
-				onMouseEnter={() => setIsHovered(true)}
-				onMouseLeave={() => setIsHovered(false)}
-				style={{
-					display: 'flex',
-					alignItems: 'center',
-					gap: '7px',
-					padding: '8px 12px',
-					paddingRight: canClose && isActive ? '30px' : '12px',
-					borderRadius: '16px',
-					border: isActive ? `1px solid ${colors.accent}40` : '1px solid rgba(255, 255, 255, 0.06)',
-					background: isActive
-						? `linear-gradient(180deg, ${colors.accent}18 0%, rgba(255, 255, 255, 0.08) 100%)`
-						: isHovered
-							? 'linear-gradient(180deg, rgba(255, 255, 255, 0.11) 0%, rgba(255, 255, 255, 0.06) 100%)'
-							: 'linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.03) 100%)',
-					backdropFilter: 'blur(18px)',
-					WebkitBackdropFilter: 'blur(18px)',
-					color: isActive ? colors.textMain : colors.textDim,
-					fontSize: '12px',
-					fontWeight: isActive ? 650 : 500,
-					fontFamily: 'monospace',
-					cursor: 'pointer',
-					whiteSpace: 'nowrap',
-					transition: 'all 0.18s ease',
-					boxShadow: isActive
-						? '0 14px 28px rgba(15, 23, 42, 0.14), 0 3px 10px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.08)'
-						: '0 8px 18px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
-					touchAction: 'pan-x pan-y',
-					WebkitTapHighlightColor: 'transparent',
-					userSelect: 'none',
-					WebkitUserSelect: 'none',
-				}}
-			>
-				{/* Pulsing dot for busy tabs */}
-				{tab.state === 'busy' && (
-					<span
-						style={{
-							width: '6px',
-							height: '6px',
-							borderRadius: '50%',
-							backgroundColor: colors.warning,
-							animation: 'pulse 1.5s infinite',
-							flexShrink: 0,
-						}}
-					/>
-				)}
-
-				{/* Star indicator */}
-				{tab.starred && (
-					<span style={{ fontSize: '10px', flexShrink: 0, color: colors.warning }}>★</span>
-				)}
-
-				{/* Tab name - minimum 8 characters visible */}
-				<span
-					style={{
-						overflow: 'hidden',
-						textOverflow: 'ellipsis',
-						minWidth: '48px', // ~8 characters at 12px monospace (6px per char)
-						maxWidth: '80px',
-					}}
-				>
-					{displayName}
-				</span>
-			</button>
-
-			{/* Close button - separate from tab button for reliable touch targets */}
-			{canClose && (isHovered || isActive) && (
-				<button
-					onClick={(e) => {
-						e.stopPropagation();
-						e.preventDefault();
-						onClose();
-					}}
-					onMouseEnter={() => setIsCloseHovered(true)}
-					onMouseLeave={() => setIsCloseHovered(false)}
-					style={{
-						position: 'absolute',
-						right: '6px',
-						top: '50%',
-						transform: 'translateY(-50%)',
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'center',
-						width: '18px',
-						height: '18px',
-						borderRadius: '999px',
-						border: 'none',
-						fontSize: '11px',
-						color: isCloseHovered ? colors.textMain : colors.textDim,
-						background: isCloseHovered ? 'rgba(255, 255, 255, 0.16)' : 'rgba(255, 255, 255, 0.06)',
-						cursor: 'pointer',
-						padding: 0,
-						zIndex: 2,
-						transition: 'background-color 0.12s ease, color 0.12s ease',
-					}}
-					aria-label="Close tab"
-				>
-					×
-				</button>
-			)}
-		</div>
-	);
-}
-
-/**
- * Tab actions popover state
- */
-interface TabPopoverState {
-	tab: AITabData;
-	tabIndex: number;
-	anchorRect: DOMRect;
-}
-
-/**
- * TabActionsPopover - shown on long-press of a tab
- * Provides rename, star, and move actions.
- */
-function TabActionsPopover({
-	tab,
-	tabIndex,
-	tabCount,
-	anchorRect,
-	onClose,
-	onRename,
-	onStar,
-	onMoveLeft,
-	onMoveRight,
-}: {
-	tab: AITabData;
-	tabIndex: number;
-	tabCount: number;
-	anchorRect: DOMRect;
-	onClose: () => void;
-	onRename?: (tabId: string, newName: string) => void;
-	onStar?: (tabId: string, starred: boolean) => void;
-	onMoveLeft?: () => void;
-	onMoveRight?: () => void;
-}) {
-	const colors = useThemeColors();
-	const popoverRef = useRef<HTMLDivElement>(null);
-	const [isRenaming, setIsRenaming] = useState(false);
-	const [renameValue, setRenameValue] = useState(tab.name || '');
-	const inputRef = useRef<HTMLInputElement>(null);
-
-	const displayName =
-		tab.name || (tab.agentSessionId ? tab.agentSessionId.split('-')[0].toUpperCase() : 'New');
-	const isFirst = tabIndex === 0;
-	const isLast = tabIndex === tabCount - 1;
-
-	// Auto-focus rename input
-	useEffect(() => {
-		if (isRenaming && inputRef.current) {
-			inputRef.current.focus();
-			inputRef.current.select();
-		}
-	}, [isRenaming]);
-
-	// Calculate position - show below the tab, centered
-	const calculatePosition = (): React.CSSProperties => {
-		const popoverWidth = 220;
-		const viewportWidth = window.innerWidth;
-		const padding = 12;
-
-		let left = anchorRect.left + anchorRect.width / 2 - popoverWidth / 2;
-		if (left < padding) left = padding;
-		if (left + popoverWidth > viewportWidth - padding)
-			left = viewportWidth - popoverWidth - padding;
-
-		return {
-			position: 'fixed',
-			top: `${anchorRect.bottom + 8}px`,
-			left: `${left}px`,
-			width: `${popoverWidth}px`,
-			zIndex: 1000,
-		};
-	};
-
-	// Close on outside click/touch
-	useEffect(() => {
-		const handleClickOutside = (e: MouseEvent | TouchEvent) => {
-			if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-				onClose();
-			}
-		};
-
-		const timer = setTimeout(() => {
-			document.addEventListener('mousedown', handleClickOutside);
-			document.addEventListener('touchstart', handleClickOutside);
-		}, 100);
-
-		return () => {
-			clearTimeout(timer);
-			document.removeEventListener('mousedown', handleClickOutside);
-			document.removeEventListener('touchstart', handleClickOutside);
-		};
-	}, [onClose]);
-
-	// Close on escape key
-	useEffect(() => {
-		const handleKeyDown = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') {
-				if (isRenaming) {
-					setIsRenaming(false);
-				} else {
-					onClose();
-				}
-			}
-		};
-		document.addEventListener('keydown', handleKeyDown);
-		return () => document.removeEventListener('keydown', handleKeyDown);
-	}, [onClose, isRenaming]);
-
-	const handleSaveRename = () => {
-		if (onRename) {
-			onRename(tab.id, renameValue.trim());
-		}
-		onClose();
-	};
-
-	if (typeof document === 'undefined') {
+function normalizeModelLabel(model: string | null | undefined): string | null {
+	const normalized = model?.trim();
+	if (!normalized || normalized.toLowerCase() === 'default' || normalized === 'Model') {
 		return null;
 	}
-
-	const actionButtonStyle = (disabled?: boolean): React.CSSProperties => ({
-		display: 'flex',
-		alignItems: 'center',
-		gap: '10px',
-		width: '100%',
-		padding: '10px 12px',
-		border: 'none',
-		backgroundColor: 'transparent',
-		color: disabled ? colors.textDim : colors.textMain,
-		fontSize: '14px',
-		cursor: disabled ? 'default' : 'pointer',
-		opacity: disabled ? 0.4 : 1,
-		borderRadius: '6px',
-		transition: 'background-color 0.1s ease',
-	});
-
-	return createPortal(
-		<>
-			{/* Backdrop */}
-			<div
-				style={{
-					position: 'fixed',
-					top: 0,
-					left: 0,
-					right: 0,
-					bottom: 0,
-					backgroundColor: 'rgba(0, 0, 0, 0.3)',
-					zIndex: 999,
-				}}
-				onClick={onClose}
-				aria-hidden="true"
-			/>
-
-			{/* Popover */}
-			<div
-				ref={popoverRef}
-				role="dialog"
-				aria-label={`Actions for tab ${displayName}`}
-				style={{
-					...calculatePosition(),
-					background:
-						'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.05) 100%)',
-					backdropFilter: 'blur(22px)',
-					WebkitBackdropFilter: 'blur(22px)',
-					borderRadius: '18px',
-					border: '1px solid rgba(255, 255, 255, 0.10)',
-					boxShadow:
-						'0 24px 48px rgba(15, 23, 42, 0.18), 0 8px 20px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.07)',
-					overflow: 'hidden',
-					animation: 'tabPopoverFadeIn 0.15s ease-out',
-				}}
-			>
-				{/* Header */}
-				<div
-					style={{
-						padding: '12px 15px',
-						borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-						background: `linear-gradient(180deg, ${colors.accent}12 0%, rgba(255, 255, 255, 0.04) 100%)`,
-						display: 'flex',
-						alignItems: 'center',
-						justifyContent: 'space-between',
-					}}
-				>
-					<span
-						style={{
-							fontSize: '13px',
-							fontWeight: 600,
-							color: colors.textMain,
-							fontFamily: 'monospace',
-							overflow: 'hidden',
-							textOverflow: 'ellipsis',
-							whiteSpace: 'nowrap',
-						}}
-					>
-						{displayName}
-					</span>
-					<button
-						onClick={onClose}
-						style={{
-							padding: '2px 6px',
-							fontSize: '16px',
-							color: colors.textDim,
-							backgroundColor: 'transparent',
-							border: 'none',
-							cursor: 'pointer',
-							borderRadius: '4px',
-							lineHeight: 1,
-						}}
-						aria-label="Close"
-					>
-						×
-					</button>
-				</div>
-
-				{/* Actions */}
-				<div style={{ padding: '6px' }}>
-					{isRenaming ? (
-						/* Rename input view */
-						<div style={{ padding: '6px' }}>
-							<input
-								ref={inputRef}
-								value={renameValue}
-								onChange={(e) => setRenameValue(e.target.value)}
-								onKeyDown={(e) => {
-									if (e.key === 'Enter') handleSaveRename();
-									if (e.key === 'Escape') setIsRenaming(false);
-								}}
-								placeholder="Tab name"
-								style={{
-									width: '100%',
-									padding: '8px 10px',
-									borderRadius: '6px',
-									border: `1px solid ${colors.border}`,
-									backgroundColor: colors.bgMain,
-									color: colors.textMain,
-									fontSize: '13px',
-									fontFamily: 'monospace',
-									outline: 'none',
-									boxSizing: 'border-box',
-								}}
-							/>
-							<div style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-								<button
-									onClick={handleSaveRename}
-									style={{
-										flex: 1,
-										padding: '8px',
-										borderRadius: '6px',
-										border: 'none',
-										backgroundColor: colors.accent,
-										color: '#fff',
-										fontSize: '13px',
-										fontWeight: 500,
-										cursor: 'pointer',
-									}}
-								>
-									Save
-								</button>
-								<button
-									onClick={() => setIsRenaming(false)}
-									style={{
-										flex: 1,
-										padding: '8px',
-										borderRadius: '6px',
-										border: `1px solid ${colors.border}`,
-										backgroundColor: 'transparent',
-										color: colors.textMain,
-										fontSize: '13px',
-										cursor: 'pointer',
-									}}
-								>
-									Cancel
-								</button>
-							</div>
-						</div>
-					) : (
-						/* Action list view */
-						<>
-							{/* Star/Unstar */}
-							{onStar && (
-								<button
-									onClick={() => {
-										triggerHaptic(HAPTIC_PATTERNS.tap);
-										onStar(tab.id, !tab.starred);
-										onClose();
-									}}
-									style={actionButtonStyle()}
-								>
-									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>
-										{tab.starred ? '★' : '☆'}
-									</span>
-									{tab.starred ? 'Unstar' : 'Star'}
-								</button>
-							)}
-
-							{/* Rename */}
-							{onRename && (
-								<button
-									onClick={() => {
-										triggerHaptic(HAPTIC_PATTERNS.tap);
-										setIsRenaming(true);
-									}}
-									style={actionButtonStyle()}
-								>
-									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>✎</span>
-									Rename
-								</button>
-							)}
-
-							{/* Move Left */}
-							{onMoveLeft && (
-								<button
-									onClick={() => {
-										if (isFirst) return;
-										triggerHaptic(HAPTIC_PATTERNS.tap);
-										onMoveLeft();
-										onClose();
-									}}
-									style={actionButtonStyle(isFirst)}
-									disabled={isFirst}
-								>
-									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>←</span>
-									Move Left
-								</button>
-							)}
-
-							{/* Move Right */}
-							{onMoveRight && (
-								<button
-									onClick={() => {
-										if (isLast) return;
-										triggerHaptic(HAPTIC_PATTERNS.tap);
-										onMoveRight();
-										onClose();
-									}}
-									style={actionButtonStyle(isLast)}
-									disabled={isLast}
-								>
-									<span style={{ fontSize: '16px', width: '20px', textAlign: 'center' }}>→</span>
-									Move Right
-								</button>
-							)}
-						</>
-					)}
-				</div>
-			</div>
-
-			<style>{`
-				@keyframes tabPopoverFadeIn {
-					from { opacity: 0; transform: translateY(-4px); }
-					to { opacity: 1; transform: translateY(0); }
-				}
-			`}</style>
-		</>,
-		document.body
-	);
+	return normalized;
 }
 
 export function TabBar({
-	tabs,
-	activeTabId,
-	onSelectTab,
-	onNewTab,
-	onCloseTab,
-	onRenameTab,
-	onStarTab,
-	onReorderTab,
+	sessionKey = null,
+	onNewThread,
+	supportsModelSelection = false,
+	modelLabel = 'Model',
+	modelToolType = null,
+	loadModels,
+	onSelectModel,
+	canChooseProviderModels = false,
+	loadProviderModels,
+	onSelectProviderModel,
+	contextUsagePercentage = null,
+	contextUsageColor,
 }: TabBarProps) {
 	const colors = useThemeColors();
-	const [popoverState, setPopoverState] = useState<TabPopoverState | null>(null);
+	const modelMenuRef = useRef<HTMLDivElement>(null);
+	const [modelMenuOpen, setModelMenuOpen] = useState(false);
+	const [availableModels, setAvailableModels] = useState<string[]>([]);
+	const [modelCatalogGroups, setModelCatalogGroups] = useState<AgentModelCatalogGroup[]>([]);
+	const [loadingModels, setLoadingModels] = useState(false);
+	const [isExpanded, setIsExpanded] = useState(false);
+	const [pullDistance, setPullDistance] = useState(0);
+	const pullStartYRef = useRef<number | null>(null);
+	const collapseStartYRef = useRef<number | null>(null);
+	const collapseDeltaYRef = useRef(0);
+	const normalizedCurrentModel = normalizeModelLabel(modelLabel);
+	const canOpenModelMenu =
+		(canChooseProviderModels && !!loadProviderModels) || (supportsModelSelection && !!loadModels);
 
-	const handleTabLongPress = useCallback((tab: AITabData, tabIdx: number, rect: DOMRect) => {
-		setPopoverState({ tab, tabIndex: tabIdx, anchorRect: rect });
+	useEffect(() => {
+		if (!canOpenModelMenu) {
+			setModelMenuOpen(false);
+		}
+	}, [canOpenModelMenu]);
+
+	useEffect(() => {
+		setIsExpanded(false);
+		setPullDistance(0);
+		setModelMenuOpen(false);
+	}, [sessionKey]);
+
+	useEffect(() => {
+		if (!modelMenuOpen) {
+			return;
+		}
+
+		const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+			const target = event.target as Node;
+			if (modelMenuRef.current && !modelMenuRef.current.contains(target)) {
+				setModelMenuOpen(false);
+			}
+		};
+
+		document.addEventListener('mousedown', handlePointerDown);
+		document.addEventListener('touchstart', handlePointerDown);
+
+		return () => {
+			document.removeEventListener('mousedown', handlePointerDown);
+			document.removeEventListener('touchstart', handlePointerDown);
+		};
+	}, [modelMenuOpen]);
+
+	const handleToggleModelMenu = useCallback(async () => {
+		if (!canOpenModelMenu) {
+			return;
+		}
+
+		const nextOpen = !modelMenuOpen;
+		setModelMenuOpen(nextOpen);
+		if (!nextOpen) {
+			return;
+		}
+
+		setLoadingModels(true);
+		try {
+			if (canChooseProviderModels && loadProviderModels) {
+				const groups = await loadProviderModels(false);
+				setModelCatalogGroups(groups);
+				return;
+			}
+
+			const models = await loadModels?.(false);
+			setAvailableModels(models || []);
+		} finally {
+			setLoadingModels(false);
+		}
+	}, [canChooseProviderModels, canOpenModelMenu, loadModels, loadProviderModels, modelMenuOpen]);
+
+	const handleRefreshModels = useCallback(async () => {
+		if (!canOpenModelMenu) {
+			return;
+		}
+
+		setLoadingModels(true);
+		try {
+			if (canChooseProviderModels && loadProviderModels) {
+				const groups = await loadProviderModels(true);
+				setModelCatalogGroups(groups);
+				return;
+			}
+
+			const models = await loadModels?.(true);
+			setAvailableModels(models || []);
+		} finally {
+			setLoadingModels(false);
+		}
+	}, [canChooseProviderModels, canOpenModelMenu, loadModels, loadProviderModels]);
+
+	const handleSelectModelInternal = useCallback(
+		async (model: string | null) => {
+			if (!onSelectModel) {
+				return;
+			}
+			await onSelectModel(model);
+			setModelMenuOpen(false);
+		},
+		[onSelectModel]
+	);
+
+	const handleSelectProviderModelInternal = useCallback(
+		async (provider: string, model: string | null) => {
+			if (!onSelectProviderModel) {
+				return;
+			}
+			await onSelectProviderModel(provider, model);
+			setModelMenuOpen(false);
+		},
+		[onSelectProviderModel]
+	);
+
+	const selectableModels = useMemo(() => {
+		const currentModel = modelLabel.trim();
+		const models = [...availableModels];
+		if (currentModel && currentModel !== 'Model' && !models.includes(currentModel)) {
+			models.unshift(currentModel);
+		}
+		return models;
+	}, [availableModels, modelLabel]);
+	const clampedContextUsage =
+		contextUsagePercentage === null ? null : Math.max(0, Math.min(100, contextUsagePercentage));
+	const contextIndicatorColor = contextUsageColor || colors.textDim;
+	const collapsedHandleOffset = Math.min(26, pullDistance * 0.45);
+
+	const handleExpand = useCallback(() => {
+		setPullDistance(0);
+		setIsExpanded(true);
 	}, []);
 
-	const handleClosePopover = useCallback(() => {
-		setPopoverState(null);
+	const handleCollapse = useCallback(() => {
+		setModelMenuOpen(false);
+		setPullDistance(0);
+		setIsExpanded(false);
 	}, []);
 
-	const canClose = tabs.length > 1;
+	const handlePullStart = useCallback((event: React.TouchEvent<HTMLButtonElement>) => {
+		pullStartYRef.current = event.touches[0]?.clientY ?? null;
+	}, []);
+
+	const handlePullMove = useCallback((event: React.TouchEvent<HTMLButtonElement>) => {
+		if (pullStartYRef.current === null) {
+			return;
+		}
+
+		const currentY = event.touches[0]?.clientY;
+		if (typeof currentY !== 'number') {
+			return;
+		}
+
+		const delta = Math.max(0, currentY - pullStartYRef.current);
+		setPullDistance(Math.min(64, delta));
+	}, []);
+
+	const handlePullEnd = useCallback(() => {
+		if (pullDistance >= 24) {
+			handleExpand();
+			pullStartYRef.current = null;
+			return;
+		}
+
+		pullStartYRef.current = null;
+		setPullDistance(0);
+	}, [handleExpand, pullDistance]);
+
+	const handleCollapseSwipeStart = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+		collapseStartYRef.current = event.touches[0]?.clientY ?? null;
+		collapseDeltaYRef.current = 0;
+	}, []);
+
+	const handleCollapseSwipeMove = useCallback((event: React.TouchEvent<HTMLDivElement>) => {
+		if (collapseStartYRef.current === null) {
+			return;
+		}
+
+		const currentY = event.touches[0]?.clientY;
+		if (typeof currentY !== 'number') {
+			return;
+		}
+
+		collapseDeltaYRef.current = currentY - collapseStartYRef.current;
+	}, []);
+
+	const handleCollapseSwipeEnd = useCallback(() => {
+		if (collapseDeltaYRef.current <= -24) {
+			handleCollapse();
+		}
+
+		collapseStartYRef.current = null;
+		collapseDeltaYRef.current = 0;
+	}, [handleCollapse]);
+
+	if (!isExpanded) {
+		return (
+			<div
+				style={{
+					position: 'relative',
+					display: 'flex',
+					justifyContent: 'center',
+					alignItems: 'flex-start',
+					minHeight: '30px',
+					padding: '2px 10px 8px',
+				}}
+			>
+				<button
+					type="button"
+					onClick={handleExpand}
+					onTouchStart={handlePullStart}
+					onTouchMove={handlePullMove}
+					onTouchEnd={handlePullEnd}
+					onTouchCancel={handlePullEnd}
+					aria-label="Pull down to open thread controls"
+					title="Open thread controls"
+					style={{
+						display: 'inline-flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						width: '88px',
+						height: '24px',
+						borderRadius: '999px',
+						border: '1px solid rgba(255, 255, 255, 0.12)',
+						background:
+							'linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.06) 100%)',
+						backdropFilter: 'blur(18px)',
+						WebkitBackdropFilter: 'blur(18px)',
+						boxShadow:
+							'0 12px 24px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+						cursor: 'pointer',
+						transform: `translateY(${collapsedHandleOffset}px)`,
+						transition:
+							pullDistance > 0 ? 'none' : 'transform 180ms ease, box-shadow 180ms ease',
+					}}
+				>
+					<span
+						style={{
+							width: '28px',
+							height: '4px',
+							borderRadius: '999px',
+							background: `${colors.textDim}88`,
+							boxShadow: `0 0 12px ${colors.accent}10`,
+						}}
+					/>
+				</button>
+			</div>
+		);
+	}
 
 	return (
 		<div
+			onTouchStart={handleCollapseSwipeStart}
+			onTouchMove={handleCollapseSwipeMove}
+			onTouchEnd={handleCollapseSwipeEnd}
+			onTouchCancel={handleCollapseSwipeEnd}
 			style={{
+				position: 'relative',
 				display: 'flex',
 				alignItems: 'center',
+				gap: '10px',
 				padding: '4px 10px 10px',
 				background:
 					'linear-gradient(180deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%)',
@@ -572,109 +323,315 @@ export function TabBar({
 				boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.04)',
 			}}
 		>
-			{/* Scrollable tabs area */}
 			<div
 				style={{
 					display: 'flex',
-					flex: 1,
 					alignItems: 'center',
-					gap: '8px',
-					padding: '6px 8px',
-					overflowX: 'auto',
-					WebkitOverflowScrolling: 'touch',
-					scrollbarWidth: 'none',
-					msOverflowStyle: 'none',
+					gap: '10px',
+					flex: 1,
+					minHeight: '46px',
+					padding: '6px 12px',
 					borderRadius: '20px',
 					border: '1px solid rgba(255, 255, 255, 0.08)',
 					background:
 						'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)',
 					backdropFilter: 'blur(18px)',
 					WebkitBackdropFilter: 'blur(18px)',
-					boxShadow: '0 14px 30px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+					boxShadow:
+						'0 14px 30px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 				}}
-				className="hide-scrollbar"
 			>
-				{tabs.map((tab, index) => (
-					<Tab
-						key={tab.id}
-						tab={tab}
-						tabIndex={index}
-						isActive={tab.id === activeTabId}
-						canClose={canClose}
-						colors={colors}
-						onSelect={() => onSelectTab(tab.id)}
-						onClose={() => onCloseTab(tab.id)}
-						onLongPress={handleTabLongPress}
-					/>
-				))}
-				<button
-					onClick={onNewTab}
+				<div
 					style={{
 						display: 'flex',
 						alignItems: 'center',
-						justifyContent: 'center',
-						width: '34px',
-						height: '34px',
-						borderRadius: '999px',
-						border: '1px solid rgba(255, 255, 255, 0.08)',
-						background: `linear-gradient(180deg, ${colors.accent}14 0%, rgba(255, 255, 255, 0.06) 100%)`,
-						color: colors.textMain,
-						cursor: 'pointer',
-						flexShrink: 0,
-						boxShadow:
-							'0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+						gap: '8px',
+						minWidth: 0,
+						flex: 1,
 					}}
-					title="New Tab"
 				>
-					<svg
-						width="14"
-						height="14"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
+					<span
+						style={{
+							fontSize: '12px',
+							fontWeight: 500,
+							color: colors.textDim,
+						}}
 					>
-						<line x1="12" y1="5" x2="12" y2="19" />
-						<line x1="5" y1="12" x2="19" y2="12" />
-					</svg>
-				</button>
+						Thread controls
+					</span>
+				</div>
+
+				{clampedContextUsage !== null && (
+					<div
+						title={`Context window ${clampedContextUsage}% used`}
+						aria-label={`Context window ${clampedContextUsage}% used`}
+						style={{
+							marginLeft: 'auto',
+							display: 'inline-flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							width: '28px',
+							height: '28px',
+							borderRadius: '999px',
+							background: `conic-gradient(${contextIndicatorColor} ${clampedContextUsage * 3.6}deg, rgba(15, 23, 42, 0.12) 0deg)`,
+							boxShadow: `0 0 16px ${contextIndicatorColor}18`,
+							flexShrink: 0,
+						}}
+					>
+						<div
+							style={{
+								width: '21px',
+								height: '21px',
+								borderRadius: '999px',
+								background:
+									'linear-gradient(180deg, rgba(248, 250, 252, 0.95) 0%, rgba(241, 245, 249, 0.92) 100%)',
+								border: '1px solid rgba(255, 255, 255, 0.18)',
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								color: colors.textDim,
+								fontSize: '8px',
+								fontWeight: 700,
+								lineHeight: 1,
+							}}
+						>
+							{clampedContextUsage}%
+						</div>
+					</div>
+				)}
 			</div>
 
-			{/* Tab actions popover */}
-			{popoverState && (
-				<TabActionsPopover
-					tab={popoverState.tab}
-					tabIndex={popoverState.tabIndex}
-					tabCount={tabs.length}
-					anchorRect={popoverState.anchorRect}
-					onClose={handleClosePopover}
-					onRename={onRenameTab}
-					onStar={onStarTab}
-					onMoveLeft={
-						onReorderTab
-							? () => onReorderTab(popoverState.tabIndex, popoverState.tabIndex - 1)
-							: undefined
-					}
-					onMoveRight={
-						onReorderTab
-							? () => onReorderTab(popoverState.tabIndex, popoverState.tabIndex + 1)
-							: undefined
-					}
-				/>
+			{canOpenModelMenu && (
+				<div
+					ref={modelMenuRef}
+					style={{
+						position: 'relative',
+						flexShrink: 0,
+					}}
+				>
+					<ModelSelectorButton
+						label={modelLabel}
+						toolType={modelToolType}
+						onClick={() => void handleToggleModelMenu()}
+						disabled={!canOpenModelMenu}
+						isOpen={modelMenuOpen}
+					/>
+
+					{modelMenuOpen && (
+						<div
+							style={{
+								position: 'absolute',
+								right: '0',
+								top: 'calc(100% + 10px)',
+								width: 'min(320px, calc(100vw - 32px))',
+								maxHeight: '320px',
+								overflow: 'hidden',
+								borderRadius: '18px',
+								border: '1px solid rgba(255, 255, 255, 0.18)',
+								background:
+									'linear-gradient(180deg, rgba(246, 248, 252, 0.94) 0%, rgba(238, 242, 249, 0.92) 100%)',
+								backdropFilter: 'blur(24px) saturate(120%)',
+								WebkitBackdropFilter: 'blur(24px) saturate(120%)',
+								boxShadow:
+									'0 18px 36px rgba(15, 23, 42, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.26)',
+								padding: '12px',
+								display: 'flex',
+								flexDirection: 'column',
+								gap: '10px',
+								zIndex: 40,
+							}}
+						>
+							<div
+								style={{
+									display: 'flex',
+									alignItems: 'center',
+									justifyContent: 'space-between',
+									gap: '12px',
+								}}
+							>
+								<div
+									style={{
+										fontSize: '12px',
+										fontWeight: 700,
+										color: colors.textMain,
+									}}
+								>
+									Model
+								</div>
+								<button
+									type="button"
+									onClick={() => void handleRefreshModels()}
+									style={{
+										border: 'none',
+										background: 'transparent',
+										color: colors.accent,
+										fontSize: '12px',
+										fontWeight: 600,
+										cursor: 'pointer',
+									}}
+								>
+									{loadingModels ? 'Loading...' : 'Refresh'}
+								</button>
+							</div>
+							<div
+								style={{
+									display: 'flex',
+									flexDirection: 'column',
+									gap: '8px',
+									maxHeight: '240px',
+									overflowY: 'auto',
+								}}
+							>
+								{canChooseProviderModels ? (
+									modelCatalogGroups.map((group) => {
+										const isCurrentProvider = group.provider === modelToolType;
+										const defaultSelected = isCurrentProvider && !normalizedCurrentModel;
+
+										return (
+											<div
+												key={group.provider}
+												style={{
+													display: 'flex',
+													flexDirection: 'column',
+													gap: '6px',
+												}}
+											>
+												<div
+													style={{
+														padding: '2px 4px 0',
+														fontSize: '11px',
+														fontWeight: 700,
+														color: colors.textDim,
+													}}
+												>
+													{group.providerLabel}
+												</div>
+												{group.options.map((option) => {
+													const optionModel = normalizeModelLabel(option.modelId);
+													const isSelected = option.isDefault
+														? defaultSelected
+														: isCurrentProvider && optionModel === normalizedCurrentModel;
+
+													return (
+														<button
+															key={option.id}
+															type="button"
+															onClick={() =>
+																void handleSelectProviderModelInternal(
+																	group.provider,
+																	option.modelId || null
+																)
+															}
+															style={{
+																padding: '11px 12px',
+																borderRadius: '12px',
+																border: '1px solid rgba(255, 255, 255, 0.18)',
+																backgroundColor: isSelected
+																	? `${colors.accent}1f`
+																	: 'rgba(255, 255, 255, 0.62)',
+																color: isSelected ? colors.accent : colors.textMain,
+																fontSize: '13px',
+																fontWeight: 500,
+																textAlign: 'left',
+																cursor: 'pointer',
+																overflow: 'hidden',
+																textOverflow: 'ellipsis',
+																whiteSpace: 'nowrap',
+															}}
+														>
+															{option.label}
+														</button>
+													);
+												})}
+											</div>
+										);
+									})
+								) : (
+									selectableModels.map((model) => {
+										const isSelected = model === modelLabel;
+										return (
+											<button
+												key={model}
+												type="button"
+												onClick={() => void handleSelectModelInternal(model)}
+												style={{
+													padding: '11px 12px',
+													borderRadius: '12px',
+													border: '1px solid rgba(255, 255, 255, 0.18)',
+													backgroundColor: isSelected
+														? `${colors.accent}1f`
+														: 'rgba(255, 255, 255, 0.62)',
+													color: isSelected ? colors.accent : colors.textMain,
+													fontSize: '13px',
+													fontWeight: 500,
+													textAlign: 'left',
+													cursor: 'pointer',
+													overflow: 'hidden',
+													textOverflow: 'ellipsis',
+													whiteSpace: 'nowrap',
+												}}
+											>
+												{model}
+											</button>
+										);
+									})
+								)}
+								{!loadingModels &&
+									((canChooseProviderModels && modelCatalogGroups.length === 0) ||
+										(!canChooseProviderModels && selectableModels.length === 0)) && (
+										<div
+											style={{
+												padding: '11px 12px',
+												borderRadius: '12px',
+												border: '1px solid rgba(255, 255, 255, 0.18)',
+												backgroundColor: 'rgba(255, 255, 255, 0.62)',
+												color: colors.textDim,
+												fontSize: '13px',
+											}}
+										>
+											No models available
+										</div>
+									)}
+							</div>
+						</div>
+					)}
+				</div>
 			)}
 
-			{/* CSS for pulse animation */}
-			<style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
-        }
-        .hide-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-      `}</style>
+			<button
+				type="button"
+				onClick={onNewThread}
+				aria-label="New Thread"
+				title="New Thread"
+				style={{
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+					width: '42px',
+					height: '42px',
+					borderRadius: '999px',
+					border: '1px solid rgba(255, 255, 255, 0.08)',
+					background: `linear-gradient(180deg, ${colors.accent}14 0%, rgba(255, 255, 255, 0.06) 100%)`,
+					color: colors.textMain,
+					cursor: 'pointer',
+					flexShrink: 0,
+					boxShadow:
+						'0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+				}}
+			>
+				<svg
+					width="14"
+					height="14"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					strokeWidth="2"
+					strokeLinecap="round"
+					strokeLinejoin="round"
+				>
+					<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+				</svg>
+			</button>
 		</div>
 	);
 }

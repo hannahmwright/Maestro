@@ -11,7 +11,14 @@
  */
 
 import { useEffect, useMemo, useCallback } from 'react';
-import type { Session, ToolType, SessionState, LogEntry, CustomAICommand } from '../../types';
+import type {
+	Session,
+	ToolType,
+	SessionState,
+	LogEntry,
+	CustomAICommand,
+	QueuedItem,
+} from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -20,7 +27,9 @@ import { maybeStartAutomaticTabNaming } from '../../utils/autoTabNaming';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { appendDemoCaptureInstructions } from '../../utils/demoCapturePrompt';
+import { buildApiUrl } from '../../../web/utils/config';
 import { gitService } from '../../services/git';
+import { conversationService } from '../../services/conversation';
 import { captureException } from '../../utils/sentry';
 import { imageOnlyDefaultPrompt } from '../../../prompts';
 import type { WebAttachmentSummary, WebTextAttachmentInput } from '../../../shared/remote-web';
@@ -175,6 +184,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				sessionId: string;
 				command: string;
 				inputMode?: 'ai' | 'terminal';
+				commandAction?: 'default' | 'queue';
 				images?: string[];
 				textAttachments?: WebTextAttachmentInput[];
 				attachments?: WebAttachmentSummary[];
@@ -184,6 +194,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				sessionId,
 				command,
 				inputMode: webInputMode,
+				commandAction = 'default',
 				images = [],
 				textAttachments = [],
 				attachments = [],
@@ -303,12 +314,6 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				return;
 			}
 
-			// Check if session is busy
-			if (session.state === 'busy') {
-				console.log('[Remote] Session is busy, cannot process command');
-				return;
-			}
-
 			// Check for slash commands (built-in and custom)
 			let promptToSend = command;
 			let commandMetadata: { command: string; description: string } | undefined;
@@ -404,6 +409,171 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				const hasImages = images.length > 0;
 				const hasTextAttachments = textAttachments.length > 0;
 				const userVisibleText = command.trim();
+				const hasDraftContent = userVisibleText.length > 0 || hasImages || hasTextAttachments;
+
+				if (session.state === 'busy' && activeTab && hasDraftContent) {
+					if (commandAction === 'queue') {
+						const queuedItem: QueuedItem = {
+							id: generateId(),
+							timestamp: Date.now(),
+							tabId: activeTab.id,
+							type: 'message',
+							text: command,
+							images: hasImages ? images : undefined,
+							demoCapture,
+							tabName:
+								activeTab.name ||
+								(activeTab.agentSessionId
+									? activeTab.agentSessionId.split('-')[0].toUpperCase()
+									: 'New'),
+							readOnlyMode: isReadOnly,
+						};
+						const queuedLogEntry: LogEntry = {
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'user',
+							text: userVisibleText,
+							images: hasImages ? images : undefined,
+							attachments,
+							delivered: false,
+							interactionKind: 'queued',
+							deliveryState: 'pending',
+							...(isReadOnly && { readOnly: true }),
+						};
+
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								return {
+									...s,
+									executionQueue: [...s.executionQueue, queuedItem],
+									aiTabs: s.aiTabs.map((tab) =>
+										tab.id === activeTab.id
+											? {
+													...tab,
+													logs: [...tab.logs, queuedLogEntry],
+												}
+											: tab
+									),
+								};
+							})
+						);
+						return;
+					}
+
+					if (activeTab.steerMode === 'true-steer') {
+						const steerLogId = generateId();
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== sessionId) return s;
+								return {
+									...s,
+									aiTabs: s.aiTabs.map((tab) => {
+										if (tab.id !== activeTab.id) return tab;
+										const existingPending = tab.pendingSteer;
+										const nextLogId = existingPending?.logEntryId || steerLogId;
+										const previousLog = tab.logs.find((log) => log.id === nextLogId);
+										const mergedText = existingPending?.text
+											? [existingPending.text, userVisibleText].filter(Boolean).join('\n\n')
+											: userVisibleText;
+										const mergedImages = [...(existingPending?.images || []), ...images];
+										const steerLog: LogEntry = {
+											id: nextLogId,
+											timestamp: Date.now(),
+											source: 'user',
+											text: mergedText,
+											images: mergedImages.length > 0 ? mergedImages : undefined,
+											attachments,
+											delivered: false,
+											interactionKind: 'steer',
+											deliveryState: 'pending',
+											...(isReadOnly && { readOnly: true }),
+										};
+										return {
+											...tab,
+											logs: previousLog
+												? tab.logs.map((log) => (log.id === nextLogId ? steerLog : log))
+												: [...tab.logs, steerLog],
+											pendingSteer: {
+												logEntryId: nextLogId,
+												text: mergedText,
+												images: mergedImages.length > 0 ? mergedImages : undefined,
+												submittedAt: Date.now(),
+												deliveryState: 'pending',
+											},
+											steerStatus: 'pending',
+										};
+									}),
+								};
+							})
+						);
+
+						void conversationService.steerTurn({
+							sessionId: `${sessionId}-ai-${activeTab.id}`,
+							toolType: session.toolType,
+							text: userVisibleText,
+							images,
+						});
+						return;
+					}
+
+					const steerLogId = generateId();
+					const hasExistingPendingSteer = !!activeTab.pendingSteer;
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((tab) => {
+									if (tab.id !== activeTab.id) return tab;
+									const existingPending = tab.pendingSteer;
+									const nextLogId = existingPending?.logEntryId || steerLogId;
+									const previousLog = tab.logs.find((log) => log.id === nextLogId);
+									const mergedText = existingPending?.text
+										? [existingPending.text, userVisibleText].filter(Boolean).join('\n\n')
+										: userVisibleText;
+									const mergedImages = [...(existingPending?.images || []), ...images];
+									const steerLog: LogEntry = {
+										id: nextLogId,
+										timestamp: Date.now(),
+										source: 'user',
+										text: mergedText,
+										images: mergedImages.length > 0 ? mergedImages : undefined,
+										attachments,
+										delivered: false,
+										interactionKind: 'steer',
+										deliveryState: 'fallback_interrupt',
+										...(isReadOnly && { readOnly: true }),
+									};
+									return {
+										...tab,
+										logs: previousLog
+											? tab.logs.map((log) => (log.id === nextLogId ? steerLog : log))
+											: [...tab.logs, steerLog],
+										pendingSteer: {
+											logEntryId: nextLogId,
+											text: mergedText,
+											images: mergedImages.length > 0 ? mergedImages : undefined,
+											submittedAt: Date.now(),
+											deliveryState: 'fallback_interrupt',
+										},
+										steerStatus: 'pending',
+									};
+								}),
+							};
+						})
+					);
+
+					if (!hasExistingPendingSteer) {
+						void fetch(buildApiUrl(`/session/${sessionId}/interrupt`), {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+							},
+						});
+					}
+					return;
+				}
 
 				if (!promptToSend.trim()) {
 					if (hasImages && !hasTextAttachments) {
@@ -436,6 +606,45 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 				// Include tab ID in targetSessionId for proper output routing
 				const targetSessionId = `${sessionId}-ai-${activeTab?.id || 'default'}`;
 				const commandToUse = agent.path ?? agent.command;
+				const workingDir =
+					session.projectRoot ||
+					session.remoteCwd ||
+					session.sessionSshRemoteConfig?.workingDirOverride ||
+					session.shellCwd ||
+					session.cwd;
+
+				if (!session.toolType || !workingDir) {
+					const metadataError =
+						'Error: Failed to process remote command - session is missing provider or working directory metadata.';
+					const metadataErrorLog: LogEntry = {
+						id: generateId(),
+						timestamp: Date.now(),
+						source: 'system',
+						text: metadataError,
+					};
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== sessionId) return s;
+							return {
+								...s,
+								state: 'idle' as SessionState,
+								busySource: undefined,
+								thinkingStartTime: undefined,
+								aiTabs: s.aiTabs.map((tab) =>
+									tab.id === s.activeTabId
+										? {
+												...tab,
+												state: 'idle' as const,
+												thinkingStartTime: undefined,
+												logs: [...tab.logs, metadataErrorLog],
+											}
+										: tab
+								),
+							};
+						})
+					);
+					return;
+				}
 
 				console.log('[Remote] Spawning agent:', {
 					maestroSessionId: sessionId,
@@ -443,6 +652,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					activeTabId: activeTab?.id,
 					tabAgentSessionId: tabAgentSessionId || 'NEW SESSION',
 					isResume: !!tabAgentSessionId,
+					toolType: session.toolType,
+					workingDir,
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend.substring(0, 100),
@@ -519,11 +730,10 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					});
 				}
 
-				// Spawn agent with the prompt
-				await window.maestro.process.spawn({
+				const dispatchResult = await conversationService.sendTurn({
 					sessionId: targetSessionId,
 					toolType: session.toolType,
-					cwd: session.cwd,
+					cwd: workingDir,
 					command: commandToUse,
 					args: spawnArgs,
 					prompt: promptToSend,
@@ -539,8 +749,25 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					demoCapture,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id === activeTab?.id
+									? {
+											...tab,
+											runtimeKind: dispatchResult.runtimeKind,
+											steerMode: dispatchResult.steerMode,
+										}
+									: tab
+							),
+						};
+					})
+				);
 
-				console.log(`[Remote] ${session.toolType} spawn initiated successfully`);
+				console.log(`[Remote] ${session.toolType} conversation dispatch initiated successfully`);
 			} catch (error: unknown) {
 				captureException(error, {
 					extra: { sessionId, toolType: session.toolType, mode: 'ai', operation: 'remote-spawn' },

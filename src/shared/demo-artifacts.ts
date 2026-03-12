@@ -55,6 +55,17 @@ export interface DemoCaptureRequest {
 	enabled: boolean;
 }
 
+export interface DemoArtifactHarvestRequest {
+	sessionId: string;
+	tabId?: string | null;
+	text: string;
+	sourceLogId: string;
+	projectRoots?: string[];
+	demoCaptureRequested?: boolean;
+	sshRemoteId?: string | null;
+	sshRemoteHost?: string | null;
+}
+
 export interface DemoCaptureEvent {
 	type:
 		| 'capture_started'
@@ -79,4 +90,16 @@ export interface DemoCaptureEvent {
 	orderIndex?: number;
 	actionType?: string;
 	toolContext?: string;
+}
+
+export function demoCardHasArtifacts(
+	demoCard: Pick<DemoCard, 'posterArtifact' | 'videoArtifact' | 'stepCount'>
+): boolean {
+	return Boolean(demoCard.posterArtifact || demoCard.videoArtifact || demoCard.stepCount > 0);
+}
+
+export function isCompletedDemoCapture(
+	demoCard: Pick<DemoCard, 'status' | 'posterArtifact' | 'videoArtifact' | 'stepCount'>
+): boolean {
+	return demoCard.status === 'completed' && demoCardHasArtifacts(demoCard);
 }

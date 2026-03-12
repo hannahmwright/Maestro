@@ -1,5 +1,9 @@
 import { ipcRenderer } from 'electron';
-import type { DemoCard, DemoDetail } from '../../shared/demo-artifacts';
+import type {
+	DemoArtifactHarvestRequest,
+	DemoCard,
+	DemoDetail,
+} from '../../shared/demo-artifacts';
 
 export interface ArtifactFileInfo {
 	id: string;
@@ -18,6 +22,8 @@ export function createArtifactsApi() {
 			ipcRenderer.invoke('artifacts:loadArtifact', artifactId),
 		getArtifactFileInfo: (artifactId: string): Promise<ArtifactFileInfo | null> =>
 			ipcRenderer.invoke('artifacts:getArtifactFileInfo', artifactId),
+		harvestFromLogText: (request: DemoArtifactHarvestRequest): Promise<DemoCard | null> =>
+			ipcRenderer.invoke('artifacts:harvestFromLogText', request),
 	};
 }
 

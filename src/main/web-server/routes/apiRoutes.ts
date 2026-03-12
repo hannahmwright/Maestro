@@ -26,10 +26,12 @@ import {
 	type WebVoiceTranscriptionStatusResponse,
 	type WebPushSubscriptionInput,
 } from '../../../shared/remote-web';
+import type { AgentModelCatalogGroup } from '../../../shared/agent-model-catalog';
 import type { DemoCard, DemoDetail } from '../../../shared/demo-artifacts';
-import { HistoryEntry } from '../../../shared/types';
+import { HistoryEntry, type ToolType } from '../../../shared/types';
 import { logger } from '../../utils/logger';
 import type { Theme, SessionData, SessionDetail, LiveSessionInfo, RateLimitConfig } from '../types';
+import type { ProviderUsageSnapshot } from '../../../shared/provider-usage';
 
 // Re-export types for backwards compatibility
 export type {
@@ -53,6 +55,14 @@ export interface ApiRouteCallbacks {
 	getSessions: () => Promise<SessionData[]> | SessionData[];
 	getSessionDetail: (sessionId: string, tabId?: string) => SessionDetail | null;
 	getSessionModels: (sessionId: string, forceRefresh?: boolean) => Promise<string[]> | string[];
+	getSessionModelCatalog: (
+		sessionId: string,
+		forceRefresh?: boolean
+	) => Promise<AgentModelCatalogGroup[]> | AgentModelCatalogGroup[];
+	getSessionProviderUsage: (
+		sessionId: string,
+		forceRefresh?: boolean
+	) => Promise<ProviderUsageSnapshot | null> | ProviderUsageSnapshot | null;
 	getSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]> | DemoCard[];
 	getDemoDetail: (demoId: string) => Promise<DemoDetail | null> | DemoDetail | null;
 	getArtifactContent: (
@@ -80,6 +90,10 @@ export interface ApiRouteCallbacks {
 	writeToSession: (sessionId: string, data: string) => boolean;
 	interruptSession: (sessionId: string) => Promise<boolean>;
 	setSessionModel: (sessionId: string, model: string | null) => Promise<boolean> | boolean;
+	forkThread: (
+		sessionId: string,
+		options?: { toolType?: ToolType; model?: string | null }
+	) => Promise<{ success: boolean; sessionId?: string | null }>;
 	getHistory: (projectPath?: string, sessionId?: string) => HistoryEntry[];
 	getLiveSessionInfo: (sessionId: string) => LiveSessionInfo | undefined;
 	isSessionLive: (sessionId: string) => boolean;
@@ -516,6 +530,66 @@ export class ApiRoutes {
 		);
 
 		server.get(
+			`${WEB_APP_API_BASE_PATH}/session/:id/model-catalog`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const { forceRefresh } = request.query as { forceRefresh?: string };
+
+				if (!this.callbacks.getSessionModelCatalog) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Session model catalog service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const groups = await this.callbacks.getSessionModelCatalog(id, forceRefresh === 'true');
+				return {
+					groups,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/session/:id/provider-usage`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const { forceRefresh } = request.query as { forceRefresh?: string };
+
+				if (!this.callbacks.getSessionProviderUsage) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Provider usage service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const usage = await this.callbacks.getSessionProviderUsage(id, forceRefresh === 'true');
+				return {
+					usage,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.get(
 			`${WEB_APP_API_BASE_PATH}/sessions/:id/demos`,
 			{
 				config: {
@@ -899,6 +973,59 @@ export class ApiRoutes {
 					success: true,
 					model: model?.trim() ? model.trim() : null,
 					sessionId: id,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/session/:id/fork-thread`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const body = request.body as
+					| { toolType?: string; model?: string | null }
+					| undefined;
+				const nextToolType =
+					body?.toolType === 'codex' ||
+					body?.toolType === 'claude-code' ||
+					body?.toolType === 'opencode' ||
+					body?.toolType === 'factory-droid' ||
+					body?.toolType === 'terminal'
+						? (body.toolType as ToolType)
+						: undefined;
+
+				if (!this.callbacks.forkThread) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Thread forking service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const result = await this.callbacks.forkThread(id, {
+					toolType: nextToolType,
+					model: typeof body?.model === 'string' ? body.model : (body?.model ?? null),
+				});
+
+				if (!result.success) {
+					return reply.code(500).send({
+						error: 'Internal Server Error',
+						message: 'Failed to fork thread',
+						timestamp: Date.now(),
+					});
+				}
+
+				return {
+					success: true,
+					sessionId: result.sessionId || null,
 					timestamp: Date.now(),
 				};
 			}

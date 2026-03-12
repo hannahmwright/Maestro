@@ -49,7 +49,7 @@ import { formatRelativeTime } from '../../../shared/formatters';
 import { parseSynopsis } from '../../../shared/synopsis';
 import { autorunSynopsisPrompt } from '../../../prompts';
 import type { WebRemoteLogEntry } from '../../../shared/remote-web';
-import type { DemoCard } from '../../../shared/demo-artifacts';
+import { isCompletedDemoCapture, type DemoCard } from '../../../shared/demo-artifacts';
 import type { UserInputRequest } from '../../../shared/user-input-requests';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
@@ -664,12 +664,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	>(new Map());
 	const assistantStreamRafIdRef = useRef<number | null>(null);
 	const activeAssistantLogIdRef = useRef<Map<string, string>>(new Map());
+	const harvestedDemoLogIdsRef = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
 		// Copy ref value to local variable for cleanup (React ESLint rule)
 		const thinkingChunkBuffer = thinkingChunkBufferRef.current;
 		const assistantStreamBuffer = assistantStreamBufferRef.current;
 		const activeAssistantLogIds = activeAssistantLogIdRef.current;
+		const harvestedDemoLogIds = harvestedDemoLogIdsRef.current;
 
 		// Stable references from stores (Zustand actions are referentially stable)
 		const setSessions = useSessionStore.getState().setSessions;
@@ -752,36 +754,116 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				});
 		};
 
+		const appendDemoCardLog = (sessionId: string, tabId: string | null, demoCard: DemoCard) => {
+			const logEntry: LogEntry = {
+				id: generateId(),
+				timestamp: demoCard.updatedAt || Date.now(),
+				source: 'system',
+				text: demoCard.status === 'failed' ? 'Demo capture failed' : 'Demo ready',
+				metadata: {
+					demoCard,
+				},
+			};
+
+			setSessions((prev) =>
+				prev.map((session) => {
+					if (session.id !== sessionId) return session;
+					const targetTabId = tabId || session.activeTabId;
+					if (!targetTabId) {
+						return session;
+					}
+					return {
+						...session,
+						aiTabs: session.aiTabs.map((tab) =>
+							tab.id === targetTabId
+								? {
+										...tab,
+										logs: [...tab.logs, logEntry],
+										...(isCompletedDemoCapture(demoCard)
+											? { demoCaptureRequested: false }
+											: {}),
+									}
+								: tab
+						),
+					};
+				})
+			);
+
+			broadcastSessionLogEntry(sessionId, tabId, 'ai', logEntry);
+		};
+
+		const extractHarvestTextFromLog = (logEntry: LogEntry): string => {
+			const textParts: string[] = [];
+			if (logEntry.text?.trim()) {
+				textParts.push(logEntry.text);
+			}
+
+			const toolOutput = logEntry.metadata?.toolState?.output;
+			if (typeof toolOutput === 'string' && toolOutput.trim()) {
+				textParts.push(toolOutput);
+			} else if (toolOutput !== undefined && toolOutput !== null) {
+				try {
+					const serializedOutput = JSON.stringify(toolOutput);
+					if (serializedOutput.trim()) {
+						textParts.push(serializedOutput);
+					}
+				} catch {
+					// Ignore non-serializable tool output.
+				}
+			}
+
+			return textParts.join('\n');
+		};
+
+		const maybeHarvestDemoFromLog = (sessionId: string, tabId: string | null, logEntry: LogEntry) => {
+			if (harvestedDemoLogIds.has(logEntry.id)) {
+				return;
+			}
+
+			const session = getSessions().find((candidate) => candidate.id === sessionId);
+			if (!session) {
+				return;
+			}
+
+			const targetTab =
+				(tabId ? session.aiTabs.find((candidate) => candidate.id === tabId) : null) ||
+				getActiveTab(session);
+			if (!targetTab) {
+				return;
+			}
+
+			const harvestText = extractHarvestTextFromLog(logEntry);
+			if (!harvestText.trim()) {
+				return;
+			}
+
+			harvestedDemoLogIds.add(logEntry.id);
+			void window.maestro.artifacts
+				.harvestFromLogText({
+					sessionId,
+					tabId: targetTab.id,
+					text: harvestText,
+					sourceLogId: logEntry.id,
+					projectRoots: Array.from(new Set([session.projectRoot, session.cwd].filter(Boolean))),
+					demoCaptureRequested: targetTab.demoCaptureRequested === true,
+					sshRemoteId: session.sshRemoteId ?? null,
+					sshRemoteHost: session.sshRemote?.host ?? null,
+				})
+				.then((demoCard) => {
+					if (demoCard) {
+						appendDemoCardLog(sessionId, targetTab.id, demoCard);
+					}
+				})
+				.catch((error) => {
+					harvestedDemoLogIds.delete(logEntry.id);
+					console.error('[Artifacts] Failed to harvest demo from log text', error);
+				});
+		};
+
 		const unsubscribeDemoGenerated =
 			window.maestro.process.onDemoGenerated?.(
 				(sessionId: string, tabId: string | null, demoCard: DemoCard) => {
-					const logEntry: LogEntry = {
-						id: generateId(),
-						timestamp: demoCard.updatedAt || Date.now(),
-						source: 'system',
-						text: demoCard.status === 'failed' ? 'Demo capture failed' : 'Demo ready',
-						metadata: {
-							demoCard,
-						},
-					};
-
-					setSessions((prev) =>
-						prev.map((session) => {
-							if (session.id !== sessionId) return session;
-							const targetTabId = tabId || session.activeTabId;
-							if (!targetTabId) {
-								return session;
-							}
-							return {
-								...session,
-								aiTabs: session.aiTabs.map((tab) =>
-									tab.id === targetTabId ? { ...tab, logs: [...tab.logs, logEntry] } : tab
-								),
-							};
-						})
-					);
-
-					broadcastSessionLogEntry(sessionId, tabId, 'ai', logEntry);
+					appendDemoCardLog(sessionId, tabId, demoCard);
 				}
 			) || (() => {});
 
@@ -2553,8 +2635,13 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						};
 					})
 				);
-				if (toolLogToBroadcast) {
-					broadcastSessionLogEntry(actualSessionId, tabId, 'ai', toolLogToBroadcast);
+				const finalizedToolLog = toolLogToBroadcast as LogEntry | null;
+				if (finalizedToolLog) {
+					broadcastSessionLogEntry(actualSessionId, tabId, 'ai', finalizedToolLog);
+					const toolStatus = finalizedToolLog.metadata?.toolState?.status;
+					if (toolStatus === 'completed' || toolStatus === 'error') {
+						maybeHarvestDemoFromLog(actualSessionId, tabId, finalizedToolLog);
+					}
 				}
 			}
 		);
@@ -2586,6 +2673,229 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			}
 		);
 
+		const unsubscribeConversationEvent = window.maestro.conversation.onEvent(
+			(sessionId: string, event) => {
+				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+				if (!aiTabMatch) return;
+
+				const actualSessionId = aiTabMatch[1];
+				const tabId = aiTabMatch[2];
+
+				if (event.type === 'turn_started') {
+					setSessions((prev) =>
+						prev.map((session) => {
+							if (session.id !== actualSessionId) return session;
+							return {
+								...session,
+								aiTabs: session.aiTabs.map((tab) =>
+									tab.id === tabId
+										? {
+												...tab,
+												activeTurnId: event.turnId,
+												runtimeKind: event.runtimeKind,
+											}
+										: tab
+								),
+							};
+						})
+					);
+					return;
+				}
+
+				if (event.type === 'steer_accepted') {
+					setSessions((prev) =>
+						prev.map((session) => {
+							if (session.id !== actualSessionId) return session;
+							return {
+								...session,
+								aiTabs: session.aiTabs.map((tab) => {
+									if (tab.id !== tabId) return tab;
+									const pendingSteer = tab.pendingSteer;
+									return {
+										...tab,
+										activeTurnId: event.turnId,
+										pendingSteer: null,
+										steerStatus: 'delivered' as const,
+										lastCheckpointAt: event.timestamp,
+										logs: pendingSteer
+											? tab.logs.map((log) =>
+													log.id === pendingSteer.logEntryId
+														? {
+																...log,
+																delivered: true,
+																deliveryState: 'delivered',
+															}
+														: log
+												)
+											: tab.logs,
+									};
+								}),
+							};
+						})
+					);
+					return;
+				}
+
+				if (event.type === 'steer_rejected') {
+					setSessions((prev) =>
+						prev.map((session) => {
+							if (session.id !== actualSessionId) return session;
+							return {
+								...session,
+								aiTabs: session.aiTabs.map((tab) =>
+									tab.id === tabId
+										? {
+												...tab,
+												pendingSteer: null,
+												steerStatus: 'idle' as const,
+												logs: [
+													...tab.logs,
+													{
+														id: generateId(),
+														timestamp: Date.now(),
+														source: 'system',
+														text: event.message,
+													},
+												],
+											}
+										: tab
+								),
+							};
+						})
+					);
+					return;
+				}
+
+				if (event.type !== 'turn_completed' || event.runtimeKind !== 'live') {
+					return;
+				}
+
+				let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
+				const currentSession = getSessions().find((s) => s.id === actualSessionId);
+				if (currentSession && currentSession.executionQueue.length > 0) {
+					queuedItemToProcess = {
+						sessionId: actualSessionId,
+						item: currentSession.executionQueue[0],
+					};
+				}
+
+				setSessions((prev) =>
+					prev.map((session) => {
+						if (session.id !== actualSessionId) return session;
+
+						if (session.executionQueue.length > 0) {
+							const [nextItem, ...remainingQueue] = session.executionQueue;
+							const targetTab =
+								session.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(session);
+
+							let updatedAiTabs = session.aiTabs.map((tab) => {
+								if (tab.id === targetTab?.id) {
+									return {
+										...tab,
+										state: 'busy' as const,
+										thinkingStartTime: Date.now(),
+										pendingSteer: null,
+										steerStatus: 'idle' as const,
+										activeTurnId: null,
+										lastCheckpointAt: event.timestamp,
+									};
+								}
+								if (tab.id === tabId) {
+									return {
+										...tab,
+										state: 'idle' as const,
+										thinkingStartTime: undefined,
+										pendingUserInputRequest: null,
+										pendingSteer: null,
+										steerStatus: 'idle' as const,
+										activeTurnId: null,
+										lastCheckpointAt: event.timestamp,
+									};
+								}
+								return tab;
+							});
+
+							if (nextItem.type === 'message' && nextItem.text && targetTab) {
+								const logEntry: LogEntry = {
+									id: generateId(),
+									timestamp: Date.now(),
+									source: 'user',
+									text: nextItem.text,
+									images: nextItem.images,
+									delivered: false,
+									interactionKind: 'queued',
+									deliveryState: 'pending',
+								};
+								updatedAiTabs = updatedAiTabs.map((tab) =>
+									tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
+								);
+							}
+
+							return {
+								...session,
+								state: 'busy' as SessionState,
+								busySource: 'ai',
+								thinkingStartTime: Date.now(),
+								currentCycleTokens: 0,
+								currentCycleBytes: 0,
+								pendingAICommandForSynopsis: undefined,
+								executionQueue: remainingQueue,
+								aiTabs: updatedAiTabs,
+							};
+						}
+
+						const updatedAiTabs = session.aiTabs.map((tab) =>
+							tab.id === tabId
+								? {
+										...tab,
+										state: 'idle' as const,
+										thinkingStartTime: undefined,
+										pendingUserInputRequest: null,
+										pendingSteer: null,
+										steerStatus: 'idle' as const,
+										activeTurnId: null,
+										lastCheckpointAt: event.timestamp,
+									}
+								: tab
+						);
+
+						return {
+							...session,
+							state: updatedAiTabs.some((tab) => tab.state === 'busy')
+								? ('busy' as SessionState)
+								: ('idle' as SessionState),
+							busySource: updatedAiTabs.some((tab) => tab.state === 'busy')
+								? session.busySource
+								: undefined,
+							thinkingStartTime: undefined,
+							pendingAICommandForSynopsis: undefined,
+							aiTabs: updatedAiTabs,
+						};
+					})
+				);
+
+				const finishedSession = getSessions().find((candidate) => candidate.id === actualSessionId);
+				const finishedTab = finishedSession?.aiTabs.find((candidate) => candidate.id === tabId);
+				const latestResponseLog =
+					finishedTab?.logs
+						.slice()
+						.reverse()
+						.find((log) => log.source === 'ai' || log.source === 'stdout') || null;
+				if (latestResponseLog) {
+					maybeHarvestDemoFromLog(actualSessionId, tabId, latestResponseLog);
+				}
+
+				if (queuedItemToProcess) {
+					setTimeout(() => {
+						deps.processQueuedItemRef.current?.(
+							queuedItemToProcess!.sessionId,
+							queuedItemToProcess!.item
+						);
+					}, 0);
+				}
+			}
+		);
+
 		// ================================================================
 		// Cleanup — unsubscribe all listeners on unmount
 		// ================================================================
@@ -2610,6 +2920,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			unsubscribeSshRemote?.();
 			unsubscribeToolExecution?.();
 			unsubscribeUserInputRequest?.();
+			unsubscribeConversationEvent?.();
 			unsubscribeDemoGenerated?.();
 			// Cancel any pending thinking chunk RAF and clear buffer
 			if (thinkingChunkRafIdRef.current !== null) {

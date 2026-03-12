@@ -5,8 +5,8 @@
  * Shows messages in a scrollable container with user/AI differentiation.
  */
 
-import { Fragment, memo, useEffect, useRef, useState, useCallback } from 'react';
-import { ArrowDown, FileText } from 'lucide-react';
+import { Fragment, memo, useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { ArrowDown, Check, CircleSlash, Clock3, FileText, Navigation2 } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MobileMarkdownRenderer } from './MobileMarkdownRenderer';
@@ -37,6 +37,12 @@ export interface MessageHistoryProps {
 	maxHeight?: string;
 	/** Callback when user taps a message */
 	onMessageTap?: (entry: LogEntry) => void;
+	/** Message key to scroll into view */
+	jumpToMessageKey?: string | null;
+	/** Called after a jump request is handled */
+	onJumpHandled?: () => void;
+	/** Called when the most visible user turn changes while scrolling */
+	onVisibleUserTurnChange?: (messageKey: string | null) => void;
 }
 
 /**
@@ -64,6 +70,94 @@ function artifactUrl(artifactId?: string | null): string | null {
 	return buildApiUrl(`/artifacts/${artifactId}/content`);
 }
 
+function getInteractionBadge(
+	entry: LogEntry,
+	colors: ReturnType<typeof useThemeColors>
+): {
+	kind: 'steer' | 'delivered' | 'queued' | 'canceled';
+	title: string;
+	color: string;
+	background: string;
+	border: string;
+} | null {
+	if (entry.deliveryState === 'canceled') {
+		return {
+			kind: 'canceled',
+			title: 'Stopped by user',
+			color: colors.textDim,
+			background: `${colors.textDim}10`,
+			border: `${colors.textDim}20`,
+		};
+	}
+
+	if (entry.interactionKind === 'steer') {
+		if (entry.deliveryState === 'delivered' || entry.delivered) {
+			return {
+				kind: 'delivered',
+				title: 'Steer delivered',
+				color: '#16a34a',
+				background: 'rgba(22, 163, 74, 0.14)',
+				border: 'rgba(22, 163, 74, 0.28)',
+			};
+		}
+
+		if (entry.deliveryState === 'fallback_interrupt') {
+			return {
+				kind: 'steer',
+				title: 'Steer waiting for interrupt',
+				color: colors.textDim,
+				background: `${colors.textDim}12`,
+				border: `${colors.textDim}22`,
+			};
+		}
+
+		return {
+			kind: 'steer',
+			title: 'Sending steer',
+			color: colors.accent,
+			background: `${colors.accent}16`,
+			border: `${colors.accent}33`,
+		};
+	}
+
+	if (entry.interactionKind === 'queued') {
+		return {
+			kind: 'queued',
+			title:
+				entry.delivered || entry.deliveryState === 'delivered'
+					? 'Queued next sent'
+					: 'Queued next',
+			color: colors.textDim,
+			background: `${colors.textDim}12`,
+			border: `${colors.textDim}22`,
+		};
+	}
+
+	return null;
+}
+
+function InteractionBadgeIcon({
+	kind,
+	color,
+}: {
+	kind: 'steer' | 'delivered' | 'queued' | 'canceled';
+	color: string;
+}) {
+	if (kind === 'delivered') {
+		return <Check size={12} strokeWidth={3} color={color} />;
+	}
+
+	if (kind === 'canceled') {
+		return <CircleSlash size={12} strokeWidth={2.4} color={color} />;
+	}
+
+	if (kind === 'queued') {
+		return <Clock3 size={12} strokeWidth={2.4} color={color} />;
+	}
+
+	return <Navigation2 size={12} strokeWidth={2.4} color={color} />;
+}
+
 /**
  * MessageHistory component
  */
@@ -76,10 +170,17 @@ export const MessageHistory = memo(function MessageHistory({
 	autoScroll = true,
 	maxHeight = '300px',
 	onMessageTap,
+	jumpToMessageKey = null,
+	onJumpHandled,
+	onVisibleUserTurnChange,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
 	const bottomRef = useRef<HTMLDivElement>(null);
+	const messageElementMapRef = useRef<Map<string, HTMLDivElement>>(new Map());
+	const userMessageElementMapRef = useRef<Map<string, HTMLDivElement>>(new Map());
+	const lastVisibleUserTurnKeyRef = useRef<string | null>(null);
+	const scrollOverlayHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const [hasInitiallyScrolled, setHasInitiallyScrolled] = useState(false);
 	const prevLogsLengthRef = useRef(0);
 	// Track which messages are expanded (by id or index)
@@ -91,6 +192,38 @@ export const MessageHistory = memo(function MessageHistory({
 	const [newMessageCount, setNewMessageCount] = useState(0);
 	const [lightboxImages, setLightboxImages] = useState<string[]>([]);
 	const [lightboxIndex, setLightboxIndex] = useState(0);
+	const [visibleUserTurnKey, setVisibleUserTurnKey] = useState<string | null>(null);
+	const [showScrollTurnOverlay, setShowScrollTurnOverlay] = useState(false);
+	const { canceledUserMessageKeys, canceledSystemMessageKeys } = useMemo(() => {
+		const canceledKeys = new Set<string>();
+		const canceledNoticeKeys = new Set<string>();
+		let latestTurnKey: string | null = null;
+
+		for (let index = 0; index < logs.length; index += 1) {
+			const entry = logs[index];
+			const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+			const messageKey = entry.id || `${entry.timestamp}-${index}`;
+
+			if (source === 'user') {
+				if (entry.interactionKind !== 'steer' && entry.interactionKind !== 'queued') {
+					latestTurnKey = messageKey;
+				}
+				continue;
+			}
+
+			if (source === 'system' && (entry.text || entry.content || '') === 'Canceled by user') {
+				if (latestTurnKey) {
+					canceledKeys.add(latestTurnKey);
+					canceledNoticeKeys.add(messageKey);
+				}
+			}
+		}
+
+		return {
+			canceledUserMessageKeys: canceledKeys,
+			canceledSystemMessageKeys: canceledNoticeKeys,
+		};
+	}, [logs]);
 	const latestUserLogIndex =
 		inputMode === 'ai'
 			? (() => {
@@ -117,6 +250,88 @@ export const MessageHistory = memo(function MessageHistory({
 					return logs.length;
 				})()
 			: -1;
+	const userMessageKeys = useMemo(
+		() =>
+			logs
+				.map((entry, index) => {
+					const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+					if (source !== 'user') {
+						return null;
+					}
+					return entry.id || `${entry.timestamp}-${index}`;
+				})
+				.filter((messageKey): messageKey is string => Boolean(messageKey)),
+		[logs]
+	);
+	const userTurnMarkers = useMemo(
+		() =>
+			logs
+				.map((entry, index) => {
+					const source = entry.source || (entry.type === 'user' ? 'user' : 'stdout');
+					if (source !== 'user') {
+						return null;
+					}
+					return {
+						key: entry.id || `${entry.timestamp}-${index}`,
+						label: (entry.text || entry.content || '').replace(/\s+/g, ' ').trim() || 'Untitled turn',
+					};
+				})
+				.filter((entry): entry is { key: string; label: string } => Boolean(entry)),
+		[logs]
+	);
+	const visibleScrollTurnMarkers = useMemo(() => {
+		if (userTurnMarkers.length <= 1) {
+			return [];
+		}
+
+		if (userTurnMarkers.length <= 6) {
+			return userTurnMarkers;
+		}
+
+		const anchors = [
+			userTurnMarkers[0],
+			...userTurnMarkers.slice(-5),
+		];
+		const seen = new Set<string>();
+		return anchors.filter((marker) => {
+			if (seen.has(marker.key)) {
+				return false;
+			}
+			seen.add(marker.key);
+			return true;
+		});
+	}, [userTurnMarkers]);
+	const activeScrollOverlayTurnKey = useMemo(() => {
+		if (visibleScrollTurnMarkers.length === 0) {
+			return null;
+		}
+
+		if (!visibleUserTurnKey) {
+			return visibleScrollTurnMarkers[visibleScrollTurnMarkers.length - 1]?.key || null;
+		}
+
+		const activeIndex = userTurnMarkers.findIndex((marker) => marker.key === visibleUserTurnKey);
+		if (activeIndex < 0) {
+			return visibleScrollTurnMarkers[visibleScrollTurnMarkers.length - 1]?.key || null;
+		}
+
+		let nearestKey = visibleScrollTurnMarkers[0]?.key || null;
+		let nearestDistance = Number.POSITIVE_INFINITY;
+
+		for (const marker of visibleScrollTurnMarkers) {
+			const markerIndex = userTurnMarkers.findIndex((entry) => entry.key === marker.key);
+			if (markerIndex < 0) {
+				continue;
+			}
+			const distance = Math.abs(markerIndex - activeIndex);
+			if (distance < nearestDistance) {
+				nearestDistance = distance;
+				nearestKey = marker.key;
+			}
+		}
+
+		return nearestKey;
+	}, [userTurnMarkers, visibleScrollTurnMarkers, visibleUserTurnKey]);
 
 	const hasAssistantResponseAfterLatestUser =
 		inputMode === 'ai' &&
@@ -225,6 +440,65 @@ export const MessageHistory = memo(function MessageHistory({
 		}
 	}, []);
 
+	const showScrollOverlayTemporarily = useCallback(() => {
+		if (userTurnMarkers.length <= 1) {
+			return;
+		}
+
+		setShowScrollTurnOverlay(true);
+		if (scrollOverlayHideTimerRef.current) {
+			clearTimeout(scrollOverlayHideTimerRef.current);
+		}
+		scrollOverlayHideTimerRef.current = setTimeout(() => {
+			setShowScrollTurnOverlay(false);
+		}, 900);
+	}, [userTurnMarkers.length]);
+
+	const syncVisibleUserTurn = useCallback(() => {
+		const container = containerRef.current;
+		if (!container || userMessageKeys.length === 0) {
+			if (lastVisibleUserTurnKeyRef.current !== null) {
+				lastVisibleUserTurnKeyRef.current = null;
+				setVisibleUserTurnKey(null);
+				onVisibleUserTurnChange?.(null);
+			}
+			return;
+		}
+
+		const containerRect = container.getBoundingClientRect();
+		const anchorY = containerRect.top + Math.min(containerRect.height * 0.28, 140);
+		let bestKey: string | null = null;
+		let bestDistance = Number.POSITIVE_INFINITY;
+
+		for (const messageKey of userMessageKeys) {
+			const element = userMessageElementMapRef.current.get(messageKey);
+			if (!element) {
+				continue;
+			}
+
+			const rect = element.getBoundingClientRect();
+			const distance = Math.abs(rect.top - anchorY);
+			if (distance < bestDistance) {
+				bestDistance = distance;
+				bestKey = messageKey;
+			}
+		}
+
+		if (bestKey !== lastVisibleUserTurnKeyRef.current) {
+			lastVisibleUserTurnKeyRef.current = bestKey;
+			setVisibleUserTurnKey(bestKey);
+			onVisibleUserTurnChange?.(bestKey);
+		}
+	}, [onVisibleUserTurnChange, userMessageKeys]);
+
+	useEffect(() => {
+		return () => {
+			if (scrollOverlayHideTimerRef.current) {
+				clearTimeout(scrollOverlayHideTimerRef.current);
+			}
+		};
+	}, []);
+
 	// Detect new messages when user is not at bottom
 	useEffect(() => {
 		const currentCount = logs.length;
@@ -255,6 +529,33 @@ export const MessageHistory = memo(function MessageHistory({
 			setNewMessageCount(0);
 		}
 	}, []);
+
+	const scrollToMessageKey = useCallback((messageKey: string) => {
+		const container = containerRef.current;
+		const targetElement = messageElementMapRef.current.get(messageKey);
+		if (!container || !targetElement) {
+			return;
+		}
+
+		const containerRect = container.getBoundingClientRect();
+		const targetRect = targetElement.getBoundingClientRect();
+		const topPadding = 14;
+		const nextScrollTop =
+			container.scrollTop + (targetRect.top - containerRect.top) - topPadding;
+		container.scrollTop = Math.max(0, nextScrollTop);
+	}, []);
+
+	useEffect(() => {
+		if (!jumpToMessageKey) return;
+
+		scrollToMessageKey(jumpToMessageKey);
+
+		onJumpHandled?.();
+	}, [jumpToMessageKey, onJumpHandled, scrollToMessageKey]);
+
+	useEffect(() => {
+		syncVisibleUserTurn();
+	}, [logs, syncVisibleUserTurn]);
 
 	const openImageLightbox = useCallback((images: string[], index: number) => {
 		setLightboxImages(images);
@@ -294,14 +595,25 @@ export const MessageHistory = memo(function MessageHistory({
 			style={{
 				position: 'relative',
 				...(maxHeight === 'none'
-					? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }
+					? {
+							flex: 1,
+							minHeight: 0,
+							height: '100%',
+							display: 'flex',
+							flexDirection: 'column',
+							overflow: 'hidden',
+						}
 					: {}),
 			}}
 		>
 			<div
 				ref={containerRef}
 				className="maestro-message-history-scroll"
-				onScroll={handleScroll}
+				onScroll={() => {
+					handleScroll();
+					syncVisibleUserTurn();
+					showScrollOverlayTemporarily();
+				}}
 				style={{
 					display: 'flex',
 					flexDirection: 'column',
@@ -330,12 +642,29 @@ export const MessageHistory = memo(function MessageHistory({
 					const isAssistantResponse =
 						inputMode === 'ai' && !isUser && !isError && !isSystem && !isThinking && !isTool;
 					const messageKey = entry.id || `${entry.timestamp}-${index}`;
+					const isSystemCanceledNotice =
+						isSystem && (entry.text || entry.content || '') === 'Canceled by user';
+					if (isSystemCanceledNotice && canceledSystemMessageKeys.has(messageKey)) {
+						return null;
+					}
 					const isExpanded = expandedMessages.has(messageKey);
 					const isTruncatable = !isAssistantResponse && !isTool && shouldTruncate(text);
 					const displayText = isExpanded || !isTruncatable ? text : getTruncatedText(text);
 					const attachments = entry.attachments || [];
 					const demoCard = entry.metadata?.demoCard;
 					const showInlineMeta = !isUser;
+					const interactionBadge =
+						isUser && canceledUserMessageKeys.has(messageKey)
+							? {
+									kind: 'canceled' as const,
+									title: 'Stopped by user',
+									color: colors.textDim,
+									background: `${colors.textDim}10`,
+									border: `${colors.textDim}20`,
+								}
+							: isUser
+								? getInteractionBadge(entry, colors)
+								: null;
 					const messageLabel = isUser
 						? 'You'
 						: isError
@@ -356,6 +685,18 @@ export const MessageHistory = memo(function MessageHistory({
 								<ToolActivityPanel logs={toolLogs} isSessionBusy={isSessionBusy} />
 							)}
 							<div
+								ref={(element) => {
+									if (element) {
+										messageElementMapRef.current.set(messageKey, element);
+										if (isUser) {
+											userMessageElementMapRef.current.set(messageKey, element);
+										}
+									} else {
+										messageElementMapRef.current.delete(messageKey);
+										userMessageElementMapRef.current.delete(messageKey);
+									}
+								}}
+								data-message-key={messageKey}
 								style={{
 									display: 'flex',
 									flexDirection: 'column',
@@ -447,6 +788,30 @@ export const MessageHistory = memo(function MessageHistory({
 													{isExpanded ? '▼ collapse' : '▶ expand'}
 												</span>
 											)}
+										</div>
+									)}
+
+									{isUser && interactionBadge && (
+										<div
+											aria-label={interactionBadge.title}
+											title={interactionBadge.title}
+											style={{
+												display: 'inline-flex',
+												alignItems: 'center',
+												justifyContent: 'center',
+												alignSelf: 'flex-end',
+												width: '22px',
+												height: '22px',
+												borderRadius: '999px',
+												border: `1px solid ${interactionBadge.border}`,
+												background: interactionBadge.background,
+												color: interactionBadge.color,
+											}}
+										>
+											<InteractionBadgeIcon
+												kind={interactionBadge.kind}
+												color={interactionBadge.color}
+											/>
 										</div>
 									)}
 
@@ -708,6 +1073,83 @@ export const MessageHistory = memo(function MessageHistory({
 				{/* Bottom ref with padding to ensure last message is fully visible */}
 				<div ref={bottomRef} style={{ minHeight: '8px' }} />
 			</div>
+
+			{showScrollTurnOverlay && visibleScrollTurnMarkers.length > 1 && (
+				<div
+					aria-label="Turn history navigator"
+					style={{
+						position: 'absolute',
+						top: '50%',
+						right: '8px',
+						transform: 'translateY(-50%)',
+						display: 'flex',
+						flexDirection: 'column',
+						alignItems: 'center',
+						gap: '10px',
+						padding: '10px 8px',
+						borderRadius: '999px',
+						background: 'rgba(255, 255, 255, 0.26)',
+						border: '1px solid rgba(255, 255, 255, 0.16)',
+						backdropFilter: 'blur(16px)',
+						WebkitBackdropFilter: 'blur(16px)',
+						boxShadow: '0 14px 28px rgba(15, 23, 42, 0.12)',
+						zIndex: 12,
+						pointerEvents: 'auto',
+						transition: 'opacity 180ms ease',
+					}}
+				>
+					<div
+						style={{
+							position: 'absolute',
+							top: '12px',
+							bottom: '12px',
+							width: '2px',
+							borderRadius: '999px',
+							background: `${colors.textDim}40`,
+						}}
+					/>
+					{visibleScrollTurnMarkers.map((marker, index) => {
+						const isActive = marker.key === activeScrollOverlayTurnKey;
+						return (
+							<button
+								key={marker.key}
+								type="button"
+								onClick={() => {
+									scrollToMessageKey(marker.key);
+									setVisibleUserTurnKey(marker.key);
+									setShowScrollTurnOverlay(true);
+									showScrollOverlayTemporarily();
+								}}
+								aria-label={`Jump to turn ${index + 1}: ${marker.label}`}
+								title={marker.label}
+								style={{
+									appearance: 'none',
+									WebkitAppearance: 'none',
+									position: 'relative',
+									display: 'block',
+									width: isActive ? '16px' : '12px',
+									height: isActive ? '16px' : '12px',
+									minWidth: isActive ? '16px' : '12px',
+									minHeight: isActive ? '16px' : '12px',
+									borderRadius: '999px',
+									border: isActive
+										? `1px solid ${colors.accent}66`
+										: `1px solid ${colors.textDim}40`,
+									background: isActive ? colors.accent : `${colors.textDim}88`,
+									boxShadow: isActive ? `0 0 0 3px ${colors.accent}18` : 'none',
+									cursor: 'pointer',
+									padding: 0,
+									flexShrink: 0,
+									boxSizing: 'border-box',
+									zIndex: 1,
+									transition:
+										'background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease, width 140ms ease, height 140ms ease',
+								}}
+							/>
+						);
+					})}
+				</div>
+			)}
 
 			{lightboxImages.length > 0 && (
 				<div

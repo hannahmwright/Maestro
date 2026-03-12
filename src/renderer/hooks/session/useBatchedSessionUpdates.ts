@@ -391,7 +391,9 @@ export function useBatchedSessionUpdates(
 							return {
 								...tab,
 								logs: tab.logs.map((log, i) =>
-									i === lastUserIndex ? { ...log, delivered: true } : log
+									i === lastUserIndex
+										? { ...log, delivered: true, deliveryState: 'delivered' }
+										: log
 								),
 							};
 						}),

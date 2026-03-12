@@ -33,6 +33,7 @@ import { GitStatusWidget } from './GitStatusWidget';
 import { AgentSessionsBrowser } from './AgentSessionsBrowser';
 import { SessionWorkflowBadge } from './SessionWorkflowBadge';
 import { TabBar } from './TabBar';
+import { ThreadBar } from './ThreadBar';
 import { WizardConversationView, DocumentGenerationView } from './InlineWizard';
 import { gitService } from '../services/git';
 import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
@@ -40,10 +41,17 @@ import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitSta
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { calculateContextDisplay } from '../utils/contextUsage';
 import { resolveSessionWorkflowState } from '../utils/handoffWorkflow';
+import {
+	getRuntimeIdForSession,
+	getRuntimeIdForThread,
+	getThreadDisplayTitle,
+	getWorkspaceDisplayName,
+} from '../utils/workspaceThreads';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionStore } from '../stores/sessionStore';
 import type {
 	Session,
 	Theme,
@@ -153,6 +161,7 @@ interface MainPanelProps {
 	// Functions
 	toggleInputMode: () => void;
 	processInput: () => void;
+	queueInput: () => void;
 	handleInterrupt: () => void;
 	handleInputKeyDown: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
 	handlePaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
@@ -171,6 +180,7 @@ interface MainPanelProps {
 	onTabSelect?: (tabId: string) => void;
 	onTabClose?: (tabId: string) => void;
 	onNewTab?: () => void;
+	onNewThread?: () => void;
 	onRequestTabRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
 	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
@@ -382,6 +392,7 @@ export const MainPanel = React.memo(
 			terminalOutputRef,
 			toggleInputMode,
 			processInput,
+			queueInput,
 			handleInterrupt,
 			handleInputKeyDown,
 			handlePaste,
@@ -446,6 +457,8 @@ export const MainPanel = React.memo(
 		const outputSearchQuery = useUIStore((s) => s.outputSearchQuery);
 		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
 		const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
+		const threads = useSessionStore((s) => s.threads);
+		const groups = useSessionStore((s) => s.groups);
 
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
@@ -467,6 +480,7 @@ export const MainPanel = React.memo(
 			onTabSelect,
 			onTabClose,
 			onNewTab,
+			onNewThread,
 			onRequestTabRename,
 			onTabReorder,
 			onUnifiedTabReorder,
@@ -501,6 +515,52 @@ export const MainPanel = React.memo(
 				null,
 			[activeSession?.aiTabs, activeSession?.activeTabId]
 		);
+		const activeThread = useMemo(() => {
+			if (!activeSession) {
+				return null;
+			}
+
+			const sessionRuntimeId = getRuntimeIdForSession(activeSession);
+			return (
+				threads.find((thread) => getRuntimeIdForThread(thread) === sessionRuntimeId) ?? null
+			);
+		}, [activeSession, threads]);
+		const threadTitle = useMemo(
+			() =>
+				activeSession
+					? activeThread
+						? getThreadDisplayTitle(activeThread, activeSession)
+						: activeSession.name
+					: 'Select a thread',
+			[activeSession, activeThread]
+		);
+		const activeWorkspace = useMemo(() => {
+			if (!activeSession) {
+				return null;
+			}
+
+			const workspaceId =
+				activeThread?.workspaceId || activeSession.workspaceId || activeSession.groupId;
+			const workspace = workspaceId
+				? groups.find((candidate) => candidate.id === workspaceId) || null
+				: null;
+			const projectRoot = activeThread?.projectRoot || activeSession.projectRoot || activeSession.cwd;
+
+			return {
+				name: workspace?.name || getWorkspaceDisplayName(projectRoot),
+				emoji: workspace?.emoji || '📁',
+				projectRoot,
+			};
+		}, [
+			activeSession,
+			activeSession?.cwd,
+			activeSession?.groupId,
+			activeSession?.projectRoot,
+			activeSession?.workspaceId,
+			activeThread?.projectRoot,
+			activeThread?.workspaceId,
+			groups,
+		]);
 		const activeTabError = activeTab?.agentError;
 
 		const normalizeReasoningEffort = useCallback((value: unknown): ReasoningEffort => {
@@ -947,10 +1007,26 @@ export const MainPanel = React.memo(
 							>
 								<div className="flex items-center gap-4 min-w-0 overflow-hidden">
 									<div className="flex items-center gap-2 text-sm font-medium min-w-0 overflow-hidden">
-										{/* Session name - hidden at narrow widths via CSS container query */}
-										<span className="header-session-name truncate max-w-[150px]">
-											{activeSession.name}
-										</span>
+										{activeWorkspace && (
+											<div
+												className="inline-flex items-center gap-2 min-w-0 max-w-[220px] px-2.5 py-1 rounded-full border shrink-0"
+												style={{
+													backgroundColor: `${theme.colors.accent}12`,
+													borderColor: `${theme.colors.accent}32`,
+												}}
+												title={activeWorkspace.projectRoot}
+											>
+												<span className="text-sm leading-none shrink-0">
+													{activeWorkspace.emoji}
+												</span>
+												<span
+													className="text-xs font-semibold truncate"
+													style={{ color: theme.colors.textMain }}
+												>
+													{activeWorkspace.name}
+												</span>
+											</div>
+										)}
 										<div
 											className="relative shrink-0"
 											onMouseEnter={
@@ -1518,20 +1594,36 @@ export const MainPanel = React.memo(
 							</div>
 						)}
 
-						{/* Tab Bar - always shown in AI mode when we have tabs (includes both AI and file tabs) */}
-						{activeSession.inputMode === 'ai' &&
+						{!isMobileLandscape &&
+							activeSession.inputMode === 'ai' &&
 							activeSession.aiTabs &&
-							activeSession.aiTabs.length > 0 &&
-							onTabSelect &&
-							onTabClose &&
-							onNewTab && (
+							activeSession.aiTabs.length > 0 && (
+								<ThreadBar
+									theme={theme}
+									threadTitle={threadTitle}
+									contextUsagePercentage={
+										hasCapability('supportsUsageStats') && activeTabContextWindow > 0
+											? activeTabContextUsage
+											: null
+									}
+									contextUsageColor={getContextColor(activeTabContextUsage, theme)}
+									onNewThread={onNewThread}
+								/>
+							)}
+
+						{/* File Preview Tab Bar - keep file navigation visible without showing AI tabs */}
+						{!isMobileLandscape &&
+							activeSession.inputMode === 'ai' &&
+							unifiedTabs?.some((tab) => tab.type === 'file') &&
+							onFileTabSelect &&
+							onFileTabClose && (
 								<TabBar
-									tabs={activeSession.aiTabs}
+									tabs={activeSession.aiTabs || []}
 									activeTabId={activeSession.activeTabId}
 									theme={theme}
-									onTabSelect={onTabSelect}
-									onTabClose={onTabClose}
-									onNewTab={onNewTab}
+									onTabSelect={onTabSelect || (() => {})}
+									onTabClose={onTabClose || (() => {})}
+									onNewTab={onNewTab || (() => {})}
 									onRequestRename={onRequestTabRename}
 									onTabReorder={onTabReorder}
 									onUnifiedTabReorder={onUnifiedTabReorder}
@@ -1551,12 +1643,13 @@ export const MainPanel = React.memo(
 									onCloseOtherTabs={onCloseOtherTabs}
 									onCloseTabsLeft={onCloseTabsLeft}
 									onCloseTabsRight={onCloseTabsRight}
-									// Unified tab system props (Phase 4)
 									unifiedTabs={unifiedTabs}
 									activeFileTabId={activeFileTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
-									// Accessibility
+									visibleTabTypes={['file']}
+									showUtilityControls={false}
+									showNewTabButton={false}
 									colorBlindMode={colorBlindMode}
 								/>
 							)}
@@ -1838,6 +1931,7 @@ export const MainPanel = React.memo(
 											handleDrop={handleDrop}
 											toggleInputMode={toggleInputMode}
 											processInput={processInput}
+											queueInput={queueInput}
 											handleInterrupt={handleInterrupt}
 											onInputFocus={handleInputFocus}
 											onInputBlur={props.onInputBlur}

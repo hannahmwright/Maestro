@@ -12,7 +12,9 @@ import type {
 	WebAttachmentSummary,
 	WebTextAttachmentInput,
 } from '../../shared/remote-web';
-import type { DemoCaptureRequest } from '../../shared/demo-artifacts';
+import type { AgentModelCatalogGroup } from '../../shared/agent-model-catalog';
+import { isCompletedDemoCapture, type DemoCaptureRequest } from '../../shared/demo-artifacts';
+import type { ProviderUsageSnapshot, ProviderUsageWindow } from '../../shared/provider-usage';
 import {
 	useWebSocket,
 	type CustomCommand,
@@ -57,6 +59,14 @@ import { useMobileViewState } from '../hooks/useMobileViewState';
 import { MobileNavigationDrawer } from './MobileNavigationDrawer';
 import { ConnectionStatusIndicator } from './ConnectionStatusIndicator';
 import { calculateContextDisplay } from '../../renderer/utils/contextUsage';
+import { ProviderModelIcon } from './CommandInputButtons';
+
+function getDemoCaptureTargetKey(sessionId: string | null, tabId: string | null): string | null {
+	if (!sessionId) {
+		return null;
+	}
+	return `${sessionId}::${tabId || ''}`;
+}
 
 const MobileHistoryPanel = lazy(() =>
 	import('./MobileHistoryPanel').then((module) => ({
@@ -97,6 +107,17 @@ function normalizeModelLabel(model: string | null | undefined): string | null {
 	return normalized;
 }
 
+function getThreadDisplayName(session: Session | null | undefined): string {
+	return session?.threadTitle?.trim() || session?.name || 'Select a thread';
+}
+
+function summarizeTurnLabel(text: string | null | undefined): string {
+	const normalized = (text || '').replace(/\s+/g, ' ').trim();
+	if (!normalized) return 'Untitled turn';
+	if (normalized.length <= 48) return normalized;
+	return `${normalized.slice(0, 45).trimEnd()}...`;
+}
+
 function createAttachmentId(): string {
 	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
 		return crypto.randomUUID();
@@ -110,6 +131,43 @@ interface MobileHeaderProps {
 	onToggleDrawer: () => void;
 	canOpenTabSearch: boolean;
 	onOpenTabSearch: () => void;
+	providerUsageSnapshot?: ProviderUsageSnapshot | null;
+}
+
+function formatUsageWindowLabel(window: ProviderUsageWindow): string {
+	if (window.windowDurationMins === 10080) {
+		return 'Weekly allowance';
+	}
+
+	if (window.windowDurationMins === 300) {
+		return 'Current 5h window';
+	}
+
+	if (typeof window.windowDurationMins === 'number' && window.windowDurationMins > 0) {
+		if (window.windowDurationMins % 60 === 0) {
+			return `${window.windowDurationMins / 60}h window`;
+		}
+		return `${window.windowDurationMins}m window`;
+	}
+
+	return window.label;
+}
+
+function formatUsageResetTime(timestamp: number | null): string {
+	if (!timestamp) {
+		return 'Reset time unavailable';
+	}
+
+	try {
+		return new Intl.DateTimeFormat(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: '2-digit',
+		}).format(new Date(timestamp * 1000));
+	} catch {
+		return 'Reset time unavailable';
+	}
 }
 
 function MobileHeader({
@@ -118,45 +176,44 @@ function MobileHeader({
 	onToggleDrawer,
 	canOpenTabSearch,
 	onOpenTabSearch,
+	providerUsageSnapshot = null,
 }: MobileHeaderProps) {
 	const colors = useThemeColors();
-	const activeTab = getActiveTabFromSession(activeSession);
-	const contextUsagePercentage = activeTab?.usageStats
-		? calculateContextDisplay(
-				{
-					inputTokens: activeTab.usageStats.inputTokens,
-					outputTokens: activeTab.usageStats.outputTokens,
-					cacheReadInputTokens: activeTab.usageStats.cacheReadInputTokens ?? 0,
-					cacheCreationInputTokens: activeTab.usageStats.cacheCreationInputTokens ?? 0,
-				},
-				activeSession?.effectiveContextWindow ??
-					activeTab.usageStats.contextWindow ??
-					activeSession?.usageStats?.contextWindow ??
-					0,
-				activeSession?.toolType,
-				activeSession?.contextUsage ?? null
-			).percentage
-		: activeSession?.usageStats
-			? calculateContextDisplay(
-					{
-						inputTokens: activeSession.usageStats.inputTokens,
-						outputTokens: activeSession.usageStats.outputTokens,
-						cacheReadInputTokens: activeSession.usageStats.cacheReadInputTokens ?? 0,
-						cacheCreationInputTokens: activeSession.usageStats.cacheCreationInputTokens ?? 0,
-					},
-					activeSession.effectiveContextWindow ?? activeSession.usageStats.contextWindow ?? 0,
-					activeSession.toolType,
-					activeSession.contextUsage ?? null
-				).percentage
-			: null;
-	const contextBarColor =
-		contextUsagePercentage === null
-			? colors.textDim
-			: contextUsagePercentage >= 90
-				? colors.error
-				: contextUsagePercentage >= 70
-					? colors.warning
-					: colors.success;
+	const providerUsagePercent = providerUsageSnapshot?.usedPercent ?? null;
+	const usageMenuRef = useRef<HTMLDivElement>(null);
+	const [usageMenuOpen, setUsageMenuOpen] = useState(false);
+	const usageWindows = providerUsageSnapshot?.windows ?? [];
+
+	useEffect(() => {
+		if (!usageMenuOpen) {
+			return;
+		}
+
+		const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node)) {
+				return;
+			}
+
+			if (usageMenuRef.current && !usageMenuRef.current.contains(target)) {
+				setUsageMenuOpen(false);
+			}
+		};
+
+		document.addEventListener('mousedown', handlePointerDown);
+		document.addEventListener('touchstart', handlePointerDown);
+		return () => {
+			document.removeEventListener('mousedown', handlePointerDown);
+			document.removeEventListener('touchstart', handlePointerDown);
+		};
+	}, [usageMenuOpen]);
+
+	useEffect(() => {
+		if (!activeSession) {
+			setUsageMenuOpen(false);
+		}
+	}, [activeSession]);
+
 	const glassControlStyle: React.CSSProperties = {
 		display: 'flex',
 		alignItems: 'center',
@@ -193,6 +250,9 @@ function MobileHeader({
 	return (
 		<header
 			style={{
+				position: 'relative',
+				zIndex: 80,
+				overflow: 'visible',
 				display: 'flex',
 				alignItems: 'center',
 				justifyContent: 'space-between',
@@ -249,108 +309,240 @@ function MobileHeader({
 				<div
 					style={{
 						...titleSurfaceStyle,
+						flexDirection: 'row',
+						alignItems: 'center',
 					}}
 				>
 					<div
 						style={{
 							display: 'flex',
 							alignItems: 'center',
-							gap: '8px',
-							flex: 1,
+							gap: '10px',
 							minWidth: 0,
 						}}
 					>
-						<span
-							style={{
-								fontSize: '15px',
-								fontWeight: 650,
-								color: colors.textMain,
-								minWidth: 0,
-								overflow: 'hidden',
-								textOverflow: 'ellipsis',
-								whiteSpace: 'nowrap',
-								letterSpacing: '-0.02em',
-								flexShrink: 1,
-							}}
-						>
-							{activeSession?.name || 'Select an agent'}
-						</span>
-						{activeSession && (
-							<span
-								style={{
-									display: 'inline-flex',
-									alignItems: 'center',
-									gap: '5px',
-									padding: '5px 10px',
-									borderRadius: '999px',
-									border: '1px solid rgba(255, 255, 255, 0.08)',
-									background: `linear-gradient(180deg, ${colors.accent}14 0%, rgba(255, 255, 255, 0.05) 100%)`,
-									backdropFilter: 'blur(16px)',
-									WebkitBackdropFilter: 'blur(16px)',
-									color: colors.textMain,
-									fontSize: '10px',
-									fontWeight: 600,
-									lineHeight: 1,
-									flexShrink: 0,
-									whiteSpace: 'nowrap',
-									boxShadow:
-										'0 12px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
-								}}
-							>
-								<span style={{ lineHeight: 1 }}>{activeSession.groupEmoji || '📂'}</span>
-								<span>{activeSession.groupName || 'Ungrouped'}</span>
-							</span>
-						)}
-					</div>
-					{contextUsagePercentage !== null && activeSession && (
 						<div
-							title={`Context window ${contextUsagePercentage}% used`}
-							aria-label={`Context window ${contextUsagePercentage}% used`}
 							style={{
 								display: 'flex',
 								alignItems: 'center',
-								gap: '6px',
-								flexShrink: 0,
-								minWidth: '76px',
+								gap: '8px',
+								flex: 1,
+								minWidth: 0,
 							}}
 						>
-							<div
-								style={{
-									width: '42px',
-									height: '7px',
-									borderRadius: '999px',
-									background: 'rgba(15, 23, 42, 0.14)',
-									border: '1px solid rgba(255, 255, 255, 0.10)',
-									overflow: 'hidden',
-									flexShrink: 0,
-									boxShadow: 'inset 0 1px 2px rgba(15, 23, 42, 0.12)',
-								}}
-							>
-								<div
-									style={{
-										width: `${Math.max(0, Math.min(100, contextUsagePercentage))}%`,
-										height: '100%',
-										borderRadius: '999px',
-										background: contextBarColor,
-										boxShadow: `0 0 14px ${contextBarColor}35`,
-										transition: 'width 200ms ease-out, background-color 200ms ease-out',
-									}}
-								/>
-							</div>
 							<span
 								style={{
-									fontSize: '10px',
-									fontWeight: 600,
-									color: colors.textDim,
-									flexShrink: 0,
-									minWidth: '28px',
-									textAlign: 'right',
+									fontSize: '15px',
+									fontWeight: 650,
+									color: colors.textMain,
+									minWidth: 0,
+									overflow: 'hidden',
+									textOverflow: 'ellipsis',
+									whiteSpace: 'nowrap',
+									letterSpacing: '-0.02em',
+									flexShrink: 1,
 								}}
 							>
-								{contextUsagePercentage}%
-							</span>
+									{getThreadDisplayName(activeSession)}
+								</span>
+							{activeSession && (
+								<span
+									style={{
+										display: 'inline-flex',
+										alignItems: 'center',
+										gap: '5px',
+										padding: '5px 10px',
+										borderRadius: '999px',
+										border: '1px solid rgba(255, 255, 255, 0.08)',
+										background: `linear-gradient(180deg, ${colors.accent}14 0%, rgba(255, 255, 255, 0.05) 100%)`,
+										backdropFilter: 'blur(16px)',
+										WebkitBackdropFilter: 'blur(16px)',
+										color: colors.textMain,
+										fontSize: '10px',
+										fontWeight: 600,
+										lineHeight: 1,
+										flexShrink: 0,
+										whiteSpace: 'nowrap',
+										boxShadow:
+											'0 12px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+									}}
+								>
+									<span style={{ lineHeight: 1 }}>{activeSession.groupEmoji || '📂'}</span>
+									<span>{activeSession.groupName || 'Workspace'}</span>
+								</span>
+							)}
 						</div>
-					)}
+						{activeSession && (
+							<div style={{ position: 'relative', flexShrink: 0 }} ref={usageMenuRef}>
+								<button
+									type="button"
+									onClick={() => setUsageMenuOpen((previous) => !previous)}
+									title={
+										providerUsagePercent === null
+											? 'Provider usage unavailable'
+											: `${providerUsagePercent}% provider usage`
+									}
+									aria-label={
+										providerUsagePercent === null
+											? 'Provider usage unavailable'
+											: `${providerUsagePercent}% provider usage`
+									}
+									style={{
+										display: 'inline-flex',
+										alignItems: 'center',
+										gap: '6px',
+										flexShrink: 0,
+										padding: '5px 9px',
+										borderRadius: '999px',
+										border: usageMenuOpen
+											? `1px solid ${colors.accent}55`
+											: '1px solid rgba(255, 255, 255, 0.10)',
+										background: usageMenuOpen
+											? `linear-gradient(180deg, ${colors.accent}18 0%, rgba(255, 255, 255, 0.06) 100%)`
+											: 'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.05) 100%)',
+										boxShadow:
+											'0 10px 20px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+										cursor: 'pointer',
+									}}
+								>
+									<ProviderModelIcon
+										toolType={activeSession.toolType}
+										color={colors.textDim}
+										size={13}
+									/>
+									<span
+										style={{
+											fontSize: '10px',
+											fontWeight: 600,
+											color: colors.textDim,
+											whiteSpace: 'nowrap',
+										}}
+									>
+										{providerUsagePercent === null ? '--' : `${providerUsagePercent}%`}
+									</span>
+								</button>
+								{usageMenuOpen && (
+									<div
+										style={{
+											position: 'absolute',
+											top: 'calc(100% + 10px)',
+											right: 0,
+											width: 'min(240px, calc(100vw - 64px))',
+											padding: '12px',
+											borderRadius: '18px',
+											border: '1px solid rgba(255, 255, 255, 0.12)',
+											background:
+												'linear-gradient(180deg, rgba(255, 255, 255, 0.90) 0%, rgba(248, 250, 252, 0.84) 100%)',
+											backdropFilter: 'blur(18px)',
+											WebkitBackdropFilter: 'blur(18px)',
+											boxShadow:
+												'0 24px 40px rgba(15, 23, 42, 0.16), 0 8px 18px rgba(15, 23, 42, 0.08)',
+											zIndex: 140,
+										}}
+									>
+										<div
+											style={{
+												display: 'flex',
+												alignItems: 'center',
+												gap: '8px',
+												marginBottom: '10px',
+											}}
+										>
+											<ProviderModelIcon
+												toolType={activeSession.toolType}
+												color={colors.textMain}
+												size={15}
+											/>
+											<div style={{ minWidth: 0 }}>
+												<div
+													style={{
+														fontSize: '12px',
+														fontWeight: 700,
+														color: colors.textMain,
+														lineHeight: 1.2,
+													}}
+												>
+													{providerUsageSnapshot?.label || 'Provider usage'}
+												</div>
+												<div
+													style={{
+														fontSize: '10px',
+														color: colors.textDim,
+														marginTop: '2px',
+													}}
+												>
+													{providerUsagePercent === null
+														? 'Usage unavailable'
+														: `${providerUsagePercent}% in current window`}
+												</div>
+											</div>
+										</div>
+										<div style={{ display: 'grid', gap: '8px' }}>
+											{usageWindows.length > 0 ? (
+												usageWindows.map((window) => (
+													<div
+														key={window.id}
+														style={{
+															display: 'flex',
+															alignItems: 'center',
+															justifyContent: 'space-between',
+															gap: '10px',
+															padding: '9px 10px',
+															borderRadius: '14px',
+															background: 'rgba(255, 255, 255, 0.56)',
+															border: '1px solid rgba(255, 255, 255, 0.18)',
+														}}
+													>
+														<div style={{ minWidth: 0 }}>
+															<div
+																style={{
+																	fontSize: '11px',
+																	fontWeight: 650,
+																	color: colors.textMain,
+																	lineHeight: 1.2,
+																}}
+															>
+																{formatUsageWindowLabel(window)}
+															</div>
+															<div
+																style={{
+																	fontSize: '10px',
+																	color: colors.textDim,
+																	marginTop: '2px',
+																}}
+															>
+																Resets {formatUsageResetTime(window.resetsAt)}
+															</div>
+														</div>
+														<div
+															style={{
+																fontSize: '13px',
+																fontWeight: 700,
+																color: colors.textMain,
+																whiteSpace: 'nowrap',
+															}}
+														>
+															{window.usedPercent}%
+														</div>
+													</div>
+												))
+											) : (
+												<div
+													style={{
+														fontSize: '11px',
+														color: colors.textDim,
+														padding: '4px 2px',
+													}}
+												>
+													No provider usage windows available yet.
+												</div>
+											)}
+										</div>
+									</div>
+								)}
+							</div>
+						)}
+					</div>
 				</div>
 			</div>
 
@@ -1020,7 +1212,9 @@ export default function MobileApp() {
 	const [commandInput, setCommandInput] = useState('');
 	const [stagedImages, setStagedImages] = useState<string[]>([]);
 	const [stagedTextAttachments, setStagedTextAttachments] = useState<WebTextAttachmentInput[]>([]);
-	const [demoCaptureRequested, setDemoCaptureRequested] = useState(false);
+	const [demoCaptureRequiredByTarget, setDemoCaptureRequiredByTarget] = useState<
+		Record<string, true | undefined>
+	>({});
 	const [composerHeight, setComposerHeight] = useState(0);
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
@@ -1098,6 +1292,10 @@ export default function MobileApp() {
 	const handledResponseEventIdsRef = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
+		if (!isPushConfigured) {
+			return;
+		}
+
 		const handleVisibilityChange = () => {
 			if (document.visibilityState === 'visible') {
 				refreshPushSubscription().catch((error) => {
@@ -1112,7 +1310,7 @@ export default function MobileApp() {
 
 		document.addEventListener('visibilitychange', handleVisibilityChange);
 		return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-	}, [refreshPushSubscription]);
+	}, [isPushConfigured, refreshPushSubscription]);
 
 	// Save view state when overlays change (using hook's persistence function)
 	useEffect(() => {
@@ -1181,6 +1379,40 @@ export default function MobileApp() {
 		[addUnreadResponse, notificationPermission, rememberResponseEvent, showNotification]
 	);
 
+	const clearDemoCaptureRequirement = useCallback((sessionId: string, tabId: string | null) => {
+		const targetKey = getDemoCaptureTargetKey(sessionId, tabId);
+		if (!targetKey) {
+			return;
+		}
+
+		setDemoCaptureRequiredByTarget((prev) => {
+			if (!prev[targetKey]) {
+				return prev;
+			}
+			const { [targetKey]: _removed, ...rest } = prev;
+			return rest;
+		});
+	}, []);
+
+	const handleLiveSessionLogEntry = useCallback(
+		(
+			sessionId: string,
+			tabId: string | null,
+			inputMode: 'ai' | 'terminal',
+			logEntry: { metadata?: { demoCard?: Parameters<typeof isCompletedDemoCapture>[0] } }
+		) => {
+			if (inputMode !== 'ai') {
+				return;
+			}
+
+			const demoCard = logEntry.metadata?.demoCard;
+			if (demoCard && isCompletedDemoCapture(demoCard)) {
+				clearDemoCaptureRequirement(sessionId, tabId);
+			}
+		},
+		[clearDemoCaptureRequirement]
+	);
+
 	// Session management hook - handles session state, logs, and WebSocket handlers
 	const {
 		sessions,
@@ -1194,12 +1426,8 @@ export default function MobileApp() {
 		handleSelectSession,
 		handleSelectSessionTab,
 		handleSelectTab,
-		handleNewTab,
+		handleNewThread,
 		handleDeleteSession,
-		handleCloseTab,
-		handleRenameTab,
-		handleStarTab,
-		handleReorderTab,
 		addUserLogEntry,
 		sessionsHandlers,
 	} = useMobileSessionManagement({
@@ -1224,16 +1452,172 @@ export default function MobileApp() {
 				[sessionId]: state,
 			}));
 		},
+		onLiveSessionLogEntry: handleLiveSessionLogEntry,
 	});
 	const activeTab = getActiveTabFromSession(activeSession);
-	const supportsModelSelection = Boolean(
-		activeSession && activeSession.inputMode === 'ai' && activeSession.supportsModelSelection
+	const activeDemoCaptureTargetKey = getDemoCaptureTargetKey(activeSessionId, activeTabId);
+	const demoCaptureRequested = activeDemoCaptureTargetKey
+		? demoCaptureRequiredByTarget[activeDemoCaptureTargetKey] === true
+		: false;
+	const setDemoCaptureRequested = useCallback(
+		(nextValue: boolean | ((previous: boolean) => boolean)) => {
+			if (!activeDemoCaptureTargetKey) {
+				return;
+			}
+
+			setDemoCaptureRequiredByTarget((previous) => {
+				const currentValue = previous[activeDemoCaptureTargetKey] === true;
+				const resolvedValue =
+					typeof nextValue === 'function' ? nextValue(currentValue) : nextValue;
+
+				if (resolvedValue === currentValue) {
+					return previous;
+				}
+
+				if (resolvedValue) {
+					return {
+						...previous,
+						[activeDemoCaptureTargetKey]: true,
+					};
+				}
+
+				const { [activeDemoCaptureTargetKey]: _removed, ...rest } = previous;
+				return rest;
+			});
+		},
+		[activeDemoCaptureTargetKey]
 	);
+	const isAiThread = Boolean(activeSession && activeSession.toolType !== 'terminal');
+	const supportsModelSelection = Boolean(isAiThread && activeSession?.supportsModelSelection);
 	const activeModelLabel =
 		normalizeModelLabel(activeTab?.currentModel) ||
 		normalizeModelLabel(activeSession?.customModel) ||
 		normalizeModelLabel(activeSession?.effectiveModelLabel) ||
 		'Model';
+	const contextUsagePercentage = activeTab?.usageStats
+		? calculateContextDisplay(
+				{
+					inputTokens: activeTab.usageStats.inputTokens,
+					outputTokens: activeTab.usageStats.outputTokens,
+					cacheReadInputTokens: activeTab.usageStats.cacheReadInputTokens ?? 0,
+					cacheCreationInputTokens: activeTab.usageStats.cacheCreationInputTokens ?? 0,
+				},
+				activeSession?.effectiveContextWindow ??
+					activeTab.usageStats.contextWindow ??
+					activeSession?.usageStats?.contextWindow ??
+					0,
+				activeSession?.toolType,
+				activeSession?.contextUsage ?? null
+			).percentage
+		: activeSession?.usageStats
+			? calculateContextDisplay(
+					{
+						inputTokens: activeSession.usageStats.inputTokens,
+						outputTokens: activeSession.usageStats.outputTokens,
+						cacheReadInputTokens: activeSession.usageStats.cacheReadInputTokens ?? 0,
+						cacheCreationInputTokens: activeSession.usageStats.cacheCreationInputTokens ?? 0,
+					},
+					activeSession.effectiveContextWindow ?? activeSession.usageStats.contextWindow ?? 0,
+					activeSession.toolType,
+					activeSession.contextUsage ?? null
+				).percentage
+			: null;
+	const contextUsageColor =
+		contextUsagePercentage === null
+			? colors.textDim
+			: contextUsagePercentage >= 90
+				? colors.error
+				: contextUsagePercentage >= 70
+					? colors.warning
+					: colors.success;
+	const [activeTurnMarkerKey, setActiveTurnMarkerKey] = useState<string | null>(null);
+	const [pendingTurnJumpKey, setPendingTurnJumpKey] = useState<string | null>(null);
+	const [providerUsageSnapshot, setProviderUsageSnapshot] = useState<ProviderUsageSnapshot | null>(
+		null
+	);
+	const providerUsageSnapshotCacheRef = useRef<Record<string, ProviderUsageSnapshot>>({});
+	const threadConversationLogs = useMemo(
+		() => (isAiThread ? sessionLogs.aiLogs : []),
+		[isAiThread, sessionLogs.aiLogs]
+	);
+	const threadChatLogs = useMemo(
+		() => threadConversationLogs.filter((log) => log.source !== 'tool'),
+		[threadConversationLogs]
+	);
+	const currentConversationLogs = useMemo(
+		() =>
+			activeSession?.inputMode === 'ai'
+				? sessionLogs.aiLogs
+				: activeSession?.inputMode === 'terminal'
+					? sessionLogs.shellLogs
+					: [],
+		[activeSession?.inputMode, sessionLogs.aiLogs, sessionLogs.shellLogs]
+	);
+	const currentChatLogs = useMemo(
+		() =>
+			activeSession?.inputMode === 'ai'
+				? currentConversationLogs.filter((log) => log.source !== 'tool')
+				: currentConversationLogs,
+		[activeSession?.inputMode, currentConversationLogs]
+	);
+	const hasStartedConversation = useMemo(() => {
+		if (!isAiThread) {
+			return true;
+		}
+		if (activeTab?.agentSessionId) {
+			return true;
+		}
+		return threadChatLogs.some((entry) => entry.source !== 'system');
+	}, [activeTab?.agentSessionId, isAiThread, threadChatLogs]);
+	const canChooseProviderModels = Boolean(isAiThread && !hasStartedConversation);
+	useEffect(() => {
+		if (!isAiThread) {
+			setActiveTurnMarkerKey(null);
+			setPendingTurnJumpKey(null);
+		}
+	}, [isAiThread]);
+
+	useEffect(() => {
+		let cancelled = false;
+
+		if (!activeSessionId || !isAiThread) {
+			setProviderUsageSnapshot(null);
+			return;
+		}
+
+		setProviderUsageSnapshot(providerUsageSnapshotCacheRef.current[activeSessionId] ?? null);
+
+		const loadProviderUsage = async () => {
+			try {
+				const response = await fetch(buildApiUrl(`/session/${activeSessionId}/provider-usage`), {
+					credentials: 'include',
+					cache: 'no-store',
+				});
+
+				if (!response.ok) {
+					throw new Error(`Failed to load provider usage for session ${activeSessionId}`);
+				}
+
+				const data = (await response.json()) as { usage?: ProviderUsageSnapshot | null };
+				if (!cancelled && data.usage) {
+					providerUsageSnapshotCacheRef.current[activeSessionId] = data.usage;
+					setProviderUsageSnapshot(data.usage);
+				}
+			} catch (error) {
+				webLogger.debug('Failed to load provider usage snapshot', 'Mobile', error);
+			}
+		};
+
+		void loadProviderUsage();
+		const intervalId = window.setInterval(() => {
+			void loadProviderUsage();
+		}, 60000);
+
+		return () => {
+			cancelled = true;
+			window.clearInterval(intervalId);
+		};
+	}, [activeSessionId, isAiThread]);
 
 	// Save session selection when it changes (using hook's persistence function)
 	useEffect(() => {
@@ -1271,19 +1655,28 @@ export default function MobileApp() {
 	}, [send]);
 
 	useEffect(() => {
-		const handleVisibilityChange = () => {
-			if (
-				document.visibilityState === 'visible' &&
-				!isOffline &&
-				connectionState !== 'connected' &&
-				connectionState !== 'authenticated'
-			) {
-				connect();
+		const handleResume = () => {
+			if (document.visibilityState === 'hidden' || isOffline) {
+				return;
 			}
+
+			if (connectionState === 'connecting' || connectionState === 'authenticating') {
+				return;
+			}
+
+			connect();
 		};
 
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-		return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+		document.addEventListener('visibilitychange', handleResume);
+		window.addEventListener('focus', handleResume);
+		window.addEventListener('pageshow', handleResume);
+		window.addEventListener('online', handleResume);
+		return () => {
+			document.removeEventListener('visibilitychange', handleResume);
+			window.removeEventListener('focus', handleResume);
+			window.removeEventListener('pageshow', handleResume);
+			window.removeEventListener('online', handleResume);
+		};
 	}, [connect, connectionState, isOffline]);
 
 	// Connect on mount. The config is injected into the HTML shell before React loads,
@@ -1324,7 +1717,6 @@ export default function MobileApp() {
 		if (activeSession?.inputMode !== 'ai') {
 			setStagedImages([]);
 			setStagedTextAttachments([]);
-			setDemoCaptureRequested(false);
 		}
 	}, [activeSession?.id, activeSession?.inputMode]);
 
@@ -1499,6 +1891,33 @@ export default function MobileApp() {
 		[activeSessionId]
 	);
 
+	const handleLoadProviderModels = useCallback(
+		async (forceRefresh = false): Promise<AgentModelCatalogGroup[]> => {
+			if (!activeSessionId) {
+				return [];
+			}
+
+			const apiUrl = new URL(
+				buildApiUrl(`/session/${activeSessionId}/model-catalog`),
+				window.location.origin
+			);
+			if (forceRefresh) {
+				apiUrl.searchParams.set('forceRefresh', 'true');
+			}
+
+			const response = await fetch(apiUrl.toString(), {
+				credentials: 'include',
+			});
+			if (!response.ok) {
+				throw new Error(`Failed to load model catalog for session ${activeSessionId}`);
+			}
+
+			const data = (await response.json()) as { groups?: AgentModelCatalogGroup[] };
+			return Array.isArray(data.groups) ? data.groups : [];
+		},
+		[activeSessionId]
+	);
+
 	const handleSelectSessionModel = useCallback(
 		async (model: string | null) => {
 			if (!activeSessionId) {
@@ -1533,6 +1952,47 @@ export default function MobileApp() {
 			);
 		},
 		[activeSessionId, setSessions]
+	);
+
+	const handleSelectProviderModel = useCallback(
+		async (provider: string, model: string | null) => {
+			if (!activeSessionId || !activeSession) {
+				return;
+			}
+
+			if (provider === activeSession.toolType) {
+				await handleSelectSessionModel(model);
+				return;
+			}
+
+			const response = await fetch(buildApiUrl(`/session/${activeSessionId}/fork-thread`), {
+				method: 'POST',
+				credentials: 'include',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify({
+					toolType: provider,
+					model: model?.trim() ? model.trim() : null,
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`Failed to fork thread for session ${activeSessionId}`);
+			}
+
+			const data = (await response.json()) as {
+				success?: boolean;
+				sessionId?: string | null;
+			};
+
+			if (!data.success || !data.sessionId) {
+				throw new Error(`Forked thread did not return a new session for ${activeSessionId}`);
+			}
+
+			handleSelectSession(data.sessionId);
+		},
+		[activeSession, activeSessionId, handleSelectSession, handleSelectSessionModel]
 	);
 
 	const attachmentSummaries = useMemo(
@@ -1600,7 +2060,7 @@ export default function MobileApp() {
 
 	// Handle command submission
 	const handleCommandSubmit = useCallback(
-		(command: string) => {
+		(command: string, options?: { disposition?: 'default' | 'queue' }) => {
 			if (!activeSessionId) return;
 			if (
 				command.trim().length === 0 &&
@@ -1612,10 +2072,34 @@ export default function MobileApp() {
 
 			// Find the active session to get input mode
 			const currentMode = (activeSession?.inputMode as InputMode) || 'ai';
+			const disposition = options?.disposition ?? 'default';
 			const hasAttachments = stagedImages.length > 0 || stagedTextAttachments.length > 0;
 			const commandText = command.trim();
 			const demoCapture =
 				currentMode === 'ai' && demoCaptureRequested ? { enabled: true } : undefined;
+			const interactionMetadata =
+				currentMode === 'ai'
+					? activeSession?.state === 'busy'
+						? disposition === 'queue'
+							? {
+									interactionKind: 'queued' as const,
+									deliveryState: 'pending' as const,
+									delivered: false,
+								}
+							: {
+									interactionKind: 'steer' as const,
+									deliveryState:
+										activeTab?.steerMode === 'true-steer'
+											? ('pending' as const)
+											: ('fallback_interrupt' as const),
+									delivered: false,
+								}
+						: {
+								interactionKind: 'turn' as const,
+								deliveryState: 'pending' as const,
+								delivered: false,
+							}
+					: undefined;
 
 			// Provide haptic feedback on send
 			triggerHaptic(HAPTIC_PATTERNS.send);
@@ -1625,7 +2109,8 @@ export default function MobileApp() {
 				commandText,
 				currentMode,
 				stagedImages.length > 0 ? stagedImages : undefined,
-				attachmentSummaries.length > 0 ? attachmentSummaries : undefined
+				attachmentSummaries.length > 0 ? attachmentSummaries : undefined,
+				interactionMetadata
 			);
 
 			// If offline or not connected, queue the command for later
@@ -1653,6 +2138,7 @@ export default function MobileApp() {
 					type: 'send_command',
 					sessionId: activeSessionId,
 					command: commandText,
+					commandAction: disposition,
 					inputMode: currentMode,
 					images: stagedImages.length > 0 ? stagedImages : undefined,
 					textAttachments:
@@ -1675,7 +2161,6 @@ export default function MobileApp() {
 			setCommandInput('');
 			setStagedImages([]);
 			setStagedTextAttachments([]);
-			setDemoCaptureRequested(false);
 		},
 		[
 			activeSessionId,
@@ -1737,9 +2222,6 @@ export default function MobileApp() {
 			const apiUrl = buildApiUrl(`/session/${activeSessionId}/interrupt`);
 			const response = await fetch(apiUrl, {
 				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-				},
 			});
 
 			const result = await response.json();
@@ -1993,7 +2475,7 @@ export default function MobileApp() {
 									margin: 0,
 								}}
 							>
-								Choose an agent
+								Choose a thread
 							</p>
 							<p
 								style={{
@@ -2002,7 +2484,7 @@ export default function MobileApp() {
 									margin: '8px 0 0',
 								}}
 							>
-								Open the navigation drawer to switch agents and conversations.
+								Open the navigation drawer to switch workspaces and threads.
 							</p>
 						</div>
 						<button
@@ -2019,7 +2501,7 @@ export default function MobileApp() {
 								cursor: 'pointer',
 							}}
 						>
-							Open Agents
+							Open Workspaces
 						</button>
 					</div>
 				</div>
@@ -2049,11 +2531,7 @@ export default function MobileApp() {
 			activeSession.inputMode === 'ai'
 				? currentLogs.filter((log) => log.source !== 'tool')
 				: currentLogs;
-		const hasTabBar =
-			activeSession.inputMode === 'ai' &&
-			!!activeSession.aiTabs &&
-			activeSession.aiTabs.length > 0 &&
-			!!activeSession.activeTabId;
+		const hasThreadNavigation = isAiThread;
 
 		return (
 			<div
@@ -2068,6 +2546,9 @@ export default function MobileApp() {
 			>
 				<div
 					style={{
+						position: 'relative',
+						zIndex: 30,
+						overflow: 'visible',
 						padding: '6px 12px 8px',
 						display: 'flex',
 						flexDirection: 'column',
@@ -2075,16 +2556,20 @@ export default function MobileApp() {
 						background: `linear-gradient(180deg, ${colors.bgSidebar} 0%, ${colors.bgMain} 100%)`,
 					}}
 				>
-					{hasTabBar && (
+					{hasThreadNavigation && (
 						<TabBar
-							tabs={activeSession.aiTabs!}
-							activeTabId={activeSession.activeTabId!}
-							onSelectTab={handleSelectTab}
-							onNewTab={handleNewTab}
-							onCloseTab={handleCloseTab}
-							onRenameTab={handleRenameTab}
-							onStarTab={handleStarTab}
-							onReorderTab={handleReorderTab}
+							sessionKey={activeSession?.id || null}
+							onNewThread={handleNewThread}
+							supportsModelSelection={supportsModelSelection}
+							modelLabel={activeModelLabel}
+							modelToolType={activeSession?.toolType || null}
+							loadModels={handleLoadSessionModels}
+							onSelectModel={handleSelectSessionModel}
+							canChooseProviderModels={canChooseProviderModels}
+							loadProviderModels={handleLoadProviderModels}
+							onSelectProviderModel={handleSelectProviderModel}
+							contextUsagePercentage={contextUsagePercentage}
+							contextUsageColor={contextUsageColor}
 						/>
 					)}
 
@@ -2165,16 +2650,36 @@ export default function MobileApp() {
 							: 'Run shell commands'}
 					</div>
 				) : (
-					<MessageHistory
-						logs={chatLogs}
-						sessionId={activeSessionId}
-						inputMode={activeSession.inputMode as 'ai' | 'terminal'}
-						toolLogs={toolLogs}
-						isSessionBusy={activeSession.state === 'busy'}
-						autoScroll={true}
-						maxHeight="none"
-						onMessageTap={handleMessageTap}
-					/>
+					<div
+						style={{
+							position: 'relative',
+							zIndex: 0,
+							minHeight: 0,
+							flex: 1,
+							display: 'flex',
+							flexDirection: 'column',
+							overflow: 'hidden',
+						}}
+					>
+						<MessageHistory
+							logs={chatLogs}
+							sessionId={activeSessionId}
+							inputMode={activeSession.inputMode as 'ai' | 'terminal'}
+							toolLogs={toolLogs}
+							isSessionBusy={activeSession.state === 'busy'}
+							autoScroll={true}
+							maxHeight="none"
+							onMessageTap={handleMessageTap}
+							jumpToMessageKey={pendingTurnJumpKey}
+							onJumpHandled={() => setPendingTurnJumpKey(null)}
+							onVisibleUserTurnChange={(messageKey) => {
+								if (!messageKey) {
+									return;
+								}
+								setActiveTurnMarkerKey(messageKey);
+							}}
+						/>
+					</div>
 				)}
 			</div>
 		);
@@ -2207,6 +2712,7 @@ export default function MobileApp() {
 				onToggleDrawer={handleToggleNavigationDrawer}
 				canOpenTabSearch={!!canOpenTabSearch}
 				onOpenTabSearch={handleOpenTabSearch}
+				providerUsageSnapshot={providerUsageSnapshot}
 			/>
 
 			<MobileNavigationDrawer
@@ -2216,6 +2722,13 @@ export default function MobileApp() {
 				onClose={handleCloseNavigationDrawer}
 				onOpenControls={handleOpenAppControlsSheet}
 				onSelectSession={handleSelectSessionFromDrawer}
+				onNewThreadInWorkspace={(sessionId) => {
+					handleCloseNavigationDrawer();
+					send({
+						type: 'new_thread',
+						sessionId,
+					});
+				}}
 				onDeleteSession={handleDeleteSession}
 				onOpenTabSearch={handleOpenTabSearch}
 				canOpenTabSearch={!!canOpenTabSearch}
@@ -2433,6 +2946,7 @@ export default function MobileApp() {
 				inputMode={(activeSession?.inputMode as InputMode) || 'ai'}
 				isSessionBusy={activeSession?.state === 'busy'}
 				onInterrupt={handleInterrupt}
+				busyPrimaryLabel={activeTab?.steerMode === 'true-steer' ? 'Steer' : 'Steer (Interrupt)'}
 				hasActiveSession={!!activeSessionId}
 				supportsModelSelection={supportsModelSelection}
 				modelLabel={activeModelLabel}

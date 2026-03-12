@@ -155,6 +155,7 @@ describe('TerminalOutput', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		HTMLElement.prototype.scrollIntoView = vi.fn();
 	});
 
 	afterEach(() => {
@@ -224,6 +225,69 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByText(/total 100/)).toBeInTheDocument();
+		});
+
+		it('scrolls to a requested log entry when jumpToLogId is provided', async () => {
+			const firstTurn = createLogEntry({ id: 'log-user-1', text: 'First turn', source: 'user' });
+			const assistantReply = createLogEntry({
+				id: 'log-ai-1',
+				text: 'Response',
+				source: 'stdout',
+			});
+			const secondTurn = createLogEntry({ id: 'log-user-2', text: 'Second turn', source: 'user' });
+			const onJumpToLogHandled = vi.fn();
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [firstTurn, assistantReply, secondTurn],
+						isUnread: false,
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(
+				<TerminalOutput
+					{...createDefaultProps({
+						session,
+						jumpToLogId: 'log-user-2',
+						onJumpToLogHandled,
+					})}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+			});
+			expect(onJumpToLogHandled).toHaveBeenCalledWith('log-user-2');
+		});
+
+		it('renders in-scroll turn markers for user messages', async () => {
+			const session = createDefaultSession({
+				tabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: 'claude-123',
+						logs: [
+							createLogEntry({ id: 'log-user-1', text: 'First turn', source: 'user' }),
+							createLogEntry({ id: 'log-ai-1', text: 'Response', source: 'stdout' }),
+							createLogEntry({ id: 'log-user-2', text: 'Second turn', source: 'user' }),
+						],
+						isUnread: false,
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('turn-minimap')).toBeInTheDocument();
+			});
+			expect(screen.getByTestId('scroll-turn-marker-log-user-1')).toBeInTheDocument();
+			expect(screen.getByTestId('scroll-turn-marker-log-user-2')).toBeInTheDocument();
 		});
 
 		it('displays user messages with different styling', () => {
@@ -1964,8 +2028,8 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByText('TodoWrite')).toBeInTheDocument();
-			// Should show activeForm of in_progress task with progress count
+			fireEvent.click(screen.getByRole('button', { name: /Expand details\./i }));
+			expect(screen.getByText('Editing files')).toBeInTheDocument();
 			expect(screen.getByText('Running tests (1/3)')).toBeInTheDocument();
 		});
 
@@ -2000,7 +2064,7 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// No in_progress task, falls back to first task's content
+			fireEvent.click(screen.getByRole('button', { name: /Expand details\./i }));
 			expect(screen.getByText('Fix lint issues (2/2)')).toBeInTheDocument();
 		});
 
@@ -2026,7 +2090,8 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			expect(screen.getByText('Bash')).toBeInTheDocument();
+			expect(screen.getByText('Running tests for test')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Running tests for test/i }));
 			expect(screen.getByText('npm run test')).toBeInTheDocument();
 		});
 
@@ -2052,12 +2117,12 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('bash')).toBeInTheDocument();
-			expect(screen.getByText('command')).toBeInTheDocument();
+			expect(screen.getByText('Building the app')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Building the app/i }));
 			expect(screen.getByText('npm run build')).toBeInTheDocument();
-			expect(screen.getByText('output')).toBeInTheDocument();
+			expect(screen.getByText('Command')).toBeInTheDocument();
 			expect(screen.getByText(/Starting build/)).toBeInTheDocument();
-			expect(screen.queryByRole('button', { name: /Details/i })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /Expand details/i })).not.toBeInTheDocument();
 		});
 
 		it('auto-collapses completed tools and allows manual expansion', async () => {
@@ -2082,16 +2147,15 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('[DONE]')).toBeInTheDocument();
-			expect(screen.getByText('0 results from 1 search')).toBeInTheDocument();
-			expect(screen.queryByText(/March 3 2026 weekday/)).not.toBeInTheDocument();
-			expect(screen.queryByText('Web Search Timeline')).not.toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Expand details\./i }));
+			expect(screen.getByText('Searching the web')).toBeInTheDocument();
+			expect(screen.getByText(/March 3 2026 weekday/)).toBeInTheDocument();
+			expect(screen.queryByText('Tuesday')).not.toBeInTheDocument();
 
-			fireEvent.click(screen.getByRole('button', { name: /Details/i }));
+			fireEvent.click(screen.getByRole('button', { name: /Searching the web/i }));
 
 			await waitFor(() => {
-				expect(screen.getByText('Web Search Timeline')).toBeInTheDocument();
-				expect(screen.getByText('March 3 2026 weekday')).toBeInTheDocument();
+				expect(screen.getByText('Tuesday')).toBeInTheDocument();
 			});
 		});
 
@@ -2132,11 +2196,11 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('Web Search Timeline')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Searching the web/i }));
 			expect(screen.getByText('latest maestro release notes')).toBeInTheDocument();
 			expect(screen.getByText('maestro search aggregation bug')).toBeInTheDocument();
-			expect(screen.getByText('Release notes and changelog overview')).toBeInTheDocument();
-			expect(screen.getByText('waiting for response sources...')).toBeInTheDocument();
+			expect(screen.queryByText('Release notes and changelog overview')).not.toBeInTheDocument();
+			expect(screen.queryByText(/waiting for response sources/i)).not.toBeInTheDocument();
 		});
 
 		it('shows collapsed web search result counts and all source favicons, then expands into query/response cards', async () => {
@@ -2187,28 +2251,22 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...createDefaultProps({ session })} />);
 
-			expect(screen.getByText('6 results from 2 searches')).toBeInTheDocument();
+			fireEvent.click(screen.getByRole('button', { name: /Expand details\./i }));
+			expect(screen.getByText('Searching the web')).toBeInTheDocument();
 			expect(screen.queryByText('maestro release notes')).not.toBeInTheDocument();
-			expect(screen.getByTitle('docs.runmaestro.ai')).toBeInTheDocument();
-			expect(screen.getByTitle('github.com')).toBeInTheDocument();
-			expect(screen.getByTitle('news.ycombinator.com')).toBeInTheDocument();
-			expect(screen.getByTitle('openai.com')).toBeInTheDocument();
-			expect(screen.getByTitle('developer.mozilla.org')).toBeInTheDocument();
-			expect(screen.getByTitle('electronjs.org')).toBeInTheDocument();
+			expect(screen.queryByText('docs.runmaestro.ai')).not.toBeInTheDocument();
 
-			fireEvent.click(screen.getByRole('button', { name: /Details/i }));
+			fireEvent.click(screen.getByRole('button', { name: /Searching the web/i }));
 
 			await waitFor(() => {
-				expect(screen.getByText('Web Search Timeline')).toBeInTheDocument();
 				expect(screen.getByText('maestro release notes')).toBeInTheDocument();
 				expect(screen.getByText('maestro search sources')).toBeInTheDocument();
-				expect(
-					screen.getByText('Release notes, GitHub release, and launch discussion')
-				).toBeInTheDocument();
-				expect(
-					screen.getByText('Search implementation references and Electron shell docs')
-				).toBeInTheDocument();
-				expect(screen.getAllByText('Response Sources')).toHaveLength(2);
+				expect(screen.getByText('docs.runmaestro.ai')).toBeInTheDocument();
+				expect(screen.getByText('github.com')).toBeInTheDocument();
+				expect(screen.getByText('news.ycombinator.com')).toBeInTheDocument();
+				expect(screen.getByText('openai.com')).toBeInTheDocument();
+				expect(screen.getByText('developer.mozilla.org')).toBeInTheDocument();
+				expect(screen.getByText('electronjs.org')).toBeInTheDocument();
 			});
 		});
 
@@ -2234,8 +2292,7 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Tool name should still render even with no detail
-			expect(screen.getByText('SomeUnknownTool')).toBeInTheDocument();
+			expect(screen.getByText('Using a tool')).toBeInTheDocument();
 		});
 	});
 

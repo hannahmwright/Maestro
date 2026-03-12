@@ -26,7 +26,7 @@ type AgentConfigResolution = {
 	modelSource: 'session' | 'agent' | 'default';
 };
 
-function parseCustomArgs(customArgs?: string): string[] {
+export function parseCustomArgs(customArgs?: string): string[] {
 	if (!customArgs || typeof customArgs !== 'string') {
 		return [];
 	}

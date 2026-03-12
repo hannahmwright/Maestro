@@ -91,8 +91,8 @@ export function useSymphonyContribution(
 				console.error(`Session validation failed: ${validation.error}`);
 				notifyToast({
 					type: 'error',
-					title: 'Agent Creation Failed',
-					message: validation.error || 'Cannot create duplicate agent',
+					title: 'Thread Creation Failed',
+					message: validation.error || 'Cannot create duplicate thread',
 				});
 				return;
 			}
@@ -131,6 +131,7 @@ export function useSymphonyContribution(
 			// Create session with Symphony metadata
 			const newSession: Session = {
 				id: newId,
+				runtimeId: newId,
 				name: data.sessionName,
 				toolType: data.agentType as ToolType,
 				state: 'idle',

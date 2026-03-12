@@ -70,6 +70,18 @@ export interface AgentCapabilities {
 	/** Agent can export its context for transfer to other sessions/agents */
 	supportsContextExport: boolean;
 
+	/** Agent supports Maestro's live interactive runtime */
+	supportsLiveRuntime: boolean;
+
+	/** Agent supports true mid-turn steering without interrupting */
+	supportsTrueSteer: boolean;
+
+	/** Agent supports queueing future turns while busy */
+	supportsQueueWhileBusy: boolean;
+
+	/** Agent's live runtime can operate over SSH */
+	supportsLiveRuntimeOverSsh: boolean;
+
 	/** How images should be handled on resume when -i flag is not available.
 	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
 	 * undefined: Use default image handling (or no special resume handling needed). */
@@ -100,6 +112,10 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
 	supportsThinkingDisplay: false,
 	supportsContextMerge: false,
 	supportsContextExport: false,
+	supportsLiveRuntime: false,
+	supportsTrueSteer: false,
+	supportsQueueWhileBusy: false,
+	supportsLiveRuntimeOverSsh: false,
 };
 
 /**
@@ -133,11 +149,15 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		requiresPromptToStart: false, // Claude Code can run in --print mode waiting for input
 		supportsStreaming: true, // Stream JSON events
 		supportsResultMessages: true, // "result" event type
-		supportsModelSelection: false, // Model is configured via Anthropic account
+		supportsModelSelection: true, // --model flag and /model command are supported
 		supportsStreamJsonInput: true, // --input-format stream-json for images via stdin
 		supportsThinkingDisplay: true, // Emits streaming assistant messages
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
+		supportsLiveRuntime: true, // via @anthropic-ai/claude-agent-sdk
+		supportsTrueSteer: true, // streamed input + interrupt
+		supportsQueueWhileBusy: true,
+		supportsLiveRuntimeOverSsh: false,
 	},
 
 	/**
@@ -164,6 +184,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: false, // Terminal is not an AI agent
 		supportsContextMerge: false, // Terminal is not an AI agent
 		supportsContextExport: false, // Terminal has no AI context
+		supportsLiveRuntime: false,
+		supportsTrueSteer: false,
+		supportsQueueWhileBusy: false,
+		supportsLiveRuntimeOverSsh: false,
 	},
 
 	/**
@@ -193,6 +217,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
+		supportsLiveRuntime: true, // via app-server
+		supportsTrueSteer: true, // turn/steer
+		supportsQueueWhileBusy: true,
+		supportsLiveRuntimeOverSsh: false,
 		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
@@ -222,6 +250,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: false, // Not yet investigated
 		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
 		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
+		supportsLiveRuntime: false,
+		supportsTrueSteer: false,
+		supportsQueueWhileBusy: false,
+		supportsLiveRuntimeOverSsh: false,
 	},
 
 	/**
@@ -250,6 +282,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: false, // Not yet investigated
 		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
 		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
+		supportsLiveRuntime: false,
+		supportsTrueSteer: false,
+		supportsQueueWhileBusy: false,
+		supportsLiveRuntimeOverSsh: false,
 	},
 
 	/**
@@ -279,6 +315,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits streaming text chunks
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
+		supportsLiveRuntime: false,
+		supportsTrueSteer: false,
+		supportsQueueWhileBusy: true,
+		supportsLiveRuntimeOverSsh: false,
 	},
 
 	/**
@@ -307,6 +347,10 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits thinking content in messages - Verified
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session files are exportable
+		supportsLiveRuntime: false,
+		supportsTrueSteer: false,
+		supportsQueueWhileBusy: true,
+		supportsLiveRuntimeOverSsh: false,
 	},
 };
 

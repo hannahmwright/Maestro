@@ -1,0 +1,108 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - button "Open navigation" [ref=e5] [cursor=pointer]:
+      - img [ref=e6]
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - generic [ref=e11]: March 3 2026 Weekday
+        - generic [ref=e37]:
+          - generic [ref=e38]: 🎼
+          - generic [ref=e39]: MAESTRO
+      - button "6% provider usage" [ref=e41] [cursor=pointer]:
+        - img [ref=e42]
+        - generic [ref=e44]: 6%
+    - button "Search tabs" [ref=e45] [cursor=pointer]:
+      - img [ref=e46]
+  - main [ref=e13]:
+    - generic [ref=e15]:
+      - button "Pull down to open thread controls" [ref=e50] [cursor=pointer]
+      - generic [ref=e54]:
+        - generic [ref=e55]:
+          - generic [ref=e56]: Mar 3 03:39 PM
+          - generic [ref=e59]: "Use web search once and answer: what weekday is March 3, 2026? Include one source URL."
+        - generic [ref=e61]:
+          - generic [ref=e63]: Mar 3 03:39 PM
+          - paragraph [ref=e66]: web:search
+        - generic [ref=e68]:
+          - generic [ref=e70]: Mar 3 03:39 PM
+          - generic [ref=e72]:
+            - paragraph [ref=e73]:
+              - text: March 3, 2026 is a
+              - strong [ref=e74]: Tuesday
+              - text: .
+            - paragraph [ref=e75]:
+              - text: "Source:"
+              - link "https://en.wikipedia.org/wiki/March_2026_lunar_eclipse" [ref=e76] [cursor=pointer]:
+                - /url: https://en.wikipedia.org/wiki/March_2026_lunar_eclipse
+        - generic [ref=e77]:
+          - generic [ref=e78]: Mar 4 09:31 PM
+          - generic [ref=e81]: hi!
+        - generic [ref=e83]:
+          - generic [ref=e85]: Mar 4 09:31 PM
+          - paragraph [ref=e88]: Hi.
+        - generic [ref=e89]:
+          - generic [ref=e90]: 04:35 PM
+          - generic [ref=e93]: testingggg
+        - generic [ref=e95]:
+          - generic [ref=e96]:
+            - generic [ref=e97]: System
+            - generic [ref=e98]: 04:35 PM
+          - paragraph [ref=e101]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e102]:
+          - generic [ref=e103]: 04:38 PM
+          - generic [ref=e106]: Hi!
+        - generic [ref=e108]:
+          - generic [ref=e109]:
+            - generic [ref=e110]: System
+            - generic [ref=e111]: 04:38 PM
+          - paragraph [ref=e114]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata."
+        - generic [ref=e115]:
+          - generic [ref=e116]: 04:40 PM
+          - generic [ref=e119]: testing once again.
+        - generic [ref=e121]:
+          - generic [ref=e122]:
+            - generic [ref=e123]: System
+            - generic [ref=e124]: 04:40 PM
+          - paragraph [ref=e127]: "Error: Failed to process remote command - Error invoking remote method 'conversation:sendTurn': Error: Conversation turn request is missing required session metadata (request)."
+        - generic [ref=e128]:
+          - generic [ref=e129]: 04:42 PM
+          - generic [ref=e132]: Hi!!
+        - generic [ref=e134]:
+          - generic [ref=e136]: 04:42 PM
+          - paragraph [ref=e139]: Codex app-server did not return a thread id.
+        - generic [ref=e140]:
+          - generic [ref=e141]: 04:43 PM
+          - generic [ref=e144]: test
+        - generic [ref=e146]:
+          - generic [ref=e148]: 04:43 PM
+          - paragraph [ref=e151]: Codex app-server did not return a thread id.
+        - generic [ref=e152]:
+          - generic [ref=e153]: 04:46 PM
+          - generic [ref=e156]: Playwright verification message
+        - generic [ref=e158]:
+          - generic [ref=e159]:
+            - generic [ref=e160]: Reasoning
+            - generic [ref=e161]: 04:46 PM
+          - generic [ref=e163]:
+            - generic [ref=e164]: thinking
+            - paragraph [ref=e166]:
+              - text: Using the
+              - code [ref=e167]: playwright
+              - text: skill because your request explicitly names it. I’m checking the local skill instructions first so I can respond in the expected format.I’ve loaded the skill instructions. Next I’m checking the required
+              - code [ref=e168]: npx
+              - text: prerequisite before deciding whether any browser automation is possible here.
+        - generic [ref=e198]:
+          - generic [ref=e199]: 04:49 PM
+          - generic [ref=e202]: Count slowly from 1 to 100, one number per line.
+        - generic "Assistant is thinking" [ref=e185]:
+          - generic [ref=e191]: Thinking
+  - generic [ref=e25]:
+    - button "Actions" [ref=e204] [cursor=pointer]:
+      - img [ref=e205]
+      - generic [ref=e206]: Actions
+    - textbox "AI message input. Press the send button to submit." [active] [ref=e207]:
+      - /placeholder: AI thinking... (type your next message)
+    - generic [ref=e208]: Enter adds a new line here. Use Send when you are ready.
+    - button "Cancel running AI query" [ref=e209] [cursor=pointer]:
+      - img [ref=e210]
+      - generic [ref=e213]: Stop

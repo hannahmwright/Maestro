@@ -9,6 +9,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { AgentModelCatalogGroup } from '../../shared/agent-model-catalog';
 
 /**
  * Capability flags that determine what features are available for each agent.
@@ -31,6 +32,10 @@ export interface AgentCapabilities {
 	supportsResultMessages: boolean;
 	supportsModelSelection: boolean;
 	supportsStreamJsonInput: boolean;
+	supportsLiveRuntime: boolean;
+	supportsTrueSteer: boolean;
+	supportsQueueWhileBusy: boolean;
+	supportsLiveRuntimeOverSsh: boolean;
 }
 
 /**
@@ -169,6 +174,13 @@ export function createAgentsApi() {
 		 */
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string): Promise<string[]> =>
 			ipcRenderer.invoke('agents:getModels', agentId, forceRefresh, sshRemoteId),
+
+		getModelCatalog: (
+			agentIds: string[],
+			forceRefresh?: boolean,
+			sshRemoteId?: string
+		): Promise<AgentModelCatalogGroup[]> =>
+			ipcRenderer.invoke('agents:getModelCatalog', agentIds, forceRefresh, sshRemoteId),
 
 		/**
 		 * Discover available slash commands for an agent by spawning it briefly

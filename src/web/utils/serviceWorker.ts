@@ -9,6 +9,7 @@ import {
 	WEB_APP_SERVICE_WORKER_PATH,
 	type ResponseCompletedEvent,
 } from '../../shared/remote-web';
+import { hasInjectedMaestroConfig } from './config';
 import { webLogger } from './logger';
 
 declare const __APP_VERSION__: string;
@@ -58,6 +59,11 @@ export async function registerServiceWorker(
 ): Promise<ServiceWorkerRegistration | undefined> {
 	if (!isServiceWorkerSupported()) {
 		webLogger.info('Service workers not supported', 'ServiceWorker');
+		return undefined;
+	}
+
+	if (!hasInjectedMaestroConfig()) {
+		webLogger.debug('Skipping service worker registration in standalone web dev mode', 'ServiceWorker');
 		return undefined;
 	}
 

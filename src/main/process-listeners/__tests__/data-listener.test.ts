@@ -445,5 +445,56 @@ describe('Data Listener', () => {
 				expect.stringContaining('__MAESTRO_DEMO_EVENT__')
 			);
 		});
+
+		it('should flush a trailing demo sentinel on process exit even without a final newline', async () => {
+			mockHandleCaptureEvent.mockResolvedValueOnce({
+				demoId: 'demo-final',
+				captureRunId: 'capture-final',
+				title: 'Final demo',
+				summary: 'Summary',
+				status: 'completed' as const,
+				createdAt: 1,
+				updatedAt: 2,
+				stepCount: 1,
+				durationMs: 1000,
+				posterArtifact: null,
+				videoArtifact: null,
+			});
+			setupListener();
+			const dataHandler = eventHandlers.get('data');
+			const exitHandler = eventHandlers.get('exit');
+
+			dataHandler?.(
+				'session-555-ai-tab-final',
+				'visible line\n__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-5","title":"Final demo"}'
+			);
+			exitHandler?.('session-555-ai-tab-final', 0);
+			await Promise.resolve();
+
+			expect(mockHandleCaptureEvent).toHaveBeenCalledWith({
+				context: {
+					sessionId: 'session-555',
+					tabId: 'tab-final',
+					sshRemoteId: null,
+					sshRemoteHost: null,
+				},
+				event: {
+					type: 'capture_completed',
+					runId: 'run-5',
+					title: 'Final demo',
+				},
+			});
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'process:data',
+				'session-555-ai-tab-final',
+				'visible line'
+			);
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'process:demo-generated',
+				'session-555',
+				'tab-final',
+				expect.anything()
+			);
+		});
 	});
 });

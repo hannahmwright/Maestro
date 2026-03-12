@@ -34,6 +34,21 @@ export interface NamedSessionEntryWithAgent extends NamedSessionEntry {
 	agentId: string;
 }
 
+export interface RecoverableAgentSession {
+	agentId: string;
+	sessionId: string;
+	projectPath: string;
+	timestamp: string;
+	modifiedAt: string;
+	firstMessage: string;
+	sessionName?: string;
+	starred?: boolean;
+	contextUsage?: number;
+	origin?: 'user' | 'auto';
+	gitBranch?: string;
+	slug?: string;
+}
+
 /**
  * Global stats update
  */
@@ -291,6 +306,9 @@ export function createAgentSessionsApi() {
 
 		getAllNamedSessions: (): Promise<NamedSessionEntryWithAgent[]> =>
 			ipcRenderer.invoke('agentSessions:getAllNamedSessions'),
+
+		discoverRecoverable: (agentId: string): Promise<RecoverableAgentSession[]> =>
+			ipcRenderer.invoke('agentSessions:discoverRecoverable', agentId),
 
 		onGlobalStatsUpdate: (callback: (stats: GlobalStatsUpdate) => void) => {
 			const handler = (_: unknown, stats: GlobalStatsUpdate) => callback(stats);

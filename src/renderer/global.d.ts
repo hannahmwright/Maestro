@@ -40,6 +40,72 @@ type UserInputRequest = {
 	questions: UserInputQuestion[];
 };
 
+type ConversationRuntimeKind = 'batch' | 'live';
+type ConversationSteerMode = 'true-steer' | 'interrupt-fallback' | 'none';
+type ConversationInteractionKind = 'turn' | 'steer' | 'queued';
+type ConversationDeliveryState = 'pending' | 'delivered' | 'fallback_interrupt' | 'canceled';
+type ConversationSteerStatus = 'idle' | ConversationDeliveryState;
+
+type PendingSteerState = {
+	logEntryId: string;
+	text: string;
+	images?: string[];
+	submittedAt: number;
+	deliveryState: ConversationDeliveryState;
+};
+
+type ConversationEvent =
+	| {
+			type: 'runtime_ready';
+			sessionId: string;
+			timestamp: number;
+			runtimeKind: ConversationRuntimeKind;
+			threadId: string;
+	  }
+	| {
+			type: 'turn_started';
+			sessionId: string;
+			timestamp: number;
+			runtimeKind: ConversationRuntimeKind;
+			threadId: string;
+			turnId: string;
+	  }
+	| {
+			type: 'turn_completed';
+			sessionId: string;
+			timestamp: number;
+			runtimeKind: ConversationRuntimeKind;
+			threadId?: string;
+			turnId?: string | null;
+			status: 'completed' | 'interrupted' | 'failed';
+	  }
+	| {
+			type: 'turn_failed';
+			sessionId: string;
+			timestamp: number;
+			runtimeKind: ConversationRuntimeKind;
+			threadId?: string;
+			turnId?: string | null;
+			message: string;
+	  }
+	| {
+			type: 'steer_accepted';
+			sessionId: string;
+			timestamp: number;
+			runtimeKind: ConversationRuntimeKind;
+			threadId: string;
+			turnId: string;
+	  }
+	| {
+			type: 'steer_rejected';
+			sessionId: string;
+			timestamp: number;
+			runtimeKind: ConversationRuntimeKind;
+			threadId?: string;
+			turnId?: string | null;
+			message: string;
+	  };
+
 type UserInputResponse = {
 	answers: Record<string, { answers: string[] }>;
 };
@@ -165,6 +231,10 @@ interface AgentCapabilities {
 	supportsStreamJsonInput: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	supportsLiveRuntime: boolean;
+	supportsTrueSteer: boolean;
+	supportsQueueWhileBusy: boolean;
+	supportsLiveRuntimeOverSsh: boolean;
 }
 
 interface AgentConfig {
@@ -179,6 +249,24 @@ interface AgentConfig {
 	hidden?: boolean;
 	configOptions?: AgentConfigOption[];
 	capabilities?: AgentCapabilities;
+}
+
+interface AgentModelCatalogOption {
+	id: string;
+	provider: ToolType;
+	modelId: string | null;
+	label: string;
+	description?: string;
+	source: 'default' | 'recommended' | 'configured' | 'discovered';
+	isRecommended: boolean;
+	isDefault: boolean;
+}
+
+interface AgentModelCatalogGroup {
+	provider: ToolType;
+	providerLabel: string;
+	supportsModelSelection: boolean;
+	options: AgentModelCatalogOption[];
 }
 
 interface AgentCapabilities {
@@ -200,6 +288,10 @@ interface AgentCapabilities {
 	supportsStreamJsonInput: boolean;
 	supportsContextMerge: boolean;
 	supportsContextExport: boolean;
+	supportsLiveRuntime: boolean;
+	supportsTrueSteer: boolean;
+	supportsQueueWhileBusy: boolean;
+	supportsLiveRuntimeOverSsh: boolean;
 }
 
 interface DirectoryEntry {
@@ -421,6 +513,10 @@ interface MaestroAPI {
 	groups: {
 		getAll: () => Promise<any[]>;
 		setAll: (groups: any[]) => Promise<boolean>;
+	};
+	threads: {
+		getAll: () => Promise<any[]>;
+		setAll: (threads: any[]) => Promise<boolean>;
 	};
 	conductors: {
 		getAll: () => Promise<{
@@ -644,6 +740,7 @@ interface MaestroAPI {
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
+				commandAction?: 'default' | 'queue',
 				images?: string[],
 				textAttachments?: Array<{
 					id?: string;
@@ -676,6 +773,17 @@ interface MaestroAPI {
 		) => () => void;
 		onRemoteNewTab: (callback: (sessionId: string, responseChannel: string) => void) => () => void;
 		sendRemoteNewTabResponse: (responseChannel: string, result: { tabId: string } | null) => void;
+		onRemoteNewThread: (
+			callback: (
+				sessionId: string,
+				options: { toolType?: string; model?: string | null },
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteNewThreadResponse: (
+			responseChannel: string,
+			result: { success: boolean; sessionId?: string | null } | boolean
+		) => void;
 		onRemoteDeleteSession: (
 			callback: (sessionId: string, responseChannel: string) => void
 		) => () => void;
@@ -795,6 +903,51 @@ interface MaestroAPI {
 				}
 			) => void
 		) => () => void;
+	};
+	conversation: {
+		getCapabilities: (request: {
+			toolType: string;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+			};
+			querySource?: 'user' | 'auto';
+		}) => Promise<{
+			supportsLiveRuntime: boolean;
+			supportsTrueSteer: boolean;
+			supportsQueueWhileBusy: boolean;
+			supportsLiveRuntimeOverSsh: boolean;
+			defaultRuntimeKind: ConversationRuntimeKind;
+			steerMode: ConversationSteerMode;
+			fallbackReason?: string | null;
+		}>;
+		sendTurn: (request: ProcessConfig) => Promise<{
+			success: boolean;
+			pid?: number;
+			runtimeKind: ConversationRuntimeKind;
+			steerMode: ConversationSteerMode;
+			fallbackApplied?: boolean;
+			reason?: string | null;
+		}>;
+		steerTurn: (request: {
+			sessionId: string;
+			toolType: string;
+			text?: string;
+			images?: string[];
+		}) => Promise<{
+			success: boolean;
+			runtimeKind: ConversationRuntimeKind;
+			steerMode: ConversationSteerMode;
+			fallbackApplied?: boolean;
+			reason?: string | null;
+		}>;
+		interruptTurn: (sessionId: string, toolType: string) => Promise<boolean>;
+		respondToUserInput: (
+			sessionId: string,
+			requestId: UserInputRequestId,
+			response: UserInputResponse
+		) => Promise<boolean>;
+		onEvent: (callback: (sessionId: string, event: ConversationEvent) => void) => () => void;
 	};
 	orchestrator: {
 		createTaskContract: (input: {
@@ -1295,6 +1448,11 @@ interface MaestroAPI {
 		getCustomEnvVars: (agentId: string) => Promise<Record<string, string> | null>;
 		getAllCustomEnvVars: () => Promise<Record<string, Record<string, string>>>;
 		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => Promise<string[]>;
+		getModelCatalog: (
+			agentIds: string[],
+			forceRefresh?: boolean,
+			sshRemoteId?: string
+		) => Promise<AgentModelCatalogGroup[]>;
 		discoverSlashCommands: (
 			agentId: string,
 			cwd: string,
@@ -1460,6 +1618,24 @@ interface MaestroAPI {
 				sessionName: string;
 				starred?: boolean;
 				lastActivityAt?: number;
+			}>
+		>;
+		discoverRecoverable: (
+			agentId: string
+		) => Promise<
+			Array<{
+				agentId: string;
+				sessionId: string;
+				projectPath: string;
+				timestamp: string;
+				modifiedAt: string;
+				firstMessage: string;
+				sessionName?: string;
+				starred?: boolean;
+				contextUsage?: number;
+				origin?: 'user' | 'auto';
+				gitBranch?: string;
+				slug?: string;
 			}>
 		>;
 		registerSessionOrigin: (
@@ -1943,6 +2119,7 @@ interface MaestroAPI {
 		getArtifactFileInfo: (
 			artifactId: string
 		) => Promise<{ id: string; path: string; mimeType: string; filename: string } | null>;
+		harvestFromLogText: (request: import('../shared/demo-artifacts').DemoArtifactHarvestRequest) => Promise<DemoCard | null>;
 	};
 	// Auto Run file operations
 	// SSH remote support: Core operations accept optional sshRemoteId for remote file operations

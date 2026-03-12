@@ -120,6 +120,10 @@ export class PtySpawner {
 				command: ptyCommand,
 				args: ptyArgs,
 				taskContract: config.taskContract,
+				demoCaptureEnabled: config.demoCapture?.enabled === true,
+				demoCaptureFinalized: false,
+				demoCaptureArtifactSeen: false,
+				demoCaptureFailed: false,
 			};
 
 			this.processes.set(sessionId, managedProcess);

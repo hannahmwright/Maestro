@@ -2,6 +2,7 @@
 // These types are used by both the CLI tool and the renderer process
 
 export type ToolType = 'claude-code' | 'opencode' | 'codex' | 'terminal' | 'factory-droid';
+export type WorkspaceSortMode = 'recent' | 'alpha';
 
 /**
  * ThinkingMode controls how AI reasoning/thinking content is displayed.
@@ -24,6 +25,23 @@ export interface Group {
 	name: string;
 	emoji: string;
 	collapsed: boolean;
+	projectRoot?: string;
+	lastUsedAt?: number;
+}
+
+export interface Thread {
+	id: string;
+	workspaceId: string;
+	sessionId: string;
+	runtimeId: string;
+	title: string;
+	agentId: ToolType;
+	projectRoot: string;
+	pinned: boolean;
+	archived: boolean;
+	isOpen: boolean;
+	createdAt: number;
+	lastUsedAt: number;
 }
 
 // Simplified session interface for CLI (subset of full Session)

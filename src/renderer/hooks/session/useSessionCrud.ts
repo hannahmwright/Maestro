@@ -25,6 +25,7 @@ import { generateId } from '../../utils/ids';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { gitService } from '../../services/git';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
+import { getWorkspaceDisplayName } from '../../utils/workspaceThreads';
 
 // ============================================================================
 // Dependencies interface
@@ -51,23 +52,24 @@ export interface UseSessionCrudReturn {
 	/** Opens the new instance modal */
 	addNewSession: () => void;
 	/** Core session creation logic */
-	createNewSession: (
-		agentId: string,
-		workingDir: string,
+		createNewSession: (
+			agentId: string,
+			workingDir: string,
 		name: string,
 		nudgeMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
-		customContextWindow?: number,
-		customProviderPath?: string,
-		sessionSshRemoteConfig?: {
-			enabled: boolean;
-			remoteId: string | null;
-			workingDirOverride?: string;
-		}
-	) => Promise<void>;
+			customContextWindow?: number,
+			customProviderPath?: string,
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			},
+			workspaceId?: string
+		) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
 	/** Deletes entire worktree group and all its agents */
@@ -104,7 +106,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 	} = deps;
 
 	// --- Store actions (stable via getState) ---
-	const { setSessions, setActiveSessionId, setGroups } = useSessionStore.getState();
+	const { setSessions, setActiveSessionId, setGroups, setThreads } = useSessionStore.getState();
 	const { setEditingSessionId, setDraggingSessionId, setActiveFocus } = useUIStore.getState();
 	const { setNewInstanceModalOpen, setDeleteAgentSession } = getModalActions();
 
@@ -139,7 +141,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
-			}
+			},
+			workspaceId?: string
 		) => {
 			try {
 				// Get agent definition to get correct command
@@ -159,8 +162,8 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					console.error(`Session validation failed: ${validation.error}`);
 					notifyToast({
 						type: 'error',
-						title: 'Agent Creation Failed',
-						message: validation.error || 'Cannot create duplicate agent',
+						title: 'Thread Creation Failed',
+						message: validation.error || 'Cannot create duplicate thread',
 					});
 					return;
 				}
@@ -187,7 +190,27 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				}
 
 				const currentDefaults = useSettingsStore.getState();
+				const normalizedWorkingDir = workingDir.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+				const existingWorkspace = useSessionStore
+					.getState()
+					.groups.find(
+						(group) =>
+							group.id === workspaceId ||
+							(group.projectRoot || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
+								normalizedWorkingDir
+					);
+				const resolvedWorkspace =
+					existingWorkspace ||
+					({
+						id: workspaceId || `workspace-${generateId()}`,
+						name: getWorkspaceDisplayName(workingDir),
+						emoji: '📁',
+						collapsed: false,
+						projectRoot: workingDir,
+						lastUsedAt: Date.now(),
+					} as const);
 				const initialTabId = generateId();
+				const threadId = `thread-${generateId()}`;
 				const initialTab: AITab = {
 					id: initialTabId,
 					agentSessionId: null,
@@ -204,6 +227,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 				const newSession: Session = {
 					id: newId,
+					runtimeId: newId,
+					groupId: resolvedWorkspace.id,
+					workspaceId: resolvedWorkspace.id,
+					threadId,
 					name,
 					toolType: agentId as ToolType,
 					state: 'idle',
@@ -257,8 +284,33 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					sessionSshRemoteConfig,
 					autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
 				};
+				const newThread = {
+					id: threadId,
+					workspaceId: resolvedWorkspace.id,
+					sessionId: newId,
+					runtimeId: newId,
+					title: name,
+					agentId: agentId as ToolType,
+					projectRoot: workingDir,
+					pinned: false,
+					archived: false,
+					isOpen: true,
+					createdAt: Date.now(),
+					lastUsedAt: Date.now(),
+				};
 
+				setGroups((prev) => {
+					if (prev.some((group) => group.id === resolvedWorkspace.id)) {
+						return prev.map((group) =>
+							group.id === resolvedWorkspace.id
+								? { ...group, projectRoot: workingDir, lastUsedAt: Date.now() }
+								: group
+						);
+					}
+					return [...prev, resolvedWorkspace];
+				});
 				setSessions((prev) => [...prev, newSession]);
+				setThreads((prev) => [...prev, newThread]);
 				setActiveSessionId(newId);
 				const webInitialTab = {
 					id: initialTab.id,
@@ -272,6 +324,12 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					state: initialTab.state || 'idle',
 					thinkingStartTime: initialTab.thinkingStartTime || null,
 					currentModel: initialTab.currentModel || null,
+					runtimeKind: initialTab.runtimeKind || 'batch',
+					steerMode: initialTab.steerMode || 'none',
+					activeTurnId: initialTab.activeTurnId || null,
+					pendingSteer: initialTab.pendingSteer || null,
+					steerStatus: initialTab.steerStatus || 'idle',
+					lastCheckpointAt: initialTab.lastCheckpointAt || null,
 				};
 				void window.maestro.web?.broadcastSessionAdded?.({
 					id: newSession.id,
@@ -309,7 +367,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				console.error('Failed to create session:', error);
 			}
 		},
-		[setSessions, setActiveSessionId, setActiveFocus, inputRef]
+		[setSessions, setActiveSessionId, setGroups, setThreads, setActiveFocus, inputRef]
 	);
 
 	// ========================================================================
@@ -415,8 +473,23 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 	const finishRenamingSession = useCallback(
 		(sessId: string, newName: string) => {
+			const trimmedName = newName.trim();
+			if (!trimmedName) {
+				setEditingSessionId(null);
+				return;
+			}
+			const currentThreadId = useSessionStore
+				.getState()
+				.sessions.find((session) => session.id === sessId)?.threadId;
+			if (currentThreadId) {
+				setThreads((prev) =>
+					prev.map((thread) =>
+						thread.id === currentThreadId ? { ...thread, title: trimmedName } : thread
+					)
+				);
+			}
 			setSessions((prev) => {
-				const updated = prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s));
+				const updated = prev.map((s) => (s.id === sessId ? { ...s, name: trimmedName } : s));
 				const session = updated.find((s) => s.id === sessId);
 				// Derive provider session ID: prefer session-level (legacy), fall back to active/first aiTab
 				const providerSessionId =
@@ -427,13 +500,13 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					const agentId = session.toolType || 'claude-code';
 					if (agentId === 'claude-code') {
 						(window as any).maestro.claude
-							.updateSessionName(session.projectRoot, providerSessionId, newName)
+							.updateSessionName(session.projectRoot, providerSessionId, trimmedName)
 							.catch((err: Error) =>
 								console.warn('[finishRenamingSession] Failed to sync session name:', err)
 							);
 					} else {
 						(window as any).maestro.agentSessions
-							.setSessionName(agentId, session.projectRoot, providerSessionId, newName)
+							.setSessionName(agentId, session.projectRoot, providerSessionId, trimmedName)
 							.catch((err: Error) =>
 								console.warn('[finishRenamingSession] Failed to sync session name:', err)
 							);
@@ -443,7 +516,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			});
 			setEditingSessionId(null);
 		},
-		[setSessions, setEditingSessionId]
+		[setSessions, setThreads, setEditingSessionId]
 	);
 
 	// ========================================================================

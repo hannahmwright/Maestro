@@ -24,6 +24,8 @@ declare global {
 	}
 }
 
+let hasLoggedMissingConfigWarning = false;
+
 /**
  * Get the Maestro config from window
  * Returns default values if not injected (for development)
@@ -34,7 +36,10 @@ export function getMaestroConfig(): MaestroConfig {
 	}
 
 	// Development fallback - infer stable /app-style routes from the current URL.
-	webLogger.warn('No __MAESTRO_CONFIG__ found, using development defaults', 'Config');
+	if (!hasLoggedMissingConfigWarning) {
+		webLogger.debug('No __MAESTRO_CONFIG__ found, using development defaults', 'Config');
+		hasLoggedMissingConfigWarning = true;
+	}
 
 	const pathParts = window.location.pathname.split('/').filter(Boolean);
 	const basePath = pathParts[0] === WEB_APP_BASE_PATH.replace('/', '') ? WEB_APP_BASE_PATH : '';
@@ -56,6 +61,10 @@ export function getMaestroConfig(): MaestroConfig {
 			enabled: false,
 		},
 	};
+}
+
+export function hasInjectedMaestroConfig(): boolean {
+	return typeof window !== 'undefined' && !!window.__MAESTRO_CONFIG__;
 }
 
 /**

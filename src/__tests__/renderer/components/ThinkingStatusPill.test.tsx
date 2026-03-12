@@ -2,17 +2,16 @@
  * Tests for ThinkingStatusPill component
  *
  * Tests cover:
- * - Pure helper functions (getItemDisplayName, formatTokens)
+ * - Token formatting via dropdown rows
  * - ElapsedTimeDisplay component (timer, formatTime)
  * - ThinkingItemRow component (click handling, display name, tokens, time)
  * - AutoRunPill component (stop button, task progress, elapsed time, stopping state)
  * - ThinkingStatusPillInner main logic (AutoRun mode, filtering, null return, primary item,
- *   multiple items dropdown, token display, elapsed time, interrupt button)
+ *   multiple items dropdown, elapsed time, interrupt button)
  * - Memoization (custom arePropsEqual comparison)
  */
 
-import React from 'react';
-import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ThinkingStatusPill } from '../../../renderer/components/ThinkingStatusPill';
 import type { Session, Theme, BatchRunState, AITab, ThinkingItem } from '../../../renderer/types';
@@ -132,40 +131,57 @@ describe('ThinkingStatusPill', () => {
 		});
 	});
 
-	describe('formatTokens helper (via UI)', () => {
+	describe('formatTokens helper (via dropdown)', () => {
 		it('displays tokens under 1000 as-is', () => {
-			const item = createThinkingItem({ currentCycleTokens: 500 });
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary', currentCycleTokens: 500 }),
+			];
+			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			expect(screen.getByText('500')).toBeInTheDocument();
 		});
 
 		it('displays tokens at exactly 1000 in K notation', () => {
-			const item = createThinkingItem({ currentCycleTokens: 1000 });
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary', currentCycleTokens: 1000 }),
+			];
+			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			expect(screen.getByText('1.0K')).toBeInTheDocument();
 		});
 
 		it('displays tokens over 1000 in K notation with decimal', () => {
-			const item = createThinkingItem({ currentCycleTokens: 2500 });
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary', currentCycleTokens: 2500 }),
+			];
+			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			expect(screen.getByText('2.5K')).toBeInTheDocument();
 		});
 
 		it('displays large tokens correctly', () => {
-			const item = createThinkingItem({ currentCycleTokens: 15700 });
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary', currentCycleTokens: 15700 }),
+			];
+			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			expect(screen.getByText('15.7K')).toBeInTheDocument();
 		});
 
-		it('shows "Thinking..." when tokens are 0', () => {
-			const item = createThinkingItem({ currentCycleTokens: 0 });
+		it('does not show tokens in the primary pill', () => {
+			const item = createThinkingItem({ currentCycleTokens: 2500 });
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			expect(screen.getByText('Thinking...')).toBeInTheDocument();
+			expect(screen.queryByText('Tokens:')).not.toBeInTheDocument();
+			expect(screen.queryByText('2.5K')).not.toBeInTheDocument();
 		});
 	});
 
-	describe('activity label', () => {
-		it('shows tool-specific activity while a web search tool is running', () => {
+	describe('primary pill content', () => {
+		it('does not show tool activity text while a tool is running', () => {
 			const item = createThinkingItemWithTab(
 				{},
 				{
@@ -187,11 +203,11 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			expect(screen.getByText(/Searching web:/)).toBeInTheDocument();
-			expect(screen.getByText(/latest market headlines/)).toBeInTheDocument();
+			expect(screen.queryByText(/Searching web:/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/latest market headlines/)).not.toBeInTheDocument();
 		});
 
-		it('falls back to latest thinking line when no tool is running', () => {
+		it('does not show streamed thinking text', () => {
 			const item = createThinkingItemWithTab(
 				{},
 				{
@@ -207,7 +223,7 @@ describe('ThinkingStatusPill', () => {
 			);
 
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			expect(screen.getByText('Assessing source credibility...')).toBeInTheDocument();
+			expect(screen.queryByText('Assessing source credibility...')).not.toBeInTheDocument();
 		});
 	});
 
@@ -261,23 +277,31 @@ describe('ThinkingStatusPill', () => {
 
 	describe('getItemDisplayName (via UI)', () => {
 		it('uses namedSessions lookup when available', () => {
-			const item = createThinkingItem({ agentSessionId: 'abc12345-def6' });
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', agentSessionId: 'abc12345-def6' }),
+			];
 			render(
 				<ThinkingStatusPill
-					thinkingItems={[item]}
+					thinkingItems={items}
 					theme={mockTheme}
 					namedSessions={{ 'abc12345-def6': 'Custom Name' }}
 				/>
 			);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			expect(screen.getByText('Custom Name')).toBeInTheDocument();
 		});
 
 		it('falls back to tab name when no namedSession', () => {
-			const item = createThinkingItemWithTab(
-				{ agentSessionId: undefined },
-				{ name: 'My Tab Name', agentSessionId: 'def67890-ghi' }
-			);
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItemWithTab(
+					{ id: 'sess-2', agentSessionId: undefined },
+					{ name: 'My Tab Name', agentSessionId: 'def67890-ghi' }
+				),
+			];
+			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			expect(screen.getByText('My Tab Name')).toBeInTheDocument();
 		});
 
@@ -319,19 +343,13 @@ describe('ThinkingStatusPill', () => {
 			expect(indicator).toBeInTheDocument();
 		});
 
-		it('shows Tokens label', () => {
-			const item = createThinkingItem({ currentCycleTokens: 100 });
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			expect(screen.getByText('Tokens:')).toBeInTheDocument();
-		});
-
 		it('shows Elapsed label with time', () => {
 			const item = createThinkingItem();
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
 			expect(screen.getByText('Elapsed:')).toBeInTheDocument();
 		});
 
-		it('creates correct tooltip with all info', () => {
+		it('uses the session name for the tooltip', () => {
 			const item = createThinkingItem({
 				name: 'Test Name',
 				agentSessionId: 'abc12345',
@@ -339,57 +357,7 @@ describe('ThinkingStatusPill', () => {
 			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
 			const nameElements = screen.getAllByText('Test Name');
 			const elementWithTooltip = nameElements.find((el) => el.getAttribute('title'));
-			expect(elementWithTooltip).toHaveAttribute('title', expect.stringContaining('Test Name'));
-			expect(elementWithTooltip).toHaveAttribute(
-				'title',
-				expect.stringContaining('Claude: abc12345')
-			);
-		});
-	});
-
-	describe('Claude session ID click handler', () => {
-		it('calls onSessionClick when Claude ID button is clicked', () => {
-			const onSessionClick = vi.fn();
-			const item = createThinkingItem({
-				id: 'session-123',
-				name: 'Click Test Session',
-				agentSessionId: 'claude-456',
-			});
-			render(
-				<ThinkingStatusPill
-					thinkingItems={[item]}
-					theme={mockTheme}
-					onSessionClick={onSessionClick}
-				/>
-			);
-
-			// agentSessionId: 'claude-456' -> displayClaudeId: 'CLAUDE-4'
-			const claudeIdButton = screen.getByText('CLAUDE-4');
-			expect(claudeIdButton.tagName).toBe('BUTTON');
-			fireEvent.click(claudeIdButton);
-
-			// tab is null for legacy items
-			expect(onSessionClick).toHaveBeenCalledWith('session-123', undefined);
-		});
-
-		it('passes tabId when tab is available', () => {
-			const onSessionClick = vi.fn();
-			const item = createThinkingItemWithTab(
-				{ id: 'session-abc', name: 'Tab Test Session', agentSessionId: undefined },
-				{ id: 'tab-999', name: 'Active Tab', agentSessionId: 'tab-claude-id' }
-			);
-			render(
-				<ThinkingStatusPill
-					thinkingItems={[item]}
-					theme={mockTheme}
-					onSessionClick={onSessionClick}
-				/>
-			);
-
-			const claudeIdButton = screen.getByText('Active Tab');
-			fireEvent.click(claudeIdButton);
-
-			expect(onSessionClick).toHaveBeenCalledWith('session-abc', 'tab-999');
+			expect(elementWithTooltip).toHaveAttribute('title', 'Test Name');
 		});
 	});
 
@@ -507,8 +475,7 @@ describe('ThinkingStatusPill', () => {
 			const indicator = screen.getByText('+1').parentElement!;
 			fireEvent.mouseEnter(indicator);
 
-			// 'Write' appears in both primary pill and dropdown row
-			expect(screen.getAllByText('Write').length).toBeGreaterThanOrEqual(2);
+			expect(screen.getByText('Write')).toBeInTheDocument();
 			expect(screen.getByText('Read')).toBeInTheDocument();
 			// Agent name appears multiple times (pill + 2 dropdown rows)
 			expect(screen.getAllByText('Agent A').length).toBeGreaterThanOrEqual(2);
@@ -772,15 +739,6 @@ describe('ThinkingStatusPill', () => {
 	});
 
 	describe('tab-level display', () => {
-		it('uses tab with busy state for display', () => {
-			const item = createThinkingItemWithTab(
-				{ agentSessionId: undefined },
-				{ name: 'Busy Tab', agentSessionId: 'busy-claude-id' }
-			);
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			expect(screen.getByText('Busy Tab')).toBeInTheDocument();
-		});
-
 		it('uses tab thinkingStartTime over session thinkingStartTime', () => {
 			const tab = createMockAITab({
 				state: 'busy',
@@ -832,17 +790,6 @@ describe('ThinkingStatusPill', () => {
 			const stopButton = screen.getByText('Stop').closest('button');
 			expect(stopButton).toHaveStyle({ backgroundColor: '#d96b6b' });
 		});
-
-		it('applies accent color to Claude ID button', () => {
-			const item = createThinkingItem({
-				name: 'Accent Test',
-				agentSessionId: 'test-id-1234',
-			});
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
-			const claudeButton = screen.getByText('TEST-ID-');
-			expect(claudeButton.tagName).toBe('BUTTON');
-			expect(claudeButton).toHaveStyle({ color: mockTheme.colors.accent });
-		});
 	});
 
 	describe('memoization (arePropsEqual)', () => {
@@ -889,58 +836,75 @@ describe('ThinkingStatusPill', () => {
 		});
 
 		it('re-renders when item property changes', () => {
-			const item = createThinkingItem({ currentCycleTokens: 500 });
+			const item = createThinkingItem({
+				id: 'sess-1',
+				name: 'Primary',
+				currentCycleTokens: 0,
+			});
+			const secondary = createThinkingItem({
+				id: 'sess-2',
+				name: 'Secondary',
+				currentCycleTokens: 500,
+			});
 
-			const { rerender } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const { rerender } = render(
+				<ThinkingStatusPill thinkingItems={[item, secondary]} theme={mockTheme} />
+			);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 
 			expect(screen.getByText('500')).toBeInTheDocument();
 
-			const updatedItem: ThinkingItem = {
-				session: { ...item.session, currentCycleTokens: 1500 },
-				tab: item.tab,
+			const updatedSecondary: ThinkingItem = {
+				session: { ...secondary.session, currentCycleTokens: 1500 },
+				tab: secondary.tab,
 			};
 
-			rerender(<ThinkingStatusPill thinkingItems={[updatedItem]} theme={mockTheme} />);
+			rerender(<ThinkingStatusPill thinkingItems={[item, updatedSecondary]} theme={mockTheme} />);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 
-			expect(screen.getByText('1.5K')).toBeInTheDocument();
+			expect(screen.getAllByText('1.5K').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('re-renders when theme changes', () => {
 			const item = createThinkingItem({ name: 'Theme Test' });
 			const newTheme = {
 				...mockTheme,
-				colors: { ...mockTheme.colors, accent: '#ff0000' },
+				colors: { ...mockTheme.colors, textMain: '#ff0000' },
 			};
 
 			const { rerender } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
 
 			rerender(<ThinkingStatusPill thinkingItems={[item]} theme={newTheme} />);
 
-			const claudeButton = screen.getByText('ABC12345');
-			expect(claudeButton.tagName).toBe('BUTTON');
-			expect(claudeButton).toHaveStyle({ color: '#ff0000' });
+			expect(screen.getByText('Theme Test')).toHaveStyle({ color: '#ff0000' });
 		});
 
 		it('re-renders when namedSessions changes for thinking item', () => {
-			const item = createThinkingItem({
-				name: 'Named Test Session',
-				agentSessionId: 'abc12345',
-			});
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({
+					id: 'sess-2',
+					name: 'Named Test Session',
+					agentSessionId: 'abc12345',
+				}),
+			];
 
 			const { rerender } = render(
-				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} namedSessions={{}} />
+				<ThinkingStatusPill thinkingItems={items} theme={mockTheme} namedSessions={{}} />
 			);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 
 			const initialButtons = screen.getAllByText('Named Test Session');
 			expect(initialButtons.length).toBeGreaterThanOrEqual(1);
 
 			rerender(
 				<ThinkingStatusPill
-					thinkingItems={[item]}
+					thinkingItems={items}
 					theme={mockTheme}
 					namedSessions={{ abc12345: 'Custom Name' }}
 				/>
 			);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 
 			expect(screen.getByText('Custom Name')).toBeInTheDocument();
 		});
@@ -997,8 +961,12 @@ describe('ThinkingStatusPill', () => {
 		});
 
 		it('handles large token counts', () => {
-			const item = createThinkingItem({ currentCycleTokens: 999999 });
-			render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', name: 'Secondary', currentCycleTokens: 999999 }),
+			];
+			render(<ThinkingStatusPill thinkingItems={items} theme={mockTheme} />);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			expect(screen.getByText('1000.0K')).toBeInTheDocument();
 		});
 
@@ -1021,15 +989,24 @@ describe('ThinkingStatusPill', () => {
 		});
 
 		it('handles rapid state changes', () => {
-			const item = createThinkingItem();
-			const { rerender } = render(<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} />);
+			const primary = createThinkingItem({ id: 'sess-1', name: 'Primary' });
+			const secondary = createThinkingItem({
+				id: 'sess-2',
+				name: 'Secondary',
+				currentCycleTokens: 0,
+			});
+			const { rerender } = render(
+				<ThinkingStatusPill thinkingItems={[primary, secondary]} theme={mockTheme} />
+			);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 
 			for (let i = 0; i < 10; i++) {
 				const updatedItem: ThinkingItem = {
-					session: { ...item.session, currentCycleTokens: i * 100 },
-					tab: item.tab,
+					session: { ...secondary.session, currentCycleTokens: i * 100 },
+					tab: secondary.tab,
 				};
-				rerender(<ThinkingStatusPill thinkingItems={[updatedItem]} theme={mockTheme} />);
+				rerender(<ThinkingStatusPill thinkingItems={[primary, updatedItem]} theme={mockTheme} />);
+				fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 			}
 
 			expect(screen.getByText('900')).toBeInTheDocument();
@@ -1086,21 +1063,26 @@ describe('ThinkingStatusPill', () => {
 		});
 
 		it('should re-render when namedSessions mapping changes', () => {
-			const item = createThinkingItem({ agentSessionId: 'claude-abc123' });
+			const items = [
+				createThinkingItem({ id: 'sess-1', name: 'Primary' }),
+				createThinkingItem({ id: 'sess-2', agentSessionId: 'claude-abc123' }),
+			];
 
 			const { rerender } = render(
-				<ThinkingStatusPill thinkingItems={[item]} theme={mockTheme} namedSessions={{}} />
+				<ThinkingStatusPill thinkingItems={items} theme={mockTheme} namedSessions={{}} />
 			);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 
 			expect(screen.getAllByText('Test Session').length).toBeGreaterThan(0);
 
 			rerender(
 				<ThinkingStatusPill
-					thinkingItems={[item]}
+					thinkingItems={items}
 					theme={mockTheme}
 					namedSessions={{ 'claude-abc123': 'Custom Named Session' }}
 				/>
 			);
+			fireEvent.mouseEnter(screen.getByText('+1').parentElement!);
 
 			expect(screen.getAllByText('Custom Named Session').length).toBeGreaterThan(0);
 		});

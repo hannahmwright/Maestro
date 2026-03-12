@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import { getDemoArtifactService } from '../../artifacts';
+import type { DemoArtifactHarvestRequest } from '../../../shared/demo-artifacts';
 
 export function registerArtifactsHandlers(): void {
 	ipcMain.handle(
@@ -30,4 +31,11 @@ export function registerArtifactsHandlers(): void {
 			filename: artifact.filename,
 		};
 	});
+
+	ipcMain.handle(
+		'artifacts:harvestFromLogText',
+		async (_event, request: DemoArtifactHarvestRequest) => {
+			return getDemoArtifactService().harvestFromLogText(request);
+		}
+	);
 }

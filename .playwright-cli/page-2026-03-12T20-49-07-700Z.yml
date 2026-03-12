@@ -1,0 +1,15 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - button "Open navigation" [ref=e5] [cursor=pointer]:
+      - img [ref=e6]
+    - generic [ref=e11]: Select a thread
+  - main [ref=e13]:
+    - generic [ref=e17]: Syncing with Maestro…
+  - generic [ref=e26]:
+    - button "Open composer actions" [disabled] [ref=e28]:
+      - img [ref=e29]
+    - generic [ref=e30]:
+      - textbox "Message input. Type slash commands directly if needed." [disabled] [ref=e31]:
+        - /placeholder: Connecting...
+      - button "Start voice recording" [disabled] [ref=e33]:
+        - img [ref=e34]

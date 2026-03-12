@@ -78,7 +78,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
 	return (
 		<Modal
 			theme={theme}
-			title="Rename Agent"
+			title="Rename Thread"
 			priority={MODAL_PRIORITIES.RENAME_INSTANCE}
 			onClose={onClose}
 			initialFocusRef={inputRef}
@@ -98,7 +98,7 @@ export function RenameSessionModal(props: RenameSessionModalProps) {
 				value={value}
 				onChange={setValue}
 				onSubmit={handleRename}
-				placeholder="Enter agent name..."
+				placeholder="Enter thread title..."
 			/>
 		</Modal>
 	);

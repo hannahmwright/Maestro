@@ -68,6 +68,15 @@ export interface AgentSessionOriginsData {
 export interface AgentSessionsHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	agentSessionOriginsStore?: Store<AgentSessionOriginsData>;
+	claudeSessionOriginsStore?: Store<{
+		origins: Record<
+			string,
+			Record<
+				string,
+				'user' | 'auto' | { origin: 'user' | 'auto'; sessionName?: string; starred?: boolean; contextUsage?: number }
+			>
+		>;
+	}>;
 	/** Settings store for SSH remote configuration lookup */
 	settingsStore?: Store<MaestroSettings>;
 }
@@ -102,6 +111,188 @@ interface SessionFileInfo {
 	filePath: string;
 	sessionKey: string;
 	mtimeMs: number;
+}
+
+interface RecoverableAgentSession {
+	agentId: string;
+	sessionId: string;
+	projectPath: string;
+	timestamp: string;
+	modifiedAt: string;
+	firstMessage: string;
+	sessionName?: string;
+	starred?: boolean;
+	contextUsage?: number;
+	origin?: 'user' | 'auto';
+	gitBranch?: string;
+	slug?: string;
+}
+
+function extractClaudeTextContent(content: unknown): string {
+	if (!content) return '';
+	if (typeof content === 'string') return content;
+	if (Array.isArray(content)) {
+		return content
+			.map((item) => extractClaudeTextContent(item))
+			.filter(Boolean)
+			.join('\n');
+	}
+	if (typeof content === 'object') {
+		const record = content as Record<string, unknown>;
+		if (typeof record.text === 'string') return record.text;
+		if (typeof record.thinking === 'string') return record.thinking;
+		if (record.content) return extractClaudeTextContent(record.content);
+	}
+	return '';
+}
+
+function isRecoverableClaudePrompt(firstUserMessage: string, projectPath: string): boolean {
+	const trimmed = firstUserMessage.trim();
+	const homeDir = os.homedir().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+	const normalizedProjectPath = projectPath.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+
+	if (!trimmed) return false;
+	if (normalizedProjectPath === homeDir) return false;
+	if (trimmed.startsWith('# Context Summarization Instructions')) return false;
+	if (trimmed.startsWith('<local-command-caveat>')) return false;
+	return true;
+}
+
+async function discoverRecoverableClaudeSessions(
+	claudeSessionOriginsStore?: AgentSessionsHandlerDependencies['claudeSessionOriginsStore']
+): Promise<RecoverableAgentSession[]> {
+	const homeDir = os.homedir();
+	const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+	const recoverable: RecoverableAgentSession[] = [];
+	const allOrigins = claudeSessionOriginsStore?.get('origins', {}) || {};
+
+	try {
+		await fs.access(claudeProjectsDir);
+	} catch {
+		return recoverable;
+	}
+
+	const projectDirs = await fs.readdir(claudeProjectsDir);
+	for (const projectDir of projectDirs) {
+		const projectDirPath = path.join(claudeProjectsDir, projectDir);
+		try {
+			const projectDirStat = await fs.stat(projectDirPath);
+			if (!projectDirStat.isDirectory()) continue;
+		} catch {
+			continue;
+		}
+
+		const sessionFiles = (await fs.readdir(projectDirPath)).filter((filename) =>
+			filename.endsWith('.jsonl')
+		);
+
+		for (const filename of sessionFiles) {
+			const filePath = path.join(projectDirPath, filename);
+			const sessionId = filename.replace(/\.jsonl$/, '');
+
+			try {
+				const content = await fs.readFile(filePath, 'utf8');
+				const lines = content.split('\n').filter((line) => line.trim());
+				if (lines.length === 0) continue;
+
+				let projectPath = '';
+				let firstUserMessage = '';
+				let gitBranch: string | undefined;
+				let slug: string | undefined;
+				let firstTimestamp = 0;
+				let lastTimestamp = 0;
+				let conversationMessageCount = 0;
+
+				for (const line of lines) {
+					let entry: Record<string, unknown>;
+					try {
+						entry = JSON.parse(line) as Record<string, unknown>;
+					} catch {
+						continue;
+					}
+
+					if (!projectPath && typeof entry.cwd === 'string') {
+						projectPath = entry.cwd;
+					}
+					if (!gitBranch && typeof entry.gitBranch === 'string') {
+						gitBranch = entry.gitBranch;
+					}
+					if (!slug && typeof entry.slug === 'string') {
+						slug = entry.slug;
+					}
+
+					const timestampValue =
+						typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+					if (!Number.isNaN(timestampValue)) {
+						if (!firstTimestamp) firstTimestamp = timestampValue;
+						lastTimestamp = Math.max(lastTimestamp, timestampValue);
+					}
+
+					const message = entry.message as Record<string, unknown> | undefined;
+					if (!message) continue;
+					const role =
+						typeof message.role === 'string'
+							? message.role
+							: typeof entry.type === 'string'
+								? entry.type
+								: undefined;
+					const text = extractClaudeTextContent(message.content).trim();
+					if (!text) continue;
+
+					if (role === 'user' && !firstUserMessage) {
+						firstUserMessage = text;
+					}
+					if (role === 'user' || role === 'assistant') {
+						conversationMessageCount += 1;
+					}
+				}
+
+				if (!projectPath || conversationMessageCount === 0) continue;
+				if (!isRecoverableClaudePrompt(firstUserMessage, projectPath)) continue;
+
+				const originEntry = allOrigins[projectPath]?.[sessionId];
+				const origin =
+					typeof originEntry === 'string'
+						? originEntry
+						: originEntry && typeof originEntry.origin === 'string'
+							? originEntry.origin
+							: undefined;
+				const sessionName =
+					originEntry && typeof originEntry === 'object' ? originEntry.sessionName : undefined;
+				const starred =
+					originEntry && typeof originEntry === 'object' ? originEntry.starred : undefined;
+				const contextUsage =
+					originEntry && typeof originEntry === 'object'
+						? originEntry.contextUsage
+						: undefined;
+
+				recoverable.push({
+					agentId: 'claude-code',
+					sessionId,
+					projectPath,
+					timestamp: new Date(firstTimestamp || lastTimestamp || Date.now()).toISOString(),
+					modifiedAt: new Date(lastTimestamp || firstTimestamp || Date.now()).toISOString(),
+					firstMessage: firstUserMessage,
+					sessionName,
+					starred,
+					contextUsage,
+					origin,
+					gitBranch,
+					slug,
+				});
+			} catch (error) {
+				logger.warn(`Failed to inspect Claude session file ${filePath}: ${error}`, LOG_CONTEXT);
+			}
+		}
+	}
+
+	recoverable.sort((a, b) => {
+		const modifiedDiff = Date.parse(b.modifiedAt) - Date.parse(a.modifiedAt);
+		if (modifiedDiff !== 0) return modifiedDiff;
+		return a.projectPath.localeCompare(b.projectPath);
+	});
+
+	return recoverable;
 }
 
 /**
@@ -634,6 +825,31 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 					LOG_CONTEXT
 				);
 				return allNamedSessions;
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agentSessions:discoverRecoverable',
+		withIpcErrorLogging(
+			handlerOpts('discoverRecoverable'),
+			async (agentId: string): Promise<RecoverableAgentSession[]> => {
+				if (agentId !== 'claude-code') {
+					logger.info(
+						`discoverRecoverable currently has no scanner for agent ${agentId}`,
+						LOG_CONTEXT
+					);
+					return [];
+				}
+
+				const recoverable = await discoverRecoverableClaudeSessions(
+					deps?.claudeSessionOriginsStore
+				);
+				logger.info(
+					`Discovered ${recoverable.length} recoverable provider sessions for ${agentId}`,
+					LOG_CONTEXT
+				);
+				return recoverable;
 			}
 		)
 	);

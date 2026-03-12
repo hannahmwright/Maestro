@@ -54,6 +54,10 @@ export interface SettingsModalData {
 /** New instance modal data */
 export interface NewInstanceModalData {
 	duplicatingSessionId: string | null;
+	mode?: 'workspace' | 'thread';
+	workspaceId?: string | null;
+	fixedWorkingDir?: string | null;
+	defaultAgentId?: string | null;
 }
 
 /** Edit agent modal data */
@@ -456,9 +460,25 @@ export function getModalActions() {
 
 		// New Instance Modal
 		setNewInstanceModalOpen: (open: boolean) =>
-			open ? openModal('newInstance', { duplicatingSessionId: null }) : closeModal('newInstance'),
+			open
+				? openModal('newInstance', {
+						duplicatingSessionId: null,
+						mode: 'workspace',
+						workspaceId: null,
+						fixedWorkingDir: null,
+						defaultAgentId: null,
+					})
+				: closeModal('newInstance'),
 		setDuplicatingSessionId: (id: string | null) =>
 			updateModalData('newInstance', { duplicatingSessionId: id }),
+		setNewInstanceMode: (mode: 'workspace' | 'thread') =>
+			updateModalData('newInstance', { mode }),
+		setNewInstanceWorkspaceId: (workspaceId: string | null) =>
+			updateModalData('newInstance', { workspaceId }),
+		setNewInstanceFixedWorkingDir: (fixedWorkingDir: string | null) =>
+			updateModalData('newInstance', { fixedWorkingDir }),
+		setNewInstanceDefaultAgentId: (defaultAgentId: string | null) =>
+			updateModalData('newInstance', { defaultAgentId }),
 
 		// Edit Agent Modal
 		setEditAgentModalOpen: (open: boolean) =>
@@ -863,6 +883,10 @@ export function useModalActions() {
 		// New Instance Modal
 		newInstanceModalOpen,
 		duplicatingSessionId: newInstanceData?.duplicatingSessionId ?? null,
+		newInstanceMode: newInstanceData?.mode ?? 'workspace',
+		newInstanceWorkspaceId: newInstanceData?.workspaceId ?? null,
+		newInstanceFixedWorkingDir: newInstanceData?.fixedWorkingDir ?? null,
+		newInstanceDefaultAgentId: newInstanceData?.defaultAgentId ?? null,
 
 		// Edit Agent Modal
 		editAgentModalOpen,

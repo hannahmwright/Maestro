@@ -8,7 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
-import type { Group, Conductor, ConductorTask, ConductorRun } from '../../shared/types';
+import type { Group, Thread, Conductor, ConductorTask, ConductorRun } from '../../shared/types';
 
 /**
  * Stored session data for persistence.
@@ -49,6 +49,13 @@ export function createGroupsApi() {
 	};
 }
 
+export function createThreadsApi() {
+	return {
+		getAll: () => ipcRenderer.invoke('threads:getAll'),
+		setAll: (threads: Thread[]) => ipcRenderer.invoke('threads:setAll', threads),
+	};
+}
+
 /**
  * Creates the conductors persistence API object for preload exposure
  */
@@ -79,5 +86,6 @@ export function createAgentErrorApi() {
 export type SettingsApi = ReturnType<typeof createSettingsApi>;
 export type SessionsApi = ReturnType<typeof createSessionsApi>;
 export type GroupsApi = ReturnType<typeof createGroupsApi>;
+export type ThreadsApi = ReturnType<typeof createThreadsApi>;
 export type ConductorsApi = ReturnType<typeof createConductorsApi>;
 export type AgentErrorApi = ReturnType<typeof createAgentErrorApi>;

@@ -18,6 +18,7 @@ import type {
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
+	ThreadsData,
 	ConductorsData,
 	AgentConfigsData,
 	WindowState,
@@ -29,6 +30,7 @@ import {
 	SETTINGS_DEFAULTS,
 	SESSIONS_DEFAULTS,
 	GROUPS_DEFAULTS,
+	THREADS_DEFAULTS,
 	CONDUCTORS_DEFAULTS,
 	AGENT_CONFIGS_DEFAULTS,
 	WINDOW_STATE_DEFAULTS,
@@ -46,6 +48,7 @@ let _bootstrapStore: Store<BootstrapSettings> | null = null;
 let _settingsStore: Store<MaestroSettings> | null = null;
 let _sessionsStore: Store<SessionsData> | null = null;
 let _groupsStore: Store<GroupsData> | null = null;
+let _threadsStore: Store<ThreadsData> | null = null;
 let _conductorsStore: Store<ConductorsData> | null = null;
 let _agentConfigsStore: Store<AgentConfigsData> | null = null;
 let _windowStateStore: Store<WindowState> | null = null;
@@ -112,6 +115,12 @@ export function initializeStores(options: StoreInitOptions): {
 		defaults: GROUPS_DEFAULTS,
 	});
 
+	_threadsStore = new Store<ThreadsData>({
+		name: 'maestro-threads',
+		cwd: _syncPath,
+		defaults: THREADS_DEFAULTS,
+	});
+
 	_conductorsStore = new Store<ConductorsData>({
 		name: 'maestro-conductors',
 		cwd: _syncPath,
@@ -168,6 +177,7 @@ export function getStoreInstances() {
 		settingsStore: _settingsStore,
 		sessionsStore: _sessionsStore,
 		groupsStore: _groupsStore,
+		threadsStore: _threadsStore,
 		conductorsStore: _conductorsStore,
 		agentConfigsStore: _agentConfigsStore,
 		windowStateStore: _windowStateStore,

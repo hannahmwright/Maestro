@@ -3,13 +3,19 @@ import { Folder, RefreshCw, ChevronRight, AlertTriangle, Copy, Check, X } from '
 import type { AgentConfig, Session, ToolType } from '../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { validateNewSession, validateEditSession } from '../utils/sessionValidation';
+import {
+	validateNewSession,
+	validateEditSession,
+	buildDefaultThreadName,
+	getProviderDisplayName,
+} from '../utils/sessionValidation';
 import { FormInput } from './ui/FormInput';
 import { Modal, ModalFooter } from './ui/Modal';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { SshRemoteSelector } from './shared/SshRemoteSelector';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { safeClipboardWrite } from '../utils/clipboard';
+import { ProviderModelIcon, getProviderBrandColor } from './shared/ProviderModelIcon';
 
 // Maximum character length for nudge message
 const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -44,11 +50,16 @@ interface NewInstanceModalProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		workspaceId?: string
 	) => void;
 	theme: any;
 	existingSessions: Session[];
 	sourceSession?: Session; // Optional session to duplicate from
+	mode?: 'workspace' | 'thread';
+	workspaceId?: string | null;
+	fixedWorkingDir?: string | null;
+	defaultAgentId?: string | null;
 }
 
 interface EditAgentModalProps {
@@ -85,6 +96,10 @@ export function NewInstanceModal({
 	theme,
 	existingSessions,
 	sourceSession,
+	mode = 'workspace',
+	workspaceId = null,
+	fixedWorkingDir = null,
+	defaultAgentId = null,
 }: NewInstanceModalProps) {
 	const [agents, setAgents] = useState<AgentConfig[]>([]);
 	const [selectedAgent, setSelectedAgent] = useState('');
@@ -121,6 +136,24 @@ export function NewInstanceModal({
 	const [sshConnectionError, setSshConnectionError] = useState<string | null>(null);
 
 	const nameInputRef = useRef<HTMLInputElement>(null);
+	const firstProviderButtonRef = useRef<HTMLButtonElement>(null);
+	const isThreadMode = mode === 'thread';
+	const modalTitle = isThreadMode ? 'Create New Thread' : 'Create New Workspace';
+	const confirmLabel = isThreadMode ? 'Create Thread' : 'Create Workspace';
+	const nameLabel = isThreadMode ? 'Thread Name' : 'First Thread Name';
+	const providerLabel = isThreadMode ? 'Thread Provider' : 'Initial Provider';
+	const workingDirectoryLabel = isThreadMode ? 'Workspace Directory' : 'Working Directory';
+	const effectiveWorkingDir = useMemo(
+		() => expandTilde((fixedWorkingDir || workingDir).trim()),
+		[fixedWorkingDir, workingDir, homeDir]
+	);
+	const derivedThreadName = useMemo(
+		() =>
+			selectedAgent
+				? buildDefaultThreadName(selectedAgent as ToolType, existingSessions)
+				: '',
+		[selectedAgent, existingSessions]
+	);
 
 	// Fetch home directory on mount for tilde expansion
 	useEffect(() => {
@@ -136,19 +169,20 @@ export function NewInstanceModal({
 	};
 
 	const handleWorkingDirChange = React.useCallback((value: string) => {
+		if (fixedWorkingDir) return;
 		setWorkingDir(value);
 		setDirectoryWarningAcknowledged(false);
-	}, []);
+	}, [fixedWorkingDir]);
 
 	// Validate session uniqueness
 	const validation = useMemo(() => {
-		const name = instanceName.trim();
-		const expandedDir = expandTilde(workingDir.trim());
+		const name = isThreadMode ? derivedThreadName : instanceName.trim();
+		const expandedDir = effectiveWorkingDir;
 		if (!name || !expandedDir || !selectedAgent) {
 			return { valid: true }; // Don't show errors until fields are filled
 		}
 		return validateNewSession(name, expandedDir, selectedAgent as ToolType, existingSessions);
-	}, [instanceName, workingDir, selectedAgent, existingSessions, homeDir]);
+	}, [instanceName, effectiveWorkingDir, selectedAgent, existingSessions, isThreadMode, derivedThreadName]);
 
 	// Check if SSH remote is enabled for the selected agent or pending config
 	// When no agent is selected, check the _pending_ config (user may select SSH before choosing agent)
@@ -323,9 +357,12 @@ export function NewInstanceModal({
 				setSelectedAgent(source.toolType);
 			} else if (!sshRemoteId) {
 				// Only auto-select on initial load, not on SSH remote re-detection
-				const firstAvailable = detectedAgents.find((a: AgentConfig) => a.available && !a.hidden);
-				if (firstAvailable) {
-					setSelectedAgent(firstAvailable.id);
+				const preferredAgent =
+					(defaultAgentId && detectedAgents.find((a: AgentConfig) => a.id === defaultAgentId && !a.hidden)) ||
+					detectedAgents.find((a: AgentConfig) => a.available && !a.hidden) ||
+					detectedAgents.find((a: AgentConfig) => !a.hidden);
+				if (preferredAgent) {
+					setSelectedAgent(preferredAgent.id);
 				}
 			}
 
@@ -415,10 +452,9 @@ export function NewInstanceModal({
 	);
 
 	const handleCreate = React.useCallback(() => {
-		const name = instanceName.trim();
+		const name = isThreadMode ? derivedThreadName : instanceName.trim();
 		if (!name) return; // Name is required
-		// Expand tilde before passing to callback
-		const expandedWorkingDir = expandTilde(workingDir.trim());
+		const expandedWorkingDir = effectiveWorkingDir;
 
 		// Validate before creating
 		const result = validateNewSession(
@@ -466,7 +502,8 @@ export function NewInstanceModal({
 			agentCustomModel,
 			agentCustomContextWindow,
 			agentCustomProviderPath,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			workspaceId || undefined
 		);
 		onClose();
 
@@ -498,6 +535,10 @@ export function NewInstanceModal({
 		expandTilde,
 		handleWorkingDirChange,
 		existingSessions,
+		workspaceId,
+		isThreadMode,
+		derivedThreadName,
+		effectiveWorkingDir,
 	]);
 
 	// Check if form is valid for submission
@@ -514,20 +555,21 @@ export function NewInstanceModal({
 		return (
 			selectedAgent &&
 			isAgentUsable &&
-			workingDir.trim() &&
-			instanceName.trim() &&
+			!!effectiveWorkingDir &&
+			(isThreadMode || instanceName.trim()) &&
 			validation.valid &&
-			!hasWarningThatNeedsAck
+			(isThreadMode || !hasWarningThatNeedsAck)
 		);
 	}, [
 		selectedAgent,
 		agents,
-		workingDir,
+		effectiveWorkingDir,
 		instanceName,
 		validation.valid,
 		validation.warning,
 		directoryWarningAcknowledged,
 		customAgentPaths,
+		isThreadMode,
 	]);
 
 	// Handle keyboard shortcuts
@@ -537,7 +579,7 @@ export function NewInstanceModal({
 			if ((e.key === 'o' || e.key === 'O') && (e.metaKey || e.ctrlKey)) {
 				e.preventDefault();
 				e.stopPropagation();
-				if (!isSshEnabled) {
+				if (!isSshEnabled && !isThreadMode) {
 					handleSelectFolder();
 				}
 				return;
@@ -552,7 +594,7 @@ export function NewInstanceModal({
 				return;
 			}
 		},
-		[handleSelectFolder, handleCreate, isFormValid, isSshEnabled]
+		[handleSelectFolder, handleCreate, isFormValid, isSshEnabled, isThreadMode]
 	);
 
 	// Sort agents: supported first, then coming soon at the bottom
@@ -562,6 +604,16 @@ export function NewInstanceModal({
 		const comingSoon = visible.filter((a) => !SUPPORTED_AGENTS.includes(a.id));
 		return [...supported, ...comingSoon];
 	}, [agents]);
+
+	const threadProviders = useMemo(
+		() =>
+			sortedAgents.filter((agent) => {
+				if (!SUPPORTED_AGENTS.includes(agent.id)) return false;
+				const hasCustomPath = customAgentPaths[agent.id]?.trim();
+				return agent.available || !!hasCustomPath;
+			}),
+		[sortedAgents, customAgentPaths]
+	);
 
 	// Effects - load agents and optionally pre-fill from source session
 	useEffect(() => {
@@ -579,6 +631,13 @@ export function NewInstanceModal({
 			setDirectoryWarningAcknowledged(false);
 		}
 	}, [isOpen, sourceSession]);
+
+	useEffect(() => {
+		if (!isOpen) return;
+		if (!fixedWorkingDir || sourceSession) return;
+		setWorkingDir(fixedWorkingDir);
+		setDirectoryWarningAcknowledged(true);
+	}, [fixedWorkingDir, isOpen, sourceSession]);
 
 	// Load SSH remote configurations independently of agent detection
 	// This ensures SSH remotes are available even if agent detection fails
@@ -655,509 +714,590 @@ export function NewInstanceModal({
 	if (!isOpen) return null;
 
 	return (
-		<div onKeyDown={handleKeyDown} role="group" aria-label="Create new agent dialog">
+		<div onKeyDown={handleKeyDown} role="group" aria-label={modalTitle}>
 			<Modal
 				theme={theme}
-				title="Create New Agent"
+				title={modalTitle}
 				priority={MODAL_PRIORITIES.NEW_INSTANCE}
 				onClose={onClose}
 				width={600}
-				initialFocusRef={nameInputRef}
+				initialFocusRef={
+					isThreadMode
+						? (firstProviderButtonRef as React.RefObject<HTMLElement>)
+						: (nameInputRef as React.RefObject<HTMLElement>)
+				}
 				footer={
 					<ModalFooter
 						theme={theme}
 						onCancel={onClose}
 						onConfirm={handleCreate}
-						confirmLabel="Create Agent"
+						confirmLabel={confirmLabel}
 						confirmDisabled={!isFormValid}
 					/>
 				}
 			>
 				<div className="space-y-5">
-					{/* Agent Name */}
-					<FormInput
-						ref={nameInputRef}
-						id="agent-name-input"
-						theme={theme}
-						label="Agent Name"
-						value={instanceName}
-						onChange={setInstanceName}
-						placeholder=""
-						error={validation.errorField === 'name' ? validation.error : undefined}
-						heightClass="p-2"
-					/>
+					{isThreadMode ? (
+						<>
+							<div>
+								<div className="mb-2 text-sm font-medium" style={{ color: theme.colors.textMain }}>
+									Choose a provider
+								</div>
+								{loading ? (
+									<div className="text-sm opacity-50" style={{ color: theme.colors.textDim }}>
+										Loading providers...
+									</div>
+								) : threadProviders.length === 0 ? (
+									<div
+										className="rounded-lg border px-3 py-4 text-sm"
+										style={{
+											borderColor: theme.colors.border,
+											color: theme.colors.textDim,
+										}}
+									>
+										No configured providers are available for this workspace yet.
+									</div>
+								) : (
+									<div className="grid grid-cols-2 gap-2">
+										{threadProviders.map((agent, index) => {
+											const isSelected = selectedAgent === agent.id;
+											const brandColor = getProviderBrandColor(agent.id as ToolType, theme.colors.textMain);
 
-					{/* Agent Selection */}
-					<div>
-						<div
-							className="block text-xs font-bold opacity-70 uppercase mb-2"
-							style={{ color: theme.colors.textMain }}
-						>
-							Agent Provider
-						</div>
-						{loading ? (
-							<div className="text-sm opacity-50">Loading agents...</div>
-						) : sshConnectionError ? (
-							/* SSH Connection Error State */
-							<div
-								className="flex flex-col items-center justify-center p-6 rounded-lg border-2 text-center"
-								style={{
-									backgroundColor: `${theme.colors.error}10`,
-									borderColor: theme.colors.error,
-								}}
-							>
-								<AlertTriangle className="w-10 h-10 mb-3" style={{ color: theme.colors.error }} />
-								<h4
-									className="text-base font-semibold mb-2"
+											return (
+												<button
+													key={agent.id}
+													ref={index === 0 ? firstProviderButtonRef : undefined}
+													type="button"
+													onClick={() => setSelectedAgent(agent.id)}
+													className="flex items-center gap-3 rounded-lg border px-3 py-3 text-left transition-colors"
+													style={{
+														borderColor: isSelected ? theme.colors.accent : theme.colors.border,
+														backgroundColor: isSelected ? theme.colors.accentDim : 'transparent',
+														color: theme.colors.textMain,
+													}}
+													aria-pressed={isSelected}
+												>
+													<div
+														className="flex h-9 w-9 items-center justify-center rounded-md"
+														style={{
+															backgroundColor: isSelected
+																? `${theme.colors.bgMain}66`
+																: `${theme.colors.bgMain}33`,
+															color: brandColor,
+														}}
+													>
+														<ProviderModelIcon
+															toolType={agent.id as ToolType}
+															color={brandColor}
+															size={18}
+														/>
+													</div>
+													<div className="min-w-0">
+														<div className="truncate text-sm font-medium">{agent.name}</div>
+													</div>
+												</button>
+											);
+										})}
+									</div>
+								)}
+								{validation.errorField === 'name' && validation.error && (
+									<p className="mt-2 text-xs" style={{ color: theme.colors.error }}>
+										{validation.error}
+									</p>
+								)}
+							</div>
+						</>
+					) : (
+						<>
+							{/* Thread Name */}
+							<FormInput
+								ref={nameInputRef}
+								id="agent-name-input"
+								theme={theme}
+								label={nameLabel}
+								value={instanceName}
+								onChange={setInstanceName}
+								placeholder=""
+								error={validation.errorField === 'name' ? validation.error : undefined}
+								heightClass="p-2"
+							/>
+
+							{/* Agent Selection */}
+							<div>
+								<div
+									className="block text-xs font-bold opacity-70 uppercase mb-2"
 									style={{ color: theme.colors.textMain }}
 								>
-									Unable to Connect
-								</h4>
-								<p className="text-sm mb-3" style={{ color: theme.colors.textDim }}>
-									{sshConnectionError}
-								</p>
-								<p className="text-xs" style={{ color: theme.colors.textDim }}>
-									Select a different remote host or switch to Local Execution.
-								</p>
-							</div>
-						) : (
-							<div className="space-y-1">
-								{sortedAgents.map((agent) => {
-									const isSupported = SUPPORTED_AGENTS.includes(agent.id);
-									const isExpanded = expandedAgent === agent.id;
-									const isSelected = selectedAgent === agent.id;
-
-									const handleAgentHeaderActivate = () => {
-										if (isSupported) {
-											// Toggle expansion
-											const nowExpanded = !isExpanded;
-											setExpandedAgent(nowExpanded ? agent.id : null);
-											// Always select when clicking a supported agent (even if not available)
-											// User can configure a custom path to make it usable
-											setSelectedAgent(agent.id);
-											// Transfer pending SSH config to the newly selected agent if it doesn't have one
-											setAgentSshRemoteConfigs((prev) => {
-												const pendingConfig = prev['_pending_'];
-												if (pendingConfig && !prev[agent.id]) {
-													return {
-														...prev,
-														[agent.id]: pendingConfig,
-													};
-												}
-												return prev;
-											});
-											// Load models when expanding an agent that supports model selection
-											if (nowExpanded && agent.capabilities?.supportsModelSelection) {
-												loadModelsForAgent(agent.id);
-											}
-										}
-									};
-
-									return (
-										<div
-											key={agent.id}
-											className={`rounded border transition-all overflow-hidden ${
-												isSelected ? 'ring-2' : ''
-											}`}
-											style={
-												{
-													borderColor: theme.colors.border,
-													backgroundColor: isSelected ? theme.colors.accentDim : 'transparent',
-													'--tw-ring-color': theme.colors.accent,
-												} as React.CSSProperties
-											}
+									{providerLabel}
+								</div>
+								{loading ? (
+									<div className="text-sm opacity-50">Loading agents...</div>
+								) : sshConnectionError ? (
+									/* SSH Connection Error State */
+									<div
+										className="flex flex-col items-center justify-center p-6 rounded-lg border-2 text-center"
+										style={{
+											backgroundColor: `${theme.colors.error}10`,
+											borderColor: theme.colors.error,
+										}}
+									>
+										<AlertTriangle className="w-10 h-10 mb-3" style={{ color: theme.colors.error }} />
+										<h4
+											className="text-base font-semibold mb-2"
+											style={{ color: theme.colors.textMain }}
 										>
-											{/* Collapsed header row */}
-											<div
-												onClick={handleAgentHeaderActivate}
-												onKeyDown={(e) => {
-													if (e.key === 'Enter' || e.key === ' ') {
-														e.preventDefault();
-														handleAgentHeaderActivate();
+											Unable to Connect
+										</h4>
+										<p className="text-sm mb-3" style={{ color: theme.colors.textDim }}>
+											{sshConnectionError}
+										</p>
+										<p className="text-xs" style={{ color: theme.colors.textDim }}>
+											Select a different remote host or switch to Local Execution.
+										</p>
+									</div>
+								) : (
+									<div className="space-y-1">
+										{sortedAgents.map((agent) => {
+											const isSupported = SUPPORTED_AGENTS.includes(agent.id);
+											const isExpanded = expandedAgent === agent.id;
+											const isSelected = selectedAgent === agent.id;
+
+											const handleAgentHeaderActivate = () => {
+												if (isSupported) {
+													// Toggle expansion
+													const nowExpanded = !isExpanded;
+													setExpandedAgent(nowExpanded ? agent.id : null);
+													// Always select when clicking a supported agent (even if not available)
+													// User can configure a custom path to make it usable
+													setSelectedAgent(agent.id);
+													// Transfer pending SSH config to the newly selected agent if it doesn't have one
+													setAgentSshRemoteConfigs((prev) => {
+														const pendingConfig = prev['_pending_'];
+														if (pendingConfig && !prev[agent.id]) {
+															return {
+																...prev,
+																[agent.id]: pendingConfig,
+															};
+														}
+														return prev;
+													});
+													// Load models when expanding an agent that supports model selection
+													if (nowExpanded && agent.capabilities?.supportsModelSelection) {
+														loadModelsForAgent(agent.id);
 													}
-												}}
-												className={`w-full text-left px-3 py-2 flex items-center justify-between ${
-													!isSupported
-														? 'opacity-40 cursor-not-allowed'
-														: 'hover:bg-white/5 cursor-pointer'
-												}`}
-												style={{ color: theme.colors.textMain }}
-												role="option"
-												aria-selected={isSelected}
-												aria-expanded={isExpanded}
-												tabIndex={isSupported ? 0 : -1}
-											>
-												<div className="flex items-center gap-2">
-													{/* Expand/collapse chevron for supported agents */}
-													{isSupported && (
-														<ChevronRight
-															className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
-															style={{ color: theme.colors.textDim }}
-														/>
-													)}
-													<span className="font-medium">{agent.name}</span>
-													{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
-													{(agent.id === 'codex' ||
-														agent.id === 'opencode' ||
-														agent.id === 'factory-droid') && (
-														<span
-															className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
-															style={{
-																backgroundColor: theme.colors.warning + '30',
-																color: theme.colors.warning,
-															}}
-														>
-															Beta
-														</span>
-													)}
-												</div>
-												<div className="flex items-center gap-2">
-													{isSupported ? (
-														<>
-															{agent.available ? (
+												}
+											};
+
+											return (
+												<div
+													key={agent.id}
+													className={`rounded border transition-all overflow-hidden ${
+														isSelected ? 'ring-2' : ''
+													}`}
+													style={
+														{
+															borderColor: theme.colors.border,
+															backgroundColor: isSelected ? theme.colors.accentDim : 'transparent',
+															'--tw-ring-color': theme.colors.accent,
+														} as React.CSSProperties
+													}
+												>
+													{/* Collapsed header row */}
+													<div
+														onClick={handleAgentHeaderActivate}
+														onKeyDown={(e) => {
+															if (e.key === 'Enter' || e.key === ' ') {
+																e.preventDefault();
+																handleAgentHeaderActivate();
+															}
+														}}
+														className={`w-full text-left px-3 py-2 flex items-center justify-between ${
+															!isSupported
+																? 'opacity-40 cursor-not-allowed'
+																: 'hover:bg-white/5 cursor-pointer'
+														}`}
+														style={{ color: theme.colors.textMain }}
+														role="option"
+														aria-selected={isSelected}
+														aria-expanded={isExpanded}
+														tabIndex={isSupported ? 0 : -1}
+													>
+														<div className="flex items-center gap-2">
+															{/* Expand/collapse chevron for supported agents */}
+															{isSupported && (
+																<ChevronRight
+																	className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+																	style={{ color: theme.colors.textDim }}
+																/>
+															)}
+															<span className="font-medium">{agent.name}</span>
+															{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
+															{(agent.id === 'codex' ||
+																agent.id === 'opencode' ||
+																agent.id === 'factory-droid') && (
 																<span
-																	className="text-xs px-2 py-0.5 rounded"
+																	className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
 																	style={{
-																		backgroundColor: theme.colors.success + '20',
-																		color: theme.colors.success,
+																		backgroundColor: theme.colors.warning + '30',
+																		color: theme.colors.warning,
 																	}}
 																>
-																	Available
+																	Beta
 																</span>
+															)}
+														</div>
+														<div className="flex items-center gap-2">
+															{isSupported ? (
+																<>
+																	{agent.available ? (
+																		<span
+																			className="text-xs px-2 py-0.5 rounded"
+																			style={{
+																				backgroundColor: theme.colors.success + '20',
+																				color: theme.colors.success,
+																			}}
+																		>
+																			Available
+																		</span>
+																	) : (
+																		<span
+																			className="text-xs px-2 py-0.5 rounded"
+																			style={{
+																				backgroundColor: theme.colors.error + '20',
+																				color: theme.colors.error,
+																			}}
+																		>
+																			Not Found
+																		</span>
+																	)}
+																	<button
+																		onClick={(e) => {
+																			e.stopPropagation();
+																			handleRefreshAgent(agent.id);
+																		}}
+																		className="p-1 rounded hover:bg-white/10 transition-colors"
+																		title="Refresh detection"
+																		style={{ color: theme.colors.textDim }}
+																	>
+																		<RefreshCw
+																			className={`w-3 h-3 ${refreshingAgent === agent.id ? 'animate-spin' : ''}`}
+																		/>
+																	</button>
+																</>
 															) : (
 																<span
 																	className="text-xs px-2 py-0.5 rounded"
 																	style={{
-																		backgroundColor: theme.colors.error + '20',
-																		color: theme.colors.error,
+																		backgroundColor: theme.colors.warning + '20',
+																		color: theme.colors.warning,
 																	}}
 																>
-																	Not Found
+																	Coming Soon
 																</span>
 															)}
-															<button
-																onClick={(e) => {
-																	e.stopPropagation();
-																	handleRefreshAgent(agent.id);
+														</div>
+													</div>
+
+													{/* Expanded details for supported agents */}
+													{/* Per-agent config (path, args, env vars) is local state only - saved to agent on create */}
+													{isSupported && isExpanded && (
+														<div className="px-3 pb-3 pt-2">
+															<AgentConfigPanel
+																theme={theme}
+																agent={agent}
+																customPath={customAgentPaths[agent.id] || ''}
+																onCustomPathChange={(value) => {
+																	setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
 																}}
-																className="p-1 rounded hover:bg-white/10 transition-colors"
-																title="Refresh detection"
-																style={{ color: theme.colors.textDim }}
-															>
-																<RefreshCw
-																	className={`w-3 h-3 ${refreshingAgent === agent.id ? 'animate-spin' : ''}`}
-																/>
-															</button>
-														</>
-													) : (
-														<span
-															className="text-xs px-2 py-0.5 rounded"
-															style={{
-																backgroundColor: theme.colors.warning + '20',
-																color: theme.colors.warning,
-															}}
-														>
-															Coming Soon
-														</span>
+																onCustomPathBlur={() => {
+																	/* Saved on agent create */
+																}}
+																onCustomPathClear={() => {
+																	setCustomAgentPaths((prev) => {
+																		const newPaths = { ...prev };
+																		delete newPaths[agent.id];
+																		return newPaths;
+																	});
+																}}
+																customArgs={customAgentArgs[agent.id] || ''}
+																onCustomArgsChange={(value) => {
+																	setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
+																}}
+																onCustomArgsBlur={() => {
+																	/* Saved on agent create */
+																}}
+																onCustomArgsClear={() => {
+																	setCustomAgentArgs((prev) => {
+																		const newArgs = { ...prev };
+																		delete newArgs[agent.id];
+																		return newArgs;
+																	});
+																}}
+																customEnvVars={customAgentEnvVars[agent.id] || {}}
+																onEnvVarKeyChange={(oldKey, newKey, value) => {
+																	const currentVars = { ...customAgentEnvVars[agent.id] };
+																	delete currentVars[oldKey];
+																	currentVars[newKey] = value;
+																	setCustomAgentEnvVars((prev) => ({
+																		...prev,
+																		[agent.id]: currentVars,
+																	}));
+																}}
+																onEnvVarValueChange={(key, value) => {
+																	setCustomAgentEnvVars((prev) => ({
+																		...prev,
+																		[agent.id]: {
+																			...prev[agent.id],
+																			[key]: value,
+																		},
+																	}));
+																}}
+																onEnvVarRemove={(key) => {
+																	const currentVars = { ...customAgentEnvVars[agent.id] };
+																	delete currentVars[key];
+																	if (Object.keys(currentVars).length > 0) {
+																		setCustomAgentEnvVars((prev) => ({
+																			...prev,
+																			[agent.id]: currentVars,
+																		}));
+																	} else {
+																		setCustomAgentEnvVars((prev) => {
+																			const newVars = { ...prev };
+																			delete newVars[agent.id];
+																			return newVars;
+																		});
+																	}
+																}}
+																onEnvVarAdd={() => {
+																	const currentVars = customAgentEnvVars[agent.id] || {};
+																	let newKey = 'NEW_VAR';
+																	let counter = 1;
+																	while (currentVars[newKey]) {
+																		newKey = `NEW_VAR_${counter}`;
+																		counter++;
+																	}
+																	setCustomAgentEnvVars((prev) => ({
+																		...prev,
+																		[agent.id]: {
+																			...prev[agent.id],
+																			[newKey]: '',
+																		},
+																	}));
+																}}
+																onEnvVarsBlur={() => {
+																	/* Saved on agent create */
+																}}
+																agentConfig={agentConfigs[agent.id] || {}}
+																onConfigChange={(key, value) => {
+																	setAgentConfigs((prev) => ({
+																		...prev,
+																		[agent.id]: {
+																			...prev[agent.id],
+																			[key]: value,
+																		},
+																	}));
+																}}
+																onConfigBlur={() => {
+																	const currentConfig = agentConfigs[agent.id] || {};
+																	window.maestro.agents.setConfig(agent.id, currentConfig);
+																}}
+																availableModels={availableModels[agent.id] || []}
+																loadingModels={loadingModels[agent.id] || false}
+																onRefreshModels={() => loadModelsForAgent(agent.id, true)}
+																onRefreshAgent={() => handleRefreshAgent(agent.id)}
+																refreshingAgent={refreshingAgent === agent.id}
+																showBuiltInEnvVars
+															/>
+														</div>
 													)}
 												</div>
-											</div>
-
-											{/* Expanded details for supported agents */}
-											{/* Per-agent config (path, args, env vars) is local state only - saved to agent on create */}
-											{isSupported && isExpanded && (
-												<div className="px-3 pb-3 pt-2">
-													<AgentConfigPanel
-														theme={theme}
-														agent={agent}
-														customPath={customAgentPaths[agent.id] || ''}
-														onCustomPathChange={(value) => {
-															setCustomAgentPaths((prev) => ({ ...prev, [agent.id]: value }));
-														}}
-														onCustomPathBlur={() => {
-															/* Saved on agent create */
-														}}
-														onCustomPathClear={() => {
-															setCustomAgentPaths((prev) => {
-																const newPaths = { ...prev };
-																delete newPaths[agent.id];
-																return newPaths;
-															});
-														}}
-														customArgs={customAgentArgs[agent.id] || ''}
-														onCustomArgsChange={(value) => {
-															setCustomAgentArgs((prev) => ({ ...prev, [agent.id]: value }));
-														}}
-														onCustomArgsBlur={() => {
-															/* Saved on agent create */
-														}}
-														onCustomArgsClear={() => {
-															setCustomAgentArgs((prev) => {
-																const newArgs = { ...prev };
-																delete newArgs[agent.id];
-																return newArgs;
-															});
-														}}
-														customEnvVars={customAgentEnvVars[agent.id] || {}}
-														onEnvVarKeyChange={(oldKey, newKey, value) => {
-															const currentVars = { ...customAgentEnvVars[agent.id] };
-															delete currentVars[oldKey];
-															currentVars[newKey] = value;
-															setCustomAgentEnvVars((prev) => ({
-																...prev,
-																[agent.id]: currentVars,
-															}));
-														}}
-														onEnvVarValueChange={(key, value) => {
-															setCustomAgentEnvVars((prev) => ({
-																...prev,
-																[agent.id]: {
-																	...prev[agent.id],
-																	[key]: value,
-																},
-															}));
-														}}
-														onEnvVarRemove={(key) => {
-															const currentVars = { ...customAgentEnvVars[agent.id] };
-															delete currentVars[key];
-															if (Object.keys(currentVars).length > 0) {
-																setCustomAgentEnvVars((prev) => ({
-																	...prev,
-																	[agent.id]: currentVars,
-																}));
-															} else {
-																setCustomAgentEnvVars((prev) => {
-																	const newVars = { ...prev };
-																	delete newVars[agent.id];
-																	return newVars;
-																});
-															}
-														}}
-														onEnvVarAdd={() => {
-															const currentVars = customAgentEnvVars[agent.id] || {};
-															let newKey = 'NEW_VAR';
-															let counter = 1;
-															while (currentVars[newKey]) {
-																newKey = `NEW_VAR_${counter}`;
-																counter++;
-															}
-															setCustomAgentEnvVars((prev) => ({
-																...prev,
-																[agent.id]: {
-																	...prev[agent.id],
-																	[newKey]: '',
-																},
-															}));
-														}}
-														onEnvVarsBlur={() => {
-															/* Saved on agent create */
-														}}
-														agentConfig={agentConfigs[agent.id] || {}}
-														onConfigChange={(key, value) => {
-															setAgentConfigs((prev) => ({
-																...prev,
-																[agent.id]: {
-																	...prev[agent.id],
-																	[key]: value,
-																},
-															}));
-														}}
-														onConfigBlur={() => {
-															const currentConfig = agentConfigs[agent.id] || {};
-															window.maestro.agents.setConfig(agent.id, currentConfig);
-														}}
-														availableModels={availableModels[agent.id] || []}
-														loadingModels={loadingModels[agent.id] || false}
-														onRefreshModels={() => loadModelsForAgent(agent.id, true)}
-														onRefreshAgent={() => handleRefreshAgent(agent.id)}
-														refreshingAgent={refreshingAgent === agent.id}
-														showBuiltInEnvVars
-													/>
-												</div>
-											)}
-										</div>
-									);
-								})}
-							</div>
-						)}
-
-						{/* Hook behavior note */}
-						<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-							Agent hooks run per-message. Use{' '}
-							<button
-								type="button"
-								className="underline hover:opacity-80"
-								style={{ color: theme.colors.accent }}
-								onClick={() =>
-									window.maestro.shell.openExternal(
-										'https://docs.runmaestro.ai/autorun-playbooks#environment-variables'
-									)
-								}
-							>
-								MAESTRO_SESSION_RESUMED
-							</button>{' '}
-							to skip on resumed sessions.
-						</p>
-
-						{/* Debug Info Display */}
-						{debugInfo && (
-							<div
-								className="mt-3 p-3 rounded border text-xs font-mono overflow-auto max-h-40"
-								style={{
-									backgroundColor: theme.colors.error + '10',
-									borderColor: theme.colors.error + '40',
-									color: theme.colors.textMain,
-								}}
-							>
-								<div className="font-bold mb-2" style={{ color: theme.colors.error }}>
-									Debug Info: {debugInfo.binaryName} not found
-								</div>
-								{debugInfo.error && <div className="mb-2 text-red-400">{debugInfo.error}</div>}
-								<div className="space-y-1 opacity-70">
-									<div>
-										<span className="opacity-50">Platform:</span> {debugInfo.platform}
+											);
+										})}
 									</div>
-									<div>
-										<span className="opacity-50">Home:</span> {debugInfo.homeDir}
-									</div>
-									<div>
-										<span className="opacity-50">PATH:</span>
-									</div>
-									<div className="pl-2 break-all text-[10px]">
-										{debugInfo.envPath.split(':').map((p) => (
-											<div key={`${debugInfo.platform}-${p}`}>{p}</div>
-										))}
-									</div>
-								</div>
-								<button
-									onClick={() => setDebugInfo(null)}
-									className="mt-2 text-xs underline"
-									style={{ color: theme.colors.textDim }}
-								>
-									Dismiss
-								</button>
-							</div>
-						)}
-					</div>
+								)}
 
-					{/* Working Directory */}
-					<FormInput
-						theme={theme}
-						label="Working Directory"
-						value={workingDir}
-						onChange={handleWorkingDirChange}
-						placeholder={
-							isSshEnabled
-								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
-								: 'Select directory...'
-						}
-						error={validation.errorField === 'directory' ? validation.error : undefined}
-						monospace
-						heightClass="p-2"
-						addon={
-							<button
-								onClick={isSshEnabled ? undefined : handleSelectFolder}
-								disabled={isSshEnabled}
-								className={`p-2 rounded border transition-colors ${isSshEnabled ? 'opacity-40 cursor-not-allowed' : 'hover:bg-opacity-10'}`}
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								title={
-									isSshEnabled
-										? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-										: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
-								}
-							>
-								<Folder className="w-5 h-5" />
-							</button>
-						}
-					/>
+								{/* Hook behavior note */}
+								<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+									Agent hooks run per-message. Use{' '}
+									<button
+										type="button"
+										className="underline hover:opacity-80"
+										style={{ color: theme.colors.accent }}
+										onClick={() =>
+											window.maestro.shell.openExternal(
+												'https://docs.runmaestro.ai/autorun-playbooks#environment-variables'
+											)
+										}
+									>
+										MAESTRO_SESSION_RESUMED
+									</button>{' '}
+									to skip on resumed sessions.
+								</p>
 
-					{/* Remote path validation status (only shown when SSH is enabled) */}
-					{isSshEnabled && workingDir.trim() && (
-						<div className="mt-2 text-xs flex items-center gap-1.5">
-							{remotePathValidation.checking ? (
-								<>
+								{/* Debug Info Display */}
+								{debugInfo && (
 									<div
-										className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"
-										style={{ borderColor: theme.colors.textDim, borderTopColor: 'transparent' }}
-									/>
-									<span style={{ color: theme.colors.textDim }}>Checking remote path...</span>
-								</>
-							) : remotePathValidation.valid ? (
-								<>
-									<Check className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />
-									<span style={{ color: theme.colors.success }}>Remote directory found</span>
-								</>
-							) : remotePathValidation.error ? (
-								<>
-									<X className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
-									<span style={{ color: theme.colors.error }}>{remotePathValidation.error}</span>
-								</>
-							) : null}
-						</div>
-					)}
-
-					{/* Directory Warning with Acknowledgment */}
-					{validation.warning && validation.warningField === 'directory' && (
-						<div
-							className="p-3 rounded border"
-							style={{
-								backgroundColor: theme.colors.warning + '15',
-								borderColor: theme.colors.warning + '50',
-							}}
-						>
-							<div className="flex items-start gap-2">
-								<AlertTriangle
-									className="w-4 h-4 flex-shrink-0 mt-0.5"
-									style={{ color: theme.colors.warning }}
-								/>
-								<div className="flex-1">
-									<p className="text-sm" style={{ color: theme.colors.textMain }}>
-										{validation.warning}
-									</p>
-									<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-										We recommend using a unique directory for each managed agent.
-									</p>
-									<label className="flex items-center gap-2 mt-3 cursor-pointer">
-										<input
-											type="checkbox"
-											checked={directoryWarningAcknowledged}
-											onChange={(e) => setDirectoryWarningAcknowledged(e.target.checked)}
-											className="w-4 h-4 rounded"
-											style={{ accentColor: theme.colors.warning }}
-										/>
-										<span className="text-sm" style={{ color: theme.colors.textMain }}>
-											I understand the risk and want to proceed
-										</span>
-									</label>
-								</div>
+										className="mt-3 p-3 rounded border text-xs font-mono overflow-auto max-h-40"
+										style={{
+											backgroundColor: theme.colors.error + '10',
+											borderColor: theme.colors.error + '40',
+											color: theme.colors.textMain,
+										}}
+									>
+										<div className="font-bold mb-2" style={{ color: theme.colors.error }}>
+											Debug Info: {debugInfo.binaryName} not found
+										</div>
+										{debugInfo.error && <div className="mb-2 text-red-400">{debugInfo.error}</div>}
+										<div className="space-y-1 opacity-70">
+											<div>
+												<span className="opacity-50">Platform:</span> {debugInfo.platform}
+											</div>
+											<div>
+												<span className="opacity-50">Home:</span> {debugInfo.homeDir}
+											</div>
+											<div>
+												<span className="opacity-50">PATH:</span>
+											</div>
+											<div className="pl-2 break-all text-[10px]">
+												{debugInfo.envPath.split(':').map((p) => (
+													<div key={`${debugInfo.platform}-${p}`}>{p}</div>
+												))}
+											</div>
+										</div>
+										<button
+											onClick={() => setDebugInfo(null)}
+											className="mt-2 text-xs underline"
+											style={{ color: theme.colors.textDim }}
+										>
+											Dismiss
+										</button>
+									</div>
+								)}
 							</div>
-						</div>
-					)}
 
-					{/* SSH Remote Execution - Top Level */}
-					{/* Show SSH selector when remotes are configured, regardless of agent selection */}
-					{/* This allows users to see and configure SSH settings even while troubleshooting agent detection */}
-					{/* Uses '_pending_' key when no agent selected, transfers to agent when selected */}
-					{sshRemotes.length > 0 && (
-						<SshRemoteSelector
-							theme={theme}
-							sshRemotes={sshRemotes}
-							sshRemoteConfig={
-								agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_']
-							}
-							onSshRemoteConfigChange={(config) => {
-								setAgentSshRemoteConfigs((prev) => {
-									const newConfigs: Record<string, AgentSshRemoteConfig> = {
-										...prev,
-										_pending_: config,
-									};
-									if (selectedAgent) {
-										newConfigs[selectedAgent] = config;
+							{/* Working Directory */}
+							<FormInput
+								theme={theme}
+								label={workingDirectoryLabel}
+								value={workingDir}
+								onChange={handleWorkingDirChange}
+								placeholder={
+									isSshEnabled
+										? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
+										: 'Select directory...'
+								}
+								error={validation.errorField === 'directory' ? validation.error : undefined}
+								monospace
+								heightClass="p-2"
+								disabled={!!fixedWorkingDir}
+								addon={
+									<button
+										onClick={isSshEnabled || fixedWorkingDir ? undefined : handleSelectFolder}
+										disabled={isSshEnabled || !!fixedWorkingDir}
+										className={`p-2 rounded border transition-colors ${isSshEnabled || fixedWorkingDir ? 'opacity-40 cursor-not-allowed' : 'hover:bg-opacity-10'}`}
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+										title={
+											fixedWorkingDir
+												? 'Workspace directory is fixed for this thread'
+												: isSshEnabled
+												? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
+												: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
+										}
+									>
+										<Folder className="w-5 h-5" />
+									</button>
+								}
+							/>
+
+							{/* Remote path validation status (only shown when SSH is enabled) */}
+							{isSshEnabled && workingDir.trim() && (
+								<div className="mt-2 text-xs flex items-center gap-1.5">
+									{remotePathValidation.checking ? (
+										<>
+											<div
+												className="w-3 h-3 border-2 border-t-transparent rounded-full animate-spin"
+												style={{ borderColor: theme.colors.textDim, borderTopColor: 'transparent' }}
+											/>
+											<span style={{ color: theme.colors.textDim }}>Checking remote path...</span>
+										</>
+									) : remotePathValidation.valid ? (
+										<>
+											<Check className="w-3.5 h-3.5" style={{ color: theme.colors.success }} />
+											<span style={{ color: theme.colors.success }}>Remote directory found</span>
+										</>
+									) : remotePathValidation.error ? (
+										<>
+											<X className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
+											<span style={{ color: theme.colors.error }}>{remotePathValidation.error}</span>
+										</>
+									) : null}
+								</div>
+							)}
+
+							{/* Directory Warning with Acknowledgment */}
+							{validation.warning && validation.warningField === 'directory' && (
+								<div
+									className="p-3 rounded border"
+									style={{
+										backgroundColor: theme.colors.warning + '15',
+										borderColor: theme.colors.warning + '50',
+									}}
+								>
+									<div className="flex items-start gap-2">
+										<AlertTriangle
+											className="w-4 h-4 flex-shrink-0 mt-0.5"
+											style={{ color: theme.colors.warning }}
+										/>
+										<div className="flex-1">
+											<p className="text-sm" style={{ color: theme.colors.textMain }}>
+												{validation.warning}
+											</p>
+											<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+												We recommend using a unique directory for each managed agent.
+											</p>
+											<label className="flex items-center gap-2 mt-3 cursor-pointer">
+												<input
+													type="checkbox"
+													checked={directoryWarningAcknowledged}
+													onChange={(e) => setDirectoryWarningAcknowledged(e.target.checked)}
+													className="w-4 h-4 rounded"
+													style={{ accentColor: theme.colors.warning }}
+												/>
+												<span className="text-sm" style={{ color: theme.colors.textMain }}>
+													I understand the risk and want to proceed
+												</span>
+											</label>
+										</div>
+									</div>
+								</div>
+							)}
+
+							{/* SSH Remote Execution - Top Level */}
+							{/* Show SSH selector when remotes are configured, regardless of agent selection */}
+							{/* This allows users to see and configure SSH settings even while troubleshooting agent detection */}
+							{/* Uses '_pending_' key when no agent selected, transfers to agent when selected */}
+							{sshRemotes.length > 0 && (
+								<SshRemoteSelector
+									theme={theme}
+									sshRemotes={sshRemotes}
+									sshRemoteConfig={
+										agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_']
 									}
-									return newConfigs;
-								});
-							}}
-						/>
+									onSshRemoteConfigChange={(config) => {
+										setAgentSshRemoteConfigs((prev) => {
+											const newConfigs: Record<string, AgentSshRemoteConfig> = {
+												...prev,
+												_pending_: config,
+											};
+											if (selectedAgent) {
+												newConfigs[selectedAgent] = config;
+											}
+											return newConfigs;
+										});
+									}}
+								/>
+							)}
+						</>
 					)}
 
 					{/* Nudge Message */}
@@ -1343,8 +1483,8 @@ export function EditAgentModal({
 		if (!name || !session) {
 			return { valid: true }; // Don't show errors until fields are filled
 		}
-		return validateEditSession(name, session.id, existingSessions);
-	}, [instanceName, session, existingSessions]);
+		return validateEditSession(name, session.id, selectedToolType, existingSessions);
+	}, [instanceName, session, selectedToolType, existingSessions]);
 
 	// Check if SSH remote is enabled
 	const isSshEnabled = useMemo(() => {
@@ -1426,7 +1566,7 @@ export function EditAgentModal({
 		if (!name) return;
 
 		// Validate before saving
-		const result = validateEditSession(name, session.id, existingSessions);
+		const result = validateEditSession(name, session.id, selectedToolType, existingSessions);
 		if (!result.valid) return;
 
 		// Get model and contextWindow from agentConfig (which is updated via onConfigChange)

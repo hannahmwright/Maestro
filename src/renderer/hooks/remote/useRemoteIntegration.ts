@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
-import type { Session, SessionState, ThinkingMode } from '../../types';
+import type { Session, ThinkingMode } from '../../types';
 import { createTab, closeTab } from '../../utils/tabHelpers';
+import { buildDefaultThreadName } from '../../utils/sessionValidation';
+import { useSessionStore } from '../../stores/sessionStore';
 import { WEB_APP_BASE_PATH, type ResponseCompletedEvent } from '../../../shared/remote-web';
 import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 
@@ -60,6 +62,27 @@ export interface UseRemoteIntegrationDeps {
 	defaultShowThinking: ThinkingMode;
 	/** Delete an agent/session using the shared desktop lifecycle */
 	performDeleteSession: (session: Session, eraseWorkingDirectory: boolean) => Promise<void>;
+	/** Create a new thread/session using the shared desktop creation flow */
+	createNewSession: (
+		agentId: string,
+		workingDir: string,
+		name: string,
+		nudgeMessage?: string,
+		customPath?: string,
+		customArgs?: string,
+		customEnvVars?: Record<string, string>,
+		customModel?: string,
+		customContextWindow?: number,
+		customProviderPath?: string,
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		},
+		workspaceId?: string
+	) => Promise<void>;
+	/** Shared interrupt handler ref so web interrupts use the same queue-aware path */
+	interruptCurrentTurnRef: React.MutableRefObject<((sessionId?: string) => Promise<void>) | null>;
 }
 
 /**
@@ -98,6 +121,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		defaultSaveToHistory,
 		defaultShowThinking,
 		performDeleteSession,
+		createNewSession,
+		interruptCurrentTurnRef,
 	} = deps;
 
 	// Broadcast active session change to web clients
@@ -116,6 +141,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal',
+				commandAction?: 'default' | 'queue',
 				images?: string[],
 				textAttachments?: Array<{
 					id?: string;
@@ -137,6 +163,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					sessionId,
 					command: command?.substring(0, 50),
 					inputMode,
+					commandAction,
 					imageCount: images?.length ?? 0,
 					textAttachmentCount: textAttachments?.length ?? 0,
 					demoCaptureEnabled: demoCapture?.enabled ?? false,
@@ -154,16 +181,6 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					console.warn('[useRemoteIntegration] Session not found, dropping command');
 					return;
 				}
-
-				// Check if session is busy (should have been checked by web server, but double-check)
-				if (targetSession.state === 'busy') {
-					console.warn(
-						'[useRemoteIntegration] Session is busy, dropping command. State:',
-						targetSession.state
-					);
-					return;
-				}
-				console.log('[useRemoteIntegration] Session state check passed:', targetSession.state);
 
 				// If web provided an inputMode, sync the session state before executing
 				// This ensures the renderer uses the same mode the web intended
@@ -199,6 +216,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							sessionId,
 							command,
 							inputMode,
+							commandAction,
 							images,
 							textAttachments,
 							attachments,
@@ -262,37 +280,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					return;
 				}
 
-				// Use the same logic as handleInterrupt
-				const currentMode = session.inputMode;
-				const targetSessionId =
-					currentMode === 'ai' ? `${session.id}-ai` : `${session.id}-terminal`;
-
-				try {
-					// Send interrupt signal (Ctrl+C)
-					await window.maestro.process.interrupt(targetSessionId);
-
-					// Set state to idle (same as handleInterrupt)
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== session.id) return s;
-							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
-							};
-						})
-					);
-				} catch (error) {
+				interruptCurrentTurnRef.current?.(sessionId).catch((error) => {
 					console.error('[Remote] Failed to interrupt session:', error);
-				}
+				});
 			}
 		);
 
 		return () => {
 			unsubscribeInterrupt();
 		};
-	}, [sessionsRef, setSessions]);
+	}, [interruptCurrentTurnRef, sessionsRef]);
 
 	// Handle remote session selection from web interface
 	// This allows web clients to switch the active session in the desktop app
@@ -391,6 +388,76 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					window.maestro.process.sendRemoteNewTabResponse(responseChannel, null);
 				}
 			}) || (() => {});
+
+		const unsubscribeNewThread =
+			window.maestro.process.onRemoteNewThread?.(
+				(
+					sessionId: string,
+					options: { toolType?: string; model?: string | null },
+					responseChannel: string
+				) => {
+					const sourceSession = sessionsRef.current.find((session) => session.id === sessionId);
+					if (!sourceSession) {
+						window.maestro.process.sendRemoteNewThreadResponse(responseChannel, {
+							success: false,
+						});
+						return;
+					}
+
+					const currentSessionCount = useSessionStore.getState().sessions.length;
+					const activeTab =
+						sourceSession.aiTabs?.find((tab) => tab.id === sourceSession.activeTabId) ||
+						sourceSession.aiTabs?.[0];
+					const nextToolType = (options.toolType as typeof sourceSession.toolType) || sourceSession.toolType;
+					const nextModel =
+						options.model === undefined
+							? sourceSession.customModel || activeTab?.currentModel || undefined
+							: options.model || undefined;
+					const nextName = buildDefaultThreadName(nextToolType, sessionsRef.current);
+					const workingDir = sourceSession.projectRoot || sourceSession.cwd;
+					const workspaceId = sourceSession.workspaceId || sourceSession.groupId || undefined;
+					const reusingProviderConfig = nextToolType === sourceSession.toolType;
+
+					void createNewSession(
+						nextToolType,
+						workingDir,
+						nextName,
+						undefined,
+						reusingProviderConfig ? sourceSession.customPath : undefined,
+						reusingProviderConfig ? sourceSession.customArgs : undefined,
+						reusingProviderConfig ? sourceSession.customEnvVars : undefined,
+						nextModel,
+						reusingProviderConfig ? sourceSession.customContextWindow : undefined,
+						reusingProviderConfig ? sourceSession.customProviderPath : undefined,
+						sourceSession.sessionSshRemoteConfig,
+						workspaceId
+					)
+						.then(() => {
+							const updatedSessions = useSessionStore.getState().sessions;
+							const updatedSessionCount = useSessionStore.getState().sessions.length;
+							const createdSession =
+								updatedSessions.find((session) => !sessionsRef.current.some((candidate) => candidate.id === session.id)) ||
+								null;
+							window.maestro.process.sendRemoteNewThreadResponse(
+								responseChannel,
+								createdSession
+									? {
+										success: true,
+										sessionId: createdSession.id,
+									}
+									: {
+										success: updatedSessionCount > currentSessionCount,
+									}
+							);
+						})
+						.catch((error) => {
+							console.error('[Remote] Failed to create thread:', error);
+							window.maestro.process.sendRemoteNewThreadResponse(responseChannel, {
+								success: false,
+							});
+						});
+				}
+			) || (() => {});
 
 		const unsubscribeDeleteSession =
 			window.maestro.process.onRemoteDeleteSession?.(
@@ -532,6 +599,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeSelectTab();
 			unsubscribeSetSessionModel();
 			unsubscribeNewTab();
+			unsubscribeNewThread();
 			unsubscribeDeleteSession();
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
@@ -547,6 +615,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		defaultSaveToHistory,
 		defaultShowThinking,
 		performDeleteSession,
+		createNewSession,
 	]);
 
 	// Broadcast tab changes to web clients when tabs, activeTabId, or tab properties change
@@ -619,7 +688,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				const tabsHash = session.aiTabs
 					.map(
 						(t) =>
-							`${t.id}:${t.name || ''}:${t.starred}:${t.hasUnread ? 1 : 0}:${t.state}:${t.currentModel || ''}:${t.usageStats?.inputTokens || 0}:${t.usageStats?.outputTokens || 0}:${t.usageStats?.cacheReadInputTokens || 0}:${t.usageStats?.cacheCreationInputTokens || 0}:${t.usageStats?.contextWindow || 0}:${t.usageStats?.reasoningTokens || 0}`
+							`${t.id}:${t.name || ''}:${t.starred}:${t.hasUnread ? 1 : 0}:${t.state}:${t.currentModel || ''}:${t.runtimeKind || 'batch'}:${t.steerMode || 'none'}:${t.activeTurnId || ''}:${t.pendingSteer?.logEntryId || ''}:${t.pendingSteer?.deliveryState || ''}:${t.steerStatus || 'idle'}:${t.lastCheckpointAt || 0}:${t.usageStats?.inputTokens || 0}:${t.usageStats?.outputTokens || 0}:${t.usageStats?.cacheReadInputTokens || 0}:${t.usageStats?.cacheCreationInputTokens || 0}:${t.usageStats?.contextWindow || 0}:${t.usageStats?.reasoningTokens || 0}`
 					)
 					.join('|');
 
@@ -645,11 +714,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						hasUnread: tab.hasUnread,
 						inputValue: tab.inputValue,
 						usageStats: tab.usageStats,
-						createdAt: tab.createdAt,
-						state: tab.state,
-						thinkingStartTime: tab.thinkingStartTime,
-						currentModel: tab.currentModel || null,
-					}));
+							createdAt: tab.createdAt,
+							state: tab.state,
+							thinkingStartTime: tab.thinkingStartTime,
+							currentModel: tab.currentModel || null,
+							runtimeKind: tab.runtimeKind || 'batch',
+							steerMode: tab.steerMode || 'none',
+							activeTurnId: tab.activeTurnId || null,
+							pendingSteer: tab.pendingSteer || null,
+							steerStatus: tab.steerStatus || 'idle',
+							lastCheckpointAt: tab.lastCheckpointAt || null,
+						}));
 
 					window.maestro.web.broadcastTabsChange(session.id, tabsForBroadcast, current.activeTabId);
 

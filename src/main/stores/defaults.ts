@@ -12,6 +12,7 @@ import type {
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
+	ThreadsData,
 	ConductorsData,
 	AgentConfigsData,
 	WindowState,
@@ -53,9 +54,11 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	llmProvider: 'openrouter',
 	modelSlug: 'anthropic/claude-3.5-sonnet',
 	apiKey: '',
+	defaultThreadProvider: 'codex',
 	shortcuts: {},
 	fontSize: 14,
 	fontFamily: CODEX_DEFAULT_FONT_STACK,
+	workspaceSortMode: 'recent',
 	customFonts: [],
 	logLevel: 'info',
 	defaultShell: getDefaultShell(),
@@ -80,6 +83,10 @@ export const SESSIONS_DEFAULTS: SessionsData = {
 
 export const GROUPS_DEFAULTS: GroupsData = {
 	groups: [],
+};
+
+export const THREADS_DEFAULTS: ThreadsData = {
+	threads: [],
 };
 
 export const CONDUCTORS_DEFAULTS: ConductorsData = {

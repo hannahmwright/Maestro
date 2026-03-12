@@ -17,6 +17,7 @@ import {
 	getSettingsStore,
 	getSessionsStore,
 	getGroupsStore,
+	getThreadsStore,
 	getConductorsStore,
 	getAgentConfigsStore,
 	getWindowStateStore,
@@ -31,6 +32,7 @@ import {
 	registerHistoryHandlers,
 	registerAgentsHandlers,
 	registerProcessHandlers,
+	registerConversationHandlers,
 	registerPersistenceHandlers,
 	registerSystemHandlers,
 	registerClaudeHandlers,
@@ -237,6 +239,7 @@ if (crashReportingEnabled && !isDevelopment) {
 // These are convenience variables - the actual stores are managed by ./stores module
 const sessionsStore = getSessionsStore();
 const groupsStore = getGroupsStore();
+const threadsStore = getThreadsStore();
 const conductorsStore = getConductorsStore();
 const agentConfigsStore = getAgentConfigsStore();
 const windowStateStore = getWindowStateStore();
@@ -285,6 +288,7 @@ const createWebServer = createWebServerFactory({
 	settingsStore: store,
 	sessionsStore,
 	groupsStore,
+	threadsStore,
 	getMainWindow: () => mainWindow,
 	getProcessManager: () => processManager,
 	getAgentDetector: () => agentDetector,
@@ -552,12 +556,20 @@ function setupIpcHandlers() {
 		getMainWindow: () => mainWindow,
 		sessionsStore,
 	});
+	registerConversationHandlers({
+		getProcessManager: () => processManager,
+		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
+		settingsStore: store,
+		getMainWindow: () => mainWindow,
+	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
 	registerPersistenceHandlers({
 		settingsStore: store,
 		sessionsStore,
 		groupsStore,
+		threadsStore,
 		conductorsStore,
 		getWebServer: () => webServer,
 	});
@@ -586,7 +598,11 @@ function setupIpcHandlers() {
 	// This provides the new window.maestro.agentSessions.* API
 	// Pass the shared claudeSessionOriginsStore so session names/stars are consistent
 	initializeSessionStorages({ claudeSessionOriginsStore });
-	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore });
+	registerAgentSessionsHandlers({
+		getMainWindow: () => mainWindow,
+		agentSessionOriginsStore,
+		claudeSessionOriginsStore,
+	});
 
 	// Helper to get custom env vars for an agent
 	const getCustomEnvVarsForAgent = (agentId: string): Record<string, string> | undefined => {

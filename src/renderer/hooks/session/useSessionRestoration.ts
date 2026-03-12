@@ -21,6 +21,10 @@ import { useConductorStore } from '../../stores/conductorStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
+import {
+	migrateWorkspacesAndThreads,
+	recoverMissingProviderThreads,
+} from '../../utils/workspaceThreads';
 
 // ============================================================================
 // Return type
@@ -49,7 +53,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 	// useCallback/useEffect without appearing in dependency arrays. Zustand
 	// store actions returned by getState() are stable singletons that never
 	// change, so the empty deps array is intentional.
-	const { setSessions, setGroups, setActiveSessionId, setSessionsLoaded } = useMemo(
+	const { setSessions, setGroups, setThreads, setActiveSessionId, setSessionsLoaded } = useMemo(
 		() => useSessionStore.getState(),
 		[]
 	);
@@ -284,6 +288,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				...tab,
 				state: 'idle' as const,
 				thinkingStartTime: undefined,
+				awaitingSessionId: false,
+				pendingUserInputRequest: null,
+				activeTurnId: null,
+				pendingSteer: null,
+				steerStatus: 'idle' as const,
+				lastCheckpointAt: null,
 			}));
 
 			return {
@@ -346,50 +356,102 @@ export function useSessionRestoration(): SessionRestorationReturn {
 			try {
 				const savedSessions = await window.maestro.sessions.getAll();
 				const savedGroups = await window.maestro.groups.getAll();
+				const savedThreads = await window.maestro.threads.getAll();
 				const savedConductors = window.maestro.conductors
 					? await window.maestro.conductors.getAll()
 					: { conductors: [], tasks: [], runs: [] };
 
+				let restoredSessions: Session[] = [];
+				let nextGroups = savedGroups || [];
+				let nextThreads = savedThreads || [];
+
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
-					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
-					setSessions(restoredSessions);
+					restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
 
-					// Set active session to first session if current activeSessionId is invalid
-					const activeSessionId = useSessionStore.getState().activeSessionId;
-					if (
-						restoredSessions.length > 0 &&
-						!restoredSessions.find((s) => s.id === activeSessionId)
-					) {
-						setActiveSessionId(restoredSessions[0].id);
-					}
+					const needsWorkspaceThreadMigration =
+						!Array.isArray(savedThreads) ||
+						savedThreads.length === 0 ||
+						restoredSessions.some(
+							(session) =>
+								(!session.parentSessionId && (!session.threadId || !session.workspaceId)) ||
+								!session.groupId
+						) ||
+						(savedGroups || []).some((group: { projectRoot?: string }) => !group.projectRoot);
 
-					// For remote (SSH) sessions, fetch git info in background
-					for (const session of restoredSessions) {
-						const sshRemoteId =
-							session.sshRemoteId ||
-							(session.sessionSshRemoteConfig?.enabled
-								? session.sessionSshRemoteConfig.remoteId
-								: undefined);
-						if (sshRemoteId) {
-							fetchGitInfoInBackground(session.id, session.cwd, sshRemoteId);
-						}
+					if (needsWorkspaceThreadMigration) {
+						const migration = migrateWorkspacesAndThreads(
+							restoredSessions,
+							savedGroups || [],
+							useSessionStore.getState().activeSessionId
+						);
+						restoredSessions = migration.sessions;
+						nextGroups = migration.groups;
+						nextThreads = migration.threads;
+					} else {
+						const threadIdBySessionId = new Map(
+							(savedThreads || []).map((thread: { sessionId: string; id: string }) => [
+								thread.sessionId,
+								thread.id,
+							])
+						);
+						nextThreads = (savedThreads || []).map((thread) => ({
+							...thread,
+							runtimeId: thread.runtimeId || thread.sessionId,
+						}));
+						restoredSessions = restoredSessions.map((session) => ({
+							...session,
+							runtimeId: session.runtimeId || session.id,
+							workspaceId: session.workspaceId || session.groupId,
+							threadId:
+								session.threadId ||
+								(!session.parentSessionId ? threadIdBySessionId.get(session.id) : undefined),
+						}));
 					}
-				} else {
-					setSessions([]);
 				}
 
-				// Handle groups
-				if (savedGroups && savedGroups.length > 0) {
-					setGroups(savedGroups);
-				} else {
-					setGroups([]);
+				const recovery = await recoverMissingProviderThreads(
+					restoredSessions,
+					nextGroups,
+					nextThreads
+				);
+				restoredSessions = recovery.sessions;
+				nextGroups = recovery.groups;
+				nextThreads = recovery.threads;
+
+				if (recovery.recoveredCount > 0) {
+					window.maestro.sessions.setAll(restoredSessions);
+					window.maestro.groups.setAll(nextGroups);
+					window.maestro.threads.setAll(nextThreads);
+				}
+
+				setSessions(restoredSessions);
+				setGroups(nextGroups);
+				setThreads(nextThreads);
+
+				const activeSessionId = useSessionStore.getState().activeSessionId;
+				if (
+					restoredSessions.length > 0 &&
+					!restoredSessions.find((s) => s.id === activeSessionId)
+				) {
+					setActiveSessionId(restoredSessions[0].id);
+				}
+
+				for (const session of restoredSessions) {
+					const sshRemoteId =
+						session.sshRemoteId ||
+						(session.sessionSshRemoteConfig?.enabled
+							? session.sessionSshRemoteConfig.remoteId
+							: undefined);
+					if (sshRemoteId) {
+						fetchGitInfoInBackground(session.id, session.cwd, sshRemoteId);
+					}
 				}
 
 				setConductors(savedConductors?.conductors || []);
 				setTasks(savedConductors?.tasks || []);
 				setRuns(savedConductors?.runs || []);
-				syncWithGroups(savedGroups || []);
+				syncWithGroups(useSessionStore.getState().groups || []);
 
 				// Load group chats
 				try {
@@ -403,6 +465,7 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				console.error('Failed to load sessions/groups:', e);
 				setSessions([]);
 				setGroups([]);
+				setThreads([]);
 				setConductors([]);
 				setTasks([]);
 				setRuns([]);

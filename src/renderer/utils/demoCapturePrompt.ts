@@ -23,8 +23,11 @@ Environment provided for this process:
 
 Required behavior:
 - If the task can be meaningfully demonstrated in a browser or browser-like dev session, you must use Playwright/browser automation and produce demo artifacts for this run.
+- Requests about UI behavior, browser flows, screenshots, recordings, demos, or proof that something worked are demoable and require artifacts.
 - If the task cannot be meaningfully demonstrated that way, you must explicitly say that in the response and explain why no browser demo was produced.
 - If capture starts and the workflow later fails, emit a failure event.
+- If you exit a demoable workflow without emitting a final demo event, Maestro will treat the run as failed.
+- A successful demo capture must include at least one screenshot or video artifact. If video recording is unavailable, capture screenshots instead.
 
 If you use Playwright or any browser automation in this run, you must emit Maestro demo events and save artifacts for playback:
 

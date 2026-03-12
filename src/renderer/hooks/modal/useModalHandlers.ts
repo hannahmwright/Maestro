@@ -238,6 +238,10 @@ export function useModalHandlers(
 	const handleCloseNewInstanceModal = useCallback(() => {
 		getModalActions().setNewInstanceModalOpen(false);
 		getModalActions().setDuplicatingSessionId(null);
+		getModalActions().setNewInstanceMode('workspace');
+		getModalActions().setNewInstanceWorkspaceId(null);
+		getModalActions().setNewInstanceFixedWorkingDir(null);
+		getModalActions().setNewInstanceDefaultAgentId(null);
 	}, []);
 
 	const handleCloseEditAgentModal = useCallback(() => {

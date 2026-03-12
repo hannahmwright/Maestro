@@ -20,15 +20,22 @@ import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 
 // Re-export types from canonical source so existing imports from './persistence' still work
-export type { MaestroSettings, SessionsData, GroupsData, ConductorsData } from '../../stores/types';
+export type {
+	MaestroSettings,
+	SessionsData,
+	GroupsData,
+	ThreadsData,
+	ConductorsData,
+} from '../../stores/types';
 import type {
 	MaestroSettings,
 	SessionsData,
 	GroupsData,
+	ThreadsData,
 	ConductorsData,
 	StoredSession,
 } from '../../stores/types';
-import type { Group, Conductor, ConductorTask, ConductorRun } from '../../../shared/types';
+import type { Group, Thread, Conductor, ConductorTask, ConductorRun } from '../../../shared/types';
 
 /**
  * Dependencies required for persistence handlers
@@ -37,6 +44,7 @@ export interface PersistenceHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	sessionsStore: Store<SessionsData>;
 	groupsStore: Store<GroupsData>;
+	threadsStore: Store<ThreadsData>;
 	conductorsStore: Store<ConductorsData>;
 	getWebServer: () => WebServer | null;
 }
@@ -45,7 +53,8 @@ export interface PersistenceHandlerDependencies {
  * Register all persistence-related IPC handlers.
  */
 export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies): void {
-	const { settingsStore, sessionsStore, groupsStore, conductorsStore, getWebServer } = deps;
+	const { settingsStore, sessionsStore, groupsStore, threadsStore, conductorsStore, getWebServer } =
+		deps;
 
 	// Settings management
 	ipcMain.handle('settings:get', async (_, key: string) => {
@@ -181,6 +190,12 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 								state: tab.state || 'idle',
 								thinkingStartTime: tab.thinkingStartTime || null,
 								currentModel: tab.currentModel || null,
+								runtimeKind: tab.runtimeKind || 'batch',
+								steerMode: tab.steerMode || 'none',
+								activeTurnId: tab.activeTurnId || null,
+								pendingSteer: tab.pendingSteer || null,
+								steerStatus: tab.steerStatus || 'idle',
+								lastCheckpointAt: tab.lastCheckpointAt || null,
 							})) || [],
 						activeTabId: session.activeTabId || session.aiTabs?.[0]?.id,
 						parentSessionId: session.parentSessionId || null,
@@ -222,6 +237,21 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		} catch (err) {
 			const code = (err as NodeJS.ErrnoException).code;
 			logger.warn(`Failed to persist groups: ${code || (err as Error).message}`, 'Groups');
+			return false;
+		}
+		return true;
+	});
+
+	ipcMain.handle('threads:getAll', async () => {
+		return threadsStore.get('threads', []);
+	});
+
+	ipcMain.handle('threads:setAll', async (_, threads: Thread[]) => {
+		try {
+			threadsStore.set('threads', threads);
+		} catch (err) {
+			const code = (err as NodeJS.ErrnoException).code;
+			logger.warn(`Failed to persist threads: ${code || (err as Error).message}`, 'Threads');
 			return false;
 		}
 		return true;

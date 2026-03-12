@@ -44,6 +44,24 @@ export interface UseSessionListPropsDeps {
 	createNewGroup: () => void;
 	handleCreateGroupAndMove: (sessionId: string) => void;
 	addNewSession: () => void;
+	createNewSession: (
+		agentId: string,
+		workingDir: string,
+		name: string,
+		nudgeMessage?: string,
+		customPath?: string,
+		customArgs?: string,
+		customEnvVars?: Record<string, string>,
+		customModel?: string,
+		customContextWindow?: number,
+		customProviderPath?: string,
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		},
+		workspaceId?: string
+	) => Promise<void>;
 	deleteSession: (id: string) => void;
 	deleteWorktreeGroup: (groupId: string) => void;
 	handleEditAgent: (session: Session) => void;
@@ -101,6 +119,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			createNewGroup: deps.createNewGroup,
 			onCreateGroupAndMove: deps.handleCreateGroupAndMove,
 			addNewSession: deps.addNewSession,
+			onCreateSession: deps.createNewSession,
 			onDeleteSession: deps.deleteSession,
 			onDeleteWorktreeGroup: deps.deleteWorktreeGroup,
 			onEditAgent: deps.handleEditAgent,
@@ -146,6 +165,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.createNewGroup,
 			deps.handleCreateGroupAndMove,
 			deps.addNewSession,
+			deps.createNewSession,
 			deps.deleteSession,
 			deps.deleteWorktreeGroup,
 			deps.handleEditAgent,

@@ -1,20 +1,19 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from 'react';
 import {
-	Wand2,
 	Plus,
 	ChevronRight,
 	ChevronDown,
 	ChevronUp,
-	X,
 	Radio,
-	Folder,
 	GitBranch,
+	Server,
 	Menu,
 	Bookmark,
 	Trophy,
-	Trash2,
+	Clock3,
+	ArrowDownAZ,
 } from 'lucide-react';
-import type { Session, Group, Theme } from '../../types';
+import type { Session, Group, Theme, Thread } from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
 import { GroupChatList } from '../GroupChatList';
@@ -26,17 +25,22 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
-import { useConductorStore } from '../../stores/conductorStore';
 import { getModalActions } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
-import { GroupContextMenu } from './GroupContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
 import { SkinnySidebar } from './SkinnySidebar';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
-import { useSessionCategories } from '../../hooks/session/useSessionCategories';
 import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
+import { compareNamesIgnoringEmojis as compareNames } from '../../../shared/emojiUtils';
+import {
+	getRuntimeIdForSession,
+	getRuntimeIdForThread,
+	getSessionLastActivity,
+	getThreadDisplayTitle,
+} from '../../utils/workspaceThreads';
+import { buildDefaultThreadName } from '../../utils/sessionValidation';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -70,6 +74,24 @@ interface SessionListProps {
 	createNewGroup: () => void;
 	onCreateGroupAndMove?: (sessionId: string) => void;
 	addNewSession: () => void;
+	onCreateSession: (
+		agentId: string,
+		workingDir: string,
+		name: string,
+		nudgeMessage?: string,
+		customPath?: string,
+		customArgs?: string,
+		customEnvVars?: Record<string, string>,
+		customModel?: string,
+		customContextWindow?: number,
+		customProviderPath?: string,
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		},
+		workspaceId?: string
+	) => Promise<void>;
 	onDeleteSession?: (id: string) => void;
 	onDeleteWorktreeGroup?: (groupId: string) => void;
 
@@ -102,25 +124,6 @@ interface SessionListProps {
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
 }
 
-function getSidebarGlassSurface(
-	theme: Theme,
-	options?: {
-		tint?: string;
-		borderColor?: string;
-		strong?: boolean;
-	}
-): React.CSSProperties {
-	const tint = options?.tint || 'rgba(255,255,255,0.10)';
-	const borderColor = options?.borderColor || 'rgba(255,255,255,0.08)';
-	const strong = options?.strong ?? false;
-
-	return {
-		backgroundColor: tint,
-		border: `1px solid ${borderColor}`,
-		boxShadow: strong ? 'inset 0 1px 0 rgba(255,255,255,0.05)' : 'none',
-	};
-}
-
 function getSidebarHeaderButtonStyle(
 	theme: Theme,
 	options?: {
@@ -139,10 +142,25 @@ function getSidebarHeaderButtonStyle(
 	};
 }
 
+function getSidebarSectionTextStyle(theme: Theme): React.CSSProperties {
+	return {
+		color: theme.colors.textMain,
+		opacity: 0.78,
+	};
+}
+
+function getSidebarWorkspaceTextStyle(theme: Theme): React.CSSProperties {
+	return {
+		color: theme.colors.textMain,
+		opacity: 1,
+	};
+}
+
 function SessionListInner(props: SessionListProps) {
 	// Store subscriptions
 	const sessions = useSessionStore((s) => s.sessions);
 	const groups = useSessionStore((s) => s.groups);
+	const threads = useSessionStore((s) => s.threads);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
 	const activeFocus = useUIStore((s) => s.activeFocus);
@@ -150,13 +168,13 @@ function SessionListInner(props: SessionListProps) {
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
 	const editingSessionId = useUIStore((s) => s.editingSessionId);
 	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
-	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
+	const workspaceSortMode = useSettingsStore((s) => s.workspaceSortMode);
+	const defaultThreadProvider = useSettingsStore((s) => s.defaultThreadProvider);
 	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
-	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
 	const contextWarningYellowThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningYellowThreshold
@@ -171,31 +189,26 @@ function SessionListInner(props: SessionListProps) {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
-	const conductors = useConductorStore((s) => s.conductors);
-	const activeConductorGroupId = useConductorStore((s) => s.activeConductorGroupId);
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
 	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
-	const setBookmarksCollapsed = useUIStore.getState().setBookmarksCollapsed;
 	const setGroupChatsExpanded = useUIStore.getState().setGroupChatsExpanded;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
 	const setActiveGroupChatId = useGroupChatStore.getState().setActiveGroupChatId;
-	const setActiveConductorGroupId = useConductorStore.getState().setActiveConductorGroupId;
 	const setActiveSessionId = useCallback(
 		(id: string) => {
 			setActiveGroupChatId(null);
-			setActiveConductorGroupId(null);
 			setActiveSessionIdRaw(id);
 		},
-		[setActiveSessionIdRaw, setActiveGroupChatId, setActiveConductorGroupId]
+		[setActiveSessionIdRaw, setActiveGroupChatId]
 	);
 	const setSessions = useSessionStore.getState().setSessions;
-	const setGroups = useSessionStore.getState().setGroups;
+	const setThreads = useSessionStore.getState().setThreads;
 	const setWebInterfaceUseCustomPort = useSettingsStore.getState().setWebInterfaceUseCustomPort;
 	const setWebInterfaceCustomPort = useSettingsStore.getState().setWebInterfaceCustomPort;
-	const setUngroupedCollapsed = useSettingsStore.getState().setUngroupedCollapsed;
 	const setLeftSidebarWidthState = useSettingsStore.getState().setLeftSidebarWidth;
+	const setWorkspaceSortMode = useSettingsStore.getState().setWorkspaceSortMode;
 
 	// Modal actions (stable, accessed via store)
 	const {
@@ -204,6 +217,11 @@ function SessionListInner(props: SessionListProps) {
 		setRenameInstanceValue,
 		setRenameInstanceSessionId,
 		setDuplicatingSessionId,
+		setNewInstanceModalOpen,
+		setNewInstanceMode,
+		setNewInstanceWorkspaceId,
+		setNewInstanceFixedWorkingDir,
+		setNewInstanceDefaultAgentId,
 	} = getModalActions();
 
 	const {
@@ -216,17 +234,13 @@ function SessionListInner(props: SessionListProps) {
 		toggleGroup,
 		handleDragStart,
 		handleDragOver,
-		handleDropOnGroup,
 		handleDropOnUngrouped,
 		finishRenamingGroup,
 		finishRenamingSession,
 		startRenamingGroup,
 		startRenamingSession,
-		showConfirmation,
-		createNewGroup,
-		onCreateGroupAndMove,
+		onCreateSession,
 		onDeleteSession,
-		onDeleteWorktreeGroup,
 		onEditAgent,
 		onNewAgentSession,
 		onToggleWorktreeExpanded,
@@ -238,7 +252,6 @@ function SessionListInner(props: SessionListProps) {
 		visibleSessions = [],
 		openWizard,
 		startTour,
-		onOpenConductor,
 		sidebarContainerRef,
 		onOpenGroupChat,
 		onNewGroupChat,
@@ -298,112 +311,164 @@ function SessionListInner(props: SessionListProps) {
 		y: number;
 		sessionId: string;
 	} | null>(null);
-	const [groupContextMenu, setGroupContextMenu] = useState<{
-		x: number;
-		y: number;
-		groupId: string;
-	} | null>(null);
 	const contextMenuSession = contextMenu
 		? sessions.find((s) => s.id === contextMenu.sessionId)
 		: null;
-	const contextMenuGroup = groupContextMenu
-		? groups.find((group) => group.id === groupContextMenu.groupId)
+	const contextMenuThread = contextMenuSession
+		? threads.find(
+				(thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(contextMenuSession)
+			)
 		: null;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const ignoreNextBlurRef = useRef(false);
+	const [expandedOlderByWorkspace, setExpandedOlderByWorkspace] = useState<Record<string, boolean>>(
+		{}
+	);
+	const [expandedArchivedByWorkspace, setExpandedArchivedByWorkspace] = useState<
+		Record<string, boolean>
+	>({});
 
-	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders
-	const toggleBookmark = useCallback(
-		(sessionId: string) => {
+	const toggleThreadPinned = useCallback(
+		(thread: Thread) => {
+			const nextPinned = !thread.pinned;
+			setThreads((prev) =>
+				prev.map((candidate) =>
+					candidate.id === thread.id
+						? {
+								...candidate,
+								pinned: nextPinned,
+								isOpen: nextPinned ? true : candidate.isOpen,
+							}
+						: candidate
+				)
+			);
 			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, bookmarked: !s.bookmarked } : s))
+				prev.map((s) =>
+					getRuntimeIdForSession(s) === getRuntimeIdForThread(thread)
+						? { ...s, bookmarked: nextPinned }
+						: s
+				)
 			);
 		},
-		[setSessions]
+		[setSessions, setThreads]
 	);
 
 	// Context menu handlers - memoized to prevent SessionItem re-renders
 	const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string) => {
 		e.preventDefault();
 		e.stopPropagation();
-		setGroupContextMenu(null);
 		setContextMenu({ x: e.clientX, y: e.clientY, sessionId });
 	}, []);
 
-	const handleGroupContextMenu = useCallback((e: React.MouseEvent, groupId: string) => {
-		e.preventDefault();
-		e.stopPropagation();
-		setContextMenu(null);
-		setGroupContextMenu({ x: e.clientX, y: e.clientY, groupId });
-	}, []);
-
-	const handleMoveToGroup = useCallback(
-		(sessionId: string, groupId: string) => {
-			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, groupId: groupId || undefined } : s))
+	const handleDeleteSession = useCallback(
+		(sessionId: string) => {
+			setThreads((prev) =>
+				prev.filter((thread) => getRuntimeIdForThread(thread) !== sessionId)
 			);
-		},
-		[setSessions]
-	);
-
-	const handleOpenConductorForGroup = useCallback(
-		(groupId: string) => {
-			onOpenConductor?.(groupId);
-		},
-		[onOpenConductor]
-	);
-
-	const handleDeleteSession = (sessionId: string) => {
-		// Use the parent's delete handler if provided (includes proper cleanup)
-		if (onDeleteSession) {
-			onDeleteSession(sessionId);
-			return;
-		}
-		// Fallback to local delete logic
-		const session = sessions.find((s) => s.id === sessionId);
-		if (!session) return;
-		showConfirmation(
-			`Are you sure you want to remove "${session.name}"? This action cannot be undone.`,
-			() => {
-				setSessions((prev) => {
-					const remaining = prev.filter((s) => s.id !== sessionId);
-					// If deleting the active session, switch to another one
-					const currentActive = useSessionStore.getState().activeSessionId;
-					if (currentActive === sessionId && remaining.length > 0) {
-						setActiveSessionId(remaining[0].id);
-					}
-					return remaining;
-				});
+			setContextMenu(null);
+			// Use the parent's delete handler if provided (includes proper cleanup)
+			if (onDeleteSession) {
+				onDeleteSession(sessionId);
+				return;
 			}
-		);
-	};
-
-	const handleDeleteGroup = useCallback(
-		(groupId: string) => {
-			const currentGroups = useSessionStore.getState().groups;
-			const currentSessions = useSessionStore.getState().sessions;
-			const group = currentGroups.find((g) => g.id === groupId);
-			if (!group) return;
-
-			const groupSessions = currentSessions.filter((session) => session.groupId === groupId);
-			const sessionCount = groupSessions.length;
-			const message =
-				sessionCount === 0
-					? `Are you sure you want to delete the group "${group.name}"?`
-					: `Are you sure you want to delete the group "${group.name}"? ${sessionCount} agent${
-							sessionCount !== 1 ? 's will' : ' will'
-						} be moved to Ungrouped.`;
-
-			showConfirmation(message, () => {
-				setSessions((prev) =>
-					prev.map((session) =>
-						session.groupId === groupId ? { ...session, groupId: undefined } : session
-					)
-				);
-				setGroups((prev) => prev.filter((g) => g.id !== groupId));
+			setSessions((prev) => {
+				const remaining = prev.filter((s) => s.id !== sessionId);
+				const currentActive = useSessionStore.getState().activeSessionId;
+				if (currentActive === sessionId && remaining.length > 0) {
+					setActiveSessionId(remaining[0].id);
+				}
+				return remaining;
 			});
 		},
-		[setGroups, setSessions, showConfirmation]
+		[onDeleteSession, setActiveSessionId, setSessions, setThreads]
+	);
+
+	const handleSelectThread = useCallback(
+		(thread: Thread) => {
+			const runtimeId = getRuntimeIdForThread(thread);
+			useSessionStore.setState((state) => ({
+				threads: state.threads.map((candidate) =>
+					candidate.id === thread.id
+						? { ...candidate, isOpen: true }
+						: candidate
+				),
+				activeSessionId: runtimeId,
+				cyclePosition: -1,
+			}));
+			setActiveGroupChatId(null);
+		},
+		[setActiveGroupChatId]
+	);
+
+	const handleCloseThread = useCallback(
+		(threadId: string) => {
+			setThreads((prev) =>
+				prev.map((thread) => (thread.id === threadId ? { ...thread, isOpen: false } : thread))
+			);
+		},
+		[setThreads]
+	);
+
+	const handleToggleArchived = useCallback(
+		(thread: Thread) => {
+			setThreads((prev) =>
+				prev.map((candidate) =>
+					candidate.id === thread.id
+						? {
+								...candidate,
+								archived: !candidate.archived,
+								isOpen: candidate.archived ? candidate.isOpen : false,
+							}
+						: candidate
+				)
+			);
+		},
+		[setThreads]
+	);
+
+	const openNewWorkspaceModal = useCallback(() => {
+		setNewInstanceModalOpen(true);
+		setNewInstanceMode('workspace');
+		setNewInstanceWorkspaceId(null);
+		setNewInstanceFixedWorkingDir(null);
+		setNewInstanceDefaultAgentId(null);
+		setDuplicatingSessionId(null);
+	}, [
+		setDuplicatingSessionId,
+		setNewInstanceDefaultAgentId,
+		setNewInstanceFixedWorkingDir,
+		setNewInstanceModalOpen,
+		setNewInstanceMode,
+		setNewInstanceWorkspaceId,
+	]);
+
+	const createThreadForWorkspace = useCallback(
+		async (workspace: Group) => {
+			const workingDir = workspace.projectRoot?.trim();
+			if (!workingDir) return;
+
+			const currentSessions = useSessionStore
+				.getState()
+				.sessions.filter((session) => !session.parentSessionId);
+			const provider = defaultThreadProvider || 'codex';
+			const name = buildDefaultThreadName(provider, currentSessions);
+
+			await onCreateSession(
+				provider,
+				workingDir,
+				name,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				workspace.id
+			);
+		},
+		[defaultThreadProvider, onCreateSession]
 	);
 
 	// Close menu when clicking outside
@@ -465,20 +530,190 @@ function SessionListInner(props: SessionListProps) {
 	// when only branch data changes (we only need file counts here)
 	const { getFileCount } = useGitFileStatus();
 
-	const {
-		sortedWorktreeChildrenByParentId,
-		sortedSessionIndexById,
-		getWorktreeChildren,
-		bookmarkedSessions,
-		sortedBookmarkedSessions,
-		sortedBookmarkedParentSessions,
-		sortedGroupSessionsById,
-		ungroupedSessions,
-		sortedUngroupedSessions,
-		sortedUngroupedParentSessions,
-		sortedFilteredSessions,
-		sortedGroups,
-	} = useSessionCategories(sessionFilter, sortedSessions);
+	const topLevelSessions = useMemo(
+		() => sessions.filter((session) => !session.parentSessionId),
+		[sessions]
+	);
+
+	const topLevelSessionsById = useMemo(
+		() => new Map(topLevelSessions.map((session) => [session.id, session])),
+		[topLevelSessions]
+	);
+	const topLevelSessionActivityByRuntimeId = useMemo(
+		() =>
+			new Map(
+				topLevelSessions.map((session) => [
+					getRuntimeIdForSession(session),
+					getSessionLastActivity(session),
+				])
+			),
+		[topLevelSessions]
+	);
+
+	const worktreeChildrenByParentId = useMemo(() => {
+		const map = new Map<string, Session[]>();
+		sessions.forEach((session) => {
+			if (!session.parentSessionId) return;
+			const siblings = map.get(session.parentSessionId);
+			if (siblings) {
+				siblings.push(session);
+			} else {
+				map.set(session.parentSessionId, [session]);
+			}
+		});
+		return map;
+	}, [sessions]);
+
+	const sortedWorktreeChildrenByParentId = useMemo(() => {
+		const map = new Map<string, Session[]>();
+		worktreeChildrenByParentId.forEach((children, parentId) => {
+			map.set(parentId, [...children].sort((a, b) => compareNames(a.name, b.name)));
+		});
+		return map;
+	}, [worktreeChildrenByParentId]);
+
+	const sortedSessionIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		sortedSessions.forEach((session, index) => {
+			map.set(session.id, index);
+		});
+		return map;
+	}, [sortedSessions]);
+
+	const getWorktreeChildren = useCallback(
+		(parentId: string): Session[] => worktreeChildrenByParentId.get(parentId) || [],
+		[worktreeChildrenByParentId]
+	);
+
+	const threadBySessionId = useMemo(() => {
+		const map = new Map<string, Thread>();
+		threads.forEach((thread) => {
+			const runtimeId = getRuntimeIdForThread(thread);
+			if (topLevelSessionsById.has(runtimeId)) {
+				map.set(runtimeId, thread);
+			}
+		});
+		return map;
+	}, [threads, topLevelSessionsById]);
+
+	const getThreadRecentTimestamp = useCallback(
+		(thread: Thread) =>
+			Math.max(
+				thread.lastUsedAt,
+				topLevelSessionActivityByRuntimeId.get(getRuntimeIdForThread(thread)) || 0
+			),
+		[topLevelSessionActivityByRuntimeId]
+	);
+
+	const nonArchivedThreads = useMemo(
+		() =>
+			threads
+				.filter(
+					(thread) => !thread.archived && topLevelSessionsById.has(getRuntimeIdForThread(thread))
+				)
+				.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a)),
+		[threads, topLevelSessionsById, getThreadRecentTimestamp]
+	);
+
+	const pinnedThreads = useMemo(
+		() => nonArchivedThreads.filter((thread) => thread.pinned),
+		[nonArchivedThreads]
+	);
+
+	const pinnedThreadIds = useMemo(() => new Set(pinnedThreads.map((thread) => thread.id)), [pinnedThreads]);
+
+	const recentThreads = useMemo(
+		() => nonArchivedThreads.filter((thread) => !pinnedThreadIds.has(thread.id)).slice(0, 5),
+		[nonArchivedThreads, pinnedThreadIds]
+	);
+
+	const filteredWorkspaces = useMemo(() => {
+		const query = sessionFilter.trim().toLowerCase();
+		const matchesWorkspace = (group: Group) =>
+			!query ||
+			group.name.toLowerCase().includes(query) ||
+			(group.projectRoot || '').toLowerCase().includes(query);
+
+		const withStats = groups
+			.filter(matchesWorkspace)
+			.map((workspace) => {
+				const workspaceThreads = threads
+					.filter(
+						(thread) =>
+							thread.workspaceId === workspace.id &&
+							topLevelSessionsById.has(getRuntimeIdForThread(thread))
+					)
+					.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a));
+				const workspaceSessionIds = new Set(
+					workspaceThreads.map((thread) => getRuntimeIdForThread(thread))
+				);
+				const workspaceSessions = topLevelSessions.filter((session) => workspaceSessionIds.has(session.id));
+				const statusSession = workspaceSessions[0] || null;
+				const unreadCount = workspaceSessions.reduce(
+					(count, session) =>
+						count + (session.aiTabs?.some((tab) => tab.hasUnread) ? 1 : 0),
+					0
+				);
+				const hasBusy = workspaceSessions.some(
+					(session) => session.state === 'busy' || activeBatchSessionIds.includes(session.id)
+				);
+				const openThreads = workspaceThreads.filter((thread) => !thread.archived && thread.isOpen);
+				const recentCandidateThreads = workspaceThreads
+					.filter((thread) => !thread.archived)
+					.slice(0, 5);
+				const excludedIds = new Set([
+					...openThreads.map((thread) => thread.id),
+					...workspaceThreads.filter((thread) => thread.pinned).map((thread) => thread.id),
+				]);
+				const recentVisibleThreads = recentCandidateThreads.filter(
+					(thread) => !excludedIds.has(thread.id)
+				);
+				const recentCandidateIds = new Set(recentCandidateThreads.map((thread) => thread.id));
+				const recentVisibleIds = new Set(recentVisibleThreads.map((thread) => thread.id));
+				const olderThreads = workspaceThreads.filter(
+					(thread) =>
+						!thread.archived &&
+						!excludedIds.has(thread.id) &&
+						!recentVisibleIds.has(thread.id) &&
+						!recentCandidateIds.has(thread.id)
+				);
+				const archivedThreads = workspaceThreads.filter((thread) => thread.archived);
+				return {
+					workspace,
+					threads: workspaceThreads,
+					openThreads,
+					recentThreads: recentVisibleThreads,
+					olderThreads,
+					archivedThreads,
+					statusSession,
+					unreadCount,
+					hasBusy,
+					defaultAgentId: workspaceThreads[0]?.agentId,
+					sortKey: Math.max(
+						workspace.lastUsedAt || 0,
+						workspaceThreads[0] ? getThreadRecentTimestamp(workspaceThreads[0]) : 0
+					),
+					hasPinned: workspaceThreads.some((thread) => thread.pinned),
+				};
+			});
+
+		return withStats.sort((a, b) => {
+			if (a.hasPinned !== b.hasPinned) return a.hasPinned ? -1 : 1;
+			if (workspaceSortMode === 'alpha') {
+				return compareNames(a.workspace.name, b.workspace.name);
+			}
+			return b.sortKey - a.sortKey || compareNames(a.workspace.name, b.workspace.name);
+		});
+	}, [
+		groups,
+		threads,
+		topLevelSessions,
+		topLevelSessionsById,
+		sessionFilter,
+		activeBatchSessionIds,
+		workspaceSortMode,
+		getThreadRecentTimestamp,
+	]);
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders
 	// These Maps store stable function references keyed by session/editing ID
@@ -486,10 +721,11 @@ function SessionListInner(props: SessionListProps) {
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessions.forEach((s) => {
-			map.set(s.id, () => setActiveSessionId(s.id));
+			const thread = threadBySessionId.get(s.id);
+			map.set(s.id, () => (thread ? handleSelectThread(thread) : setActiveSessionId(s.id)));
 		});
 		return map;
-	}, [sessions, setActiveSessionId]);
+	}, [sessions, handleSelectThread, setActiveSessionId, threadBySessionId]);
 
 	const dragStartHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
@@ -518,10 +754,15 @@ function SessionListInner(props: SessionListProps) {
 	const toggleBookmarkHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessions.forEach((s) => {
-			map.set(s.id, () => toggleBookmark(s.id));
+			const thread = threadBySessionId.get(s.id);
+			map.set(s.id, () => {
+				if (thread) {
+					toggleThreadPinned(thread);
+				}
+			});
 		});
 		return map;
-	}, [sessions, toggleBookmark]);
+	}, [sessions, threadBySessionId, toggleThreadPinned]);
 
 	// Helper component: Renders a session item with its worktree children (if any)
 	const renderSessionWithWorktrees = (
@@ -532,6 +773,9 @@ function SessionListInner(props: SessionListProps) {
 			groupId?: string;
 			group?: Group;
 			onDrop?: () => void;
+			displayName?: string;
+			providerAgentId?: Session['toolType'];
+			workspaceEmoji?: string;
 		}
 	) => {
 		const worktreeChildren = getWorktreeChildren(session.id);
@@ -554,6 +798,7 @@ function SessionListInner(props: SessionListProps) {
 					session={session}
 					variant={effectiveVariant}
 					theme={theme}
+					displayName={options.displayName}
 					isActive={activeSessionId === session.id && !activeGroupChatId}
 					isKeyboardSelected={isKeyboardSelected}
 					isDragging={draggingSessionId === session.id}
@@ -561,7 +806,8 @@ function SessionListInner(props: SessionListProps) {
 					leftSidebarOpen={leftSidebarOpen}
 					group={options.group}
 					groupId={options.groupId}
-					gitFileCount={getFileCount(session.id)}
+					providerAgentId={options.providerAgentId}
+					workspaceEmoji={options.workspaceEmoji}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
 					onSelect={selectHandlers.get(session.id)!}
@@ -623,7 +869,6 @@ function SessionListInner(props: SessionListProps) {
 										isDragging={draggingSessionId === child.id}
 										isEditing={editingSessionId === `worktree-${session.id}-${child.id}`}
 										leftSidebarOpen={leftSidebarOpen}
-										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
 										onSelect={selectHandlers.get(child.id)!}
@@ -691,17 +936,41 @@ function SessionListInner(props: SessionListProps) {
 		return jumpNumberMap.get(sessionId) ?? null;
 	};
 
+	const renderThread = useCallback(
+		(
+			thread: Thread,
+			variant: 'bookmark' | 'group' | 'flat' | 'ungrouped',
+			options: {
+				keyPrefix: string;
+				group?: Group;
+			}
+		) => {
+			const runtimeId = getRuntimeIdForThread(thread);
+			const session = topLevelSessionsById.get(runtimeId);
+			if (!session) return null;
+			const displayName = getThreadDisplayTitle(thread, session);
+			return renderSessionWithWorktrees(session, variant, {
+				keyPrefix: options.keyPrefix,
+				groupId: options.group?.id,
+				group: options.group,
+				displayName,
+				providerAgentId: thread.agentId,
+				workspaceEmoji: options.group?.emoji,
+			});
+		},
+		[topLevelSessionsById]
+	);
+
 	return (
 		<div
 			ref={sidebarContainerRef}
 			tabIndex={0}
-			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20 ${activeFocus === 'sidebar' && !activeGroupChatId ? 'ring-1 ring-inset' : ''}`}
+			className={`border-r flex flex-col shrink-0 ${sidebarTransitionClass} outline-none relative z-20`}
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
-					'--tw-ring-color': theme.colors.accent,
 				} as React.CSSProperties
 			}
 			onClick={() => setActiveFocus('sidebar')}
@@ -736,9 +1005,11 @@ function SessionListInner(props: SessionListProps) {
 				{leftSidebarOpen ? (
 					<>
 						<div className="flex items-center gap-2">
-							<Wand2
-								className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}`}
-								style={{ color: theme.colors.accent }}
+							<img
+								src="/icon.png"
+								alt=""
+								aria-hidden="true"
+								className={`w-5 h-5 rounded-sm object-cover${isAnyBusy ? ' animate-pulse' : ''}`}
 							/>
 							<h1
 								className="font-bold tracking-widest text-lg"
@@ -855,9 +1126,11 @@ function SessionListInner(props: SessionListProps) {
 							className="p-2 rounded hover:bg-white/10 transition-colors"
 							title="Menu"
 						>
-							<Wand2
-								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}`}
-								style={{ color: theme.colors.accent }}
+							<img
+								src="/icon.png"
+								alt=""
+								aria-hidden="true"
+								className={`w-6 h-6 rounded-md object-cover${isAnyBusy ? ' animate-pulse' : ''}`}
 							/>
 						</button>
 						{/* Menu Overlay for Collapsed Sidebar */}
@@ -895,7 +1168,7 @@ function SessionListInner(props: SessionListProps) {
 							<input
 								autoFocus
 								type="text"
-								placeholder="Filter agents..."
+								placeholder="Filter workspaces..."
 								value={sessionFilter}
 								onChange={(e) => setSessionFilter(e.target.value)}
 								onKeyDown={(e) => {
@@ -910,383 +1183,372 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					)}
 
-					{/* BOOKMARKS SECTION - only show if there are bookmarked sessions */}
-					{bookmarkedSessions.length > 0 && (
-						<div className="mb-1">
-							<button
-								type="button"
-								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
-								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
-								aria-expanded={!bookmarksCollapsed}
-								style={getSidebarHeaderButtonStyle(theme, {
-									active: !bookmarksCollapsed,
-									tint: theme.colors.accent,
-								})}
+					<div className="px-3 pb-2">
+						<div className="flex items-center justify-between gap-2">
+							<div
+								className="text-[11px] font-semibold tracking-[0.08em]"
+								style={getSidebarSectionTextStyle(theme)}
 							>
-								<div
-									className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
-									style={{ color: theme.colors.accent }}
+								Workspaces
+							</div>
+							<div className="flex items-center gap-1">
+								<button
+									type="button"
+									onClick={() => setWorkspaceSortMode(workspaceSortMode === 'recent' ? 'alpha' : 'recent')}
+									className="p-1.5 rounded hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textDim }}
+									title={
+										workspaceSortMode === 'recent'
+											? 'Sorting by last used'
+											: 'Sorting alphabetically'
+									}
 								>
-									{bookmarksCollapsed ? (
-										<ChevronRight className="w-3 h-3" />
+									{workspaceSortMode === 'recent' ? (
+										<Clock3 className="w-3.5 h-3.5" />
 									) : (
-										<ChevronDown className="w-3 h-3" />
+										<ArrowDownAZ className="w-3.5 h-3.5" />
 									)}
-									<Bookmark className="w-3.5 h-3.5" fill={theme.colors.accent} />
-									<span>Bookmarks</span>
-								</div>
-							</button>
+								</button>
+								<button
+									type="button"
+									onClick={openNewWorkspaceModal}
+									className="p-1.5 rounded hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.accent }}
+									title="New Workspace"
+								>
+									<Plus className="w-3.5 h-3.5" />
+								</button>
+							</div>
+						</div>
+					</div>
 
-							{!bookmarksCollapsed ? (
-								<div
-									className="flex flex-col border-l ml-4 mt-1"
-									style={{ borderColor: `${theme.colors.accent}28` }}
-								>
-									{sortedBookmarkedSessions.map((session) => {
-										const group = groups.find((g) => g.id === session.groupId);
-										return renderSessionWithWorktrees(session, 'bookmark', {
-											keyPrefix: 'bookmark',
-											group,
-										});
-									})}
-								</div>
-							) : (
-								/* Collapsed Bookmarks Palette - uses subdivided pills for worktrees */
-								<div
-									className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
-									onClick={() => setBookmarksCollapsed(false)}
-								>
-									{sortedBookmarkedParentSessions.map((s) => (
-										<CollapsedSessionPill
-											key={`bookmark-collapsed-${s.id}`}
-											session={s}
-											keyPrefix="bookmark-collapsed"
-											theme={theme}
-											activeBatchSessionIds={activeBatchSessionIds}
-											leftSidebarWidth={leftSidebarWidthState}
-											contextWarningYellowThreshold={contextWarningYellowThreshold}
-											contextWarningRedThreshold={contextWarningRedThreshold}
-											getFileCount={getFileCount}
-											getWorktreeChildren={getWorktreeChildren}
-											setActiveSessionId={setActiveSessionId}
-										/>
-									))}
-								</div>
-							)}
+					{recentThreads.length > 0 && (
+						<div className="mb-3">
+							<div className="px-3 py-1.5 text-[11px] font-semibold tracking-[0.08em]">
+								<span style={getSidebarSectionTextStyle(theme)}>Recent Threads</span>
+							</div>
+							<div className="flex flex-col">
+								{recentThreads.map((thread) =>
+									renderThread(thread, 'flat', {
+										keyPrefix: 'recent',
+										group: groups.find((group) => group.id === thread.workspaceId),
+									})
+								)}
+							</div>
 						</div>
 					)}
 
-					{/* GROUPS */}
-					{sortedGroups.map((group) => {
-						const groupSessions = sortedGroupSessionsById.get(group.id) || [];
-						const conductor = conductors.find((candidate) => candidate.groupId === group.id);
-						const isConductorActive = activeConductorGroupId === group.id;
+					{pinnedThreads.length > 0 && (
+						<div className="mb-3">
+							<div className="px-3 py-1.5 text-[11px] font-semibold tracking-[0.08em] flex items-center gap-2">
+								<Bookmark className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
+								<span style={{ color: theme.colors.accent }}>Pinned</span>
+							</div>
+							<div
+								className="flex flex-col border-l ml-4"
+								style={{ borderColor: `${theme.colors.accent}28` }}
+							>
+								{pinnedThreads.map((thread) =>
+									renderThread(thread, 'bookmark', {
+										keyPrefix: 'pinned',
+										group: groups.find((group) => group.id === thread.workspaceId),
+									})
+								)}
+							</div>
+						</div>
+					)}
+
+					{filteredWorkspaces.map((workspaceEntry) => {
+						const { workspace, openThreads, recentThreads, olderThreads, archivedThreads } =
+							workspaceEntry;
+						const expandedOlder = !!expandedOlderByWorkspace[workspace.id];
+						const expandedArchived = !!expandedArchivedByWorkspace[workspace.id];
+						const workspaceGitFileCount = workspaceEntry.statusSession
+							? getFileCount(workspaceEntry.statusSession.id)
+							: undefined;
+						const collapsedPaletteThreads = workspaceEntry.threads
+							.map((thread) => topLevelSessionsById.get(getRuntimeIdForThread(thread)))
+							.filter((session): session is Session => !!session);
+
 						return (
-							<div key={group.id} className="mb-1">
+							<div key={workspace.id} className="mb-2">
 								<div
 									role="button"
 									tabIndex={0}
-									aria-expanded={!group.collapsed}
+									aria-expanded={!workspace.collapsed}
 									onKeyDown={(e) => {
 										if (e.key === 'Enter' || e.key === ' ') {
 											e.preventDefault();
-											toggleGroup(group.id);
+											toggleGroup(workspace.id);
 										}
 									}}
+									onClick={() => toggleGroup(workspace.id)}
 									className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
-									onClick={() => toggleGroup(group.id)}
-									onDragOver={handleDragOver}
-									onDrop={() => handleDropOnGroup(group.id)}
 									style={getSidebarHeaderButtonStyle(theme, {
-										active: !group.collapsed,
+										active: !workspace.collapsed,
 										tint: theme.colors.textDim,
 									})}
 								>
 									<div
-										className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
-										style={{
-											color: !group.collapsed ? theme.colors.textMain : theme.colors.textDim,
-										}}
-										onContextMenu={(e) => handleGroupContextMenu(e, group.id)}
+										className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.08em] min-w-0 flex-1"
+										style={getSidebarWorkspaceTextStyle(theme)}
 									>
-										{group.collapsed ? (
-											<ChevronRight className="w-3 h-3" />
+										{workspace.collapsed ? (
+											<ChevronRight className="w-3 h-3 shrink-0" />
 										) : (
-											<ChevronDown className="w-3 h-3" />
+											<ChevronDown className="w-3 h-3 shrink-0" />
 										)}
-										<span className="text-sm">{group.emoji}</span>
-										{editingGroupId === group.id ? (
+										<span className="text-sm shrink-0">{workspace.emoji}</span>
+										{editingGroupId === workspace.id ? (
 											<input
 												autoFocus
 												className="bg-transparent outline-none w-full border-b border-indigo-500"
-												defaultValue={group.name}
+												defaultValue={workspace.name}
 												onClick={(e) => e.stopPropagation()}
 												onBlur={(e) => {
 													if (ignoreNextBlurRef.current) {
 														ignoreNextBlurRef.current = false;
 														return;
 													}
-													finishRenamingGroup(group.id, e.target.value);
+													finishRenamingGroup(workspace.id, e.target.value);
 												}}
 												onKeyDown={(e) => {
 													e.stopPropagation();
 													if (e.key === 'Enter') {
 														ignoreNextBlurRef.current = true;
-														finishRenamingGroup(group.id, e.currentTarget.value);
+														finishRenamingGroup(workspace.id, e.currentTarget.value);
 													}
 												}}
 											/>
 										) : (
-											<span onDoubleClick={() => startRenamingGroup(group.id)}>{group.name}</span>
+											<span
+												className="truncate"
+												style={getSidebarWorkspaceTextStyle(theme)}
+												onDoubleClick={(e) => {
+													e.stopPropagation();
+													startRenamingGroup(workspace.id);
+												}}
+											>
+												{workspace.name}
+											</span>
+										)}
+										{workspaceEntry.hasBusy && (
+											<span
+												className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+												style={{ backgroundColor: theme.colors.warning }}
+												title="Workspace has active threads"
+											/>
+										)}
+										{workspaceEntry.unreadCount > 0 && (
+											<span
+												className="px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0"
+												style={{
+													backgroundColor: `${theme.colors.accent}22`,
+													color: theme.colors.accent,
+												}}
+											>
+												{workspaceEntry.unreadCount}
+											</span>
+										)}
+										{workspaceEntry.statusSession && (
+											<>
+												{workspaceGitFileCount !== undefined && workspaceGitFileCount > 0 && (
+													<div
+														className="flex items-center gap-0.5 text-[10px] shrink-0"
+														style={{ color: theme.colors.warning }}
+														title={`${workspaceGitFileCount} changed file${workspaceGitFileCount === 1 ? '' : 's'}`}
+													>
+														<GitBranch className="w-2.5 h-2.5" />
+														<span>{workspaceGitFileCount}</span>
+													</div>
+												)}
+												{workspaceEntry.statusSession.isGitRepo ? (
+													<div
+														className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
+														style={{
+															backgroundColor: `${theme.colors.accent}30`,
+															color: theme.colors.accent,
+														}}
+														title="Git repository"
+													>
+														GIT
+													</div>
+												) : (
+													<div
+														className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
+														style={{
+															backgroundColor: workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
+																? `${theme.colors.warning}30`
+																: `${theme.colors.textDim}20`,
+															color: workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
+																? theme.colors.warning
+																: theme.colors.textDim,
+														}}
+														title={
+															workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
+																? 'Running on remote host via SSH'
+																: 'Local directory'
+														}
+													>
+														{workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
+															? 'REMOTE'
+															: 'LOCAL'}
+													</div>
+												)}
+												{workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled &&
+													workspaceEntry.statusSession.isGitRepo && (
+														<div
+															className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center shrink-0"
+															style={{
+																backgroundColor: `${theme.colors.warning}30`,
+																color: theme.colors.warning,
+															}}
+															title="Running on remote host via SSH"
+														>
+															<Server className="w-3 h-3" />
+														</div>
+													)}
+											</>
 										)}
 									</div>
-									{/* Delete button for empty groups */}
-									{groupSessions.length === 0 && (
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												showConfirmation(
-													`Are you sure you want to delete the group "${group.name}"?`,
-													() => {
-														setGroups((prev) => prev.filter((g) => g.id !== group.id));
-													}
-												);
-											}}
-											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
-											title="Delete empty group"
-										>
-											<X className="w-3 h-3" />
-										</button>
-									)}
-									{/* Delete button for worktree groups with agents */}
-									{group.emoji === '🌳' && groupSessions.length > 0 && onDeleteWorktreeGroup && (
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												onDeleteWorktreeGroup(group.id);
-											}}
-											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
-											title="Remove group and all agents"
-										>
-											<Trash2 className="w-3 h-3" />
-										</button>
-									)}
+									<button
+										type="button"
+										onClick={(e) => {
+											e.stopPropagation();
+											void createThreadForWorkspace(workspace);
+										}}
+										className="p-1 rounded hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.accent }}
+										title="New Thread"
+									>
+										<Plus className="w-3.5 h-3.5" />
+									</button>
 								</div>
 
-								{!group.collapsed ? (
+								{!workspace.collapsed ? (
 									<div
 										className="flex flex-col border-l ml-4 mt-1"
 										style={{ borderColor: 'rgba(255,255,255,0.06)' }}
 									>
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												handleOpenConductorForGroup(group.id);
-											}}
-											className="mx-3 mt-1.5 mb-1 px-3 py-2 rounded-lg border text-left transition-colors"
-											style={{
-												backgroundColor: isConductorActive
-													? `${theme.colors.accent}12`
-													: 'transparent',
-												borderColor: isConductorActive
-													? `${theme.colors.accent}26`
-													: 'rgba(255,255,255,0.06)',
-												color: isConductorActive ? theme.colors.textMain : theme.colors.textDim,
-											}}
-											title={`Open Conductor for ${group.name}`}
-										>
-											<div className="flex items-center justify-between gap-3">
-												<div className="flex items-center gap-2 min-w-0">
-													<Radio className="w-3.5 h-3.5 shrink-0" />
-													<span className="text-[11px] font-semibold uppercase tracking-[0.16em]">
-														Conductor
-													</span>
+										{openThreads.length > 0 && (
+											<>
+												<div className="px-3 py-1 text-[10px] font-semibold tracking-[0.08em]">
+													<span style={getSidebarSectionTextStyle(theme)}>Open</span>
 												</div>
-												{conductor && (
-													<span
-														className="text-[10px] uppercase"
-														style={{
-															color: isConductorActive ? theme.colors.accent : theme.colors.textDim,
-														}}
-													>
-														{conductor.status.replace(/_/g, ' ')}
-													</span>
+												<div className="flex flex-col">
+													{openThreads.map((thread) =>
+														renderThread(thread, 'group', {
+															keyPrefix: `workspace-open-${workspace.id}`,
+															group: workspace,
+														})
+													)}
+												</div>
+											</>
+										)}
+
+										{recentThreads.length > 0 && (
+											<>
+												<div className="px-3 py-1 text-[10px] font-semibold tracking-[0.08em]">
+													<span style={getSidebarSectionTextStyle(theme)}>Recent</span>
+												</div>
+												<div className="flex flex-col">
+													{recentThreads.map((thread) =>
+														renderThread(thread, 'group', {
+															keyPrefix: `workspace-recent-${workspace.id}`,
+															group: workspace,
+														})
+													)}
+												</div>
+											</>
+										)}
+
+										{expandedOlder && (
+											<div className="flex flex-col">
+												{olderThreads.map((thread) =>
+													renderThread(thread, 'group', {
+														keyPrefix: `workspace-older-${workspace.id}`,
+														group: workspace,
+													})
 												)}
 											</div>
-										</button>
-										{groupSessions.map((session) =>
-											renderSessionWithWorktrees(session, 'group', {
-												keyPrefix: `group-${group.id}`,
-												groupId: group.id,
-												onDrop: () => handleDropOnGroup(group.id),
-											})
+										)}
+
+										{olderThreads.length > 0 && (
+											<button
+												type="button"
+												onClick={() =>
+													setExpandedOlderByWorkspace((prev) => ({
+														...prev,
+														[workspace.id]: !prev[workspace.id],
+													}))
+												}
+												className="mx-3 my-1 px-2 py-1 rounded text-[11px] text-left hover:bg-white/5 transition-colors"
+												style={{ color: theme.colors.textDim }}
+											>
+												{expandedOlder ? 'Hide older threads' : `Show older (${olderThreads.length})`}
+											</button>
+										)}
+
+										{expandedArchived && (
+											<div className="flex flex-col">
+												{archivedThreads.map((thread) =>
+													renderThread(thread, 'group', {
+														keyPrefix: `workspace-archived-${workspace.id}`,
+														group: workspace,
+													})
+												)}
+											</div>
+										)}
+
+										{archivedThreads.length > 0 && (
+											<button
+												type="button"
+												onClick={() =>
+													setExpandedArchivedByWorkspace((prev) => ({
+														...prev,
+														[workspace.id]: !prev[workspace.id],
+													}))
+												}
+												className="mx-3 my-1 px-2 py-1 rounded text-[11px] text-left hover:bg-white/5 transition-colors"
+												style={{ color: theme.colors.textDim }}
+											>
+												{expandedArchived
+													? 'Hide archived'
+													: `Show archived (${archivedThreads.length})`}
+											</button>
 										)}
 									</div>
 								) : (
-									/* Collapsed Group Palette - uses subdivided pills for worktrees */
 									<div
 										className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
-										onClick={() => toggleGroup(group.id)}
+										onClick={() => toggleGroup(workspace.id)}
 									>
-										{groupSessions
-											.filter((s) => !s.parentSessionId)
-											.map((s) => (
-												<CollapsedSessionPill
-													key={`group-collapsed-${group.id}-${s.id}`}
-													session={s}
-													keyPrefix={`group-collapsed-${group.id}`}
-													theme={theme}
-													activeBatchSessionIds={activeBatchSessionIds}
-													leftSidebarWidth={leftSidebarWidthState}
-													contextWarningYellowThreshold={contextWarningYellowThreshold}
-													contextWarningRedThreshold={contextWarningRedThreshold}
-													getFileCount={getFileCount}
-													getWorktreeChildren={getWorktreeChildren}
-													setActiveSessionId={setActiveSessionId}
-												/>
-											))}
+										{collapsedPaletteThreads.map((session) => (
+											<CollapsedSessionPill
+												key={`workspace-collapsed-${workspace.id}-${session.id}`}
+												session={session}
+												keyPrefix={`workspace-collapsed-${workspace.id}`}
+												theme={theme}
+												activeBatchSessionIds={activeBatchSessionIds}
+												leftSidebarWidth={leftSidebarWidthState}
+												contextWarningYellowThreshold={contextWarningYellowThreshold}
+												contextWarningRedThreshold={contextWarningRedThreshold}
+												getFileCount={getFileCount}
+												getWorktreeChildren={getWorktreeChildren}
+												setActiveSessionId={setActiveSessionId}
+											/>
+										))}
 									</div>
 								)}
 							</div>
 						);
 					})}
 
-					{/* SESSIONS - Flat list when no groups exist, otherwise show Ungrouped folder */}
-					{sessions.length > 0 && groups.length === 0 ? (
-						/* FLAT LIST - No groups exist yet, show sessions directly with New Group button */
-						<>
-							<div className="flex flex-col">
-								{sortedFilteredSessions.map((session) =>
-									renderSessionWithWorktrees(session, 'flat', { keyPrefix: 'flat' })
-								)}
-							</div>
-							<div className="mt-4 px-3">
-								<button
-									onClick={createNewGroup}
-									className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
-									style={{
-										backgroundColor: theme.colors.accent + '14',
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}28`,
-									}}
-									title="Create new group"
-								>
-									<Plus className="w-3 h-3" />
-									<span>New Group</span>
-								</button>
-							</div>
-						</>
-					) : groups.length > 0 && ungroupedSessions.length > 0 ? (
-						/* UNGROUPED FOLDER - Groups exist and there are ungrouped agents */
-						<div className="mb-1 mt-4">
-							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
-								onClick={() => setUngroupedCollapsed(!ungroupedCollapsed)}
-								onDragOver={handleDragOver}
-								onDrop={handleDropOnUngrouped}
-								style={getSidebarHeaderButtonStyle(theme, {
-									active: !ungroupedCollapsed,
-									tint: theme.colors.textDim,
-								})}
-							>
-								<div
-									className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] flex-1"
-									style={{ color: theme.colors.textDim }}
-								>
-									{ungroupedCollapsed ? (
-										<ChevronRight className="w-3 h-3" />
-									) : (
-										<ChevronDown className="w-3 h-3" />
-									)}
-									<Folder className="w-3.5 h-3.5" />
-									<span>Ungrouped Agents</span>
-								</div>
-								<button
-									onClick={(e) => {
-										e.stopPropagation();
-										createNewGroup();
-									}}
-									className="px-2 py-0.5 rounded-full text-[10px] font-medium transition-opacity flex items-center gap-1"
-									style={{
-										backgroundColor: `${theme.colors.accent}14`,
-										border: `1px solid ${theme.colors.accent}28`,
-										color: theme.colors.accent,
-									}}
-									title="Create new group"
-								>
-									<Plus className="w-3 h-3" />
-									<span>New Group</span>
-								</button>
-							</div>
-
-							{!ungroupedCollapsed ? (
-								<div
-									className="flex flex-col border-l ml-4 mt-1"
-									style={{ borderColor: 'rgba(255,255,255,0.06)' }}
-								>
-									{sortedUngroupedSessions.map((session) =>
-										renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
-									)}
-								</div>
-							) : (
-								/* Collapsed Ungrouped Palette - uses subdivided pills for worktrees */
-								<div
-									className="ml-8 mr-3 mt-2 mb-2 flex gap-1 h-1.5 cursor-pointer"
-									onClick={() => setUngroupedCollapsed(false)}
-								>
-									{sortedUngroupedParentSessions.map((s) => (
-										<CollapsedSessionPill
-											key={`ungrouped-collapsed-${s.id}`}
-											session={s}
-											keyPrefix="ungrouped-collapsed"
-											theme={theme}
-											activeBatchSessionIds={activeBatchSessionIds}
-											leftSidebarWidth={leftSidebarWidthState}
-											contextWarningYellowThreshold={contextWarningYellowThreshold}
-											contextWarningRedThreshold={contextWarningRedThreshold}
-											getFileCount={getFileCount}
-											getWorktreeChildren={getWorktreeChildren}
-											setActiveSessionId={setActiveSessionId}
-										/>
-									))}
-								</div>
-							)}
+					{filteredWorkspaces.length === 0 && (
+						<div className="px-3 py-6 text-sm" style={{ color: theme.colors.textDim }}>
+							{sessionFilter.trim() ? 'No workspaces match this filter.' : 'No workspaces yet.'}
 						</div>
-					) : groups.length > 0 ? (
-						/* NO UNGROUPED AGENTS - Show drop zone for ungrouping + New Group button */
-						<div className="mt-4 px-3" onDragOver={handleDragOver} onDrop={handleDropOnUngrouped}>
-							{/* Drop zone indicator when dragging */}
-							{draggingSessionId && (
-								<div
-									className="mb-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs"
-									style={{
-										borderColor: theme.colors.accent,
-										color: theme.colors.textDim,
-										backgroundColor: theme.colors.accent + '10',
-									}}
-								>
-									Drop here to ungroup
-								</div>
-							)}
-							<button
-								onClick={createNewGroup}
-								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium transition-opacity flex items-center justify-center gap-1"
-								style={{
-									...getSidebarGlassSurface(theme, {
-										tint: `${theme.colors.accent}18`,
-										borderColor: `${theme.colors.accent}38`,
-									}),
-									color: theme.colors.accent,
-								}}
-								title="Create new group"
-							>
-								<Plus className="w-3 h-3" />
-								<span>New Group</span>
-							</button>
-						</div>
-					) : null}
+					)}
 
 					{/* Flexible spacer to push group chats to bottom */}
 					<div className="flex-grow min-h-4" />
@@ -1350,21 +1612,29 @@ function SessionListInner(props: SessionListProps) {
 					y={contextMenu.y}
 					theme={theme}
 					session={contextMenuSession}
-					groups={groups}
+					isPinned={!!contextMenuThread?.pinned}
+					isArchived={!!contextMenuThread?.archived}
 					hasWorktreeChildren={sessions.some((s) => s.parentSessionId === contextMenuSession.id)}
 					onRename={() => {
-						setRenameInstanceValue(contextMenuSession.name);
+						setRenameInstanceValue(
+							contextMenuThread ? getThreadDisplayTitle(contextMenuThread, contextMenuSession) : contextMenuSession.name
+						);
 						setRenameInstanceSessionId(contextMenuSession.id);
 						setRenameInstanceModalOpen(true);
 					}}
 					onEdit={() => onEditAgent(contextMenuSession)}
 					onDuplicate={() => {
+						setNewInstanceModalOpen(true);
+						setNewInstanceMode('thread');
+						setNewInstanceWorkspaceId(contextMenuThread?.workspaceId || contextMenuSession.workspaceId || null);
+						setNewInstanceFixedWorkingDir(contextMenuSession.projectRoot || contextMenuSession.cwd);
+						setNewInstanceDefaultAgentId(contextMenuSession.toolType);
 						setDuplicatingSessionId(contextMenuSession.id);
-						onNewAgentSession();
 						setContextMenu(null);
 					}}
-					onToggleBookmark={() => toggleBookmark(contextMenuSession.id)}
-					onMoveToGroup={(groupId) => handleMoveToGroup(contextMenuSession.id, groupId)}
+					onTogglePinned={() => contextMenuThread && toggleThreadPinned(contextMenuThread)}
+					onCloseThread={() => contextMenuThread && handleCloseThread(contextMenuThread.id)}
+					onToggleArchived={() => contextMenuThread && handleToggleArchived(contextMenuThread)}
 					onDelete={() => handleDeleteSession(contextMenuSession.id)}
 					onDismiss={() => setContextMenu(null)}
 					onCreatePR={
@@ -1387,23 +1657,6 @@ function SessionListInner(props: SessionListProps) {
 							? () => onDeleteWorktree(contextMenuSession)
 							: undefined
 					}
-					onCreateGroup={
-						onCreateGroupAndMove
-							? () => onCreateGroupAndMove(contextMenuSession.id)
-							: createNewGroup
-					}
-				/>
-			)}
-
-			{/* Group Context Menu */}
-			{groupContextMenu && contextMenuGroup && (
-				<GroupContextMenu
-					x={groupContextMenu.x}
-					y={groupContextMenu.y}
-					theme={theme}
-					group={contextMenuGroup}
-					onDelete={() => handleDeleteGroup(contextMenuGroup.id)}
-					onDismiss={() => setGroupContextMenu(null)}
 				/>
 			)}
 		</div>

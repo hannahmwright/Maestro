@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch } from 'lucide-react';
+import { GitBranch, Plus } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import type { Session } from '../hooks/useSessions';
+import { ProviderModelIcon } from './CommandInputButtons';
 
 interface MobileNavigationDrawerProps {
 	isOpen: boolean;
@@ -11,22 +12,34 @@ interface MobileNavigationDrawerProps {
 	onClose: () => void;
 	onOpenControls?: () => void;
 	onSelectSession: (sessionId: string) => void;
+	onNewThreadInWorkspace?: (sessionId: string) => void;
 	onDeleteSession?: (sessionId: string) => void;
 	onOpenTabSearch?: () => void;
 	canOpenTabSearch: boolean;
 }
 
-interface SessionGroupSection {
+interface WorkspaceSection {
 	id: string;
 	name: string;
 	emoji: string;
 	sessions: Session[];
+	lastActivityAt: number;
 }
 
-interface SwipeableAgentRowProps {
+interface RecentThreadEntry {
+	session: Session;
+	workspaceId: string;
+	workspaceName: string;
+	workspaceEmoji: string;
+	lastActivityAt: number;
+}
+
+interface SwipeableThreadRowProps {
 	session: Session;
 	isActive: boolean;
 	activeBadgeShadow: string;
+	subtitle?: string | null;
+	trailingWorkspaceEmoji?: string | null;
 	onSelect: (sessionId: string) => void;
 	onDelete?: (session: Session) => void;
 	isDeleteActionVisible: boolean;
@@ -40,15 +53,37 @@ function normalizeSearchText(value: string): string {
 	return value.trim().toLowerCase();
 }
 
-function SwipeableAgentRow({
+function getSessionActivityTimestamp(session: Session): number {
+	const lastTurnAt = session.lastTurnAt ?? 0;
+	const lastResponseAt = session.lastResponse?.timestamp ?? 0;
+	const aiTabActivityAt =
+		session.aiTabs?.reduce((latest, tab) => {
+			return Math.max(
+				latest,
+				tab.lastCheckpointAt ?? 0,
+				tab.thinkingStartTime ?? 0,
+				tab.createdAt ?? 0
+			);
+		}, 0) ?? 0;
+
+	return Math.max(lastTurnAt, lastResponseAt, aiTabActivityAt);
+}
+
+function getThreadDisplayName(session: Session): string {
+	return session.threadTitle?.trim() || session.name;
+}
+
+function SwipeableThreadRow({
 	session,
 	isActive,
 	activeBadgeShadow,
+	subtitle,
+	trailingWorkspaceEmoji,
 	onSelect,
 	onDelete,
 	isDeleteActionVisible,
 	onToggleDeleteAction,
-}: SwipeableAgentRowProps) {
+}: SwipeableThreadRowProps) {
 	const colors = useThemeColors();
 	const tabCount = session.aiTabs?.length || 0;
 	const showTabCount = tabCount > 1;
@@ -126,9 +161,9 @@ function SwipeableAgentRow({
 					<button
 						type="button"
 						onClick={handleDelete}
-						aria-label={`Delete ${session.name}`}
+						aria-label={`Delete thread ${getThreadDisplayName(session)}`}
 						aria-hidden={!isDeleteActionRevealed}
-						title={`Delete ${session.name}`}
+						title={`Delete thread ${getThreadDisplayName(session)}`}
 						tabIndex={isDeleteActionRevealed ? 0 : -1}
 						style={{
 							position: 'absolute',
@@ -200,18 +235,57 @@ function SwipeableAgentRow({
 				>
 					<span
 						style={{
-							fontSize: '13px',
-							fontWeight: isActive ? 600 : 500,
-							color: colors.textMain,
-							minWidth: 0,
-							flex: 1,
-							letterSpacing: isActive ? '-0.01em' : undefined,
-							overflow: 'hidden',
-							textOverflow: 'ellipsis',
-							whiteSpace: 'nowrap',
+							display: 'inline-flex',
+							alignItems: 'center',
+							justifyContent: 'center',
+							width: '24px',
+							height: '24px',
+							borderRadius: '999px',
+							background: isActive ? `${colors.accent}12` : 'rgba(255, 255, 255, 0.06)',
+							border: '1px solid rgba(255, 255, 255, 0.06)',
+							boxShadow: isActive ? activeBadgeShadow : 'none',
+							flexShrink: 0,
 						}}
 					>
-						{session.name}
+						<ProviderModelIcon toolType={session.toolType} color={colors.textMain} size={14} />
+					</span>
+					<span
+						style={{
+							display: 'flex',
+							flexDirection: 'column',
+							gap: subtitle ? '3px' : 0,
+							minWidth: 0,
+							flex: 1,
+						}}
+					>
+						<span
+							style={{
+								fontSize: '13px',
+								fontWeight: isActive ? 600 : 500,
+								color: colors.textMain,
+								letterSpacing: isActive ? '-0.01em' : undefined,
+								overflow: 'hidden',
+								textOverflow: 'ellipsis',
+								whiteSpace: 'nowrap',
+							}}
+						>
+								{getThreadDisplayName(session)}
+							</span>
+						{subtitle && (
+							<span
+								style={{
+									fontSize: '10px',
+									fontWeight: 600,
+									color: colors.textDim,
+									opacity: 0.84,
+									overflow: 'hidden',
+									textOverflow: 'ellipsis',
+									whiteSpace: 'nowrap',
+								}}
+							>
+								{subtitle}
+							</span>
+						)}
 					</span>
 					<div
 						style={{
@@ -223,6 +297,28 @@ function SwipeableAgentRow({
 							justifyContent: 'flex-end',
 						}}
 					>
+						{trailingWorkspaceEmoji && (
+							<span
+								title="Workspace"
+								style={{
+									display: 'inline-flex',
+									alignItems: 'center',
+									justifyContent: 'center',
+									width: '26px',
+									height: '26px',
+									borderRadius: '999px',
+									backgroundColor: isActive
+										? `${colors.accent}10`
+										: 'rgba(255, 255, 255, 0.06)',
+									border: '1px solid rgba(255, 255, 255, 0.06)',
+									fontSize: '15px',
+									lineHeight: 1,
+									boxShadow: isActive ? activeBadgeShadow : 'none',
+								}}
+							>
+								{trailingWorkspaceEmoji}
+							</span>
+						)}
 						{showGitIndicator && (
 							<span
 								title={`${gitFileCount} changed file${gitFileCount === 1 ? '' : 's'}`}
@@ -281,6 +377,7 @@ export function MobileNavigationDrawer({
 	onClose,
 	onOpenControls,
 	onSelectSession,
+	onNewThreadInWorkspace,
 	onDeleteSession,
 	onOpenTabSearch,
 	canOpenTabSearch,
@@ -318,7 +415,7 @@ export function MobileNavigationDrawer({
 		(session: Session) => {
 			if (!onDeleteSession) return;
 			setDeleteActionSessionId(null);
-			const shouldDelete = window.confirm(`Remove agent "${session.name}"?`);
+				const shouldDelete = window.confirm(`Delete thread "${getThreadDisplayName(session)}"?`);
 			if (!shouldDelete) return;
 			searchInputRef.current?.blur();
 			setSearchQuery('');
@@ -326,55 +423,89 @@ export function MobileNavigationDrawer({
 		},
 		[onDeleteSession]
 	);
-	const groupedSessions = useMemo((): SessionGroupSection[] => {
-		const grouped = new Map<string, SessionGroupSection>();
+	const handleCreateThreadInWorkspace = useCallback(
+		(sessionId: string) => {
+			if (!onNewThreadInWorkspace) return;
+			searchInputRef.current?.blur();
+			setSearchQuery('');
+			setDeleteActionSessionId(null);
+			onNewThreadInWorkspace(sessionId);
+		},
+		[onNewThreadInWorkspace]
+	);
+	const workspaceSections = useMemo((): WorkspaceSection[] => {
+		const grouped = new Map<string, WorkspaceSection>();
 
 		for (const session of sessions) {
-			const groupId = session.groupId || 'ungrouped';
-			const existingGroup = grouped.get(groupId);
+			const workspaceId = session.groupId || 'ungrouped';
+			const sessionActivityAt = getSessionActivityTimestamp(session);
+			const existingGroup = grouped.get(workspaceId);
 
 			if (existingGroup) {
 				existingGroup.sessions.push(session);
+				existingGroup.lastActivityAt = Math.max(existingGroup.lastActivityAt, sessionActivityAt);
 				continue;
 			}
 
-			grouped.set(groupId, {
-				id: groupId,
-				name: session.groupName || 'Ungrouped',
+			grouped.set(workspaceId, {
+				id: workspaceId,
+				name: session.groupName || 'Workspace',
 				emoji: session.groupEmoji || '📂',
 				sessions: [session],
+				lastActivityAt: sessionActivityAt,
 			});
 		}
 
 		return [...grouped.values()]
 			.sort((a, b) => {
-				if (a.id === 'ungrouped') return 1;
-				if (b.id === 'ungrouped') return -1;
-				return a.name.localeCompare(b.name);
+				return b.lastActivityAt - a.lastActivityAt || a.name.localeCompare(b.name);
 			})
-			.map((group) => ({
-				...group,
-				sessions: [...group.sessions].sort((a, b) => a.name.localeCompare(b.name)),
-			}));
+			.map((workspace) => ({
+				...workspace,
+				sessions: [...workspace.sessions].sort((a, b) => {
+					const activityDiff = getSessionActivityTimestamp(b) - getSessionActivityTimestamp(a);
+					if (activityDiff !== 0) return activityDiff;
+						return getThreadDisplayName(a).localeCompare(getThreadDisplayName(b));
+					}),
+				}));
 	}, [sessions]);
 	const normalizedSearchQuery = normalizeSearchText(searchQuery);
-	const filteredGroups = useMemo(() => {
+	const filteredWorkspaces = useMemo(() => {
 		if (!normalizedSearchQuery) {
-			return groupedSessions;
+			return workspaceSections;
 		}
 
-		return groupedSessions
-			.map((group) => ({
-				...group,
-				sessions: group.sessions.filter((session) => {
-					const haystack = `${group.name} ${session.name} ${session.toolType}`.toLowerCase();
-					return haystack.includes(normalizedSearchQuery);
-				}),
+		return workspaceSections
+			.map((workspace) => ({
+				...workspace,
+				sessions: workspace.sessions.filter((session) => {
+						const haystack = `${workspace.name} ${getThreadDisplayName(session)} ${session.toolType} ${session.groupName || ''}`.toLowerCase();
+						return haystack.includes(normalizedSearchQuery);
+					}),
 			}))
-			.filter((group) => group.sessions.length > 0);
-	}, [groupedSessions, normalizedSearchQuery]);
-	const visibleAgentCount = filteredGroups.reduce(
-		(total, group) => total + group.sessions.length,
+			.filter((workspace) => workspace.sessions.length > 0);
+	}, [normalizedSearchQuery, workspaceSections]);
+	const recentThreads = useMemo((): RecentThreadEntry[] => {
+		const threadEntries = filteredWorkspaces.flatMap((workspace) =>
+			workspace.sessions.map((session) => ({
+				session,
+				workspaceId: workspace.id,
+				workspaceName: workspace.name,
+				workspaceEmoji: workspace.emoji,
+				lastActivityAt: getSessionActivityTimestamp(session),
+			}))
+		);
+
+		return threadEntries
+			.sort(
+				(a, b) =>
+					b.lastActivityAt - a.lastActivityAt ||
+					getThreadDisplayName(a.session).localeCompare(getThreadDisplayName(b.session))
+			)
+			.slice(0, 5);
+	}, [filteredWorkspaces]);
+	const visibleThreadCount = filteredWorkspaces.reduce(
+		(total, workspace) => total + workspace.sessions.length,
 		0
 	);
 
@@ -463,7 +594,7 @@ export function MobileNavigationDrawer({
 									letterSpacing: '-0.02em',
 								}}
 							>
-								Agents
+								Workspaces
 							</div>
 						</div>
 						<div
@@ -586,7 +717,7 @@ export function MobileNavigationDrawer({
 										<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" />
 									</svg>
 								</span>
-								<span>Chats</span>
+								<span>Threads</span>
 							</button>
 						)}
 					</div>
@@ -646,7 +777,7 @@ export function MobileNavigationDrawer({
 								enterKeyHint="search"
 								value={searchQuery}
 								onChange={(event) => setSearchQuery(event.target.value)}
-								placeholder="Search agents"
+								placeholder="Search workspaces and threads"
 								style={{
 									width: '100%',
 									height: '100%',
@@ -674,7 +805,7 @@ export function MobileNavigationDrawer({
 								gap: '12px',
 							}}
 						>
-							<span>Agents</span>
+							<span>Threads</span>
 							<span
 								style={{
 									display: 'inline-flex',
@@ -692,11 +823,120 @@ export function MobileNavigationDrawer({
 									textTransform: 'none',
 								}}
 							>
-								{visibleAgentCount}
+								{visibleThreadCount}
 							</span>
 						</div>
 						<div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-							{filteredGroups.map((group) => (
+							{recentThreads.length > 0 && (
+								<div
+									style={{
+										display: 'flex',
+										flexDirection: 'column',
+										gap: '10px',
+									}}
+								>
+									<div
+										style={{
+											display: 'flex',
+											alignItems: 'center',
+											justifyContent: 'space-between',
+											gap: '8px',
+											padding: '0 4px',
+										}}
+									>
+										<div
+											style={{
+												fontSize: '12px',
+												fontWeight: 650,
+												color: colors.textMain,
+											}}
+										>
+											Recent Threads
+										</div>
+										<div
+											style={{
+												fontSize: '10px',
+												fontWeight: 600,
+												color: colors.textDim,
+												opacity: 0.82,
+												textTransform: 'uppercase',
+												letterSpacing: '0.04em',
+											}}
+										>
+											Latest activity
+										</div>
+									</div>
+									<div
+										style={{
+											...softSurface,
+											display: 'flex',
+											flexDirection: 'column',
+											borderRadius: '18px',
+											overflow: 'hidden',
+											padding: '4px',
+											background:
+												'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)',
+										}}
+									>
+										{recentThreads.map((thread) => {
+											const isActive = thread.session.id === activeSessionId;
+											return (
+												<SwipeableThreadRow
+													key={`recent-${thread.session.id}`}
+													session={thread.session}
+													isActive={isActive}
+													activeBadgeShadow={activeBadgeShadow}
+													trailingWorkspaceEmoji={thread.workspaceEmoji}
+													onSelect={(sessionId) => {
+														searchInputRef.current?.blur();
+														setSearchQuery('');
+														setDeleteActionSessionId(null);
+														onSelectSession(sessionId);
+													}}
+													onDelete={onDeleteSession ? confirmDeleteSession : undefined}
+													isDeleteActionVisible={deleteActionSessionId === thread.session.id}
+													onToggleDeleteAction={setDeleteActionSessionId}
+												/>
+											);
+										})}
+									</div>
+								</div>
+							)}
+
+							{filteredWorkspaces.length > 0 && (
+								<div
+									style={{
+										display: 'flex',
+										alignItems: 'center',
+										justifyContent: 'space-between',
+										gap: '12px',
+										padding: '0 4px',
+									}}
+								>
+									<div
+										style={{
+											fontSize: '12px',
+											fontWeight: 650,
+											color: colors.textMain,
+										}}
+									>
+										Workspaces
+									</div>
+									<div
+										style={{
+											fontSize: '10px',
+											fontWeight: 600,
+											color: colors.textDim,
+											opacity: 0.82,
+											textTransform: 'uppercase',
+											letterSpacing: '0.04em',
+										}}
+									>
+										By repo
+									</div>
+								</div>
+							)}
+							{filteredWorkspaces.map((group) => (
 								<div
 									key={group.id}
 									style={{
@@ -731,9 +971,9 @@ export function MobileNavigationDrawer({
 										</span>
 										<div
 											style={{
-												fontSize: '12px',
-												fontWeight: 600,
-												color: colors.textMain,
+													fontSize: '12px',
+													fontWeight: 600,
+													color: colors.textMain,
 												minWidth: 0,
 												overflow: 'hidden',
 												textOverflow: 'ellipsis',
@@ -745,6 +985,36 @@ export function MobileNavigationDrawer({
 										<div
 											style={{
 												marginLeft: 'auto',
+												display: 'flex',
+												alignItems: 'center',
+												gap: '8px',
+											}}
+										>
+											{onNewThreadInWorkspace && (
+												<button
+													type="button"
+													onClick={() => handleCreateThreadInWorkspace(group.sessions[0].id)}
+													aria-label={`New thread in ${group.name}`}
+													title={`New thread in ${group.name}`}
+													style={{
+														width: '24px',
+														height: '24px',
+														borderRadius: '999px',
+														border: '1px solid rgba(255, 255, 255, 0.08)',
+														background: 'rgba(255, 255, 255, 0.06)',
+														color: colors.accent,
+														display: 'inline-flex',
+														alignItems: 'center',
+														justifyContent: 'center',
+														cursor: 'pointer',
+														flexShrink: 0,
+													}}
+												>
+													<Plus size={14} />
+												</button>
+											)}
+											<div
+												style={{
 												display: 'inline-flex',
 												alignItems: 'center',
 												justifyContent: 'center',
@@ -760,6 +1030,7 @@ export function MobileNavigationDrawer({
 											}}
 										>
 											{group.sessions.length}
+											</div>
 										</div>
 									</div>
 
@@ -778,7 +1049,7 @@ export function MobileNavigationDrawer({
 										{group.sessions.map((session) => {
 											const isActive = session.id === activeSessionId;
 											return (
-												<SwipeableAgentRow
+												<SwipeableThreadRow
 													key={session.id}
 													session={session}
 													isActive={isActive}
@@ -798,7 +1069,7 @@ export function MobileNavigationDrawer({
 									</div>
 								</div>
 							))}
-							{filteredGroups.length === 0 && (
+							{filteredWorkspaces.length === 0 && (
 								<div
 									style={{
 										...softSurface,
@@ -809,7 +1080,7 @@ export function MobileNavigationDrawer({
 										textAlign: 'center',
 									}}
 								>
-									No agents match “{searchQuery.trim()}”
+									No workspaces or threads match “{searchQuery.trim()}”
 								</div>
 							)}
 						</div>

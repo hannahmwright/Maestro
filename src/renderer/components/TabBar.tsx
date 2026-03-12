@@ -79,6 +79,12 @@ interface TabBarProps {
 	onFileTabSelect?: (tabId: string) => void;
 	/** Handler to close a file preview tab */
 	onFileTabClose?: (tabId: string) => void;
+	/** Optional filter for which unified tab types should be rendered */
+	visibleTabTypes?: UnifiedTab['type'][];
+	/** Whether search/filter controls should be shown */
+	showUtilityControls?: boolean;
+	/** Whether the trailing new-tab button should be shown */
+	showNewTabButton?: boolean;
 
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */
@@ -1581,6 +1587,9 @@ function TabBarInner({
 	onFileTabSelect,
 	onFileTabClose,
 	onUnifiedTabReorder,
+	visibleTabTypes,
+	showUtilityControls = true,
+	showNewTabButton = true,
 	// Accessibility
 	colorBlindMode,
 }: TabBarProps) {
@@ -1667,13 +1676,21 @@ function TabBarInner({
 					return !t.hasUnread || t.id === activeTabId || hasDraft(t);
 				});
 
+	const visibleTypeSet = useMemo(
+		() => (visibleTabTypes && visibleTabTypes.length > 0 ? new Set(visibleTabTypes) : null),
+		[visibleTabTypes]
+	);
+
 	// When unifiedTabs is provided, filter it similarly for display
 	// File tabs don't have "unread" state, so they only show in filtered mode if active
 	const displayedUnifiedTabs = useMemo(() => {
 		if (!unifiedTabs) return null;
-		if (activeMailFilterMode === 'all') return unifiedTabs;
+		const baseTabs = visibleTypeSet
+			? unifiedTabs.filter((unifiedTab) => visibleTypeSet.has(unifiedTab.type))
+			: unifiedTabs;
+		if (activeMailFilterMode === 'all') return baseTabs;
 		// In filtered modes: show AI tabs by selected mode plus active/draft, and active file tab.
-		return unifiedTabs.filter((ut) => {
+		return baseTabs.filter((ut) => {
 			if (ut.type === 'ai') {
 				if (activeMailFilterMode === 'unread') {
 					return ut.data.hasUnread || ut.id === activeTabId || hasDraft(ut.data);
@@ -1683,7 +1700,7 @@ function TabBarInner({
 			// File tabs: only show if active
 			return ut.id === activeFileTabId;
 		});
-	}, [unifiedTabs, activeMailFilterMode, activeTabId, activeFileTabId]);
+	}, [unifiedTabs, visibleTypeSet, activeMailFilterMode, activeTabId, activeFileTabId]);
 
 	useEffect(() => {
 		if (!showUnreadOnly) return;
@@ -2005,88 +2022,92 @@ function TabBarInner({
 			}}
 		>
 			{/* Tab search and unread filter - sticky at the beginning with full-height opaque background */}
-			<div
-				className="sticky left-0 flex items-center shrink-0 pl-2 pr-1 gap-1 self-stretch"
-				style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
-			>
-				{/* Tab search button */}
-				{onOpenTabSearch && (
-					<button
-						onClick={onOpenTabSearch}
-						className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
-						style={{ color: theme.colors.textDim }}
-						title={`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`}
-					>
-						<Search className="w-4 h-4" />
-					</button>
-				)}
-				<div className="relative">
-					<button
-						ref={mailFilterButtonRef}
-						onClick={handleMailFilterTriggerClick}
-						className="flex items-center justify-center gap-0.5 h-6 px-1.5 rounded transition-colors"
-						style={{
-							color: isTabFilterActive ? theme.colors.accent : theme.colors.textDim,
-							opacity: isTabFilterActive ? 1 : 0.7,
-						}}
-						title={`${mailFilterLabel} (${unreadShortcut} toggles unread only)`}
-					>
-						<MailFilterIcon className="w-4 h-4" />
-						<ChevronDown className="w-3 h-3 opacity-70" />
-					</button>
-					{isMailFilterMenuOpen &&
-						mailFilterMenuPosition &&
-						createPortal(
-							<div
-								ref={mailFilterMenuRef}
-								className="fixed rounded-lg border shadow-xl p-1 z-[100] min-w-[160px]"
-								style={{
-									top: mailFilterMenuPosition.top,
-									left: mailFilterMenuPosition.left,
-									backgroundColor: theme.colors.bgSidebar,
-									borderColor: theme.colors.border,
-								}}
-							>
-								{(
-									[
-										{ id: 'all' as const, label: 'Show all', Icon: Mail },
-										{ id: 'unread' as const, label: 'Unread only', Icon: Mail },
-										{ id: 'read' as const, label: 'Read only', Icon: MailOpen },
-									] satisfies Array<{
-										id: MailFilterMode;
-										label: string;
-										Icon: typeof Mail;
-									}>
-								).map((option) => {
-									const isSelected = option.id === activeMailFilterMode;
-									return (
-										<button
-											key={option.id}
-											onClick={() => setMailFilterMode(option.id)}
-											className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left transition-all"
-											style={{
-												backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
-												color: isSelected ? theme.colors.accent : theme.colors.textMain,
-											}}
-											title={
-												option.id === 'unread'
-													? `${option.label} (${unreadShortcut})`
-													: option.label
-											}
-										>
-											<span className="flex items-center gap-2">
-												<option.Icon className="w-3.5 h-3.5" />
-												<span className="text-xs">{option.label}</span>
-											</span>
-											{isSelected && <Check className="w-3.5 h-3.5" />}
-										</button>
-									);
-								})}
-							</div>,
-							document.body
-						)}
+			{showUtilityControls && (
+				<div
+					className="sticky left-0 flex items-center shrink-0 pl-2 pr-1 gap-1 self-stretch"
+					style={{ backgroundColor: theme.colors.bgSidebar, zIndex: 5 }}
+				>
+					{/* Tab search button */}
+					{onOpenTabSearch && (
+						<button
+							onClick={onOpenTabSearch}
+							className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textDim }}
+							title={`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`}
+						>
+							<Search className="w-4 h-4" />
+						</button>
+					)}
+					<div className="relative">
+						<button
+							ref={mailFilterButtonRef}
+							onClick={handleMailFilterTriggerClick}
+							className="flex items-center justify-center gap-0.5 h-6 px-1.5 rounded transition-colors"
+							style={{
+								color: isTabFilterActive ? theme.colors.accent : theme.colors.textDim,
+								opacity: isTabFilterActive ? 1 : 0.7,
+							}}
+							title={`${mailFilterLabel} (${unreadShortcut} toggles unread only)`}
+						>
+							<MailFilterIcon className="w-4 h-4" />
+							<ChevronDown className="w-3 h-3 opacity-70" />
+						</button>
+						{isMailFilterMenuOpen &&
+							mailFilterMenuPosition &&
+							createPortal(
+								<div
+									ref={mailFilterMenuRef}
+									className="fixed rounded-lg border shadow-xl p-1 z-[100] min-w-[160px]"
+									style={{
+										top: mailFilterMenuPosition.top,
+										left: mailFilterMenuPosition.left,
+										backgroundColor: theme.colors.bgSidebar,
+										borderColor: theme.colors.border,
+									}}
+								>
+									{(
+										[
+											{ id: 'all' as const, label: 'Show all', Icon: Mail },
+											{ id: 'unread' as const, label: 'Unread only', Icon: Mail },
+											{ id: 'read' as const, label: 'Read only', Icon: MailOpen },
+										] satisfies Array<{
+											id: MailFilterMode;
+											label: string;
+											Icon: typeof Mail;
+										}>
+									).map((option) => {
+										const isSelected = option.id === activeMailFilterMode;
+										return (
+											<button
+												key={option.id}
+												onClick={() => setMailFilterMode(option.id)}
+												className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left transition-all"
+												style={{
+													backgroundColor: isSelected
+														? `${theme.colors.accent}25`
+														: 'transparent',
+													color: isSelected ? theme.colors.accent : theme.colors.textMain,
+												}}
+												title={
+													option.id === 'unread'
+														? `${option.label} (${unreadShortcut})`
+														: option.label
+												}
+											>
+												<span className="flex items-center gap-2">
+													<option.Icon className="w-3.5 h-3.5" />
+													<span className="text-xs">{option.label}</span>
+												</span>
+												{isSelected && <Check className="w-3.5 h-3.5" />}
+											</button>
+										);
+									})}
+								</div>,
+								document.body
+							)}
+					</div>
 				</div>
-			</div>
+			)}
 
 			{/* Empty state when a filter is on but there are no matching tabs */}
 			{isTabFilterActive &&
@@ -2328,22 +2349,24 @@ function TabBarInner({
 					})}
 
 			{/* New Tab Button - sticky on right when tabs overflow, with full-height opaque background */}
-			<div
-				className={`flex items-center shrink-0 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
-				style={{
-					backgroundColor: theme.colors.bgSidebar,
-					zIndex: 5,
-				}}
-			>
-				<button
-					onClick={onNewTab}
-					className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
-					style={{ color: theme.colors.textDim }}
-					title={`New tab (${formatShortcutKeys(['Meta', 't'])})`}
+			{showNewTabButton && (
+				<div
+					className={`flex items-center shrink-0 pl-2 pr-2 self-stretch ${isOverflowing ? 'sticky right-0' : ''}`}
+					style={{
+						backgroundColor: theme.colors.bgSidebar,
+						zIndex: 5,
+					}}
 				>
-					<Plus className="w-4 h-4" />
-				</button>
-			</div>
+					<button
+						onClick={onNewTab}
+						className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textDim }}
+						title={`New tab (${formatShortcutKeys(['Meta', 't'])})`}
+					>
+						<Plus className="w-4 h-4" />
+					</button>
+				</div>
+			)}
 		</div>
 	);
 }
