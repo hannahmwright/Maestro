@@ -95,6 +95,7 @@ export interface RenameGroupModalData {
 	groupId: string;
 	value: string;
 	emoji: string;
+	projectRoot: string;
 }
 
 /** Agent sessions browser data */
@@ -645,7 +646,7 @@ export function getModalActions() {
 				return;
 			}
 			const current = useModalStore.getState().getData('renameGroup');
-			openModal('renameGroup', current ?? { groupId: '', value: '', emoji: '📂' });
+			openModal('renameGroup', current ?? { groupId: '', value: '', emoji: '📂', projectRoot: '' });
 		},
 		setRenameGroupId: (groupId: string | null) => {
 			if (!groupId) return;
@@ -654,6 +655,7 @@ export function getModalActions() {
 				groupId,
 				value: current?.value ?? '',
 				emoji: current?.emoji ?? '📂',
+				projectRoot: current?.projectRoot ?? '',
 			});
 		},
 		setRenameGroupValue: (value: string) => {
@@ -661,7 +663,7 @@ export function getModalActions() {
 			if (current) {
 				updateModalData('renameGroup', { value });
 			} else {
-				openModal('renameGroup', { groupId: '', value, emoji: '📂' });
+				openModal('renameGroup', { groupId: '', value, emoji: '📂', projectRoot: '' });
 			}
 		},
 		setRenameGroupEmoji: (emoji: string) => {
@@ -669,7 +671,15 @@ export function getModalActions() {
 			if (current) {
 				updateModalData('renameGroup', { emoji });
 			} else {
-				openModal('renameGroup', { groupId: '', value: '', emoji });
+				openModal('renameGroup', { groupId: '', value: '', emoji, projectRoot: '' });
+			}
+		},
+		setRenameGroupProjectRoot: (projectRoot: string) => {
+			const current = useModalStore.getState().getData('renameGroup');
+			if (current) {
+				updateModalData('renameGroup', { projectRoot });
+			} else {
+				openModal('renameGroup', { groupId: '', value: '', emoji: '📂', projectRoot });
 			}
 		},
 
@@ -968,6 +978,7 @@ export function useModalActions() {
 		renameGroupId: renameGroupData?.groupId ?? null,
 		renameGroupValue: renameGroupData?.value ?? '',
 		renameGroupEmoji: renameGroupData?.emoji ?? '📂',
+		renameGroupProjectRoot: renameGroupData?.projectRoot ?? '',
 
 		// Agent Sessions Browser
 		agentSessionsOpen,

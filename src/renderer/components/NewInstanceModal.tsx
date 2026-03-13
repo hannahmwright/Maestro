@@ -143,6 +143,15 @@ export function NewInstanceModal({
 	const nameLabel = isThreadMode ? 'Thread Name' : 'First Thread Name';
 	const providerLabel = isThreadMode ? 'Thread Provider' : 'Initial Provider';
 	const workingDirectoryLabel = isThreadMode ? 'Workspace Directory' : 'Working Directory';
+
+	// Expand tilde in path before any memoized render-time consumers use it.
+	const expandTilde = (path: string): string => {
+		if (!homeDir) return path;
+		if (path === '~') return homeDir;
+		if (path.startsWith('~/')) return homeDir + path.slice(1);
+		return path;
+	};
+
 	const effectiveWorkingDir = useMemo(
 		() => expandTilde((fixedWorkingDir || workingDir).trim()),
 		[fixedWorkingDir, workingDir, homeDir]
@@ -159,14 +168,6 @@ export function NewInstanceModal({
 	useEffect(() => {
 		window.maestro.fs.homeDir().then(setHomeDir);
 	}, []);
-
-	// Expand tilde in path
-	const expandTilde = (path: string): string => {
-		if (!homeDir) return path;
-		if (path === '~') return homeDir;
-		if (path.startsWith('~/')) return homeDir + path.slice(1);
-		return path;
-	};
 
 	const handleWorkingDirChange = React.useCallback((value: string) => {
 		if (fixedWorkingDir) return;

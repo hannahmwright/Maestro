@@ -25,6 +25,39 @@ import { webLogger } from './utils/logger';
 import type { Theme } from '../shared/theme-types';
 
 const THEME_SNAPSHOT_STORAGE_KEY = 'maestro:web-theme-snapshot';
+const APPEARANCE_PREFERENCE_STORAGE_KEY = 'maestro:web-appearance-preference';
+
+export type WebAppearancePreference = 'system' | 'light' | 'dark';
+
+function isWebAppearancePreference(value: string | null): value is WebAppearancePreference {
+	return value === 'system' || value === 'light' || value === 'dark';
+}
+
+function readStoredAppearancePreference(): WebAppearancePreference {
+	if (typeof window === 'undefined') {
+		return 'system';
+	}
+
+	try {
+		const raw = window.localStorage.getItem(APPEARANCE_PREFERENCE_STORAGE_KEY);
+		return isWebAppearancePreference(raw) ? raw : 'system';
+	} catch {
+		return 'system';
+	}
+}
+
+function persistAppearancePreference(preference: WebAppearancePreference): void {
+	if (typeof window === 'undefined') {
+		return;
+	}
+
+	try {
+		window.localStorage.setItem(APPEARANCE_PREFERENCE_STORAGE_KEY, preference);
+	} catch {
+		// Ignore localStorage failures
+	}
+}
+
 function readStoredThemeSnapshot(): Theme | null {
 	if (typeof window === 'undefined') {
 		return null;
@@ -236,16 +269,21 @@ interface ThemeUpdateContextValue {
 	desktopTheme: Theme | null;
 	/** Update the theme when received from desktop app */
 	setDesktopTheme: (theme: Theme) => void;
+	/** Web-local appearance preference for the PWA shell */
+	appearancePreference: WebAppearancePreference;
+	/** Update the web-local appearance preference */
+	setAppearancePreference: (preference: WebAppearancePreference) => void;
 }
 
 const ThemeUpdateContext = createContext<ThemeUpdateContextValue>({
 	desktopTheme: null,
 	setDesktopTheme: () => {},
+	appearancePreference: 'system',
+	setAppearancePreference: () => {},
 });
 
 /**
- * Hook to access and update the desktop theme
- * Used by mobile app to set theme when received via WebSocket
+ * Hook to access desktop-driven theme updates plus the PWA's local appearance preference
  */
 export function useDesktopTheme(): ThemeUpdateContextValue {
 	return useContext(ThemeUpdateContext);
@@ -477,6 +515,9 @@ function BootBackdrop() {
 export function App() {
 	const [offline, setOffline] = useState(isOffline());
 	const [desktopTheme, setDesktopTheme] = useState<Theme | null>(() => readStoredThemeSnapshot());
+	const [appearancePreference, setAppearancePreference] = useState<WebAppearancePreference>(() =>
+		readStoredAppearancePreference()
+	);
 	const [hasServiceWorkerUpdate, setHasServiceWorkerUpdate] = useState(false);
 	const [hasInstalledServiceWorkerUpdate, setHasInstalledServiceWorkerUpdate] = useState(false);
 	const config = useMemo(() => getMaestroConfig(), []);
@@ -493,12 +534,20 @@ export function App() {
 		setDesktopTheme(theme);
 	}, []);
 
+	const handleAppearancePreference = useCallback((preference: WebAppearancePreference) => {
+		webLogger.debug(`Web appearance preference updated: ${preference}`, 'App');
+		persistAppearancePreference(preference);
+		setAppearancePreference(preference);
+	}, []);
+
 	const themeUpdateContextValue = useMemo(
 		() => ({
 			desktopTheme,
 			setDesktopTheme: handleDesktopTheme,
+			appearancePreference,
+			setAppearancePreference: handleAppearancePreference,
 		}),
-		[desktopTheme, handleDesktopTheme]
+		[desktopTheme, handleDesktopTheme, appearancePreference, handleAppearancePreference]
 	);
 
 	// Register service worker for offline capability
@@ -556,7 +605,13 @@ export function App() {
             will automatically use a dark or light theme based on the user's device settings.
             Once the desktop app sends a theme (via desktopTheme), it will override the device preference.
           */}
-					<ThemeProvider theme={desktopTheme || undefined} useDevicePreference>
+					<ThemeProvider
+						theme={appearancePreference === 'system' ? desktopTheme || undefined : undefined}
+						useDevicePreference={appearancePreference === 'system'}
+						forcedColorScheme={
+							appearancePreference === 'system' ? undefined : appearancePreference
+						}
+					>
 						{hasServiceWorkerUpdate && (
 							<BuildToast
 								variant="update-ready"

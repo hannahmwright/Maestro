@@ -38,6 +38,7 @@ interface QuickActionsModalProps {
 	setRenameGroupId: (id: string) => void;
 	setRenameGroupValue: (value: string) => void;
 	setRenameGroupEmoji: (emoji: string) => void;
+	setRenameGroupProjectRoot: (value: string) => void;
 	setCreateGroupModalOpen: (open: boolean) => void;
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
@@ -141,6 +142,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		setRenameGroupId,
 		setRenameGroupValue,
 		setRenameGroupEmoji,
+		setRenameGroupProjectRoot,
 		setCreateGroupModalOpen,
 		setLeftSidebarOpen,
 		setRightPanelOpen,
@@ -417,13 +419,14 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 			? [
 					{
 						id: 'renameGroup',
-						label: 'Rename Group',
+						label: 'Edit Workspace',
 						action: () => {
 							const group = groups.find((g) => g.id === activeSession.groupId);
 							if (group) {
 								setRenameGroupId(group.id);
 								setRenameGroupValue(group.name);
 								setRenameGroupEmoji(group.emoji);
+								setRenameGroupProjectRoot(group.projectRoot || '');
 								setRenameGroupModalOpen(true);
 								setQuickActionOpen(false);
 							}

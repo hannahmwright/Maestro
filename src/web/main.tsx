@@ -9,6 +9,7 @@ import { webLogger } from './utils/logger';
 import './index.css';
 
 export { useOfflineStatus, useMaestroMode, useDesktopTheme } from './App';
+export type { WebAppearancePreference } from './App';
 
 declare global {
 	interface Window {

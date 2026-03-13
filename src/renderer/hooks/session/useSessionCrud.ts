@@ -396,7 +396,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			const sessionCount = groupSessions.length;
 
 			showConfirmation(
-				`Are you sure you want to remove the group "${group.name}" and all ${sessionCount} agent${
+				`Are you sure you want to remove the workspace "${group.name}" and all ${sessionCount} agent${
 					sessionCount !== 1 ? 's' : ''
 				} in it? This action cannot be undone.`,
 				async () => {
@@ -429,6 +429,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					const sessionIdsToRemove = new Set(groupSessions.map((s) => s.id));
 					const latestSessions = useSessionStore.getState().sessions;
 					const newSessions = latestSessions.filter((s) => !sessionIdsToRemove.has(s.id));
+					setThreads((prev) => prev.filter((thread) => thread.workspaceId !== groupId));
 					setSessions(newSessions);
 					setGroups((prev) => prev.filter((g) => g.id !== groupId));
 
@@ -443,7 +444,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 
 					notifyToast({
 						type: 'success',
-						title: 'Group Removed',
+						title: 'Workspace Removed',
 						message: `Removed "${group.name}" and ${sessionCount} agent${
 							sessionCount !== 1 ? 's' : ''
 						}`,
@@ -455,6 +456,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 			showConfirmation,
 			setSessions,
 			setGroups,
+			setThreads,
 			setActiveSessionId,
 			setRemovedWorktreePaths,
 			flushSessionPersistence,

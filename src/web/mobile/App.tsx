@@ -28,7 +28,7 @@ import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { useMobileSessionManagement } from '../hooks/useMobileSessionManagement';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { usePushSubscription } from '../hooks/usePushSubscription';
-import { useOfflineStatus, useDesktopTheme } from '../main';
+import { useOfflineStatus, useDesktopTheme, type WebAppearancePreference } from '../main';
 import { showLocalServiceWorkerNotification } from '../utils/serviceWorker';
 import {
 	buildApiUrl,
@@ -586,11 +586,13 @@ interface AppControlsPanelProps {
 	isPushSubscribed: boolean;
 	isPushLoading: boolean;
 	pushError: string | null;
+	appearancePreference: WebAppearancePreference;
 	onInstall: () => void;
 	onEnableNotifications: () => void;
 	onEnablePush: () => void;
 	onDisablePush: () => void;
 	onSendTestNotification: () => void;
+	onAppearancePreferenceChange: (preference: WebAppearancePreference) => void;
 	embedded?: boolean;
 	hideHeader?: boolean;
 }
@@ -604,11 +606,13 @@ function AppControlsPanel({
 	isPushSubscribed,
 	isPushLoading,
 	pushError,
+	appearancePreference,
 	onInstall,
 	onEnableNotifications,
 	onEnablePush,
 	onDisablePush,
 	onSendTestNotification,
+	onAppearancePreferenceChange,
 	embedded = false,
 	hideHeader = false,
 }: AppControlsPanelProps) {
@@ -837,6 +841,28 @@ function AppControlsPanel({
 		}
 	})();
 
+	const appearanceOptions: Array<{
+		value: WebAppearancePreference;
+		label: string;
+		description: string;
+	}> = [
+		{
+			value: 'system',
+			label: 'Auto',
+			description: 'Uses the desktop theme when available, otherwise your device setting.',
+		},
+		{
+			value: 'light',
+			label: 'Light',
+			description: 'Keeps the PWA in a bright reading mode on this device.',
+		},
+		{
+			value: 'dark',
+			label: 'Dark',
+			description: 'Keeps the PWA in a darker low-glare mode on this device.',
+		},
+	];
+
 	return (
 		<section
 			style={{
@@ -957,6 +983,115 @@ function AppControlsPanel({
 					</div>
 				</div>
 			)}
+
+			<div
+				style={{
+					padding: '10px 11px',
+					borderRadius: '14px',
+					border: '1px solid rgba(255, 255, 255, 0.08)',
+					background: 'rgba(255, 255, 255, 0.05)',
+					display: 'flex',
+					flexDirection: 'column',
+					gap: '8px',
+				}}
+			>
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+						gap: '10px',
+					}}
+				>
+					<div>
+						<div
+							style={{
+								fontSize: '12px',
+								fontWeight: 650,
+								color: colors.textMain,
+								lineHeight: 1.25,
+							}}
+						>
+							Appearance
+						</div>
+						<div
+							style={{
+								marginTop: '3px',
+								fontSize: '10px',
+								color: colors.textDim,
+								lineHeight: 1.4,
+							}}
+						>
+							Choose how this PWA should look on this device.
+						</div>
+					</div>
+					<div style={getStatusChipStyle(appearancePreference === 'system' ? 'accent' : 'success')}>
+						<span style={{ opacity: 0.7 }}>Theme</span>
+						<span>
+							{appearancePreference === 'system'
+								? 'Auto'
+								: appearancePreference === 'light'
+									? 'Light'
+									: 'Dark'}
+						</span>
+					</div>
+				</div>
+
+				<div
+					style={{
+						display: 'grid',
+						gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+						gap: '6px',
+					}}
+				>
+					{appearanceOptions.map((option) => {
+						const isSelected = appearancePreference === option.value;
+						return (
+							<button
+								key={option.value}
+								type="button"
+								onClick={() => onAppearancePreferenceChange(option.value)}
+								aria-pressed={isSelected}
+								style={{
+									padding: '10px 8px',
+									borderRadius: '12px',
+									border: isSelected
+										? `1px solid ${colors.accent}`
+										: '1px solid rgba(255, 255, 255, 0.08)',
+									background: isSelected
+										? `${colors.accent}20`
+										: 'rgba(255, 255, 255, 0.04)',
+									color: isSelected ? colors.accent : colors.textDim,
+									cursor: 'pointer',
+									display: 'flex',
+									flexDirection: 'column',
+									alignItems: 'flex-start',
+									gap: '3px',
+									textAlign: 'left',
+								}}
+							>
+								<span
+									style={{
+										fontSize: '11px',
+										fontWeight: 650,
+										color: colors.textMain,
+									}}
+								>
+									{option.label}
+								</span>
+								<span
+									style={{
+										fontSize: '10px',
+										lineHeight: 1.35,
+									}}
+								>
+									{option.description}
+								</span>
+							</button>
+						);
+					})}
+				</div>
+			</div>
 
 			<div
 				style={{
@@ -1192,7 +1327,7 @@ function AppControlsPanel({
 export default function MobileApp() {
 	const colors = useThemeColors();
 	const isOffline = useOfflineStatus();
-	const { setDesktopTheme } = useDesktopTheme();
+	const { setDesktopTheme, appearancePreference, setAppearancePreference } = useDesktopTheme();
 
 	// View state persistence and screen tracking (hook consolidates multiple effects)
 	const {
@@ -1822,6 +1957,14 @@ export default function MobileApp() {
 	const handleSendTestNotification = useCallback(() => {
 		void sendTestNotification();
 	}, [sendTestNotification]);
+
+	const handleAppearancePreferenceChange = useCallback(
+		(preference: WebAppearancePreference) => {
+			setAppearancePreference(preference);
+			triggerHaptic(HAPTIC_PATTERNS.tap);
+		},
+		[setAppearancePreference]
+	);
 
 	const isBootstrappingConnection =
 		!isOffline &&
@@ -2784,9 +2927,8 @@ export default function MobileApp() {
 							maxHeight: 'min(68dvh, 520px)',
 							padding: '14px 14px 16px',
 							borderRadius: '24px',
-							border: '1px solid rgba(255, 255, 255, 0.14)',
-							background:
-								'linear-gradient(180deg, rgba(245, 247, 252, 0.90) 0%, rgba(236, 240, 248, 0.84) 100%)',
+							border: `1px solid ${colors.border}`,
+							background: `linear-gradient(180deg, ${colors.bgSidebar} 0%, ${colors.bgMain} 100%)`,
 							backdropFilter: 'blur(30px) saturate(140%)',
 							WebkitBackdropFilter: 'blur(30px) saturate(140%)',
 							boxShadow:
@@ -2824,8 +2966,8 @@ export default function MobileApp() {
 									width: '30px',
 									height: '30px',
 									borderRadius: '10px',
-									border: '1px solid rgba(255, 255, 255, 0.18)',
-									background: 'rgba(255, 255, 255, 0.42)',
+									border: `1px solid ${colors.border}`,
+									background: colors.bgActivity,
 									color: colors.textMain,
 									display: 'inline-flex',
 									alignItems: 'center',
@@ -2846,11 +2988,13 @@ export default function MobileApp() {
 							isPushSubscribed={isPushSubscribed}
 							isPushLoading={isPushLoading}
 							pushError={pushError}
+							appearancePreference={appearancePreference}
 							onInstall={handleInstallApp}
 							onEnableNotifications={handleEnableNotifications}
 							onEnablePush={handleEnablePush}
 							onDisablePush={handleDisablePush}
 							onSendTestNotification={handleSendTestNotification}
+							onAppearancePreferenceChange={handleAppearancePreferenceChange}
 							embedded={true}
 							hideHeader={true}
 						/>

@@ -81,6 +81,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 		setRenameGroupId,
 		setRenameGroupValue,
 		setRenameGroupEmoji,
+		setRenameGroupProjectRoot,
 	} = getModalActions();
 
 	/**
@@ -106,9 +107,18 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 			setRenameGroupId(group.id);
 			setRenameGroupValue(group.name);
 			setRenameGroupEmoji(group.emoji);
+			setRenameGroupProjectRoot(group.projectRoot || '');
 			setRenameGroupModalOpen(true);
 		},
-		[_groups, setEditingGroupId, setRenameGroupEmoji, setRenameGroupId, setRenameGroupModalOpen, setRenameGroupValue]
+		[
+			_groups,
+			setEditingGroupId,
+			setRenameGroupEmoji,
+			setRenameGroupId,
+			setRenameGroupModalOpen,
+			setRenameGroupProjectRoot,
+			setRenameGroupValue,
+		]
 	);
 
 	/**

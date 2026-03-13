@@ -105,6 +105,11 @@ export interface ThemeProviderProps {
 	 * @default false
 	 */
 	useDevicePreference?: boolean;
+	/**
+	 * Force a specific light/dark scheme for the web app shell.
+	 * This takes precedence over any explicit theme prop.
+	 */
+	forcedColorScheme?: ColorSchemePreference;
 	/** Children components that will have access to the theme */
 	children: React.ReactNode;
 }
@@ -131,16 +136,25 @@ export interface ThemeProviderProps {
 export function ThemeProvider({
 	theme: themeProp,
 	useDevicePreference = false,
+	forcedColorScheme,
 	children,
 }: ThemeProviderProps) {
 	// Get device color scheme preference
 	const { colorScheme } = useDeviceColorScheme();
 
 	// Determine the active theme:
-	// 1. If a theme prop is provided (from desktop app), use it (override)
-	// 2. If useDevicePreference is true and no theme prop, use device preference
-	// 3. Otherwise, use default dark theme
+	// 1. If a color scheme is forced locally, use that web default
+	// 2. If a theme prop is provided (from desktop app), use it
+	// 3. If useDevicePreference is true and no theme prop, use device preference
+	// 4. Otherwise, use default dark theme
 	const { activeTheme, isDevicePreference } = useMemo(() => {
+		if (forcedColorScheme) {
+			return {
+				activeTheme: getDefaultThemeForScheme(forcedColorScheme),
+				isDevicePreference: false,
+			};
+		}
+
 		// Theme prop provided - this is an override from desktop app
 		if (themeProp) {
 			return { activeTheme: themeProp, isDevicePreference: false };
@@ -156,7 +170,7 @@ export function ThemeProvider({
 
 		// Default to dark theme
 		return { activeTheme: defaultDarkTheme, isDevicePreference: false };
-	}, [themeProp, useDevicePreference, colorScheme]);
+	}, [themeProp, useDevicePreference, colorScheme, forcedColorScheme]);
 
 	const contextValue = useMemo<ThemeContextValue>(
 		() => ({

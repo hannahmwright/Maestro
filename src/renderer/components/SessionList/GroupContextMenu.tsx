@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Edit3, Trash2 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 
@@ -8,6 +8,7 @@ interface GroupContextMenuProps {
 	y: number;
 	theme: Theme;
 	group: Group;
+	onEdit: () => void;
 	onDelete: () => void;
 	onDismiss: () => void;
 }
@@ -17,6 +18,7 @@ export function GroupContextMenu({
 	y,
 	theme,
 	group,
+	onEdit,
 	onDelete,
 	onDismiss,
 }: GroupContextMenuProps) {
@@ -54,6 +56,22 @@ export function GroupContextMenu({
 			<button
 				type="button"
 				onClick={() => {
+					onEdit();
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+				title={`Edit ${group.name}`}
+			>
+				<Edit3 className="w-3.5 h-3.5" />
+				Edit Workspace...
+			</button>
+
+			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
+			<button
+				type="button"
+				onClick={() => {
 					onDelete();
 					onDismiss();
 				}}
@@ -62,7 +80,7 @@ export function GroupContextMenu({
 				title={`Delete ${group.name}`}
 			>
 				<Trash2 className="w-3.5 h-3.5" />
-				Delete Group
+				Delete Workspace
 			</button>
 		</div>
 	);

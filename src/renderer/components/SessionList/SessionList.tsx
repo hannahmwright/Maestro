@@ -27,6 +27,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { getModalActions } from '../../stores/modalStore';
 import { SessionContextMenu } from './SessionContextMenu';
+import { GroupContextMenu } from './GroupContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
@@ -248,6 +249,7 @@ function SessionListInner(props: SessionListProps) {
 		onQuickCreateWorktree,
 		onOpenWorktreeConfig,
 		onDeleteWorktree,
+		onDeleteWorktreeGroup,
 		showSessionJumpNumbers = false,
 		visibleSessions = [],
 		openWizard,
@@ -311,6 +313,11 @@ function SessionListInner(props: SessionListProps) {
 		y: number;
 		sessionId: string;
 	} | null>(null);
+	const [groupContextMenu, setGroupContextMenu] = useState<{
+		x: number;
+		y: number;
+		groupId: string;
+	} | null>(null);
 	const contextMenuSession = contextMenu
 		? sessions.find((s) => s.id === contextMenu.sessionId)
 		: null;
@@ -318,6 +325,9 @@ function SessionListInner(props: SessionListProps) {
 		? threads.find(
 				(thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(contextMenuSession)
 			)
+		: null;
+	const contextMenuGroup = groupContextMenu
+		? groups.find((group) => group.id === groupContextMenu.groupId)
 		: null;
 	const menuRef = useRef<HTMLDivElement>(null);
 	const ignoreNextBlurRef = useRef(false);
@@ -357,7 +367,15 @@ function SessionListInner(props: SessionListProps) {
 	const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string) => {
 		e.preventDefault();
 		e.stopPropagation();
+		setGroupContextMenu(null);
 		setContextMenu({ x: e.clientX, y: e.clientY, sessionId });
+	}, []);
+
+	const handleGroupContextMenu = useCallback((e: React.MouseEvent, groupId: string) => {
+		e.preventDefault();
+		e.stopPropagation();
+		setContextMenu(null);
+		setGroupContextMenu({ x: e.clientX, y: e.clientY, groupId });
 	}, []);
 
 	const handleDeleteSession = useCallback(
@@ -1283,6 +1301,7 @@ function SessionListInner(props: SessionListProps) {
 										}
 									}}
 									onClick={() => toggleGroup(workspace.id)}
+									onContextMenu={(e) => handleGroupContextMenu(e, workspace.id)}
 									className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
 									style={getSidebarHeaderButtonStyle(theme, {
 										active: !workspace.collapsed,
@@ -1657,6 +1676,18 @@ function SessionListInner(props: SessionListProps) {
 							? () => onDeleteWorktree(contextMenuSession)
 							: undefined
 					}
+				/>
+			)}
+
+			{groupContextMenu && contextMenuGroup && onDeleteWorktreeGroup && (
+				<GroupContextMenu
+					x={groupContextMenu.x}
+					y={groupContextMenu.y}
+					theme={theme}
+					group={contextMenuGroup}
+					onEdit={() => startRenamingGroup(contextMenuGroup.id)}
+					onDelete={() => onDeleteWorktreeGroup(contextMenuGroup.id)}
+					onDismiss={() => setGroupContextMenu(null)}
 				/>
 			)}
 		</div>
