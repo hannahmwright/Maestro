@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentModelCatalogGroup } from '../../shared/agent-model-catalog';
 import { useThemeColors } from '../components/ThemeProvider';
 import { ModelSelectorButton } from './CommandInputButtons';
+import { useScrollTapGuard } from './useScrollTapGuard';
 
 interface TurnMarker {
 	key: string;
@@ -55,6 +56,8 @@ export function TabBar({
 }: TabBarProps) {
 	const colors = useThemeColors();
 	const modelMenuRef = useRef<HTMLDivElement>(null);
+	const { scrollGuardProps: modelMenuScrollGuardProps, shouldIgnoreClick: shouldIgnoreModelMenuClick } =
+		useScrollTapGuard();
 	const [modelMenuOpen, setModelMenuOpen] = useState(false);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [modelCatalogGroups, setModelCatalogGroups] = useState<AgentModelCatalogGroup[]>([]);
@@ -149,24 +152,24 @@ export function TabBar({
 
 	const handleSelectModelInternal = useCallback(
 		async (model: string | null) => {
-			if (!onSelectModel) {
+			if (shouldIgnoreModelMenuClick() || !onSelectModel) {
 				return;
 			}
 			await onSelectModel(model);
 			setModelMenuOpen(false);
 		},
-		[onSelectModel]
+		[onSelectModel, shouldIgnoreModelMenuClick]
 	);
 
 	const handleSelectProviderModelInternal = useCallback(
 		async (provider: string, model: string | null) => {
-			if (!onSelectProviderModel) {
+			if (shouldIgnoreModelMenuClick() || !onSelectProviderModel) {
 				return;
 			}
 			await onSelectProviderModel(provider, model);
 			setModelMenuOpen(false);
 		},
-		[onSelectProviderModel]
+		[onSelectProviderModel, shouldIgnoreModelMenuClick]
 	);
 
 	const selectableModels = useMemo(() => {
@@ -474,12 +477,14 @@ export function TabBar({
 								</button>
 							</div>
 							<div
+								{...modelMenuScrollGuardProps}
 								style={{
 									display: 'flex',
 									flexDirection: 'column',
 									gap: '8px',
 									maxHeight: '240px',
 									overflowY: 'auto',
+									WebkitOverflowScrolling: 'touch',
 								}}
 							>
 								{canChooseProviderModels ? (

@@ -48,6 +48,7 @@ const DirectorNotesModal = lazy(() =>
 import { GroupChatPanel } from './components/GroupChatPanel';
 import { GroupChatRightPanel } from './components/GroupChatRightPanel';
 import { ConductorPanel } from './components/ConductorPanel';
+import { ConductorHomePanel } from './components/ConductorHomePanel';
 
 // Import custom hooks
 import {
@@ -157,7 +158,15 @@ import { ToastContainer } from './components/Toast';
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
-import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem } from './types';
+import type {
+	RightPanelTab,
+	Session,
+	QueuedItem,
+	CustomAICommand,
+	ThinkingItem,
+	SidebarNavTarget,
+	SidebarThreadTarget,
+} from './types';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
@@ -185,6 +194,7 @@ import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 import type { UserInputRequest, UserInputResponse } from '../shared/user-input-requests';
 import {
+	findActiveThreadForSession,
 	reconcileThreadsWithSessions,
 	reconcileWorkspacesWithThreads,
 } from './utils/workspaceThreads';
@@ -443,7 +453,9 @@ function MaestroConsoleInner() {
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// sessionsLoaded moved to useQueueProcessing hook
 	const activeSession = useSessionStore(selectActiveSession);
-	const activeConductorGroupId = useConductorStore((s) => s.activeConductorGroupId);
+	const activeConductorView = useConductorStore((s) => s.activeConductorView);
+	const sidebarThreadTargets = useUIStore((s) => s.sidebarThreadTargets);
+	const sidebarNavTargets = useUIStore((s) => s.sidebarNavTargets);
 
 	// Actions — stable references from store, never trigger re-renders
 	const {
@@ -573,7 +585,7 @@ function MaestroConsoleInner() {
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
 	} = useGroupChatStore.getState();
-	const { setActiveConductorGroupId, syncWithGroups } = useConductorStore.getState();
+	const { setActiveConductorView, syncWithGroups } = useConductorStore.getState();
 
 	// --- APP INITIALIZATION (extracted hook, Phase 2G) ---
 	const { ghCliAvailable, sshRemoteConfigs, speckitCommands, openspecCommands, saveFileGistUrl } =
@@ -583,10 +595,10 @@ function MaestroConsoleInner() {
 	const setActiveSessionId = useCallback(
 		(id: string) => {
 			setActiveGroupChatId(null); // Dismiss group chat when selecting an agent
-			setActiveConductorGroupId(null); // Dismiss conductor when selecting an agent
+			setActiveConductorView(null); // Dismiss conductor when selecting an agent
 			setActiveSessionIdFromContext(id);
 		},
-		[setActiveSessionIdFromContext, setActiveGroupChatId, setActiveConductorGroupId]
+		[setActiveSessionIdFromContext, setActiveGroupChatId, setActiveConductorView]
 	);
 
 	useEffect(() => {
@@ -771,10 +783,10 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		if (!initialLoadComplete.current) return;
 		setThreads((prev) => {
-			const next = reconcileThreadsWithSessions(prev, useSessionStore.getState().sessions, activeSessionId);
+			const next = reconcileThreadsWithSessions(prev, useSessionStore.getState().sessions);
 			return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
 		});
-	}, [sessions, activeSessionId, initialLoadComplete, setThreads]);
+	}, [sessions, initialLoadComplete, setThreads]);
 
 	useEffect(() => {
 		if (!initialLoadComplete.current) return;
@@ -868,10 +880,15 @@ function MaestroConsoleInner() {
 	const handleOpenConductor = useCallback(
 		(groupId: string) => {
 			setActiveGroupChatId(null);
-			setActiveConductorGroupId(groupId);
+			setActiveConductorView({ scope: 'workspace', groupId });
 		},
-		[setActiveGroupChatId, setActiveConductorGroupId]
+		[setActiveGroupChatId, setActiveConductorView]
 	);
+
+	const handleOpenConductorHome = useCallback(() => {
+		setActiveGroupChatId(null);
+		setActiveConductorView({ scope: 'home' });
+	}, [setActiveGroupChatId, setActiveConductorView]);
 
 	// --- MODAL HANDLERS (open/close, error recovery, lightbox, celebrations) ---
 	const {
@@ -1601,9 +1618,84 @@ function MaestroConsoleInner() {
 		[setActiveSessionId]
 	);
 
+	const openSidebarThreadTarget = useCallback(
+		(target: SidebarThreadTarget) => {
+			useGroupChatStore.getState().setActiveGroupChatId(null);
+			setActiveConductorView(null);
+			setActiveSessionId(target.sessionId);
+
+			setSessions((prev) =>
+				prev.map((session) => {
+					if (session.id !== target.sessionId) return session;
+					const nextTabId =
+						target.tabId && session.aiTabs?.some((tab) => tab.id === target.tabId)
+							? target.tabId
+							: session.activeTabId;
+					return {
+						...session,
+						...(nextTabId ? { activeTabId: nextTabId } : {}),
+						activeFileTabId: null,
+						inputMode: 'ai',
+					};
+				})
+			);
+		},
+		[setActiveConductorView, setActiveSessionId, setSessions]
+	);
+
+	const openSidebarNavTarget = useCallback(
+		(target: SidebarNavTarget) => {
+			if (target.type === 'workspace') {
+				setActiveGroupChatId(null);
+				setActiveConductorView({ scope: 'workspace', groupId: target.workspace.workspaceId });
+				return;
+			}
+			openSidebarThreadTarget(target.thread);
+		},
+		[openSidebarThreadTarget, setActiveConductorView, setActiveGroupChatId]
+	);
+
+	const activeSidebarThreadTargetId = useMemo(() => {
+		if (!activeSession) return null;
+
+		const activeThread = findActiveThreadForSession(threads, activeSession);
+		if (!activeThread) return null;
+
+		const activeTabId = activeSession.activeTabId || activeSession.aiTabs?.[0]?.id || null;
+		return (
+			sidebarThreadTargets.find(
+				(target) =>
+					target.threadId === activeThread.id &&
+					target.sessionId === activeSession.id &&
+					target.tabId === activeTabId
+			)?.id ||
+			sidebarThreadTargets.find(
+				(target) => target.threadId === activeThread.id && target.sessionId === activeSession.id
+			)?.id ||
+			null
+		);
+	}, [activeSession, sidebarThreadTargets, threads]);
+
+	const activeSidebarNavTargetId = useMemo(() => {
+		if (activeConductorView?.scope === 'workspace') {
+			return `workspace-${activeConductorView.groupId}`;
+		}
+		if (activeSidebarThreadTargetId) {
+			return activeSidebarThreadTargetId;
+		}
+		if (!activeSession) return null;
+		const activeThread = findActiveThreadForSession(threads, activeSession);
+		if (!activeThread) return null;
+		return sidebarNavTargets.find(
+			(target) =>
+				target.type === 'workspace' &&
+				target.workspace.workspaceId === activeThread.workspaceId
+		)?.id || null;
+	}, [activeConductorView, activeSession, activeSidebarThreadTargetId, sidebarNavTargets, threads]);
+
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
-	const { sortedSessions, visibleSessions } = useSortedSessions({
+	const { sortedSessions } = useSortedSessions({
 		sessions,
 		groups,
 		bookmarksCollapsed,
@@ -1617,17 +1709,15 @@ function MaestroConsoleInner() {
 		handleEnterToActivate,
 		handleEscapeInMain,
 	} = useKeyboardNavigation({
-		sortedSessions,
+		sidebarNavTargets,
 		selectedSidebarIndex,
 		setSelectedSidebarIndex,
-		activeSessionId,
-		setActiveSessionId,
+		activeSidebarNavTargetId,
+		openSidebarNavTarget,
 		activeFocus,
 		setActiveFocus,
 		groups,
 		setGroups,
-		bookmarksCollapsed,
-		setBookmarksCollapsed,
 		inputRef,
 		terminalOutputRef,
 	});
@@ -1675,7 +1765,11 @@ function MaestroConsoleInner() {
 
 	// --- ACTIONS ---
 	// cycleSession — provided by useCycleSession hook
-	const { cycleSession } = useCycleSession({ sortedSessions, handleOpenGroupChat });
+	const { cycleSession } = useCycleSession({
+		sortedSessions,
+		sidebarThreadTargets,
+		handleOpenGroupChat,
+	});
 
 	// showConfirmation, performDeleteSession — provided by useSessionLifecycle hook (Phase 2H)
 	// deleteSession, deleteWorktreeGroup — provided by useSessionCrud hook
@@ -1812,21 +1906,48 @@ function MaestroConsoleInner() {
 		}
 
 		const nextName = buildDefaultThreadName(activeSession.toolType, sessions);
-		void createNewSession(
-			activeSession.toolType,
-			activeSession.projectRoot || activeSession.cwd,
-			nextName,
-			activeSession.nudgeMessage,
-			activeSession.customPath,
-			activeSession.customArgs,
-			activeSession.customEnvVars,
-			activeSession.customModel,
-			activeSession.customContextWindow,
-			activeSession.customProviderPath,
-			activeSession.sessionSshRemoteConfig,
-			activeSession.workspaceId || activeSession.groupId
+		const result = createTab(activeSession, {
+			saveToHistory: defaultSaveToHistory,
+			showThinking: defaultShowThinking,
+			name: nextName,
+		});
+		if (!result) {
+			return;
+		}
+
+		const workspaceId = activeSession.workspaceId || activeSession.groupId;
+		const projectRoot = activeSession.projectRoot || activeSession.cwd;
+		setSessions((prev) =>
+			prev.map((session) => (session.id === activeSession.id ? result.session : session))
 		);
-	}, [activeSession, createNewSession, sessions]);
+		if (workspaceId) {
+			setThreads((prev) => [
+				...prev,
+				{
+					id: `thread-${generateId()}`,
+					workspaceId,
+					sessionId: activeSession.id,
+					runtimeId: activeSession.runtimeId || activeSession.id,
+					tabId: result.tab.id,
+					title: nextName,
+					agentId: activeSession.toolType,
+					projectRoot,
+					pinned: false,
+					archived: false,
+					isOpen: true,
+					createdAt: Date.now(),
+					lastUsedAt: Date.now(),
+				},
+			]);
+		}
+	}, [
+		activeSession,
+		defaultSaveToHistory,
+		defaultShowThinking,
+		sessions,
+		setSessions,
+		setThreads,
+	]);
 
 	// Remote integration hook - handles web interface communication
 	useRemoteIntegration({
@@ -2011,8 +2132,8 @@ function MaestroConsoleInner() {
 		lightboxImage,
 		hasOpenLayers,
 		hasOpenModal,
-		visibleSessions,
-		sortedSessions,
+		sidebarThreadTargets,
+		sidebarNavTargets,
 		groups,
 		bookmarksCollapsed,
 		leftSidebarOpen,
@@ -2026,6 +2147,8 @@ function MaestroConsoleInner() {
 		setRightPanelOpen,
 		addNewSession,
 		deleteSession,
+		openSidebarNavTarget,
+		openSidebarThreadTarget,
 		setQuickActionInitialMode,
 		setQuickActionOpen,
 		cycleSession,
@@ -2389,12 +2512,9 @@ function MaestroConsoleInner() {
 		theme,
 
 		// Computed values (not raw store fields)
-		sortedSessions,
 		isLiveMode,
 		webInterfaceUrl,
 		showSessionJumpNumbers,
-		visibleSessions,
-
 		// Ref
 		sidebarContainerRef,
 
@@ -2403,16 +2523,10 @@ function MaestroConsoleInner() {
 		restartWebServer,
 		toggleGroup,
 		handleDragStart,
-		handleDragOver,
-		handleDropOnGroup,
-		handleDropOnUngrouped,
 		finishRenamingGroup,
-		finishRenamingSession,
 		startRenamingGroup,
 		startRenamingSession,
-		showConfirmation,
 		createNewGroup,
-		handleCreateGroupAndMove,
 		addNewSession,
 		createNewSession,
 		deleteSession: (id: string) => {
@@ -2426,10 +2540,10 @@ function MaestroConsoleInner() {
 		handleQuickCreateWorktree,
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
-		handleToggleWorktreeExpanded,
 		openWizardModal,
 		handleStartTour,
 		handleOpenConductor,
+		handleOpenConductorHome,
 
 		// Group Chat handlers
 		handleOpenGroupChat,
@@ -2555,12 +2669,16 @@ function MaestroConsoleInner() {
 							} as React.CSSProperties
 						}
 					>
-						{activeConductorGroupId ? (
+						{activeConductorView ? (
 							<span
 								className="text-xs select-none opacity-50"
 								style={{ color: theme.colors.textDim }}
 							>
-								Conductor: {groups.find((g) => g.id === activeConductorGroupId)?.name || 'Unknown'}
+								{activeConductorView.scope === 'home'
+									? 'Agent Review'
+									: `Kanban: ${
+											groups.find((g) => g.id === activeConductorView.groupId)?.name || 'Unknown'
+										}`}
 							</span>
 						) : activeGroupChatId ? (
 							<span
@@ -3274,18 +3392,23 @@ function MaestroConsoleInner() {
 						</>
 					)}
 
-				{/* --- CONDUCTOR VIEW (group-owned orchestration workspace) --- */}
+				{/* --- CONDUCTOR VIEW (workspace or global dashboard) --- */}
 				{!logViewerOpen &&
 					!activeGroupChatId &&
-					activeConductorGroupId &&
-					groups.find((g) => g.id === activeConductorGroupId) && (
+					activeConductorView &&
+					(activeConductorView.scope === 'home' ||
+						groups.find((g) => g.id === activeConductorView.groupId)) && (
 						<div className="flex-1 flex flex-col min-w-0">
-							<ConductorPanel theme={theme} groupId={activeConductorGroupId} />
+							{activeConductorView.scope === 'home' ? (
+								<ConductorHomePanel theme={theme} />
+							) : (
+								<ConductorPanel theme={theme} groupId={activeConductorView.groupId} />
+							)}
 						</div>
 					)}
 
 				{/* --- CENTER WORKSPACE (hidden when no sessions, group chat is active, or log viewer is open) --- */}
-				{sessions.length > 0 && !activeGroupChatId && !activeConductorGroupId && !logViewerOpen && (
+				{sessions.length > 0 && !activeGroupChatId && !activeConductorView && !logViewerOpen && (
 					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 				)}
 
@@ -3293,7 +3416,7 @@ function MaestroConsoleInner() {
 				{!isMobileLandscape &&
 					sessions.length > 0 &&
 					!activeGroupChatId &&
-					!activeConductorGroupId &&
+					!activeConductorView &&
 					!logViewerOpen && (
 						<ErrorBoundary>
 							<RightPanel ref={rightPanelRef} {...rightPanelProps} />

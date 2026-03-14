@@ -10,6 +10,7 @@
 
 import { ipcRenderer } from 'electron';
 import type { AgentModelCatalogGroup } from '../../shared/agent-model-catalog';
+import type { ProviderUsageSnapshot } from '../../shared/provider-usage';
 
 /**
  * Capability flags that determine what features are available for each agent.
@@ -181,6 +182,12 @@ export function createAgentsApi() {
 			sshRemoteId?: string
 		): Promise<AgentModelCatalogGroup[]> =>
 			ipcRenderer.invoke('agents:getModelCatalog', agentIds, forceRefresh, sshRemoteId),
+
+		getProviderUsage: (
+			agentId: string,
+			forceRefresh?: boolean
+		): Promise<ProviderUsageSnapshot | null> =>
+			ipcRenderer.invoke('agents:getProviderUsage', agentId, forceRefresh),
 
 		/**
 		 * Discover available slash commands for an agent by spawning it briefly

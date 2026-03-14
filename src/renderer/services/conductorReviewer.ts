@@ -1,25 +1,23 @@
 import type { ConductorTask, ConductorTaskPriority, Session } from '../types';
 
-export interface ConductorWorkerFollowUpDraft {
+export interface ConductorReviewerFollowUpDraft {
 	title: string;
 	description: string;
 	priority: ConductorTaskPriority;
 }
 
-export interface ConductorWorkerResult {
-	outcome: 'completed' | 'blocked';
+export interface ConductorReviewerResult {
+	decision: 'approved' | 'changes_requested';
 	summary: string;
-	changedPaths: string[];
-	followUpTasks: ConductorWorkerFollowUpDraft[];
-	blockedReason?: string;
+	followUpTasks: ConductorReviewerFollowUpDraft[];
+	reviewNotes?: string;
 }
 
-interface RawWorkerResponse {
-	outcome?: unknown;
+interface RawReviewerResponse {
+	decision?: unknown;
 	summary?: unknown;
-	changedPaths?: unknown;
 	followUpTasks?: unknown;
-	blockedReason?: unknown;
+	reviewNotes?: unknown;
 }
 
 interface RawFollowUpTask {
@@ -41,17 +39,6 @@ function normalizePriority(value: unknown): ConductorTaskPriority {
 		: 'medium';
 }
 
-function normalizeStringArray(value: unknown): string[] {
-	if (!Array.isArray(value)) {
-		return [];
-	}
-
-	return value
-		.filter((item): item is string => typeof item === 'string')
-		.map((item) => item.trim())
-		.filter(Boolean);
-}
-
 function extractJsonBlock(text: string): string {
 	const fencedMatch = text.match(/```json\s*([\s\S]*?)```/i);
 	if (fencedMatch?.[1]) {
@@ -61,32 +48,27 @@ function extractJsonBlock(text: string): string {
 	const firstBrace = text.indexOf('{');
 	const lastBrace = text.lastIndexOf('}');
 	if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-		throw new Error('Worker did not return a JSON object.');
+		throw new Error('Reviewer did not return a JSON object.');
 	}
 
 	return text.slice(firstBrace, lastBrace + 1).trim();
 }
 
-export function buildConductorWorkerPrompt(
+export function buildConductorReviewerPrompt(
 	groupName: string,
 	templateSession: Session,
-	task: ConductorTask,
-	dependencyTitles: string[]
+	task: ConductorTask
 ): string {
 	const acceptanceCriteria =
 		task.acceptanceCriteria.length > 0
 			? task.acceptanceCriteria.map((item) => `- ${item}`).join('\n')
 			: '- No explicit acceptance criteria provided.';
-	const scopeLines =
-		task.scopePaths.length > 0
-			? task.scopePaths.map((path) => `- ${path}`).join('\n')
-			: '- Scope unknown; stay as narrow as possible.';
-	const dependencyLines =
-		dependencyTitles.length > 0
-			? dependencyTitles.map((title) => `- ${title}`).join('\n')
-			: '- No task dependencies.';
+	const changedPaths =
+		task.changedPaths && task.changedPaths.length > 0
+			? task.changedPaths.map((path) => `- ${path}`).join('\n')
+			: '- Changed paths were not reported.';
 
-	return `You are executing one Conductor task for the Maestro group "${groupName}".
+	return `You are reviewing one Conductor task for the Maestro group "${groupName}".
 
 Template agent:
 - Name: ${templateSession.name}
@@ -101,40 +83,34 @@ Task:
 Acceptance criteria:
 ${acceptanceCriteria}
 
-Dependencies already completed:
-${dependencyLines}
-
-Expected scope:
-${scopeLines}
+Reported changed paths:
+${changedPaths}
 
 Instructions:
-- Perform the task in the repository if you can complete it safely.
-- Keep changes scoped to the task.
-- If you cannot complete it, explain the blocker clearly.
-- You may suggest follow-up subtasks when useful, but do not invent more than 3.
+- Review the workspace as it currently exists.
+- Approve only if the task appears complete and acceptance criteria are satisfied.
+- If changes are still needed, request changes clearly and suggest at most 3 follow-up subtasks.
 
 Return ONLY valid JSON with this exact shape:
 {
-  "outcome": "completed | blocked",
-  "summary": "short outcome summary",
-  "changedPaths": ["path/to/file"],
+  "decision": "approved | changes_requested",
+  "summary": "short review summary",
   "followUpTasks": [
     {
-      "title": "small follow-up task",
+      "title": "small follow-up subtask",
       "description": "why it is needed",
       "priority": "low | medium | high | critical"
     }
   ],
-  "blockedReason": "only when blocked"
+  "reviewNotes": "optional short reviewer notes"
 }`;
 }
 
-export function parseConductorWorkerResponse(text: string): ConductorWorkerResult {
-	const parsed = JSON.parse(extractJsonBlock(text)) as RawWorkerResponse;
-	const outcome = parsed.outcome === 'blocked' ? 'blocked' : 'completed';
+export function parseConductorReviewerResponse(text: string): ConductorReviewerResult {
+	const parsed = JSON.parse(extractJsonBlock(text)) as RawReviewerResponse;
 	const followUpTasks = Array.isArray(parsed.followUpTasks)
 		? parsed.followUpTasks
-				.map((rawTask): ConductorWorkerFollowUpDraft | null => {
+				.map((rawTask): ConductorReviewerFollowUpDraft | null => {
 					const task = rawTask as RawFollowUpTask;
 					const title = typeof task.title === 'string' ? task.title.trim() : '';
 					if (!title) {
@@ -147,22 +123,23 @@ export function parseConductorWorkerResponse(text: string): ConductorWorkerResul
 						priority: normalizePriority(task.priority),
 					};
 				})
-				.filter((task): task is ConductorWorkerFollowUpDraft => Boolean(task))
+				.filter((task): task is ConductorReviewerFollowUpDraft => Boolean(task))
 		: [];
 
+	const decision = parsed.decision === 'changes_requested' ? 'changes_requested' : 'approved';
+
 	return {
-		outcome,
+		decision,
 		summary:
 			typeof parsed.summary === 'string' && parsed.summary.trim()
 				? parsed.summary.trim()
-				: outcome === 'blocked'
-					? 'Task blocked during execution.'
-					: 'Task completed.',
-		changedPaths: normalizeStringArray(parsed.changedPaths),
+				: decision === 'approved'
+					? 'Task approved by reviewer.'
+					: 'Reviewer requested changes.',
 		followUpTasks,
-		blockedReason:
-			typeof parsed.blockedReason === 'string' && parsed.blockedReason.trim()
-				? parsed.blockedReason.trim()
+		reviewNotes:
+			typeof parsed.reviewNotes === 'string' && parsed.reviewNotes.trim()
+				? parsed.reviewNotes.trim()
 				: undefined,
 	};
 }

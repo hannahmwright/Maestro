@@ -432,6 +432,7 @@ describe('WebServer E2E Sync Tests', () => {
 
 				client.close();
 			});
+
 		});
 
 		describe('Mode Switching', () => {

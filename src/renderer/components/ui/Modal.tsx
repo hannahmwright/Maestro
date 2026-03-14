@@ -173,7 +173,16 @@ export function Modal({
 					))}
 
 				{/* Content */}
-				<div className="p-6 overflow-y-auto flex-1">{children}</div>
+				<div
+					className="p-6 overflow-y-auto flex-1"
+					style={{
+						backgroundColor: theme.colors.bgSidebar,
+						overscrollBehavior: 'contain',
+						WebkitOverflowScrolling: 'touch',
+					}}
+				>
+					{children}
+				</div>
 
 				{/* Footer */}
 				{footer && (

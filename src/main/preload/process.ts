@@ -616,6 +616,122 @@ export function createProcessApi() {
 			return () => ipcRenderer.removeListener('remote:toggleBookmark', handler);
 		},
 
+		onRemoteCreateConductorTask: (
+			callback: (
+				input: {
+					groupId: string;
+					title: string;
+					description?: string;
+					priority?: 'low' | 'medium' | 'high' | 'critical';
+					status?:
+						| 'draft'
+						| 'planning'
+						| 'ready'
+						| 'running'
+						| 'needs_input'
+						| 'blocked'
+						| 'needs_review'
+						| 'cancelled'
+						| 'done';
+				},
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (_: unknown, input: Record<string, unknown>, responseChannel: string) =>
+				callback(
+					input as {
+						groupId: string;
+						title: string;
+						description?: string;
+						priority?: 'low' | 'medium' | 'high' | 'critical';
+						status?:
+							| 'draft'
+							| 'planning'
+							| 'ready'
+							| 'running'
+							| 'needs_input'
+							| 'blocked'
+							| 'needs_review'
+							| 'cancelled'
+							| 'done';
+					},
+					responseChannel
+				);
+			ipcRenderer.on('remote:createConductorTask', handler);
+			return () => ipcRenderer.removeListener('remote:createConductorTask', handler);
+		},
+
+		sendRemoteCreateConductorTaskResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		onRemoteUpdateConductorTask: (
+			callback: (
+				taskId: string,
+				updates: {
+					title?: string;
+					description?: string;
+					priority?: 'low' | 'medium' | 'high' | 'critical';
+					status?:
+						| 'draft'
+						| 'planning'
+						| 'ready'
+						| 'running'
+						| 'needs_input'
+						| 'blocked'
+						| 'needs_review'
+						| 'cancelled'
+						| 'done';
+				},
+				responseChannel: string
+			) => void
+		): (() => void) => {
+			const handler = (
+				_: unknown,
+				taskId: string,
+				updates: Record<string, unknown>,
+				responseChannel: string
+			) =>
+				callback(
+					taskId,
+					updates as {
+						title?: string;
+						description?: string;
+						priority?: 'low' | 'medium' | 'high' | 'critical';
+						status?:
+							| 'draft'
+							| 'planning'
+							| 'ready'
+							| 'running'
+							| 'needs_input'
+							| 'blocked'
+							| 'needs_review'
+							| 'cancelled'
+							| 'done';
+					},
+					responseChannel
+				);
+			ipcRenderer.on('remote:updateConductorTask', handler);
+			return () => ipcRenderer.removeListener('remote:updateConductorTask', handler);
+		},
+
+		sendRemoteUpdateConductorTaskResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
+		onRemoteDeleteConductorTask: (
+			callback: (taskId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, taskId: string, responseChannel: string) =>
+				callback(taskId, responseChannel);
+			ipcRenderer.on('remote:deleteConductorTask', handler);
+			return () => ipcRenderer.removeListener('remote:deleteConductorTask', handler);
+		},
+
+		sendRemoteDeleteConductorTaskResponse: (responseChannel: string, success: boolean): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
 		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */

@@ -6,7 +6,7 @@
  * Replaces direct use of GroupChatParticipants when group chat is active.
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react';
 import { PanelRightClose } from 'lucide-react';
 import type { Theme, GroupChatParticipant, SessionState, Shortcut } from '../types';
 import type { GroupChatHistoryEntry } from '../../shared/group-chat-types';
@@ -20,6 +20,8 @@ import {
 	type ParticipantColorInfo,
 } from '../utils/participantColors';
 import { useResizablePanel } from '../hooks';
+import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
 
 export type GroupChatRightTab = 'participants' | 'history';
 
@@ -80,8 +82,13 @@ export function GroupChatRightPanel({
 	onJumpToMessage,
 	onColorsComputed,
 }: GroupChatRightPanelProps): JSX.Element | null {
+	const activeFocus = useUIStore((s) => s.activeFocus);
+	const setActiveFocus = useUIStore((s) => s.setActiveFocus);
+	const autoCollapseRightPanel = useSettingsStore((s) => s.autoCollapseRightPanel);
+
 	// Color preferences state
 	const [colorPreferences, setColorPreferences] = useState<Record<string, number>>({});
+	const hasFocusedSinceOpenRef = useRef(false);
 	const { panelRef, onResizeStart, transitionClass } = useResizablePanel({
 		width,
 		minWidth: 200,
@@ -240,17 +247,40 @@ export function GroupChatRightPanel({
 		return unsubscribe;
 	}, [groupChatId]);
 
+	useEffect(() => {
+		if (!isOpen) {
+			hasFocusedSinceOpenRef.current = false;
+			return;
+		}
+
+		if (activeFocus === 'right') {
+			hasFocusedSinceOpenRef.current = true;
+			return;
+		}
+
+		if (autoCollapseRightPanel && hasFocusedSinceOpenRef.current) {
+			hasFocusedSinceOpenRef.current = false;
+			onToggle();
+		}
+	}, [activeFocus, autoCollapseRightPanel, isOpen, onToggle]);
+
 	if (!isOpen) return null;
 
 	return (
 		<div
 			ref={panelRef}
-			className={`relative border-l flex flex-col ${transitionClass}`}
-			style={{
-				width: `${width}px`,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
-			}}
+			tabIndex={0}
+			className={`relative border-l flex flex-col ${transitionClass} outline-none ${activeFocus === 'right' ? 'ring-1 ring-inset z-10' : ''}`}
+			style={
+				{
+					width: `${width}px`,
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+					'--tw-ring-color': theme.colors.accent,
+				} as CSSProperties
+			}
+			onClick={() => setActiveFocus('right')}
+			onFocus={() => setActiveFocus('right')}
 		>
 			{/* Resize Handle */}
 			<div

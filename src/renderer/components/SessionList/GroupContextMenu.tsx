@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Edit3, Trash2 } from 'lucide-react';
+import { Archive, Edit3, Trash2 } from 'lucide-react';
 import type { Group, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
 
@@ -9,6 +9,7 @@ interface GroupContextMenuProps {
 	theme: Theme;
 	group: Group;
 	onEdit: () => void;
+	onToggleArchived: () => void;
 	onDelete: () => void;
 	onDismiss: () => void;
 }
@@ -19,6 +20,7 @@ export function GroupContextMenu({
 	theme,
 	group,
 	onEdit,
+	onToggleArchived,
 	onDelete,
 	onDismiss,
 }: GroupContextMenuProps) {
@@ -65,6 +67,20 @@ export function GroupContextMenu({
 			>
 				<Edit3 className="w-3.5 h-3.5" />
 				Edit Workspace...
+			</button>
+
+			<button
+				type="button"
+				onClick={() => {
+					onToggleArchived();
+					onDismiss();
+				}}
+				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+				style={{ color: theme.colors.textMain }}
+				title={`${group.archived ? 'Unarchive' : 'Archive'} ${group.name}`}
+			>
+				<Archive className="w-3.5 h-3.5" />
+				{group.archived ? 'Unarchive Workspace' : 'Archive Workspace'}
 			</button>
 
 			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />

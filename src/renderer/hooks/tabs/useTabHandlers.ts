@@ -20,6 +20,7 @@ import {
 	hasActiveWizard,
 	buildUnifiedTabs,
 	ensureInUnifiedTabOrder,
+	pruneInactiveFileTabContent,
 } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -166,6 +167,81 @@ export function useTabHandlers(): TabHandlersReturn {
 
 	const isResumingSession = !!activeTab?.agentSessionId;
 
+	const updateSessionFileTabs = useCallback(
+		(
+			sessionId: string,
+			updater: (tabs: FilePreviewTab[], activeFileTabId: string | null) => {
+				tabs: FilePreviewTab[];
+				activeFileTabId?: string | null;
+			}
+		) => {
+			useSessionStore.getState().setSessions((prev: Session[]) =>
+				prev.map((session) => {
+					if (session.id !== sessionId) return session;
+
+					const result = updater(session.filePreviewTabs, session.activeFileTabId);
+					const nextActiveFileTabId =
+						result.activeFileTabId !== undefined ? result.activeFileTabId : session.activeFileTabId;
+					const nextTabs = pruneInactiveFileTabContent(result.tabs, nextActiveFileTabId);
+
+					if (nextTabs === session.filePreviewTabs && nextActiveFileTabId === session.activeFileTabId) {
+						return session;
+					}
+
+					return {
+						...session,
+						filePreviewTabs: nextTabs,
+						activeFileTabId: nextActiveFileTabId,
+					};
+				})
+			);
+		},
+		[]
+	);
+
+	const loadFileTabContent = useCallback(
+		async (sessionId: string, tabId: string, path: string, sshRemoteId?: string) => {
+			updateSessionFileTabs(sessionId, (tabs, activeFileTabId) => ({
+				tabs: tabs.map((tab) => (tab.id === tabId ? { ...tab, isLoading: true } : tab)),
+				activeFileTabId: activeFileTabId ?? tabId,
+			}));
+
+			try {
+				const [content, stat] = await Promise.all([
+					window.maestro.fs.readFile(path, sshRemoteId),
+					window.maestro.fs.stat(path, sshRemoteId).catch(() => null),
+				]);
+				if (content === null) {
+					updateSessionFileTabs(sessionId, (tabs) => ({
+						tabs: tabs.map((tab) => (tab.id === tabId ? { ...tab, isLoading: false } : tab)),
+					}));
+					return;
+				}
+
+				const nextLastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
+				updateSessionFileTabs(sessionId, (tabs, activeFileTabId) => ({
+					tabs: tabs.map((tab) =>
+						tab.id === tabId
+							? {
+									...tab,
+									content,
+									lastModified: nextLastModified,
+									isLoading: false,
+								}
+							: tab
+					),
+					activeFileTabId: activeFileTabId ?? tabId,
+				}));
+			} catch (error) {
+				console.debug('[loadFileTabContent] Failed to load file preview:', error);
+				updateSessionFileTabs(sessionId, (tabs) => ({
+					tabs: tabs.map((tab) => (tab.id === tabId ? { ...tab, isLoading: false } : tab)),
+				}));
+			}
+		},
+		[updateSessionFileTabs]
+	);
+
 	// ========================================================================
 	// File Tab Creation
 	// ========================================================================
@@ -209,7 +285,7 @@ export function useTabHandlers(): TabHandlersReturn {
 						);
 						return {
 							...s,
-							filePreviewTabs: updatedTabs,
+							filePreviewTabs: pruneInactiveFileTabContent(updatedTabs, existingTab.id),
 							activeFileTabId: existingTab.id,
 							activeTabId: s.activeTabId,
 							unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder, 'file', existingTab.id),
@@ -287,7 +363,7 @@ export function useTabHandlers(): TabHandlersReturn {
 						});
 						return {
 							...s,
-							filePreviewTabs: updatedTabs,
+							filePreviewTabs: pruneInactiveFileTabContent(updatedTabs, currentTabId),
 						};
 					}
 
@@ -340,7 +416,10 @@ export function useTabHandlers(): TabHandlersReturn {
 
 					return {
 						...s,
-						filePreviewTabs: [...s.filePreviewTabs, newFileTab],
+						filePreviewTabs: pruneInactiveFileTabContent(
+							[...s.filePreviewTabs, newFileTab],
+							newTabId
+						),
 						unifiedTabOrder: updatedUnifiedTabOrder,
 						activeFileTabId: newTabId,
 					};
@@ -381,7 +460,14 @@ export function useTabHandlers(): TabHandlersReturn {
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 				const result = setActiveTab(s, tabId);
-				return result ? result.session : s;
+				if (!result) return s;
+				return {
+					...result.session,
+					filePreviewTabs: pruneInactiveFileTabContent(
+						result.session.filePreviewTabs,
+						result.session.activeFileTabId
+					),
+				};
 			})
 		);
 	}, []);
@@ -464,7 +550,10 @@ export function useTabHandlers(): TabHandlersReturn {
 						}
 						return { ...tab, editContent };
 					});
-					return { ...s, filePreviewTabs: updatedFileTabs };
+					return {
+						...s,
+						filePreviewTabs: pruneInactiveFileTabContent(updatedFileTabs, s.activeFileTabId),
+					};
 				})
 			);
 		},
@@ -525,28 +614,23 @@ export function useTabHandlers(): TabHandlersReturn {
 			if (content === null) return;
 			const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
 
-			useSessionStore.getState().setSessions((prev: Session[]) =>
-				prev.map((s) => {
-					if (s.id !== useSessionStore.getState().activeSessionId) return s;
-					return {
-						...s,
-						filePreviewTabs: s.filePreviewTabs.map((tab) =>
-							tab.id === tabId
-								? {
-										...tab,
-										content,
-										lastModified: newMtime,
-										editContent: undefined,
-									}
-								: tab
-						),
-					};
-				})
-			);
+			updateSessionFileTabs(currentSession.id, (tabs, activeFileTabId) => ({
+				tabs: tabs.map((tab) =>
+					tab.id === tabId
+						? {
+								...tab,
+								content,
+								lastModified: newMtime,
+								editContent: undefined,
+							}
+						: tab
+				),
+				activeFileTabId,
+			}));
 		} catch (error) {
 			console.debug('[handleReloadFileTab] Failed to reload:', error);
 		}
-	}, []);
+	}, [updateSessionFileTabs]);
 
 	/**
 	 * Select a file preview tab. If fileTabAutoRefreshEnabled, checks if file changed on disk.
@@ -563,9 +647,18 @@ export function useTabHandlers(): TabHandlersReturn {
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-				return { ...s, activeFileTabId: tabId };
+				return {
+					...s,
+					activeFileTabId: tabId,
+					filePreviewTabs: pruneInactiveFileTabContent(s.filePreviewTabs, tabId),
+				};
 			})
 		);
+
+		if (fileTab.content === null && fileTab.editContent === undefined) {
+			await loadFileTabContent(currentSession.id, tabId, fileTab.path, fileTab.sshRemoteId);
+			return;
+		}
 
 		// Auto-refresh if enabled and tab has no pending edits
 		const { fileTabAutoRefreshEnabled } = useSettingsStore.getState();
@@ -579,23 +672,18 @@ export function useTabHandlers(): TabHandlersReturn {
 				if (currentMtime > fileTab.lastModified) {
 					const content = await window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId);
 					if (content === null) return;
-					useSessionStore.getState().setSessions((prev: Session[]) =>
-						prev.map((s) => {
-							if (s.id !== useSessionStore.getState().activeSessionId) return s;
-							return {
-								...s,
-								filePreviewTabs: s.filePreviewTabs.map((tab) =>
-									tab.id === tabId ? { ...tab, content, lastModified: currentMtime } : tab
-								),
-							};
-						})
-					);
+					updateSessionFileTabs(currentSession.id, (tabs, activeFileTabId) => ({
+						tabs: tabs.map((tab) =>
+							tab.id === tabId ? { ...tab, content, lastModified: currentMtime } : tab
+						),
+						activeFileTabId: activeFileTabId ?? tabId,
+					}));
 				}
 			} catch (error) {
 				console.debug('[handleSelectFileTab] Auto-refresh failed:', error);
 			}
 		}
-	}, []);
+	}, [loadFileTabContent, updateSessionFileTabs]);
 
 	const handleUnifiedTabReorder = useCallback((fromIndex: number, toIndex: number) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();
@@ -1285,24 +1373,27 @@ export function useTabHandlers(): TabHandlersReturn {
 			try {
 				const sshRemoteId = currentTab.sshRemoteId;
 				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
+				if (content === null) return;
 
 				setSessions((prev: Session[]) =>
 					prev.map((s) => {
 						if (s.id !== currentSession.id) return s;
 						return {
 							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: newIndex,
-										}
-									: tab
+							filePreviewTabs: pruneInactiveFileTabContent(
+								s.filePreviewTabs.map((tab) =>
+									tab.id === currentTab.id
+										? {
+												...tab,
+												path: historyEntry.path,
+												name: historyEntry.name,
+												content,
+												scrollTop: historyEntry.scrollTop ?? 0,
+												navigationIndex: newIndex,
+											}
+										: tab
+								),
+								s.activeFileTabId
 							),
 						};
 					})
@@ -1333,24 +1424,27 @@ export function useTabHandlers(): TabHandlersReturn {
 			try {
 				const sshRemoteId = currentTab.sshRemoteId;
 				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
+				if (content === null) return;
 
 				setSessions((prev: Session[]) =>
 					prev.map((s) => {
 						if (s.id !== currentSession.id) return s;
 						return {
 							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: newIndex,
-										}
-									: tab
+							filePreviewTabs: pruneInactiveFileTabContent(
+								s.filePreviewTabs.map((tab) =>
+									tab.id === currentTab.id
+										? {
+												...tab,
+												path: historyEntry.path,
+												name: historyEntry.name,
+												content,
+												scrollTop: historyEntry.scrollTop ?? 0,
+												navigationIndex: newIndex,
+											}
+										: tab
+								),
+								s.activeFileTabId
 							),
 						};
 					})
@@ -1379,24 +1473,27 @@ export function useTabHandlers(): TabHandlersReturn {
 			try {
 				const sshRemoteId = currentTab.sshRemoteId;
 				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
+				if (content === null) return;
 
 				setSessions((prev: Session[]) =>
 					prev.map((s) => {
 						if (s.id !== currentSession.id) return s;
 						return {
 							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: index,
-										}
-									: tab
+							filePreviewTabs: pruneInactiveFileTabContent(
+								s.filePreviewTabs.map((tab) =>
+									tab.id === currentTab.id
+										? {
+												...tab,
+												path: historyEntry.path,
+												name: historyEntry.name,
+												content,
+												scrollTop: historyEntry.scrollTop ?? 0,
+												navigationIndex: index,
+											}
+										: tab
+								),
+								s.activeFileTabId
 							),
 						};
 					})

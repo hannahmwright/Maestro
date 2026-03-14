@@ -13,6 +13,7 @@ import type {
 	GetSessionModelsCallback,
 	GetSessionModelCatalogCallback,
 	GetSessionProviderUsageCallback,
+	GetConductorSnapshotCallback,
 	GetSessionDemosCallback,
 	GetDemoDetailCallback,
 	GetArtifactContentCallback,
@@ -36,6 +37,9 @@ import type {
 	StarTabCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
+	CreateConductorTaskCallback,
+	UpdateConductorTaskCallback,
+	DeleteConductorTaskCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -52,6 +56,7 @@ export interface WebServerCallbacks {
 	getSessionModels: GetSessionModelsCallback | null;
 	getSessionModelCatalog: GetSessionModelCatalogCallback | null;
 	getSessionProviderUsage: GetSessionProviderUsageCallback | null;
+	getConductorSnapshot: GetConductorSnapshotCallback | null;
 	getSessionDemos: GetSessionDemosCallback | null;
 	getDemoDetail: GetDemoDetailCallback | null;
 	getArtifactContent: GetArtifactContentCallback | null;
@@ -77,6 +82,9 @@ export interface WebServerCallbacks {
 	starTab: StarTabCallback | null;
 	reorderTab: ReorderTabCallback | null;
 	toggleBookmark: ToggleBookmarkCallback | null;
+	createConductorTask: CreateConductorTaskCallback | null;
+	updateConductorTask: UpdateConductorTaskCallback | null;
+	deleteConductorTask: DeleteConductorTaskCallback | null;
 	getHistory: GetHistoryCallback | null;
 }
 
@@ -87,6 +95,7 @@ export class CallbackRegistry {
 		getSessionModels: null,
 		getSessionModelCatalog: null,
 		getSessionProviderUsage: null,
+		getConductorSnapshot: null,
 		getSessionDemos: null,
 		getDemoDetail: null,
 		getArtifactContent: null,
@@ -112,6 +121,9 @@ export class CallbackRegistry {
 		starTab: null,
 		reorderTab: null,
 		toggleBookmark: null,
+		createConductorTask: null,
+		updateConductorTask: null,
+		deleteConductorTask: null,
 		getHistory: null,
 	};
 
@@ -144,6 +156,10 @@ export class CallbackRegistry {
 		forceRefresh?: boolean
 	): Promise<Awaited<ReturnType<GetSessionProviderUsageCallback>> | null> {
 		return (await this.callbacks.getSessionProviderUsage?.(sessionId, forceRefresh)) ?? null;
+	}
+
+	async getConductorSnapshot(): Promise<Awaited<ReturnType<GetConductorSnapshotCallback>> | null> {
+		return (await this.callbacks.getConductorSnapshot?.()) ?? null;
 	}
 
 	async getSessionDemos(sessionId: string, tabId?: string | null) {
@@ -310,6 +326,26 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
+	async createConductorTask(
+		input: Parameters<CreateConductorTaskCallback>[0]
+	): Promise<boolean> {
+		if (!this.callbacks.createConductorTask) return false;
+		return this.callbacks.createConductorTask(input);
+	}
+
+	async updateConductorTask(
+		taskId: string,
+		updates: Parameters<UpdateConductorTaskCallback>[1]
+	): Promise<boolean> {
+		if (!this.callbacks.updateConductorTask) return false;
+		return this.callbacks.updateConductorTask(taskId, updates);
+	}
+
+	async deleteConductorTask(taskId: string): Promise<boolean> {
+		if (!this.callbacks.deleteConductorTask) return false;
+		return this.callbacks.deleteConductorTask(taskId);
+	}
+
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
 		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
 	}
@@ -334,6 +370,10 @@ export class CallbackRegistry {
 
 	setGetSessionProviderUsageCallback(callback: GetSessionProviderUsageCallback): void {
 		this.callbacks.getSessionProviderUsage = callback;
+	}
+
+	setGetConductorSnapshotCallback(callback: GetConductorSnapshotCallback): void {
+		this.callbacks.getConductorSnapshot = callback;
 	}
 
 	setGetSessionDemosCallback(callback: GetSessionDemosCallback): void {
@@ -441,6 +481,18 @@ export class CallbackRegistry {
 
 	setToggleBookmarkCallback(callback: ToggleBookmarkCallback): void {
 		this.callbacks.toggleBookmark = callback;
+	}
+
+	setCreateConductorTaskCallback(callback: CreateConductorTaskCallback): void {
+		this.callbacks.createConductorTask = callback;
+	}
+
+	setUpdateConductorTaskCallback(callback: UpdateConductorTaskCallback): void {
+		this.callbacks.updateConductorTask = callback;
+	}
+
+	setDeleteConductorTaskCallback(callback: DeleteConductorTaskCallback): void {
+		this.callbacks.deleteConductorTask = callback;
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

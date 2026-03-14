@@ -141,6 +141,96 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 	);
 
 	ipcMain.handle(
+		'git:initializeRepo',
+		withIpcErrorLogging(
+			handlerOpts('initializeRepo'),
+			async (
+				cwd: string,
+				createInitialCommit = true,
+				sshRemoteId?: string,
+				remoteCwd?: string
+			) => {
+				const sshRemote = getSshRemoteById(sshRemoteId);
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+
+				const initResult = await execGit(['init'], cwd, sshRemote, effectiveRemoteCwd);
+				if (initResult.exitCode !== 0) {
+					return {
+						success: false,
+						error: initResult.stderr || initResult.stdout || 'Failed to initialize git repository.',
+					};
+				}
+
+				let createdCommit = false;
+
+				if (createInitialCommit) {
+					const addResult = await execGit(['add', '-A'], cwd, sshRemote, effectiveRemoteCwd);
+					if (addResult.exitCode !== 0) {
+						return {
+							success: false,
+							error: addResult.stderr || addResult.stdout || 'Failed to stage files for initial commit.',
+						};
+					}
+
+					const commitResult = await execGit(
+						[
+							'-c',
+							'user.name=Maestro',
+							'-c',
+							'user.email=maestro@local',
+							'commit',
+							'--allow-empty',
+							'-m',
+							'Initial commit',
+						],
+						cwd,
+						sshRemote,
+						effectiveRemoteCwd
+					);
+
+					if (commitResult.exitCode === 0) {
+						createdCommit = true;
+					} else {
+						const commitCountResult = await execGit(
+							['rev-list', '--count', 'HEAD'],
+							cwd,
+							sshRemote,
+							effectiveRemoteCwd
+						);
+						const existingCommitCount =
+							commitCountResult.exitCode === 0
+								? parseInt(commitCountResult.stdout.trim(), 10) || 0
+								: 0;
+
+						if (existingCommitCount === 0) {
+							return {
+								success: false,
+								error:
+									commitResult.stderr ||
+									commitResult.stdout ||
+									'Failed to create the initial commit.',
+							};
+						}
+					}
+				}
+
+				const branchResult = await execGit(
+					['rev-parse', '--abbrev-ref', 'HEAD'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+
+				return {
+					success: true,
+					createdCommit,
+					currentBranch: branchResult.exitCode === 0 ? branchResult.stdout.trim() : undefined,
+				};
+			}
+		)
+	);
+
+	ipcMain.handle(
 		'git:numstat',
 		withIpcErrorLogging(
 			handlerOpts('numstat'),

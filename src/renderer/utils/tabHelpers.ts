@@ -77,6 +77,30 @@ export function ensureInUnifiedTabOrder(
 }
 
 /**
+ * Keep file preview content resident only for the active tab or tabs with unsaved edits.
+ * This trims large inactive file buffers from renderer memory while preserving dirty tabs.
+ */
+export function pruneInactiveFileTabContent(
+	filePreviewTabs: FilePreviewTab[],
+	activeFileTabId: string | null
+): FilePreviewTab[] {
+	let changed = false;
+
+	const updatedTabs = filePreviewTabs.map((tab) => {
+		const shouldKeepContent =
+			tab.id === activeFileTabId || tab.editContent !== undefined || tab.isLoading;
+		if (shouldKeepContent || tab.content === null) {
+			return tab;
+		}
+
+		changed = true;
+		return { ...tab, content: null };
+	});
+
+	return changed ? updatedTabs : filePreviewTabs;
+}
+
+/**
  * Get a repaired unifiedTabOrder that includes any orphaned tabs.
  * Follows the existing unifiedTabOrder, then appends tabs that exist in
  * aiTabs/filePreviewTabs but are missing from the order.

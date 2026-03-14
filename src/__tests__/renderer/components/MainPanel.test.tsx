@@ -566,7 +566,7 @@ describe('MainPanel', () => {
 			const session = createSession({ name: 'My Test Session' });
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			expect(screen.getByText('My Test Session', { selector: '.header-session-name' })).toBeInTheDocument();
+			expect(screen.getByTestId('thread-title')).toHaveTextContent('My Test Session');
 		});
 
 		it('should display LOCAL badge for non-git repos', () => {
@@ -892,14 +892,27 @@ describe('MainPanel', () => {
 		});
 	});
 
-	describe('Session UUID pill', () => {
-		it('should display session UUID pill in AI mode with claude session', () => {
+	describe('Provider subscription widget', () => {
+		it('should display the active thread provider usage in AI mode', async () => {
+			vi.mocked(window.maestro.agents.getProviderUsage).mockResolvedValue({
+				provider: 'codex',
+				usedPercent: 42,
+				resetsAt: 1_700_000_000,
+				label: 'Codex subscription',
+				planType: 'Pro',
+				accountType: 'Personal',
+				source: 'codex-app-server',
+				confidence: 'high',
+				fetchedAt: Date.now(),
+				windows: [],
+			});
+
 			const session = createSession({
-				inputMode: 'ai',
+				toolType: 'codex',
 				aiTabs: [
 					{
 						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
+						agentSessionId: 'codex-session-1',
 						name: 'Tab 1',
 						isUnread: false,
 						createdAt: Date.now(),
@@ -910,20 +923,18 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Should show truncated UUID (first segment in uppercase)
-			expect(screen.getByText('ABC12345')).toBeInTheDocument();
+			await waitFor(() => {
+				expect(screen.getByLabelText('Codex subscription usage 42%')).toBeInTheDocument();
+			});
 		});
 
-		it('should copy session ID when UUID pill is clicked', async () => {
-			const writeText = vi.fn().mockResolvedValue(undefined);
-			Object.assign(navigator, { clipboard: { writeText } });
-
+		it('should show unavailable state for unsupported providers while still using that thread provider visually', () => {
 			const session = createSession({
-				inputMode: 'ai',
+				toolType: 'opencode',
 				aiTabs: [
 					{
 						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
+						agentSessionId: 'opencode-session-1',
 						name: 'Tab 1',
 						isUnread: false,
 						createdAt: Date.now(),
@@ -934,73 +945,83 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			fireEvent.click(screen.getByText('ABC12345'));
-
-			expect(writeText).toHaveBeenCalledWith('abc12345-def6-7890-ghij-klmnopqrstuv');
+			expect(screen.getByLabelText('OpenCode subscription usage unavailable')).toBeInTheDocument();
 		});
 
-		it('should not show UUID pill in terminal mode', () => {
-			const session = createSession({
-				inputMode: 'terminal',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-					},
-				],
-			});
+		it('should not display provider usage widget in terminal mode', () => {
+			const session = createSession({ inputMode: 'terminal' });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
+			expect(screen.queryByLabelText(/subscription usage/i)).not.toBeInTheDocument();
 		});
 
-		it('should not show UUID pill when agent does not support session ID', () => {
-			// Pre-populate cache with capabilities where supportsSessionId is false
-			clearCapabilitiesCache();
-			setCapabilitiesCache('claude-code', {
-				supportsResume: true,
-				supportsReadOnlyMode: true,
-				supportsJsonOutput: true,
-				supportsSessionId: false, // Agent doesn't support session ID
-				supportsImageInput: true,
-				supportsImageInputOnResume: true,
-				supportsSlashCommands: true,
-				supportsSessionStorage: true,
-				supportsCostTracking: true,
-				supportsUsageStats: true,
-				supportsBatchMode: true,
-				requiresPromptToStart: false,
-				supportsStreaming: true,
-				supportsResultMessages: true,
-				supportsModelSelection: false,
-				supportsStreamJsonInput: true,
+		it('should show other provider subscription statuses in the popover', async () => {
+			vi.mocked(window.maestro.agents.getProviderUsage).mockImplementation(async (agentId: string) => {
+				if (agentId === 'codex') {
+					return {
+						provider: 'codex',
+						usedPercent: 38,
+						resetsAt: 1_700_000_000,
+						label: 'Codex subscription',
+						planType: 'Pro',
+						accountType: 'Personal',
+						source: 'codex-app-server',
+						confidence: 'high',
+						fetchedAt: Date.now(),
+						windows: [
+							{
+								id: 'codex-5h',
+								label: 'Current 5h window',
+								usedPercent: 38,
+								resetsAt: 1_700_000_000,
+								windowDurationMins: 300,
+							},
+						],
+					};
+				}
+
+				if (agentId === 'claude-code') {
+					return {
+						provider: 'claude-code',
+						usedPercent: 81,
+						resetsAt: 1_700_100_000,
+						label: 'Claude subscription',
+						planType: 'Max',
+						accountType: 'Team',
+						source: 'claude-oauth-usage',
+						confidence: 'high',
+						fetchedAt: Date.now(),
+						windows: [
+							{
+								id: 'claude-weekly',
+								label: 'Weekly allowance',
+								usedPercent: 81,
+								resetsAt: 1_700_100_000,
+								windowDurationMins: 10080,
+							},
+						],
+					};
+				}
+
+				return null;
 			});
 
-			const session = createSession({
-				inputMode: 'ai',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890-ghij-klmnopqrstuv',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-					},
-				],
-				activeTabId: 'tab-1',
-			});
-
+			const session = createSession({ toolType: 'codex' });
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Should NOT show the UUID pill when agent doesn't support session ID
-			expect(screen.queryByText('ABC12345')).not.toBeInTheDocument();
+			await waitFor(() => {
+				expect(screen.getByLabelText('Codex subscription usage 38%')).toBeInTheDocument();
+			});
 
-			// Restore cache for other tests
-			clearCapabilitiesCache();
+			fireEvent.click(screen.getByLabelText('Codex subscription usage 38%'));
+
+			await waitFor(() => {
+				expect(screen.getByText('Provider Subscription Usage')).toBeInTheDocument();
+				expect(screen.getByText('Claude subscription')).toBeInTheDocument();
+				expect(screen.getByText('Codex subscription')).toBeInTheDocument();
+				expect(screen.getByText('Weekly allowance')).toBeInTheDocument();
+			});
 		});
 	});
 
@@ -1124,49 +1145,16 @@ describe('MainPanel', () => {
 		});
 	});
 
-	describe('Context window widget', () => {
-		it('should display context window widget in AI mode', () => {
+	describe('Context usage in thread bar', () => {
+		it('should still display context usage in AI mode thread bar', () => {
 			render(<MainPanel {...defaultProps} />);
-
-			// Label shows "Context" or "Context Window" depending on panel width
-			expect(screen.getAllByText(/^Context( Window)?$/)[0]).toBeInTheDocument();
+			expect(screen.getByTestId('thread-bar')).toBeInTheDocument();
 		});
 
-		it('should not display context window in terminal mode', () => {
+		it('should not display thread bar context usage in terminal mode', () => {
 			const session = createSession({ inputMode: 'terminal' });
-
 			render(<MainPanel {...defaultProps} activeSession={session} />);
-
-			// Target the full "Context Window" label (compact "Context" label is also rendered but hidden via CSS)
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
-		});
-
-		it('should not display context window widget when agent does not support usage stats', () => {
-			// Pre-populate cache with capabilities where supportsUsageStats is false
-			clearCapabilitiesCache();
-			setCapabilitiesCache('claude-code', {
-				supportsResume: true,
-				supportsReadOnlyMode: true,
-				supportsJsonOutput: true,
-				supportsSessionId: true,
-				supportsImageInput: true,
-				supportsImageInputOnResume: true,
-				supportsSlashCommands: true,
-				supportsSessionStorage: true,
-				supportsCostTracking: true,
-				supportsUsageStats: false, // Agent doesn't support usage stats
-				supportsBatchMode: true,
-				requiresPromptToStart: false,
-				supportsStreaming: true,
-				supportsResultMessages: true,
-				supportsModelSelection: false,
-				supportsStreamJsonInput: true,
-			});
-
-			render(<MainPanel {...defaultProps} />);
-
-			// Context Window widget should not be present
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('thread-bar')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1855,85 +1843,82 @@ describe('MainPanel', () => {
 	});
 
 	describe('Context window popover', () => {
-		it('should show context popover on click', async () => {
+		it('should show provider subscription popover on click', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			const contextWidget = screen.getByTitle('Open context details');
-			fireEvent.click(contextWidget);
+			const usageWidget = screen.getByTitle('Open provider subscription usage for Claude');
+			fireEvent.click(usageWidget);
 
 			await waitFor(() => {
-				expect(screen.getByText('Context Details')).toBeInTheDocument();
+				expect(screen.getByText('Provider Subscription Usage')).toBeInTheDocument();
 			});
 		});
 
-		it('should hide context popover when clicked again', async () => {
+		it('should hide provider subscription popover when clicked again', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			const contextWidget = screen.getByTitle('Open context details');
-			fireEvent.click(contextWidget);
+			const usageWidget = screen.getByTitle('Open provider subscription usage for Claude');
+			fireEvent.click(usageWidget);
 
 			await waitFor(() => {
-				expect(screen.getByText('Context Details')).toBeInTheDocument();
+				expect(screen.getByText('Provider Subscription Usage')).toBeInTheDocument();
 			});
 
-			fireEvent.click(contextWidget);
+			fireEvent.click(usageWidget);
 
 			await waitFor(() => {
-				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+				expect(screen.queryByText('Provider Subscription Usage')).not.toBeInTheDocument();
 			});
 		});
 
-		it('should close context popover when clicking outside', async () => {
+		it('should close provider subscription popover when clicking outside', async () => {
 			render(<MainPanel {...defaultProps} />);
 
-			const contextWidget = screen.getByTitle('Open context details');
-			fireEvent.click(contextWidget);
+			const usageWidget = screen.getByTitle('Open provider subscription usage for Claude');
+			fireEvent.click(usageWidget);
 
 			await waitFor(() => {
-				expect(screen.getByText('Context Details')).toBeInTheDocument();
+				expect(screen.getByText('Provider Subscription Usage')).toBeInTheDocument();
 			});
 
 			fireEvent.mouseDown(document.body);
 
 			await waitFor(() => {
-				expect(screen.queryByText('Context Details')).not.toBeInTheDocument();
+				expect(screen.queryByText('Provider Subscription Usage')).not.toBeInTheDocument();
 			});
 		});
 
-		it('should display token stats in context popover', async () => {
-			const session = createSession({
-				aiTabs: [
+		it('should display provider window stats in the subscription popover', async () => {
+			vi.mocked(window.maestro.agents.getProviderUsage).mockResolvedValue({
+				provider: 'claude-code',
+				usedPercent: 57,
+				resetsAt: 1_700_000_000,
+				label: 'Claude subscription',
+				planType: 'Max',
+				accountType: 'Team',
+				source: 'claude-oauth-usage',
+				confidence: 'high',
+				fetchedAt: Date.now(),
+				windows: [
 					{
-						id: 'tab-1',
-						agentSessionId: 'claude-1',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-						usageStats: {
-							inputTokens: 1500,
-							outputTokens: 750,
-							cacheReadInputTokens: 200,
-							cacheCreationInputTokens: 100,
-							totalCostUsd: 0.05,
-							contextWindow: 200000,
-						},
+						id: 'claude-weekly',
+						label: 'Weekly allowance',
+						usedPercent: 57,
+						resetsAt: 1_700_000_000,
+						windowDurationMins: 10080,
 					},
 				],
-				activeTabId: 'tab-1',
 			});
 
-			render(<MainPanel {...defaultProps} activeSession={session} />);
+			render(<MainPanel {...defaultProps} />);
 
-			const contextWidget = screen.getByTitle('Open context details');
-			fireEvent.click(contextWidget);
+			const usageWidget = await screen.findByLabelText('Claude subscription usage 57%');
+			fireEvent.click(usageWidget);
 
 			await waitFor(() => {
-				expect(screen.getByText('Tokens')).toBeInTheDocument();
-				expect(screen.getByText(/1,800\s*\/\s*200,000/)).toBeInTheDocument();
-				expect(screen.getByText('Input Tokens')).toBeInTheDocument();
-				expect(screen.getByText('1,500')).toBeInTheDocument();
-				expect(screen.getByText('Output Tokens')).toBeInTheDocument();
-				expect(screen.getByText('750')).toBeInTheDocument();
+				expect(screen.getByText('Weekly allowance')).toBeInTheDocument();
+				expect(screen.getByText('Max • Team')).toBeInTheDocument();
+				expect(screen.getAllByText('57%').length).toBeGreaterThan(0);
 			});
 		});
 	});
@@ -2026,26 +2011,18 @@ describe('MainPanel', () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
 
-			const session = createSession({
-				inputMode: 'ai',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-					},
-				],
-				activeTabId: 'tab-1',
-			});
+			const session = createSession({ isGitRepo: true });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			fireEvent.click(screen.getByText('ABC12345'));
+			fireEvent.mouseEnter(screen.getByText('main'));
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+			fireEvent.click(screen.getByTitle('Copy branch name'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				expect(screen.getByText('"main" copied to clipboard')).toBeInTheDocument();
 			});
 		});
 
@@ -2053,26 +2030,18 @@ describe('MainPanel', () => {
 			const writeText = vi.fn().mockResolvedValue(undefined);
 			Object.assign(navigator, { clipboard: { writeText } });
 
-			const session = createSession({
-				inputMode: 'ai',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-					},
-				],
-				activeTabId: 'tab-1',
-			});
+			const session = createSession({ isGitRepo: true });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			fireEvent.click(screen.getByText('ABC12345'));
+			fireEvent.mouseEnter(screen.getByText('main'));
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+			fireEvent.click(screen.getByTitle('Copy branch name'));
 
 			await waitFor(() => {
-				expect(screen.getByText('Session ID Copied to Clipboard')).toBeInTheDocument();
+				expect(screen.getByText('"main" copied to clipboard')).toBeInTheDocument();
 			});
 
 			// Advance timers by 2 seconds
@@ -2081,7 +2050,7 @@ describe('MainPanel', () => {
 			});
 
 			await waitFor(() => {
-				expect(screen.queryByText('Session ID Copied to Clipboard')).not.toBeInTheDocument();
+				expect(screen.queryByText('"main" copied to clipboard')).not.toBeInTheDocument();
 			});
 		});
 	});
@@ -2204,8 +2173,7 @@ describe('MainPanel', () => {
 
 			// Wait for the effect to run and ResizeObserver to be set up
 			await waitFor(() => {
-				// Check that header exists (which triggers the ResizeObserver setup)
-				expect(screen.getByText('Test Session', { selector: '.header-session-name' })).toBeInTheDocument();
+				expect(screen.getByTestId('thread-title')).toHaveTextContent('Test Session');
 			});
 		});
 	});
@@ -2470,8 +2438,8 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Should render without crashing - Context Window widget is hidden when contextWindow is not configured
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			// Should render without crashing even when tab usage stats are unavailable
+			expect(screen.getByLabelText(/Claude subscription usage/i)).toBeInTheDocument();
 		});
 
 		it('should handle missing git status from context gracefully', async () => {
@@ -2492,23 +2460,15 @@ describe('MainPanel', () => {
 			const writeText = vi.fn().mockRejectedValue(new Error('Clipboard error'));
 			Object.assign(navigator, { clipboard: { writeText } });
 
-			const session = createSession({
-				inputMode: 'ai',
-				aiTabs: [
-					{
-						id: 'tab-1',
-						agentSessionId: 'abc12345-def6-7890',
-						name: 'Tab 1',
-						isUnread: false,
-						createdAt: Date.now(),
-					},
-				],
-				activeTabId: 'tab-1',
-			});
+			const session = createSession({ isGitRepo: true });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			fireEvent.click(screen.getByText('ABC12345'));
+			fireEvent.mouseEnter(screen.getByText('main'));
+			await act(async () => {
+				vi.advanceTimersByTime(200);
+			});
+			fireEvent.click(screen.getByTitle('Copy branch name'));
 
 			// safeClipboardWrite swallows the error and returns false,
 			// so no copy notification should appear
@@ -2541,7 +2501,7 @@ describe('MainPanel', () => {
 	});
 
 	describe('Context usage calculation edge cases', () => {
-		it('should hide context widget when context window is zero', () => {
+		it('should still render the provider usage widget when context window is zero', () => {
 			const session = createSession({
 				aiTabs: [
 					{
@@ -2565,8 +2525,7 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Context Window widget should be hidden when contextWindow is 0 (not configured)
-			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
+			expect(screen.getByLabelText(/Claude subscription usage/i)).toBeInTheDocument();
 		});
 
 		it('should use preserved session.contextUsage when accumulated values exceed window', () => {
@@ -3368,8 +3327,7 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Header elements should still be visible
-			expect(screen.getByText('Test Session', { selector: '.header-session-name' })).toBeInTheDocument();
+			expect(screen.getByTestId('thread-title')).toHaveTextContent('Test Session');
 			// Thread bar should still be visible
 			expect(screen.getByTestId('thread-bar')).toBeInTheDocument();
 			// Wizard conversation view should be visible

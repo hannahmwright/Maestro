@@ -247,6 +247,7 @@ export interface SettingsStoreState {
 	localHonorGitignore: boolean;
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
+	autoCollapseRightPanel: boolean;
 	automaticTabNamingEnabled: boolean;
 	fileTabAutoRefreshEnabled: boolean;
 	suppressWindowsWarning: boolean;
@@ -320,6 +321,7 @@ export interface SettingsStoreActions {
 	setLocalHonorGitignore: (value: boolean) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
+	setAutoCollapseRightPanel: (value: boolean) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
@@ -469,6 +471,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	localHonorGitignore: true,
 	sshRemoteIgnorePatterns: ['.git', '*cache*'],
 	sshRemoteHonorGitignore: true,
+	autoCollapseRightPanel: true,
 	automaticTabNamingEnabled: true,
 	fileTabAutoRefreshEnabled: false,
 	suppressWindowsWarning: false,
@@ -778,6 +781,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	setSshRemoteHonorGitignore: (value) => {
 		set({ sshRemoteHonorGitignore: value });
 		window.maestro.settings.set('sshRemoteHonorGitignore', value);
+	},
+
+	setAutoCollapseRightPanel: (value) => {
+		set({ autoCollapseRightPanel: value });
+		window.maestro.settings.set('autoCollapseRightPanel', value);
 	},
 
 	setAutomaticTabNamingEnabled: (value) => {
@@ -1723,6 +1731,9 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['sshRemoteHonorGitignore'] !== undefined)
 			patch.sshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'] as boolean;
+
+		if (allSettings['autoCollapseRightPanel'] !== undefined)
+			patch.autoCollapseRightPanel = allSettings['autoCollapseRightPanel'] as boolean;
 
 		if (allSettings['automaticTabNamingEnabled'] !== undefined)
 			patch.automaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'] as boolean;

@@ -23,6 +23,15 @@ export type {
 	ConductorResourceProfile,
 	ConductorTaskStatus,
 	ConductorTaskPriority,
+	ConductorAgentRole,
+	ConductorProviderAgent,
+	ConductorProviderChoice,
+	ConductorProviderRoute,
+	ConductorProviderRouteKey,
+	ConductorProviderRouting,
+	ConductorTaskSource,
+	ConductorSessionMetadata,
+	ConductorView,
 	UsageStats,
 	BatchDocumentEntry,
 	PlaybookDocumentEntry,
@@ -55,6 +64,15 @@ import type {
 	ConductorResourceProfile,
 	ConductorTaskStatus,
 	ConductorTaskPriority,
+	ConductorAgentRole,
+	ConductorProviderAgent,
+	ConductorProviderChoice,
+	ConductorProviderRoute,
+	ConductorProviderRouteKey,
+	ConductorProviderRouting,
+	ConductorTaskSource,
+	ConductorSessionMetadata,
+	ConductorView,
 } from '../../shared/types';
 import type { WebAttachmentSummary } from '../../shared/remote-web';
 import type { DemoCard, DemoCaptureRequest } from '../../shared/demo-artifacts';
@@ -90,6 +108,32 @@ export type SettingsTab = 'general' | 'shortcuts' | 'theme' | 'notifications' | 
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
 export type AgentExecutionMode = 'ask' | 'plan' | 'agent';
+
+export interface SidebarThreadTarget {
+	id: string;
+	threadId: string;
+	sessionId: string;
+	runtimeId: string;
+	workspaceId: string;
+	tabId: string | null;
+}
+
+export interface SidebarWorkspaceTarget {
+	id: string;
+	workspaceId: string;
+}
+
+export type SidebarNavTarget =
+	| {
+			type: 'thread';
+			id: string;
+			thread: SidebarThreadTarget;
+	  }
+	| {
+			type: 'workspace';
+			id: string;
+			workspace: SidebarWorkspaceTarget;
+	  };
 
 // Inline wizard types for per-session/per-tab wizard state
 export type WizardMode = 'new' | 'iterate' | null;
@@ -240,6 +284,20 @@ export interface LogEntry {
 			output?: unknown;
 			/** Provider-specific fields preserved for debugging/future UI */
 			[key: string]: unknown;
+		};
+		preservedReasoning?: {
+			reason: 'failed' | 'interrupted' | 'killed';
+			title: string;
+			excerpt?: string;
+			entryCount: number;
+			thinkingCount: number;
+			toolCount: number;
+			entries: Array<{
+				source: 'thinking' | 'tool';
+				text: string;
+				timestamp: number;
+				metadata?: LogEntry['metadata'];
+			}>;
 		};
 		demoCard?: DemoCard;
 	};
@@ -516,7 +574,7 @@ export interface FilePreviewTab {
 	path: string; // Full file path
 	name: string; // Filename without extension (displayed as tab name)
 	extension: string; // File extension with dot (e.g., '.md', '.ts') - shown as badge
-	content: string; // File content (stored directly for simplicity - file previews are typically small)
+	content: string | null; // Loaded file content (null when unloaded to reduce memory for inactive tabs)
 	scrollTop: number; // Saved scroll position
 	searchQuery: string; // Preserved search query
 	editMode: boolean; // Whether tab was in edit mode
@@ -755,6 +813,9 @@ export interface Session {
 		remoteId: string | null; // SSH remote config ID to use
 		workingDirOverride?: string; // Override remote working directory
 	};
+
+	// Conductor-managed child session metadata
+	conductorMetadata?: ConductorSessionMetadata;
 
 	// SSH connection status - runtime only, not persisted
 	// Set when background SSH operations fail (e.g., git info fetch on startup)

@@ -11,11 +11,12 @@
  */
 
 import { create } from 'zustand';
-import type { FocusArea, RightPanelTab } from '../types';
+import type { FocusArea, RightPanelTab, SidebarThreadTarget, SidebarNavTarget } from '../types';
 
 export interface UIStoreState {
 	// Sidebar
 	leftSidebarOpen: boolean;
+	leftSidebarHidden: boolean;
 	rightPanelOpen: boolean;
 
 	// Focus
@@ -33,6 +34,8 @@ export interface UIStoreState {
 
 	// Session sidebar selection
 	selectedSidebarIndex: number;
+	sidebarThreadTargets: SidebarThreadTarget[];
+	sidebarNavTargets: SidebarNavTarget[];
 
 	// Flash notifications
 	flashNotification: string | null;
@@ -62,6 +65,7 @@ export interface UIStoreState {
 export interface UIStoreActions {
 	// Sidebar
 	setLeftSidebarOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+	setLeftSidebarHidden: (hidden: boolean | ((prev: boolean) => boolean)) => void;
 	toggleLeftSidebar: () => void;
 	setRightPanelOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	toggleRightPanel: () => void;
@@ -84,6 +88,14 @@ export interface UIStoreActions {
 
 	// Session sidebar selection
 	setSelectedSidebarIndex: (index: number | ((prev: number) => number)) => void;
+	setSidebarThreadTargets: (
+		targets:
+			| SidebarThreadTarget[]
+			| ((prev: SidebarThreadTarget[]) => SidebarThreadTarget[])
+	) => void;
+	setSidebarNavTargets: (
+		targets: SidebarNavTarget[] | ((prev: SidebarNavTarget[]) => SidebarNavTarget[])
+	) => void;
 
 	// Flash notifications
 	setFlashNotification: (msg: string | null | ((prev: string | null) => string | null)) => void;
@@ -124,6 +136,7 @@ function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
 export const useUIStore = create<UIStore>()((set) => ({
 	// --- State ---
 	leftSidebarOpen: true,
+	leftSidebarHidden: false,
 	rightPanelOpen: true,
 	activeFocus: 'main',
 	activeRightTab: 'files',
@@ -133,6 +146,8 @@ export const useUIStore = create<UIStore>()((set) => ({
 	preFilterActiveTabId: null,
 	preTerminalFileTabId: null,
 	selectedSidebarIndex: 0,
+	sidebarThreadTargets: [],
+	sidebarNavTargets: [],
 	flashNotification: null,
 	successFlashNotification: null,
 	outputSearchOpen: false,
@@ -145,8 +160,27 @@ export const useUIStore = create<UIStore>()((set) => ({
 	editingSessionId: null,
 
 	// --- Actions ---
-	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
-	toggleLeftSidebar: () => set((s) => ({ leftSidebarOpen: !s.leftSidebarOpen })),
+	setLeftSidebarOpen: (v) =>
+		set((s) => {
+			const nextOpen = resolve(v, s.leftSidebarOpen);
+			return {
+				leftSidebarOpen: nextOpen,
+				leftSidebarHidden: nextOpen ? false : s.leftSidebarHidden,
+			};
+		}),
+	setLeftSidebarHidden: (v) =>
+		set((s) => {
+			const nextHidden = resolve(v, s.leftSidebarHidden);
+			return {
+				leftSidebarHidden: nextHidden,
+				leftSidebarOpen: nextHidden ? false : s.leftSidebarOpen,
+			};
+		}),
+	toggleLeftSidebar: () =>
+		set((s) => ({
+			leftSidebarOpen: s.leftSidebarHidden ? true : !s.leftSidebarOpen,
+			leftSidebarHidden: false,
+		})),
 	setRightPanelOpen: (v) => set((s) => ({ rightPanelOpen: resolve(v, s.rightPanelOpen) })),
 	toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
 
@@ -167,6 +201,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setSelectedSidebarIndex: (v) =>
 		set((s) => ({ selectedSidebarIndex: resolve(v, s.selectedSidebarIndex) })),
+	setSidebarThreadTargets: (v) =>
+		set((s) => ({ sidebarThreadTargets: resolve(v, s.sidebarThreadTargets) })),
+	setSidebarNavTargets: (v) => set((s) => ({ sidebarNavTargets: resolve(v, s.sidebarNavTargets) })),
 
 	setFlashNotification: (v) => set((s) => ({ flashNotification: resolve(v, s.flashNotification) })),
 	setSuccessFlashNotification: (v) =>

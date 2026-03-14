@@ -45,6 +45,7 @@ const mockSetEnterToSendTerminal = vi.fn();
 const mockSetDefaultSaveToHistory = vi.fn();
 const mockSetDefaultShowThinking = vi.fn();
 const mockSetAutoScrollAiMode = vi.fn();
+const mockSetAutoCollapseRightPanel = vi.fn();
 const mockSetAutomaticTabNamingEnabled = vi.fn();
 const mockSetPreventSleepEnabled = vi.fn();
 const mockSetDisableGpuAcceleration = vi.fn();
@@ -90,6 +91,8 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setDefaultShowThinking: mockSetDefaultShowThinking,
 		autoScrollAiMode: true,
 		setAutoScrollAiMode: mockSetAutoScrollAiMode,
+		autoCollapseRightPanel: true,
+		setAutoCollapseRightPanel: mockSetAutoCollapseRightPanel,
 		// Tab naming
 		automaticTabNamingEnabled: true,
 		setAutomaticTabNamingEnabled: mockSetAutomaticTabNamingEnabled,
@@ -996,7 +999,37 @@ describe('GeneralTab', () => {
 	});
 
 	// =========================================================================
-	// 14. Power Management
+	// 14. Right Bar
+	// =========================================================================
+	describe('Right Bar', () => {
+		it('should render right bar auto-collapse toggle', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByText('Auto-collapse the Right Bar')).toBeInTheDocument();
+		});
+
+		it('should call setAutoCollapseRightPanel when toggle is clicked', async () => {
+			render(<GeneralTab theme={mockTheme} isOpen={true} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			const titleElement = screen.getByText('Auto-collapse the Right Bar');
+			const toggleContainer = titleElement.closest('[role="button"]');
+			const toggleSwitch = toggleContainer?.querySelector('button[role="switch"]');
+
+			fireEvent.click(toggleSwitch!);
+			expect(mockSetAutoCollapseRightPanel).toHaveBeenCalledWith(false);
+		});
+	});
+
+	// =========================================================================
+	// 15. Power Management
 	// =========================================================================
 	describe('Power Management', () => {
 		it('should render prevent sleep toggle', async () => {

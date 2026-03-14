@@ -86,6 +86,7 @@ function resetStore() {
 		disableConfetti: false,
 		sshRemoteIgnorePatterns: ['.git', '*cache*'],
 		sshRemoteHonorGitignore: true,
+		autoCollapseRightPanel: true,
 		automaticTabNamingEnabled: true,
 		fileTabAutoRefreshEnabled: false,
 		suppressWindowsWarning: false,
@@ -118,7 +119,7 @@ describe('settingsStore', () => {
 	// ========================================================================
 
 	describe('initial state', () => {
-		it('has correct default values for all 65 fields', () => {
+		it('has correct default values for all 66 fields', () => {
 			const state = useSettingsStore.getState();
 
 			expect(state.settingsLoaded).toBe(false);
@@ -186,6 +187,7 @@ describe('settingsStore', () => {
 			expect(state.disableConfetti).toBe(false);
 			expect(state.sshRemoteIgnorePatterns).toEqual(['.git', '*cache*']);
 			expect(state.sshRemoteHonorGitignore).toBe(true);
+			expect(state.autoCollapseRightPanel).toBe(true);
 			expect(state.automaticTabNamingEnabled).toBe(true);
 			expect(state.fileTabAutoRefreshEnabled).toBe(false);
 			expect(state.suppressWindowsWarning).toBe(false);
@@ -575,6 +577,12 @@ describe('settingsStore', () => {
 		});
 
 		describe('Tabs', () => {
+			it('setAutoCollapseRightPanel updates state and persists', () => {
+				useSettingsStore.getState().setAutoCollapseRightPanel(false);
+				expect(useSettingsStore.getState().autoCollapseRightPanel).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('autoCollapseRightPanel', false);
+			});
+
 			it('setAutomaticTabNamingEnabled updates state and persists', () => {
 				useSettingsStore.getState().setAutomaticTabNamingEnabled(false);
 				expect(useSettingsStore.getState().automaticTabNamingEnabled).toBe(false);
@@ -1603,6 +1611,16 @@ describe('settingsStore', () => {
 			await loadAllSettings();
 
 			expect(useSettingsStore.getState().documentGraphLayoutType).toBe('force');
+		});
+
+		it('loads autoCollapseRightPanel from settings', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				autoCollapseRightPanel: false,
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().autoCollapseRightPanel).toBe(false);
 		});
 	});
 

@@ -61,6 +61,7 @@ import type {
 	GetSessionModelsCallback,
 	GetSessionModelCatalogCallback,
 	GetSessionProviderUsageCallback,
+	GetConductorSnapshotCallback,
 	GetSessionDemosCallback,
 	GetDemoDetailCallback,
 	GetArtifactContentCallback,
@@ -84,6 +85,9 @@ import type {
 	StarTabCallback,
 	ReorderTabCallback,
 	ToggleBookmarkCallback,
+	CreateConductorTaskCallback,
+	UpdateConductorTaskCallback,
+	DeleteConductorTaskCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -284,6 +288,10 @@ export class WebServer {
 		this.callbackRegistry.setGetSessionProviderUsageCallback(callback);
 	}
 
+	setGetConductorSnapshotCallback(callback: GetConductorSnapshotCallback): void {
+		this.callbackRegistry.setGetConductorSnapshotCallback(callback);
+	}
+
 	setGetSessionDemosCallback(callback: GetSessionDemosCallback): void {
 		this.callbackRegistry.setGetSessionDemosCallback(callback);
 	}
@@ -384,6 +392,18 @@ export class WebServer {
 		this.callbackRegistry.setToggleBookmarkCallback(callback);
 	}
 
+	setCreateConductorTaskCallback(callback: CreateConductorTaskCallback): void {
+		this.callbackRegistry.setCreateConductorTaskCallback(callback);
+	}
+
+	setUpdateConductorTaskCallback(callback: UpdateConductorTaskCallback): void {
+		this.callbackRegistry.setUpdateConductorTaskCallback(callback);
+	}
+
+	setDeleteConductorTaskCallback(callback: DeleteConductorTaskCallback): void {
+		this.callbackRegistry.setDeleteConductorTaskCallback(callback);
+	}
+
 	setGetHistoryCallback(callback: GetHistoryCallback): void {
 		this.callbackRegistry.setGetHistoryCallback(callback);
 	}
@@ -476,6 +496,13 @@ export class WebServer {
 				this.callbackRegistry.getSessionModelCatalog(sessionId, forceRefresh),
 			getSessionProviderUsage: (sessionId, forceRefresh) =>
 				this.callbackRegistry.getSessionProviderUsage(sessionId, forceRefresh),
+			getConductorSnapshot: async () =>
+				(await this.callbackRegistry.getConductorSnapshot()) || {
+					groups: [],
+					conductors: [],
+					tasks: [],
+					runs: [],
+				},
 			getSessionDemos: (sessionId, tabId) =>
 				this.callbackRegistry.getSessionDemos(sessionId, tabId),
 			getDemoDetail: (demoId) => this.callbackRegistry.getDemoDetail(demoId),
@@ -492,6 +519,11 @@ export class WebServer {
 				this.callbackRegistry.setSessionModel(sessionId, model),
 			forkThread: async (sessionId, options) =>
 				this.callbackRegistry.forkThread(sessionId, options),
+			createConductorTask: async (input) => this.callbackRegistry.createConductorTask(input),
+			updateConductorTask: async (taskId, updates) =>
+				this.callbackRegistry.updateConductorTask(taskId, updates),
+			deleteConductorTask: async (taskId) =>
+				this.callbackRegistry.deleteConductorTask(taskId),
 			getHistory: (projectPath, sessionId) =>
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
@@ -561,7 +593,8 @@ export class WebServer {
 					name: string;
 					mimeType?: string;
 					size?: number;
-				}>
+				}>,
+				demoCapture?: import('../../shared/demo-artifacts').DemoCaptureRequest
 			) =>
 				this.callbackRegistry.executeCommand(
 					sessionId,
@@ -570,7 +603,8 @@ export class WebServer {
 					commandAction,
 					images,
 					textAttachments,
-					attachments
+					attachments,
+					demoCapture
 				),
 			switchMode: async (sessionId: string, mode: 'ai' | 'terminal') =>
 				this.callbackRegistry.switchMode(sessionId, mode),

@@ -731,6 +731,12 @@ export interface ExpandedModeSendInterruptButtonProps {
 	isSendDisabled: boolean;
 	/** Callback when interrupt button is clicked */
 	onInterrupt: () => void;
+	/** Ref for the send button */
+	sendButtonRef?: React.RefObject<HTMLButtonElement>;
+	/** Optional click handler for send mode instead of form submit */
+	onSend?: () => void;
+	/** Optional custom aria-label for send mode */
+	sendAriaLabel?: string;
 }
 
 /**
@@ -743,6 +749,9 @@ export function ExpandedModeSendInterruptButton({
 	isInterruptMode,
 	isSendDisabled,
 	onInterrupt,
+	sendButtonRef,
+	onSend,
+	sendAriaLabel,
 }: ExpandedModeSendInterruptButtonProps) {
 	const colors = useThemeColors();
 
@@ -806,7 +815,9 @@ export function ExpandedModeSendInterruptButton({
 
 	return (
 		<button
-			type="submit"
+			ref={sendButtonRef}
+			type={onSend ? 'button' : 'submit'}
+			onClick={onSend}
 			disabled={isSendDisabled}
 			style={{
 				...baseExpandedStyles,
@@ -815,7 +826,7 @@ export function ExpandedModeSendInterruptButton({
 				cursor: isSendDisabled ? 'default' : 'pointer',
 				opacity: isSendDisabled ? 0.5 : 1,
 			}}
-			aria-label="Send message"
+			aria-label={sendAriaLabel || 'Send message'}
 		>
 			<svg
 				width="18"

@@ -128,6 +128,7 @@ export const RightPanel = memo(
 		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
 		const showHiddenFiles = useSettingsStore((s) => s.showHiddenFiles);
+		const autoCollapseRightPanel = useSettingsStore((s) => s.autoCollapseRightPanel);
 		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
 		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
 
@@ -218,6 +219,7 @@ export const RightPanel = memo(
 		const prevAutoRunContentVersionRef = useRef(autoRunContentVersion);
 		const prevSessionIdRef = useRef(session?.id);
 		const prevSelectedFileRef = useRef(session?.autoRunSelectedFile);
+		const hasFocusedSinceOpenRef = useRef(false);
 
 		useEffect(() => {
 			const contentChanged = autoRunContent !== prevAutoRunContentRef.current;
@@ -321,6 +323,23 @@ export const RightPanel = memo(
 				});
 			}
 		}, [activeRightTab, rightPanelOpen, activeFocus]);
+
+		useEffect(() => {
+			if (!rightPanelOpen) {
+				hasFocusedSinceOpenRef.current = false;
+				return;
+			}
+
+			if (activeFocus === 'right') {
+				hasFocusedSinceOpenRef.current = true;
+				return;
+			}
+
+			if (autoCollapseRightPanel && hasFocusedSinceOpenRef.current) {
+				hasFocusedSinceOpenRef.current = false;
+				setRightPanelOpen(false);
+			}
+		}, [activeFocus, autoCollapseRightPanel, rightPanelOpen, setRightPanelOpen]);
 
 		const handleNavigateToSessionFromProcess = useCallback(
 			(targetSessionId: string, tabId?: string) => {

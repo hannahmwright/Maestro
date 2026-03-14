@@ -23,12 +23,13 @@ function getPreferredThreadTitle(
 }
 
 export function getThreadDisplayTitle(
-	thread: Pick<Thread, 'title'> | null | undefined,
+	thread: Pick<Thread, 'title' | 'tabId'> | null | undefined,
 	session: Pick<Session, 'name' | 'activeTabId' | 'aiTabs'>
 ): string {
-	const activeTab = session.aiTabs?.find((tab) => tab.id === session.activeTabId);
+	const targetTabId = thread ? getThreadTabId(thread, session) : session.activeTabId || session.aiTabs?.[0]?.id;
+	const targetTab = session.aiTabs?.find((tab) => tab.id === targetTabId);
 	const namedTab =
-		(activeTab?.name?.trim() ? activeTab : undefined) ||
+		(targetTab?.name?.trim() ? targetTab : undefined) ||
 		session.aiTabs?.find((tab) => tab.name?.trim());
 
 	if (namedTab?.name?.trim() && (!thread?.title || thread.title === session.name)) {
@@ -51,7 +52,7 @@ export function getWorkspaceDisplayName(projectRoot: string): string {
 
 export function getSessionLastActivity(session: Pick<Session, 'aiTabs' | 'shellLogs'>): number {
 	const aiTimestamps =
-		session.aiTabs?.flatMap((tab) => tab.logs.map((log) => log.timestamp) || []) || [];
+		session.aiTabs?.flatMap((tab) => tab.logs?.map((log) => log.timestamp) || []) || [];
 	const shellTimestamps = session.shellLogs?.map((log) => log.timestamp) || [];
 	const lastActivity = Math.max(0, ...aiTimestamps, ...shellTimestamps);
 	return lastActivity || Date.now();
@@ -70,6 +71,53 @@ export function getRuntimeIdForSession(session: Pick<Session, 'id' | 'runtimeId'
 
 export function getRuntimeIdForThread(thread: Pick<Thread, 'runtimeId' | 'sessionId'>): string {
 	return thread.runtimeId || thread.sessionId;
+}
+
+export function getThreadTabId(
+	thread: Pick<Thread, 'tabId'>,
+	session: Pick<Session, 'activeTabId' | 'aiTabs'>
+): string | null {
+	if (thread.tabId && session.aiTabs?.some((tab) => tab.id === thread.tabId)) {
+		return thread.tabId;
+	}
+
+	if (session.activeTabId && session.aiTabs?.some((tab) => tab.id === session.activeTabId)) {
+		return session.activeTabId;
+	}
+
+	return session.aiTabs?.[0]?.id || null;
+}
+
+export function isThreadActiveForSession(
+	thread: Pick<Thread, 'runtimeId' | 'sessionId' | 'tabId'>,
+	session: Pick<Session, 'id' | 'runtimeId' | 'activeTabId' | 'aiTabs'>
+): boolean {
+	if (getRuntimeIdForThread(thread) !== getRuntimeIdForSession(session)) {
+		return false;
+	}
+
+	const resolvedTabId = getThreadTabId(thread, session);
+	return resolvedTabId ? resolvedTabId === session.activeTabId : true;
+}
+
+export function findActiveThreadForSession(
+	threads: Thread[],
+	session: Pick<Session, 'id' | 'runtimeId' | 'activeTabId' | 'aiTabs'>
+): Thread | null {
+	const matchingThreads = threads.filter(
+		(thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(session)
+	);
+	if (matchingThreads.length === 0) {
+		return null;
+	}
+
+	const exactMatch =
+		matchingThreads.find((thread) => isThreadActiveForSession(thread, session)) || null;
+	if (exactMatch) {
+		return exactMatch;
+	}
+
+	return matchingThreads[0] || null;
 }
 
 export function migrateWorkspacesAndThreads(
@@ -98,7 +146,14 @@ export function migrateWorkspacesAndThreads(
 	const groupById = new Map(savedGroups.map((group) => [group.id, group]));
 	const repoToWorkspace = new Map<
 		string,
-		{ id: string; name: string; emoji: string; collapsed: boolean; projectRoot: string }
+		{
+			id: string;
+			name: string;
+			emoji: string;
+			collapsed: boolean;
+			archived: boolean;
+			projectRoot: string;
+		}
 	>();
 
 	for (const [repoKey, sessions] of repoToSessions.entries()) {
@@ -132,6 +187,7 @@ export function migrateWorkspacesAndThreads(
 			name: chosenGroup?.name || getWorkspaceDisplayName(projectRoot),
 			emoji: chosenGroup?.emoji || '📁',
 			collapsed: chosenGroup?.collapsed ?? false,
+			archived: chosenGroup?.archived ?? false,
 			projectRoot,
 		});
 	}
@@ -141,6 +197,7 @@ export function migrateWorkspacesAndThreads(
 		name: workspace.name,
 		emoji: workspace.emoji,
 		collapsed: workspace.collapsed,
+		archived: workspace.archived,
 		projectRoot: workspace.projectRoot,
 		lastUsedAt: 0,
 	}));
@@ -174,6 +231,7 @@ export function migrateWorkspacesAndThreads(
 			workspaceId: workspace?.id || `workspace-${generateId()}`,
 			sessionId: session.id,
 			runtimeId: getRuntimeIdForSession(session),
+			tabId: session.activeTabId || session.aiTabs?.[0]?.id,
 			title: getPreferredThreadTitle(session),
 			agentId: session.toolType,
 			projectRoot: getProjectRootForSession(session),
@@ -213,25 +271,52 @@ export function migrateWorkspacesAndThreads(
 
 export function reconcileThreadsWithSessions(
 	threads: Thread[],
-	sessions: Session[],
-	activeSessionId: string
+	sessions: Session[]
 ): Thread[] {
 	const topLevelSessions = sessions.filter((session) => !session.parentSessionId);
 	const sessionsById = new Map(topLevelSessions.map((session) => [session.id, session]));
-	const nextThreads = threads
-		.filter((thread) => sessionsById.has(thread.sessionId))
+	const seenThreadKeys = new Set<string>();
+	const nextThreads = [...threads]
+		.sort((a, b) => {
+			if (Number(b.pinned) !== Number(a.pinned)) return Number(b.pinned) - Number(a.pinned);
+			if (Number(b.isOpen) !== Number(a.isOpen)) return Number(b.isOpen) - Number(a.isOpen);
+			if (b.lastUsedAt !== a.lastUsedAt) return b.lastUsedAt - a.lastUsedAt;
+			return b.createdAt - a.createdAt;
+		})
+		.filter((thread) => {
+			const session = sessionsById.get(thread.sessionId);
+			if (!session) {
+				return false;
+			}
+
+			if (!thread.tabId) {
+				return false;
+			}
+
+			if (!session.aiTabs?.some((tab) => tab.id === thread.tabId)) {
+				return false;
+			}
+
+			const dedupeKey = `${thread.sessionId}:${thread.tabId}`;
+			if (seenThreadKeys.has(dedupeKey)) {
+				return false;
+			}
+			seenThreadKeys.add(dedupeKey);
+			return true;
+		})
 		.map((thread) => {
 			const session = sessionsById.get(thread.sessionId)!;
 			const lastUsedAt = getSessionLastActivity(session);
 			return {
 				...thread,
 				runtimeId: thread.runtimeId || getRuntimeIdForSession(session),
-				title: getPreferredThreadTitle(session, thread.title),
+				tabId: thread.tabId,
+				title: getThreadDisplayTitle(thread, session),
 				agentId: session.toolType,
 				projectRoot: getProjectRootForSession(session),
 				workspaceId: session.workspaceId || session.groupId || thread.workspaceId,
 				lastUsedAt: Math.max(thread.lastUsedAt, lastUsedAt),
-				isOpen: thread.isOpen || session.id === activeSessionId,
+				isOpen: thread.isOpen,
 			};
 		});
 
@@ -243,12 +328,13 @@ export function reconcileThreadsWithSessions(
 			workspaceId: session.workspaceId || session.groupId || `workspace-${generateId()}`,
 			sessionId: session.id,
 			runtimeId: getRuntimeIdForSession(session),
+			tabId: session.activeTabId || session.aiTabs?.[0]?.id,
 			title: getPreferredThreadTitle(session),
 			agentId: session.toolType,
 			projectRoot: getProjectRootForSession(session),
 			pinned: !!session.bookmarked,
 			archived: false,
-			isOpen: session.id === activeSessionId,
+			isOpen: false,
 			createdAt: lastUsedAt,
 			lastUsedAt,
 		});
@@ -385,6 +471,7 @@ export async function recoverMissingProviderThreads(
 				name: getWorkspaceDisplayName(projectRoot),
 				emoji: '📁',
 				collapsed: false,
+				archived: false,
 				projectRoot,
 				lastUsedAt: 0,
 			};
@@ -478,6 +565,7 @@ export async function recoverMissingProviderThreads(
 				workspaceId: workspace.id,
 				sessionId,
 				runtimeId: sessionId,
+				tabId,
 				title,
 				agentId: 'claude-code',
 				projectRoot,

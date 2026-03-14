@@ -14,7 +14,15 @@ import type {
 	ConversationSteerStatus,
 	PendingSteerState,
 } from '../../shared/conversation';
-import type { ToolType } from '../../shared/types';
+import type {
+	ToolType,
+	Group,
+	Conductor,
+	ConductorTask,
+	ConductorRun,
+	ConductorTaskPriority,
+	ConductorTaskStatus,
+} from '../../shared/types';
 import type {
 	PushStatusResponse,
 	PushSubscriptionRecord,
@@ -182,6 +190,28 @@ export interface SessionProviderUsage {
 	usage: ProviderUsageSnapshot | null;
 }
 
+export interface ConductorSnapshot {
+	groups: Group[];
+	conductors: Conductor[];
+	tasks: ConductorTask[];
+	runs: ConductorRun[];
+}
+
+export interface CreateConductorTaskInput {
+	groupId: string;
+	title: string;
+	description?: string;
+	priority?: ConductorTaskPriority;
+	status?: ConductorTaskStatus;
+}
+
+export interface UpdateConductorTaskInput {
+	title?: string;
+	description?: string;
+	priority?: ConductorTaskPriority;
+	status?: ConductorTaskStatus;
+}
+
 /**
  * Session data for broadcast messages.
  */
@@ -302,6 +332,9 @@ export type GetSessionProviderUsageCallback = (
 	sessionId: string,
 	forceRefresh?: boolean
 ) => Promise<ProviderUsageSnapshot | null> | ProviderUsageSnapshot | null;
+export type GetConductorSnapshotCallback = () =>
+	| Promise<ConductorSnapshot>
+	| ConductorSnapshot;
 export type TranscribeAudioCallback = (
 	request: WebVoiceTranscriptionRequest
 ) => Promise<WebVoiceTranscriptionResponse>;
@@ -429,6 +462,14 @@ export type ReorderTabCallback = (
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
+export type CreateConductorTaskCallback = (
+	input: CreateConductorTaskInput
+) => Promise<boolean>;
+export type UpdateConductorTaskCallback = (
+	taskId: string,
+	updates: UpdateConductorTaskInput
+) => Promise<boolean>;
+export type DeleteConductorTaskCallback = (taskId: string) => Promise<boolean>;
 
 /**
  * Callback type for fetching current theme.

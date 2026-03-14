@@ -133,7 +133,7 @@
 				}
 			],
 			"artifactName": "${name}-${version}-${arch}-mac.${ext}",
-			"icon": "build/icon.icns",
+			"icon": "build/new-icon/icon.icns",
 			"extraResources": [
 				{
 					"from": "dist/cli/maestro-cli.js",
@@ -165,7 +165,7 @@
 					]
 				}
 			],
-			"icon": "build/icon.ico",
+			"icon": "build/new-icon/icon.ico",
 			"extraResources": [
 				{
 					"from": "dist/cli/maestro-cli.js",
@@ -189,7 +189,7 @@
 			],
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
-			"icon": "build/icon.png",
+			"icon": "build/new-icon/icon.png",
 			"extraResources": [
 				{
 					"from": "dist/cli/maestro-cli.js",

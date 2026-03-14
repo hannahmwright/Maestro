@@ -28,6 +28,7 @@ export function CreateGroupModal(props: CreateGroupModalProps) {
 				name: groupName.trim(),
 				emoji: groupEmoji,
 				collapsed: false,
+				archived: false,
 			};
 			setGroups([...groups, newGroup]);
 

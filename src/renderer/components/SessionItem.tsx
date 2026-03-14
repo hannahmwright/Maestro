@@ -64,6 +64,7 @@ export interface SessionItemProps {
 	displayName?: string;
 	providerAgentId?: Session['toolType'];
 	workspaceEmoji?: string;
+	bookmarkState?: boolean;
 
 	// State
 	isActive: boolean;
@@ -110,6 +111,7 @@ export const SessionItem = memo(function SessionItem({
 	displayName,
 	providerAgentId,
 	workspaceEmoji,
+	bookmarkState,
 	isActive,
 	isKeyboardSelected,
 	isDragging,
@@ -132,6 +134,7 @@ export const SessionItem = memo(function SessionItem({
 	const isWorking = session.state === 'busy' || isInBatch;
 	const resolvedDisplayName = displayName || session.name;
 	const resolvedProviderAgentId = providerAgentId || session.toolType;
+	const resolvedBookmarked = bookmarkState ?? session.bookmarked;
 
 	// Determine container styling based on variant
 	const getContainerClassName = () => {
@@ -177,7 +180,7 @@ export const SessionItem = memo(function SessionItem({
 				) : (
 					<div className="flex items-center gap-1.5" onDoubleClick={onStartRename}>
 						{/* Bookmark icon (only in bookmark variant, always filled) */}
-						{variant === 'bookmark' && session.bookmarked && (
+						{variant === 'bookmark' && resolvedBookmarked && (
 							<Bookmark
 								className="w-3 h-3 shrink-0"
 								style={{ color: theme.colors.accent }}
@@ -272,13 +275,13 @@ export const SessionItem = memo(function SessionItem({
 								e.stopPropagation();
 								onToggleBookmark();
 							}}
-							className={`p-0.5 rounded hover:bg-white/10 transition-all ${session.bookmarked ? '' : 'opacity-0 group-hover:opacity-100'}`}
-							title={session.bookmarked ? 'Remove bookmark' : 'Add bookmark'}
+							className={`p-0.5 rounded hover:bg-white/10 transition-all ${resolvedBookmarked ? '' : 'opacity-0 group-hover:opacity-100'}`}
+							title={resolvedBookmarked ? 'Remove bookmark' : 'Add bookmark'}
 						>
 							<Bookmark
 								className="w-3 h-3"
 								style={{ color: theme.colors.accent }}
-								fill={session.bookmarked ? theme.colors.accent : 'none'}
+								fill={resolvedBookmarked ? theme.colors.accent : 'none'}
 							/>
 						</button>
 					) : (

@@ -2,15 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { InputArea } from '../../../renderer/components/InputArea';
-import { formatShortcutKeys, formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
+import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Theme } from '../../../renderer/types';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useAgentCapabilities, useScrollIntoView } from '../../../renderer/hooks';
 
 // Mock scrollIntoView since jsdom doesn't support it
 Element.prototype.scrollIntoView = vi.fn();
 
-// Mock useAgentCapabilities hook - return claude-code capabilities by default
-vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
+// Mock hooks used by InputArea to keep tests deterministic and avoid async mount updates
+vi.mock('../../../renderer/hooks', () => ({
 	useAgentCapabilities: vi.fn(() => ({
 		capabilities: {
 			supportsResume: true,
@@ -56,6 +57,14 @@ vi.mock('../../../renderer/hooks/agent/useAgentCapabilities', () => ({
 			return capabilities[cap] ?? false;
 		}),
 	})),
+	useAvailableAgents: vi.fn(() => ({
+		agents: [],
+		loading: false,
+		error: null,
+		refresh: vi.fn(),
+		getAgent: vi.fn(),
+	})),
+	useScrollIntoView: vi.fn(() => ({ current: [] })),
 }));
 
 // Mock child components to isolate InputArea testing
@@ -206,6 +215,7 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof InputArea>[0]> 
 		handleDrop: vi.fn(),
 		toggleInputMode: vi.fn(),
 		processInput: vi.fn(),
+		queueInput: vi.fn(),
 		handleInterrupt: vi.fn(),
 		onInputFocus: vi.fn(),
 		onInputBlur: vi.fn(),
@@ -219,7 +229,7 @@ const defaultUpdateSession = useSessionStore.getState().updateSession;
 describe('InputArea', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		useSessionStore.setState({ updateSession: defaultUpdateSession } as any);
+		useSessionStore.setState({ updateSession: defaultUpdateSession, sessions: [], threads: [] } as any);
 	});
 
 	afterEach(() => {
@@ -234,13 +244,11 @@ describe('InputArea', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
-		it('renders the mode toggle button', () => {
-			const props = createDefaultProps();
+		it('renders the mode selector when interaction modes are available', () => {
+			const props = createDefaultProps({ onSetTabExecutionMode: vi.fn() });
 			render(<InputArea {...props} />);
 
-			expect(
-				screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
-			).toBeInTheDocument();
+			expect(screen.getByTitle('Mode: Agent')).toBeInTheDocument();
 		});
 
 		it('renders the send button', () => {
@@ -291,9 +299,7 @@ describe('InputArea', () => {
 
 		it('hides attach image button when agent does not support image input', async () => {
 			// Mock capabilities to return false for supportsImageInput
-			const useAgentCapabilitiesMock =
-				await import('../../../renderer/hooks/agent/useAgentCapabilities');
-			vi.mocked(useAgentCapabilitiesMock.useAgentCapabilities).mockReturnValueOnce({
+			vi.mocked(useAgentCapabilities).mockReturnValueOnce({
 				capabilities: {
 					supportsResume: true,
 					supportsReadOnlyMode: true,
@@ -351,9 +357,7 @@ describe('InputArea', () => {
 		});
 
 		it('renders the model selector before the mode button when both are available', async () => {
-			const useAgentCapabilitiesMock =
-				await import('../../../renderer/hooks/agent/useAgentCapabilities');
-			vi.mocked(useAgentCapabilitiesMock.useAgentCapabilities).mockReturnValueOnce({
+			vi.mocked(useAgentCapabilities).mockReturnValueOnce({
 				capabilities: {
 					supportsResume: true,
 					supportsReadOnlyMode: true,
@@ -393,9 +397,7 @@ describe('InputArea', () => {
 
 		it('hides read-only toggle when agent does not support read-only mode', async () => {
 			// Mock capabilities to return false for supportsReadOnlyMode
-			const useAgentCapabilitiesMock =
-				await import('../../../renderer/hooks/agent/useAgentCapabilities');
-			vi.mocked(useAgentCapabilitiesMock.useAgentCapabilities).mockReturnValueOnce({
+			vi.mocked(useAgentCapabilities).mockReturnValueOnce({
 				capabilities: {
 					supportsResume: true,
 					supportsReadOnlyMode: false, // Not supported
@@ -917,8 +919,7 @@ describe('InputArea', () => {
 			expect(clearCmd).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
-		it('scrolls selected item into view via refs', () => {
-			// This test verifies the ref array for scroll-into-view is populated
+		it('configures the scroll-into-view hook for slash command navigation', () => {
 			const props = createDefaultProps({
 				slashCommandOpen: true,
 				inputValue: '/',
@@ -929,8 +930,7 @@ describe('InputArea', () => {
 			// Items should be rendered (refs should be attached)
 			expect(screen.getByText('/clear')).toBeInTheDocument();
 			expect(screen.getByText('/help')).toBeInTheDocument();
-			// The scrollIntoView mock should have been called for selected item
-			expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+			expect(vi.mocked(useScrollIntoView)).toHaveBeenCalledWith(true, 0, 2);
 		});
 	});
 
@@ -1560,14 +1560,15 @@ describe('InputArea', () => {
 	});
 
 	describe('Button Actions', () => {
-		it('calls toggleInputMode when clicking mode toggle', () => {
-			const toggleInputMode = vi.fn();
-			const props = createDefaultProps({ toggleInputMode });
+		it('calls onSetTabExecutionMode when selecting a new interaction mode', () => {
+			const onSetTabExecutionMode = vi.fn();
+			const props = createDefaultProps({ onSetTabExecutionMode });
 			render(<InputArea {...props} />);
 
-			fireEvent.click(screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`));
+			fireEvent.click(screen.getByTitle('Mode: Agent'));
+			fireEvent.click(screen.getByRole('button', { name: /Ask/ }));
 
-			expect(toggleInputMode).toHaveBeenCalled();
+			expect(onSetTabExecutionMode).toHaveBeenCalledWith('ask');
 		});
 
 		it('calls processInput when clicking send button', () => {
@@ -1834,74 +1835,53 @@ describe('InputArea', () => {
 	});
 
 	describe('Mode Icon Display', () => {
-		it('shows Terminal icon in terminal mode', () => {
+		it('does not show the mode selector in terminal mode', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'terminal' }),
+				onSetTabExecutionMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			// Terminal icon should be in the mode toggle button
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="terminal-icon"]')).toBeInTheDocument();
+			expect(screen.queryByTitle(/^Mode:/)).not.toBeInTheDocument();
 		});
 
-		it('shows Cpu icon in AI mode', () => {
+		it('shows the agent mode selector in AI mode', () => {
 			const props = createDefaultProps({
 				session: createMockSession({ inputMode: 'ai' }),
+				onSetTabExecutionMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="cpu-icon"]')).toBeInTheDocument();
+			const modeButton = screen.getByTitle('Mode: Agent');
+			expect(modeButton.querySelector('svg')).toBeInTheDocument();
 		});
 
-		it('shows Wand2 icon in AI mode when wizard is active', () => {
+		it('shows the plan mode selector when plan mode is active', () => {
 			const props = createDefaultProps({
 				session: createMockSession({
 					inputMode: 'ai',
-					wizardState: {
-						isActive: true,
-						mode: 'new',
-						confidence: 50,
-						conversationHistory: [],
-						previousUIState: {
-							readOnlyMode: false,
-							saveToHistory: true,
-							showThinking: 'off',
-						},
-					},
 				}),
-				// Note: onExitWizard is intentionally NOT provided, so we test the fallback path
-				// in the regular InputArea (not WizardInputPanel)
+				tabExecutionMode: 'plan',
+				onSetTabExecutionMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			// wand2 icon should be shown with accent color
-			expect(modeButton.querySelector('[data-testid="wand2-icon"]')).toBeInTheDocument();
+			const modeButton = screen.getByTitle('Mode: Plan');
+			expect(modeButton.querySelector('svg')).toBeInTheDocument();
 		});
 
-		it('shows Terminal icon in terminal mode even when wizard is active', () => {
+		it('shows the ask mode selector when ask mode is active', () => {
 			const props = createDefaultProps({
 				session: createMockSession({
-					inputMode: 'terminal',
-					wizardState: {
-						isActive: true,
-						mode: 'new',
-						confidence: 50,
-						conversationHistory: [],
-						previousUIState: {
-							readOnlyMode: false,
-							saveToHistory: true,
-							showThinking: 'off',
-						},
-					},
+					inputMode: 'ai',
 				}),
+				tabExecutionMode: 'ask',
+				onSetTabExecutionMode: vi.fn(),
 			});
 			render(<InputArea {...props} />);
 
-			const modeButton = screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`);
-			expect(modeButton.querySelector('[data-testid="terminal-icon"]')).toBeInTheDocument();
+			const modeButton = screen.getByTitle('Mode: Ask');
+			expect(modeButton.querySelector('svg')).toBeInTheDocument();
 		});
 	});
 
@@ -2226,9 +2206,7 @@ describe('InputArea', () => {
 			expect(screen.getByTestId('wizard-input-panel')).toBeInTheDocument();
 			// Normal components should NOT be rendered
 			expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
-			expect(
-				screen.queryByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
-			).not.toBeInTheDocument();
+			expect(screen.queryByTitle(/^Mode:/)).not.toBeInTheDocument();
 			expect(screen.queryByTitle('Send message')).not.toBeInTheDocument();
 		});
 

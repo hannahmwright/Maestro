@@ -24,7 +24,9 @@ import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
 import {
 	migrateWorkspacesAndThreads,
 	recoverMissingProviderThreads,
+	reconcileThreadsWithSessions,
 } from '../../utils/workspaceThreads';
+import { pruneInactiveFileTabContent } from '../../utils/tabHelpers';
 
 // ============================================================================
 // Return type
@@ -320,7 +322,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				agentError: undefined,
 				agentErrorPaused: false,
 				closedTabHistory: [],
-				filePreviewTabs: correctedSession.filePreviewTabs || [],
+				filePreviewTabs: pruneInactiveFileTabContent(
+					correctedSession.filePreviewTabs || [],
+					correctedSession.activeFileTabId ?? null
+				),
 				activeFileTabId: correctedSession.activeFileTabId ?? null,
 				unifiedTabOrder: correctedSession.unifiedTabOrder || [
 					...resetAiTabs.map((tab) => ({ type: 'ai' as const, id: tab.id })),
@@ -362,7 +367,10 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					: { conductors: [], tasks: [], runs: [] };
 
 				let restoredSessions: Session[] = [];
-				let nextGroups = savedGroups || [];
+				let nextGroups = (savedGroups || []).map((group) => ({
+					...group,
+					archived: group.archived ?? false,
+				}));
 				let nextThreads = savedThreads || [];
 
 				// Handle sessions
@@ -395,10 +403,18 @@ export function useSessionRestoration(): SessionRestorationReturn {
 								thread.id,
 							])
 						);
-						nextThreads = (savedThreads || []).map((thread) => ({
-							...thread,
-							runtimeId: thread.runtimeId || thread.sessionId,
-						}));
+						const sessionById = new Map(restoredSessions.map((session) => [session.id, session]));
+						nextThreads = (savedThreads || []).map((thread) => {
+							const owningSession = sessionById.get(thread.sessionId);
+							return {
+								...thread,
+								runtimeId: thread.runtimeId || thread.sessionId,
+								tabId:
+									thread.tabId ||
+									owningSession?.activeTabId ||
+									owningSession?.aiTabs?.[0]?.id,
+							};
+						});
 						restoredSessions = restoredSessions.map((session) => ({
 							...session,
 							runtimeId: session.runtimeId || session.id,
@@ -418,8 +434,12 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				restoredSessions = recovery.sessions;
 				nextGroups = recovery.groups;
 				nextThreads = recovery.threads;
+				const reconciledThreads = reconcileThreadsWithSessions(nextThreads, restoredSessions);
+				const threadsWerePruned =
+					JSON.stringify(reconciledThreads) !== JSON.stringify(nextThreads);
+				nextThreads = reconciledThreads;
 
-				if (recovery.recoveredCount > 0) {
+				if (recovery.recoveredCount > 0 || threadsWerePruned) {
 					window.maestro.sessions.setAll(restoredSessions);
 					window.maestro.groups.setAll(nextGroups);
 					window.maestro.threads.setAll(nextThreads);

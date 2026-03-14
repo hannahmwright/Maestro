@@ -19,6 +19,7 @@ export interface ConductorPlannerTaskDraft {
 	acceptanceCriteria: string[];
 	dependsOn: string[];
 	scopePaths: string[];
+	parentTitle?: string;
 }
 
 export interface ConductorPlanDraft {
@@ -38,6 +39,7 @@ interface RawPlannerTask {
 	acceptanceCriteria?: unknown;
 	dependsOn?: unknown;
 	scopePaths?: unknown;
+	subtasks?: unknown;
 }
 
 const PRIORITY_ORDER: ConductorTaskPriority[] = ['low', 'medium', 'high', 'critical'];
@@ -117,13 +119,24 @@ Return ONLY valid JSON with this exact shape:
       "priority": "low | medium | high | critical",
       "acceptanceCriteria": ["specific outcome"],
       "dependsOn": ["title of prerequisite task"],
-      "scopePaths": ["src/path-or-subsystem"]
+      "scopePaths": ["src/path-or-subsystem"],
+      "subtasks": [
+        {
+          "title": "optional child task",
+          "description": "narrower piece of the parent task",
+          "priority": "low | medium | high | critical",
+          "acceptanceCriteria": ["specific outcome"],
+          "dependsOn": [],
+          "scopePaths": ["src/path-or-subsystem"]
+        }
+      ]
     }
   ]
 }
 
 Rules:
 - Break work into 2-8 concrete tasks when possible.
+- Use subtasks when a parent item naturally breaks into 1-4 child items that should move through the same workflow.
 - Use task titles in dependsOn, not numeric IDs.
 - Keep scopePaths narrow and file/system oriented when you can infer them.
 - If a task has unknown scope, return an empty scopePaths array.
@@ -131,28 +144,36 @@ Rules:
 - Preserve important operator priorities and note blockers or sequencing in the summary.`;
 }
 
+function collectPlannerTasks(
+	rawTasks: unknown[],
+	parentTitle?: string
+): ConductorPlannerTaskDraft[] {
+	return rawTasks.flatMap((rawTask) => {
+		const task = rawTask as RawPlannerTask;
+		const title = typeof task.title === 'string' ? task.title.trim() : '';
+		if (!title) {
+			return [];
+		}
+
+		const normalizedTask: ConductorPlannerTaskDraft = {
+			title,
+			description: typeof task.description === 'string' ? task.description.trim() : '',
+			priority: normalizePriority(task.priority),
+			acceptanceCriteria: normalizeStringArray(task.acceptanceCriteria),
+			dependsOn: normalizeStringArray(task.dependsOn),
+			scopePaths: normalizeStringArray(task.scopePaths),
+			parentTitle,
+		};
+		const subtasks = Array.isArray(task.subtasks) ? collectPlannerTasks(task.subtasks, title) : [];
+
+		return [normalizedTask, ...subtasks];
+	});
+}
+
 export function parseConductorPlannerResponse(text: string): ConductorPlanDraft {
 	const parsed = JSON.parse(extractJsonBlock(text)) as RawPlannerResponse;
 	const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-
-	const tasks = rawTasks
-		.map((rawTask): ConductorPlannerTaskDraft | null => {
-			const task = rawTask as RawPlannerTask;
-			const title = typeof task.title === 'string' ? task.title.trim() : '';
-			if (!title) {
-				return null;
-			}
-
-			return {
-				title,
-				description: typeof task.description === 'string' ? task.description.trim() : '',
-				priority: normalizePriority(task.priority),
-				acceptanceCriteria: normalizeStringArray(task.acceptanceCriteria),
-				dependsOn: normalizeStringArray(task.dependsOn),
-				scopePaths: normalizeStringArray(task.scopePaths),
-			};
-		})
-		.filter((task): task is ConductorPlannerTaskDraft => Boolean(task));
+	const tasks = collectPlannerTasks(rawTasks);
 
 	if (tasks.length === 0) {
 		throw new Error('Planner returned no usable tasks.');

@@ -24,11 +24,26 @@ vi.mock('../../../renderer/hooks', () => ({
 		scrollTargetRef: { current: null },
 		scrollIntoView: vi.fn(),
 	}),
+	useAvailableAgents: () => ({
+		agents: [],
+	}),
 }));
 
 vi.mock('../../../renderer/stores/sessionStore', () => ({
-	useSessionStore: (selector: (state: { updateSession: typeof mockUpdateSession }) => unknown) =>
-		selector({ updateSession: mockUpdateSession }),
+	useSessionStore: (
+		selector: (state: {
+			updateSession: typeof mockUpdateSession;
+			updateThread: ReturnType<typeof vi.fn>;
+			sessions: unknown[];
+			threads: unknown[];
+		}) => unknown
+	) =>
+		selector({
+			updateSession: mockUpdateSession,
+			updateThread: vi.fn(),
+			sessions: [],
+			threads: [],
+		}),
 }));
 
 vi.mock('../../../renderer/components/ThinkingStatusPill', () => ({
@@ -144,6 +159,7 @@ function createProps(session: Session): React.ComponentProps<typeof InputArea> {
 		handleDrop: vi.fn(),
 		toggleInputMode: vi.fn(),
 		processInput: vi.fn(),
+		queueInput: vi.fn(),
 		handleInterrupt: vi.fn(),
 		onInputFocus: vi.fn(),
 		onInputBlur: vi.fn(),

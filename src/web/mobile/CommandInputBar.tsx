@@ -46,6 +46,7 @@ import {
 	ExpandedModeSendInterruptButton,
 } from './CommandInputButtons';
 import type { CommandHistoryEntry } from '../hooks/useCommandHistory';
+import { useScrollTapGuard } from './useScrollTapGuard';
 
 /** Default minimum height for the text input area */
 const MIN_INPUT_HEIGHT = 56;
@@ -73,7 +74,10 @@ const COMPACT_MOBILE_MAX_TEXTAREA_HEIGHT =
 const MOBILE_MAX_WIDTH = 480;
 
 /** Height of expanded input on mobile */
-const MOBILE_EXPANDED_HEIGHT_VH = 30;
+const MOBILE_EXPANDED_HEIGHT_VH = 24;
+
+/** Minimum height for the expanded mobile textarea */
+const EXPANDED_MOBILE_TEXTAREA_MIN_HEIGHT = 88;
 
 const MOBILE_COMPOSER_SAFE_ZONE_ATTR = 'data-mobile-composer-safe-zone';
 
@@ -348,6 +352,11 @@ export function CommandInputBar({
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const actionsMenuAnchorRef = useRef<HTMLDivElement>(null);
 	const actionsMenuPanelRef = useRef<HTMLDivElement>(null);
+	const inlineSendButtonRef = useRef<HTMLButtonElement>(null);
+	const expandedSendButtonRef = useRef<HTMLButtonElement>(null);
+	const busyDraftMenuRef = useRef<HTMLDivElement>(null);
+	const { scrollGuardProps: modelMenuScrollGuardProps, shouldIgnoreClick: shouldIgnoreModelMenuClick } =
+		useScrollTapGuard();
 	const setTextareaElementRef = useCallback((node: HTMLTextAreaElement | null) => {
 		textareaRef.current = node;
 	}, []);
@@ -380,6 +389,8 @@ export function CommandInputBar({
 	const [stagedPreviewIndex, setStagedPreviewIndex] = useState<number | null>(null);
 	const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
 	const [actionsMenuAnchorRect, setActionsMenuAnchorRect] = useState<DOMRect | null>(null);
+	const [busyDraftMenuOpen, setBusyDraftMenuOpen] = useState(false);
+	const [busyDraftMenuAnchorRect, setBusyDraftMenuAnchorRect] = useState<DOMRect | null>(null);
 	const [mobilePortalRoot, setMobilePortalRoot] = useState<HTMLElement | null>(null);
 
 	// Internal state for uncontrolled mode
@@ -579,6 +590,16 @@ export function CommandInputBar({
 		setActionsMenuAnchorRect(actionsMenuAnchorRef.current?.getBoundingClientRect() ?? null);
 	}, []);
 
+	const updateBusyDraftMenuAnchorRect = useCallback((mode?: 'inline' | 'expanded') => {
+		const anchor =
+			mode === 'expanded'
+				? expandedSendButtonRef.current
+				: mode === 'inline'
+					? inlineSendButtonRef.current
+					: expandedSendButtonRef.current || inlineSendButtonRef.current;
+		setBusyDraftMenuAnchorRect(anchor?.getBoundingClientRect() ?? null);
+	}, []);
+
 	const shouldKeepExpandedComposerOpen = useCallback((relatedTarget?: EventTarget | null) => {
 		const container = containerRef.current;
 		if (!container) {
@@ -700,7 +721,20 @@ export function CommandInputBar({
 		onInterrupt?.();
 	}, [onInterrupt]);
 
+	const handleBusyDraftSendAction = useCallback(
+		(mode: 'inline' | 'expanded') => {
+			if (!hasDraft || isDisabled || !showBusyControls) {
+				return;
+			}
+			setActionsMenuOpen(false);
+			updateBusyDraftMenuAnchorRect(mode);
+			setBusyDraftMenuOpen(true);
+		},
+		[hasDraft, isDisabled, showBusyControls, updateBusyDraftMenuAnchorRect]
+	);
+
 	const handleQueueNext = useCallback(() => {
+		setBusyDraftMenuOpen(false);
 		submitDraft('queue', {
 			keepComposerOpen: true,
 			keepFocus: true,
@@ -708,6 +742,7 @@ export function CommandInputBar({
 	}, [submitDraft]);
 
 	const handleSteer = useCallback(() => {
+		setBusyDraftMenuOpen(false);
 		submitDraft('default', {
 			keepComposerOpen: true,
 			keepFocus: true,
@@ -798,11 +833,11 @@ export function CommandInputBar({
 
 	const handleSelectModelInternal = useCallback(
 		async (model: string | null) => {
-			if (!onSelectModel) return;
+			if (shouldIgnoreModelMenuClick() || !onSelectModel) return;
 			await onSelectModel(model);
 			setModelMenuOpen(false);
 		},
-		[onSelectModel]
+		[onSelectModel, shouldIgnoreModelMenuClick]
 	);
 	const selectableModels = React.useMemo(() => {
 		const normalizedCurrentModel = modelLabel.trim();
@@ -868,9 +903,14 @@ export function CommandInputBar({
 		voiceSupported;
 	const showInlineSendAction =
 		inputMode === 'ai' &&
-		!showBusyControls &&
 		!hasActiveVoiceControls &&
-		(hasDraft || (isSendBlocked && isInputFocused));
+		hasDraft;
+	const showBusyInlineStopButton =
+		inputMode === 'ai' &&
+		showBusyControls &&
+		!hasDraft &&
+		!isInputFocused &&
+		!hasActiveVoiceControls;
 	const showVoiceReviewAction =
 		inputMode === 'ai' && (voiceState === 'recording' || voiceState === 'requesting');
 	const showVoiceSendAction = inputMode === 'ai' && voiceState === 'recording';
@@ -879,86 +919,6 @@ export function CommandInputBar({
 		supportsModelSelection &&
 		(isActivelyComposing || modelMenuOpen) &&
 		!showVoiceReviewAction;
-	const busyActionRow =
-		showBusyControls ? (
-			<div
-				style={{
-					display: 'flex',
-					gap: '8px',
-					width: '100%',
-					alignItems: 'stretch',
-				}}
-			>
-				<button
-					type="button"
-					onClick={handleInterrupt}
-					style={{
-						flex: hasDraft ? '0 0 auto' : 1,
-						padding: '10px 12px',
-						borderRadius: '14px',
-						border: 'none',
-						background: 'linear-gradient(180deg, #f87171 0%, #ef4444 100%)',
-						color: '#ffffff',
-						fontSize: '13px',
-						fontWeight: 700,
-						boxShadow: '0 8px 18px rgba(15, 23, 42, 0.14)',
-					}}
-				>
-					Stop
-				</button>
-				{hasDraft ? (
-					<>
-						<button
-							type="button"
-							onClick={handleSteer}
-							style={{
-								flex: 1,
-								padding: '10px 12px',
-								borderRadius: '14px',
-								border: 'none',
-								background: `linear-gradient(180deg, ${colors.accent} 0%, ${colors.accent}dd 100%)`,
-								color: '#ffffff',
-								fontSize: '13px',
-								fontWeight: 700,
-								boxShadow: '0 8px 18px rgba(15, 23, 42, 0.14)',
-							}}
-						>
-							{busyPrimaryLabel}
-						</button>
-						<button
-							type="button"
-							onClick={handleQueueNext}
-							style={{
-								padding: '10px 12px',
-								borderRadius: '14px',
-								border: `1px solid ${colors.border}`,
-								backgroundColor: `${colors.bgMain}cc`,
-								color: colors.textMain,
-								fontSize: '13px',
-								fontWeight: 700,
-								boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
-							}}
-						>
-							Queue Next
-						</button>
-					</>
-				) : (
-					<div
-						style={{
-							flex: 1,
-							display: 'flex',
-							alignItems: 'center',
-							padding: '0 4px',
-							color: colors.textDim,
-							fontSize: '12px',
-							fontWeight: 600,
-						}}
-					>
-						Type your next message to steer or queue it.
-					</div>
-				)}
-			</div>
-		) : null;
 	const demoCaptureNotice =
 		inputMode === 'ai' && demoCaptureEnabled ? (
 			<div
@@ -1075,6 +1035,63 @@ export function CommandInputBar({
 			window.visualViewport?.removeEventListener('scroll', handleLayoutChange);
 		};
 	}, [actionsMenuOpen, updateActionsMenuAnchorRect]);
+
+	useEffect(() => {
+		if (!busyDraftMenuOpen) {
+			return;
+		}
+
+		const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+			const target = event.target as Node | null;
+			if (
+				!target ||
+				inlineSendButtonRef.current?.contains(target) ||
+				expandedSendButtonRef.current?.contains(target) ||
+				busyDraftMenuRef.current?.contains(target)
+			) {
+				return;
+			}
+			setBusyDraftMenuOpen(false);
+		};
+
+		document.addEventListener('mousedown', handlePointerDown);
+		document.addEventListener('touchstart', handlePointerDown);
+		return () => {
+			document.removeEventListener('mousedown', handlePointerDown);
+			document.removeEventListener('touchstart', handlePointerDown);
+		};
+	}, [busyDraftMenuOpen]);
+
+	useEffect(() => {
+		if (!busyDraftMenuOpen) {
+			return;
+		}
+
+		const handleLayoutChange = () => {
+			updateBusyDraftMenuAnchorRect();
+		};
+
+		window.addEventListener('resize', handleLayoutChange);
+		window.addEventListener('scroll', handleLayoutChange, true);
+		window.visualViewport?.addEventListener('resize', handleLayoutChange);
+		window.visualViewport?.addEventListener('scroll', handleLayoutChange);
+
+		handleLayoutChange();
+
+		return () => {
+			window.removeEventListener('resize', handleLayoutChange);
+			window.removeEventListener('scroll', handleLayoutChange, true);
+			window.visualViewport?.removeEventListener('resize', handleLayoutChange);
+			window.visualViewport?.removeEventListener('scroll', handleLayoutChange);
+		};
+	}, [busyDraftMenuOpen, updateBusyDraftMenuAnchorRect]);
+
+	useEffect(() => {
+		if (showBusyControls && hasDraft) {
+			return;
+		}
+		setBusyDraftMenuOpen(false);
+	}, [hasDraft, showBusyControls]);
 
 	const processAttachmentFiles = useCallback(
 		async (files: File[]) => {
@@ -1421,6 +1438,73 @@ export function CommandInputBar({
 				)
 			: null;
 
+	const busyDraftMenu =
+		busyDraftMenuOpen && busyDraftMenuAnchorRect && mobilePortalRoot
+			? createPortal(
+					<div
+						ref={busyDraftMenuRef}
+						{...{ [MOBILE_COMPOSER_SAFE_ZONE_ATTR]: 'true' }}
+						style={{
+							position: 'fixed',
+							left: `${Math.max(
+								12,
+								Math.min(busyDraftMenuAnchorRect.right - 196, window.innerWidth - 208)
+							)}px`,
+							bottom: `${Math.max(76, window.innerHeight - busyDraftMenuAnchorRect.top + 10)}px`,
+							minWidth: '172px',
+							maxWidth: 'min(208px, calc(100vw - 24px))',
+							padding: '8px',
+							borderRadius: '18px',
+							border: `1px solid ${colors.border}`,
+							background: `linear-gradient(180deg, ${colors.bgSidebar}fb 0%, ${colors.bgMain}f7 100%)`,
+							boxShadow: '0 18px 32px rgba(15, 23, 42, 0.18)',
+							backdropFilter: 'blur(20px)',
+							WebkitBackdropFilter: 'blur(20px)',
+							zIndex: 1,
+							pointerEvents: 'auto',
+						}}
+					>
+						<button
+							type="button"
+							onClick={handleSteer}
+							style={{
+								width: '100%',
+								display: 'flex',
+								alignItems: 'center',
+								padding: '11px 12px',
+								border: 'none',
+								borderRadius: '14px',
+								background: `${colors.accent}14`,
+								color: colors.textMain,
+								cursor: 'pointer',
+								textAlign: 'left',
+							}}
+						>
+							<span style={{ fontSize: '13px', fontWeight: 700 }}>{busyPrimaryLabel}</span>
+						</button>
+						<button
+							type="button"
+							onClick={handleQueueNext}
+							style={{
+								width: '100%',
+								display: 'flex',
+								alignItems: 'center',
+								padding: '11px 12px',
+								border: 'none',
+								borderRadius: '14px',
+								background: 'transparent',
+								color: colors.textMain,
+								cursor: 'pointer',
+								textAlign: 'left',
+							}}
+						>
+							<span style={{ fontSize: '13px', fontWeight: 600 }}>Queue Next</span>
+						</button>
+					</div>,
+					mobilePortalRoot
+				)
+			: null;
+
 	const closeStagedPreview = useCallback(() => {
 		setStagedPreviewIndex(null);
 	}, []);
@@ -1664,7 +1748,7 @@ export function CommandInputBar({
 				...(mobileExpandedHeight && {
 					display: 'flex',
 					flexDirection: 'column',
-					height: `calc(${MOBILE_EXPANDED_HEIGHT_VH}vh + 60px)`, // Textarea height + buttons/padding
+					height: `calc(${MOBILE_EXPANDED_HEIGHT_VH}vh + 48px)`,
 				}),
 			}}
 		>
@@ -1811,12 +1895,14 @@ export function CommandInputBar({
 						</span>
 					</div>
 					<div
+						{...modelMenuScrollGuardProps}
 						style={{
 							display: 'flex',
 							flexDirection: 'column',
 							gap: '6px',
 							maxHeight: '220px',
 							overflowY: 'auto',
+							WebkitOverflowScrolling: 'touch',
 						}}
 					>
 						{selectableModels.map((model) => {
@@ -1880,8 +1966,8 @@ export function CommandInputBar({
 					style={{
 						display: 'flex',
 						flexDirection: 'column',
-						gap: '8px',
-						padding: '14px 14px 12px',
+						gap: '6px',
+						padding: '12px 12px 10px',
 						flex: 1,
 						maxWidth: '100%',
 						overflow: 'visible',
@@ -1903,7 +1989,6 @@ export function CommandInputBar({
 						</div>
 					)}
 					{demoCaptureNotice}
-					{busyActionRow}
 
 					{hasComposerActions && (
 						<div
@@ -1953,7 +2038,7 @@ export function CommandInputBar({
 						style={{
 							flex: 1,
 							width: '100%',
-							padding: '16px 18px',
+							padding: '14px 16px',
 							borderRadius: '22px',
 							backgroundColor: `${colors.bgMain}f0`,
 							border: `1px solid ${colors.accent}33`,
@@ -1963,7 +2048,7 @@ export function CommandInputBar({
 							fontFamily: 'inherit',
 							lineHeight: `${LINE_HEIGHT}px`,
 							outline: 'none',
-							minHeight: '120px',
+							minHeight: `${EXPANDED_MOBILE_TEXTAREA_MIN_HEIGHT}px`,
 							WebkitAppearance: 'none',
 							appearance: 'none',
 							resize: 'none',
@@ -1995,22 +2080,26 @@ export function CommandInputBar({
 						aria-multiline="true"
 					/>
 
-					<div
-						style={{
-							fontSize: '12px',
-							color: colors.textDim,
-							padding: '0 4px',
-						}}
-					>
-						Enter adds a new line here. Use Send when you are ready.
-					</div>
-
 					{/* Full-width send button below textarea */}
-					{!showBusyControls && (
+					{hasDraft && (
 						<ExpandedModeSendInterruptButton
 							isInterruptMode={false}
 							isSendDisabled={isDisabled || !hasDraft}
 							onInterrupt={handleInterrupt}
+							sendButtonRef={expandedSendButtonRef}
+							onSend={() => {
+								if (showBusyControls) {
+									handleBusyDraftSendAction('expanded');
+									return;
+								}
+								submitDraft('default', {
+									keepComposerOpen: inputMode === 'ai',
+									keepFocus: inputMode === 'ai' || !isMobilePhone,
+								});
+							}}
+							sendAriaLabel={
+								showBusyControls ? 'Choose how to send while the agent is busy' : 'Send message'
+							}
 						/>
 					)}
 				</form>
@@ -2052,7 +2141,6 @@ export function CommandInputBar({
 						</div>
 					)}
 					{demoCaptureNotice}
-					{busyActionRow}
 
 					{voiceStatusText && (
 						<div
@@ -2307,6 +2395,7 @@ export function CommandInputBar({
 
 							{inputMode === 'ai' &&
 								(showInlineModelSelector ||
+									showBusyInlineStopButton ||
 									showInlineVoiceAction ||
 									showInlineSendAction ||
 									showVoiceReviewAction ||
@@ -2342,6 +2431,14 @@ export function CommandInputBar({
 												isOpen={modelMenuOpen}
 												iconOnly
 											/>
+										) : showBusyInlineStopButton ? (
+											<SendInterruptButton
+												isInterruptMode
+												isSendDisabled={false}
+												onInterrupt={handleInterrupt}
+												variant="inline"
+												interruptAriaLabel="Stop the current response"
+											/>
 										) : null}
 										{showVoiceSendAction ? (
 											<SendInterruptButton
@@ -2354,10 +2451,26 @@ export function CommandInputBar({
 											/>
 										) : showInlineSendAction ? (
 											<SendInterruptButton
-												isInterruptMode={isSendBlocked}
+												sendButtonRef={inlineSendButtonRef}
+												isInterruptMode={false}
 												isSendDisabled={isDisabled || isTranscribing || !hasDraft}
 												onInterrupt={handleInterrupt}
+												onSend={() => {
+													if (showBusyControls) {
+														handleBusyDraftSendAction('inline');
+														return;
+													}
+													submitDraft('default', {
+														keepComposerOpen: inputMode === 'ai',
+														keepFocus: inputMode === 'ai',
+													});
+												}}
 												variant="inline"
+												sendAriaLabel={
+													showBusyControls
+														? 'Choose how to send while the agent is busy'
+														: 'Send message'
+												}
 											/>
 										) : (
 											<VoiceInputButton
@@ -2385,6 +2498,7 @@ export function CommandInputBar({
 				</form>
 			)}
 
+			{busyDraftMenu}
 			{stagedPreviewOverlay}
 			{/* Inline CSS for animations */}
 			<style>

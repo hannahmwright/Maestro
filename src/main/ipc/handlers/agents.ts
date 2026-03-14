@@ -8,6 +8,7 @@ import {
 	type AgentConfigOption,
 } from '../../agents';
 import { buildAgentModelCatalogGroup } from '../../agents/model-catalog';
+import { ProviderUsageService } from '../../agents/provider-usage';
 import { execFileNoThrow } from '../../utils/execFile';
 import { logger } from '../../utils/logger';
 import {
@@ -19,6 +20,7 @@ import { buildSshCommand, RemoteCommandOptions } from '../../utils/ssh-command-b
 import { stripAnsi } from '../../utils/stripAnsi';
 import { SshRemoteConfig } from '../../../shared/types';
 import type { AgentModelCatalogGroup } from '../../../shared/agent-model-catalog';
+import type { ToolType } from '../../../shared/types';
 import { MaestroSettings } from './persistence';
 
 const LOG_CONTEXT = '[AgentDetector]';
@@ -350,6 +352,7 @@ async function discoverModelsRemote(
  */
 export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	const { getAgentDetector, agentConfigsStore, settingsStore } = deps;
+	const providerUsageService = new ProviderUsageService(getAgentDetector);
 
 	// Detect all available agents (supports SSH remote detection via optional sshRemoteId)
 	ipcMain.handle(
@@ -916,6 +919,31 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 						});
 					})
 				);
+			}
+		)
+	);
+
+	ipcMain.handle(
+		'agents:getProviderUsage',
+		withIpcErrorLogging(
+			handlerOpts('getProviderUsage'),
+			async (agentId: ToolType, forceRefresh?: boolean) => {
+				if (agentId !== 'claude-code' && agentId !== 'codex') {
+					return null;
+				}
+
+				const mergedConfig = getMergedAgentConfig(agentId, agentConfigsStore);
+				const customEnvVars =
+					mergedConfig.customEnvVars &&
+					typeof mergedConfig.customEnvVars === 'object' &&
+					!Array.isArray(mergedConfig.customEnvVars)
+						? (mergedConfig.customEnvVars as Record<string, string>)
+						: undefined;
+
+				return providerUsageService.getUsageSnapshot(agentId, {
+					forceRefresh,
+					customEnvVars,
+				});
 			}
 		)
 	);

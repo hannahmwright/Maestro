@@ -92,6 +92,21 @@ export function createGitApi() {
 			ipcRenderer.invoke('git:isRepo', cwd, sshRemoteId, remoteCwd),
 
 		/**
+		 * Initialize a git repository and optionally create the first commit
+		 */
+		initializeRepo: (
+			cwd: string,
+			createInitialCommit = true,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		): Promise<{
+			success: boolean;
+			createdCommit?: boolean;
+			currentBranch?: string;
+			error?: string;
+		}> => ipcRenderer.invoke('git:initializeRepo', cwd, createInitialCommit, sshRemoteId, remoteCwd),
+
+		/**
 		 * Get git diff numstat
 		 */
 		numstat: (

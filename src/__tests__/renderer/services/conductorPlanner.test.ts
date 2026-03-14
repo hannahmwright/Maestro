@@ -90,6 +90,40 @@ describe('conductorPlanner', () => {
 		});
 	});
 
+	it('flattens subtasks while preserving parent titles', () => {
+		const parsed = parseConductorPlannerResponse(`
+{
+	"summary": "Plan ready for review.",
+	"tasks": [
+		{
+			"title": "Ship kanban workflow",
+			"description": "Add the staged workflow foundation.",
+			"priority": "high",
+			"acceptanceCriteria": ["Workflow exists."],
+			"dependsOn": [],
+			"scopePaths": ["src/renderer/components/ConductorPanel.tsx"],
+			"subtasks": [
+				{
+					"title": "Add reviewer lane",
+					"description": "Introduce a QA stage.",
+					"priority": "medium",
+					"acceptanceCriteria": ["Reviewer exists."],
+					"dependsOn": [],
+					"scopePaths": ["src/renderer/services/conductorReviewer.ts"]
+				}
+			]
+		}
+	]
+}
+`);
+
+		expect(parsed.tasks).toHaveLength(2);
+		expect(parsed.tasks[1]).toMatchObject({
+			title: 'Add reviewer lane',
+			parentTitle: 'Ship kanban workflow',
+		});
+	});
+
 	it('throws when planner returns no usable tasks', () => {
 		expect(() =>
 			parseConductorPlannerResponse(JSON.stringify({ summary: 'Nothing', tasks: [] }))

@@ -104,7 +104,7 @@ function makeGroupChat(id: string, name: string) {
 
 /** Build a minimal Group object. */
 function makeGroup(id: string, name: string, collapsed = false) {
-	return { id, name, collapsed } as any;
+	return { id, name, collapsed, archived: false } as any;
 }
 
 /** Create default deps for the hook. */
@@ -210,6 +210,30 @@ describe('useCycleSession', () => {
 
 			// activeSessionId should remain 'a' because visual order is empty — no-op
 			expect(useSessionStore.getState().activeSessionId).toBe('a');
+		});
+	});
+
+	describe('archived workspaces', () => {
+		it('skips sessions that belong to archived workspaces during cycling', () => {
+			const active = makeSession({ id: 'active', name: 'Alpha', groupId: 'g-active' });
+			const archived = makeSession({ id: 'archived', name: 'Beta', groupId: 'g-archived' });
+
+			useSessionStore.setState({
+				sessions: [active, archived],
+				groups: [
+					makeGroup('g-active', 'Active Workspace'),
+					{ ...makeGroup('g-archived', 'Archived Workspace'), archived: true },
+				],
+				activeSessionId: 'active',
+			} as any);
+
+			const { result } = renderHook(() => useCycleSession(makeDeps()));
+
+			act(() => {
+				result.current.cycleSession('next');
+			});
+
+			expect(useSessionStore.getState().activeSessionId).toBe('active');
 		});
 	});
 

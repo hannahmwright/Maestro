@@ -57,9 +57,18 @@ import type { Session, LastResponsePreview } from '../hooks/useSessions';
 import { useMobileKeyboardHandler } from '../hooks/useMobileKeyboardHandler';
 import { useMobileViewState } from '../hooks/useMobileViewState';
 import { MobileNavigationDrawer } from './MobileNavigationDrawer';
+import { MobileKanbanPanel } from './MobileKanbanPanel';
 import { ConnectionStatusIndicator } from './ConnectionStatusIndicator';
 import { calculateContextDisplay } from '../../renderer/utils/contextUsage';
 import { ProviderModelIcon } from './CommandInputButtons';
+import type {
+	Group,
+	Conductor,
+	ConductorTask,
+	ConductorRun,
+	ConductorTaskPriority,
+	ConductorTaskStatus,
+} from '../../shared/types';
 
 function getDemoCaptureTargetKey(sessionId: string | null, tabId: string | null): string | null {
 	if (!sessionId) {
@@ -124,6 +133,13 @@ function createAttachmentId(): string {
 	}
 	return `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
+
+type MobileKanbanScope =
+	| { type: 'home' }
+	| {
+			type: 'workspace';
+			groupId: string;
+	  };
 
 interface MobileHeaderProps {
 	activeSession?: Session | null;
@@ -1344,6 +1360,7 @@ export default function MobileApp() {
 	const [showAppControlsSheet, setShowAppControlsSheet] = useState(false);
 	const [showHistoryPanel, setShowHistoryPanel] = useState(savedState.showHistoryPanel);
 	const [showTabSearch, setShowTabSearch] = useState(savedState.showTabSearch);
+	const [kanbanScope, setKanbanScope] = useState<MobileKanbanScope | null>(null);
 	const [commandInput, setCommandInput] = useState('');
 	const [stagedImages, setStagedImages] = useState<string[]>([]);
 	const [stagedTextAttachments, setStagedTextAttachments] = useState<WebTextAttachmentInput[]>([]);
@@ -1670,6 +1687,18 @@ export default function MobileApp() {
 	const [providerUsageSnapshot, setProviderUsageSnapshot] = useState<ProviderUsageSnapshot | null>(
 		null
 	);
+	const [conductorGroups, setConductorGroups] = useState<Group[]>([]);
+	const [conductorState, setConductorState] = useState<{
+		conductors: Conductor[];
+		tasks: ConductorTask[];
+		runs: ConductorRun[];
+	}>({
+		conductors: [],
+		tasks: [],
+		runs: [],
+	});
+	const [isKanbanLoading, setIsKanbanLoading] = useState(false);
+	const [kanbanError, setKanbanError] = useState<string | null>(null);
 	const providerUsageSnapshotCacheRef = useRef<Record<string, ProviderUsageSnapshot>>({});
 	const threadConversationLogs = useMemo(
 		() => (isAiThread ? sessionLogs.aiLogs : []),
@@ -1999,6 +2028,22 @@ export default function MobileApp() {
 		setShowTabSearch(false);
 	}, []);
 
+	const handleOpenKanbanHome = useCallback(() => {
+		setShowNavigationDrawer(false);
+		setKanbanScope({ type: 'home' });
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+	}, []);
+
+	const handleOpenWorkspaceKanban = useCallback((groupId: string) => {
+		setShowNavigationDrawer(false);
+		setKanbanScope({ type: 'workspace', groupId });
+		triggerHaptic(HAPTIC_PATTERNS.tap);
+	}, []);
+
+	const handleCloseKanbanPanel = useCallback(() => {
+		setKanbanScope(null);
+	}, []);
+
 	const handleSelectSessionFromDrawer = useCallback(
 		(sessionId: string) => {
 			setShowNavigationDrawer(false);
@@ -2137,6 +2182,126 @@ export default function MobileApp() {
 		},
 		[activeSession, activeSessionId, handleSelectSession, handleSelectSessionModel]
 	);
+
+	const loadConductorSnapshot = useCallback(async () => {
+		setIsKanbanLoading(true);
+		setKanbanError(null);
+
+		try {
+			const response = await fetch(buildApiUrl('/conductor'), {
+				credentials: 'include',
+				cache: 'no-store',
+			});
+
+			if (!response.ok) {
+				throw new Error('Failed to load kanban data');
+			}
+
+			const data = (await response.json()) as {
+				groups?: Group[];
+				conductors?: Conductor[];
+				tasks?: ConductorTask[];
+				runs?: ConductorRun[];
+			};
+
+			setConductorGroups(Array.isArray(data.groups) ? data.groups : []);
+			setConductorState({
+				conductors: Array.isArray(data.conductors) ? data.conductors : [],
+				tasks: Array.isArray(data.tasks) ? data.tasks : [],
+				runs: Array.isArray(data.runs) ? data.runs : [],
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : 'Failed to load kanban data';
+			setKanbanError(message);
+		} finally {
+			setIsKanbanLoading(false);
+		}
+	}, []);
+
+	const mutateConductorTask = useCallback(
+		async (path: string, options: RequestInit) => {
+			const response = await fetch(buildApiUrl(path), {
+				credentials: 'include',
+				...options,
+			});
+
+			if (!response.ok) {
+				throw new Error('Kanban update failed');
+			}
+
+			const result = (await response.json()) as { success?: boolean };
+			if (!result.success) {
+				throw new Error('Kanban update failed');
+			}
+
+			await loadConductorSnapshot();
+		},
+		[loadConductorSnapshot]
+	);
+
+	const handleCreateConductorTask = useCallback(
+		async (input: {
+			groupId: string;
+			title: string;
+			description?: string;
+			priority?: ConductorTaskPriority;
+			status?: ConductorTaskStatus;
+		}) => {
+			await mutateConductorTask('/conductor/tasks', {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(input),
+			});
+		},
+		[mutateConductorTask]
+	);
+
+	const handleUpdateConductorTask = useCallback(
+		async (
+			taskId: string,
+			updates: {
+				title?: string;
+				description?: string;
+				priority?: ConductorTaskPriority;
+				status?: ConductorTaskStatus;
+			}
+		) => {
+			await mutateConductorTask(`/conductor/tasks/${encodeURIComponent(taskId)}`, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+				},
+				body: JSON.stringify(updates),
+			});
+		},
+		[mutateConductorTask]
+	);
+
+	const handleDeleteConductorTask = useCallback(
+		async (taskId: string) => {
+			await mutateConductorTask(`/conductor/tasks/${encodeURIComponent(taskId)}`, {
+				method: 'DELETE',
+			});
+		},
+		[mutateConductorTask]
+	);
+
+	useEffect(() => {
+		if (!kanbanScope) {
+			return;
+		}
+
+		void loadConductorSnapshot();
+		const intervalId = window.setInterval(() => {
+			void loadConductorSnapshot();
+		}, 15000);
+
+		return () => {
+			window.clearInterval(intervalId);
+		};
+	}, [kanbanScope, loadConductorSnapshot]);
 
 	const attachmentSummaries = useMemo(
 		(): WebAttachmentSummary[] =>
@@ -2627,7 +2792,7 @@ export default function MobileApp() {
 									margin: '8px 0 0',
 								}}
 							>
-								Open the navigation drawer to switch workspaces and threads.
+								Open the navigation drawer to switch workspaces, threads, or kanban boards.
 							</p>
 						</div>
 						<button
@@ -2875,6 +3040,8 @@ export default function MobileApp() {
 				onDeleteSession={handleDeleteSession}
 				onOpenTabSearch={handleOpenTabSearch}
 				canOpenTabSearch={!!canOpenTabSearch}
+				onOpenKanbanHome={handleOpenKanbanHome}
+				onOpenWorkspaceKanban={handleOpenWorkspaceKanban}
 			/>
 
 			{!isOffline && !isBootstrappingConnection && (
@@ -2894,6 +3061,24 @@ export default function MobileApp() {
 					}}
 				/>
 			)}
+
+			<MobileKanbanPanel
+				isOpen={kanbanScope !== null}
+				scope={kanbanScope}
+				groups={conductorGroups}
+				conductors={conductorState.conductors}
+				tasks={conductorState.tasks}
+				runs={conductorState.runs}
+				isLoading={isKanbanLoading}
+				error={kanbanError}
+				onClose={handleCloseKanbanPanel}
+				onRefresh={loadConductorSnapshot}
+				onOpenHome={() => setKanbanScope({ type: 'home' })}
+				onOpenWorkspace={(groupId) => setKanbanScope({ type: 'workspace', groupId })}
+				onCreateTask={handleCreateConductorTask}
+				onUpdateTask={handleUpdateConductorTask}
+				onDeleteTask={handleDeleteConductorTask}
+			/>
 
 			{showAppControlsSheet && (
 				<div

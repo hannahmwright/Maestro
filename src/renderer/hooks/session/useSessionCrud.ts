@@ -206,6 +206,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						name: getWorkspaceDisplayName(workingDir),
 						emoji: '📁',
 						collapsed: false,
+						archived: false,
 						projectRoot: workingDir,
 						lastUsedAt: Date.now(),
 					} as const);
@@ -289,6 +290,7 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 					workspaceId: resolvedWorkspace.id,
 					sessionId: newId,
 					runtimeId: newId,
+					tabId: initialTabId,
 					title: name,
 					agentId: agentId as ToolType,
 					projectRoot: workingDir,

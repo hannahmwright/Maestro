@@ -6,6 +6,7 @@ import { getContextColor, formatActiveTime } from '../../utils/theme';
 interface SessionTooltipContentProps {
 	session: Session;
 	theme: Theme;
+	displayName?: string;
 	gitFileCount?: number;
 	groupName?: string;
 	isInBatch?: boolean;
@@ -16,6 +17,7 @@ interface SessionTooltipContentProps {
 export const SessionTooltipContent = memo(function SessionTooltipContent({
 	session,
 	theme,
+	displayName,
 	gitFileCount,
 	groupName,
 	isInBatch = false,
@@ -34,9 +36,9 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 					{groupName}
 				</div>
 			)}
-			<div className="flex items-center gap-2 mb-2">
+				<div className="flex items-center gap-2 mb-2">
 				<span className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
-					{session.name}
+					{displayName || session.name}
 				</span>
 				{session.toolType !== 'terminal' && (
 					<>

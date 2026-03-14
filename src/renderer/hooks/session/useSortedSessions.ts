@@ -23,12 +23,6 @@ export interface UseSortedSessionsDeps {
 export interface UseSortedSessionsReturn {
 	/** All sessions sorted by group then alphabetically (ignoring leading emojis) */
 	sortedSessions: Session[];
-	/**
-	 * Sessions visible for jump shortcuts (Opt+Cmd+NUMBER).
-	 * Order: Bookmarked sessions first (if bookmarks expanded), then expanded groups/ungrouped.
-	 * Note: A session may appear twice if bookmarked and in an expanded group.
-	 */
-	visibleSessions: Session[];
 }
 
 /**
@@ -37,11 +31,8 @@ export interface UseSortedSessionsReturn {
  * This hook handles:
  * 1. sortedSessions - All sessions sorted by group membership, then alphabetically
  *    (ignoring leading emojis for proper alphabetization)
- * 2. visibleSessions - Sessions visible for keyboard shortcuts (Opt+Cmd+NUMBER),
- *    respecting bookmarks folder state and group collapse states
- *
  * @param deps - Hook dependencies containing sessions, groups, and collapse state
- * @returns Sorted and visible session arrays
+ * @returns Sorted session array
  */
 export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSessionsReturn {
 	const { sessions, groups, bookmarksCollapsed } = deps;
@@ -90,7 +81,9 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		};
 
 		// First, add sessions from sorted groups (ignoring leading emojis)
-		const sortedGroups = [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
+		const sortedGroups = [...groups]
+			.filter((group) => !group.archived)
+			.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 		sortedGroups.forEach((group) => {
 			const groupSessions = sessions
 				.filter((s) => s.groupId === group.id && !s.parentSessionId)
@@ -107,48 +100,7 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 		return sorted;
 	}, [sessions, groups, worktreeChildrenByParent]);
 
-	// Create a Map for O(1) group lookup instead of O(n) find() calls
-	const groupsById = useMemo(() => {
-		const map = new Map<string, Group>();
-		for (const g of groups) {
-			map.set(g.id, g);
-		}
-		return map;
-	}, [groups]);
-
-	// Create visible sessions array for session jump shortcuts (Opt+Cmd+NUMBER)
-	// Order: Bookmarked sessions first (if bookmarks folder expanded), then groups/ungrouped
-	// Note: A session can appear twice if it's both bookmarked and in an expanded group
-	// Note: Worktree children are excluded - they don't display jump numbers and shouldn't consume slots
-	const visibleSessions = useMemo(() => {
-		const result: Session[] = [];
-
-		// Add bookmarked sessions first (if bookmarks folder is expanded)
-		// Exclude worktree children (they don't show jump numbers)
-		if (!bookmarksCollapsed) {
-			const bookmarkedSessions = sessions
-				.filter((s) => s.bookmarked && !s.parentSessionId)
-				.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
-			result.push(...bookmarkedSessions);
-		}
-
-		// Add sessions from expanded groups and ungrouped sessions
-		// Exclude worktree children (they don't show jump numbers)
-		// Use Map for O(1) group lookup instead of O(n) find()
-		const groupAndUngrouped = sortedSessions.filter((session) => {
-			// Exclude worktree children - they're nested under parent and don't show jump badges
-			if (session.parentSessionId) return false;
-			if (!session.groupId) return true; // Ungrouped sessions always visible
-			const group = groupsById.get(session.groupId);
-			return group && !group.collapsed; // Only show if group is expanded
-		});
-		result.push(...groupAndUngrouped);
-
-		return result;
-	}, [sortedSessions, groupsById, sessions, bookmarksCollapsed]);
-
 	return {
 		sortedSessions,
-		visibleSessions,
 	};
 }

@@ -103,6 +103,18 @@ describe('Tab Naming IPC Handlers', () => {
 		readOnlyArgs: ['--permission-mode', 'plan'],
 	};
 
+	const mockCodexAgent: AgentConfig = {
+		id: 'codex',
+		name: 'Codex',
+		command: 'codex',
+		path: '/usr/local/bin/codex',
+		args: [],
+		batchModePrefix: ['exec'],
+		batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+		jsonOutputArgs: ['--json'],
+		readOnlyArgs: ['--sandbox', 'read-only'],
+	};
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		registeredHandlers.clear();
@@ -410,6 +422,51 @@ describe('Tab Naming IPC Handlers', () => {
 
 			const result = await resultPromise;
 			expect(result).toBeNull();
+		});
+
+		it('uses assistant-stream output for Codex responses', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue(mockCodexAgent);
+
+			let onAssistantStreamCallback:
+				| ((
+						sessionId: string,
+						event: { mode: 'append' | 'replace' | 'commit' | 'discard'; text?: string }
+				  ) => void)
+				| undefined;
+			let onExitCallback: ((sessionId: string) => void) | undefined;
+
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'assistant-stream') onAssistantStreamCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
+
+			const resultPromise = invokeHandler('tabNaming:generateTabName', {
+				userMessage: 'Investigate why auth redirect loops after login',
+				agentType: 'codex',
+				cwd: '/test/project',
+			});
+
+			await vi.waitFor(() => {
+				expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+					expect.objectContaining({
+						toolType: 'codex',
+					})
+				);
+			});
+
+			onAssistantStreamCallback?.('tab-naming-mock-uuid-1234', {
+				mode: 'replace',
+				text: 'Fix Auth Redirect',
+			});
+			onAssistantStreamCallback?.('tab-naming-mock-uuid-1234', {
+				mode: 'commit',
+			});
+			onExitCallback?.('tab-naming-mock-uuid-1234');
+
+			const result = await resultPromise;
+			expect(result).toBe('Fix Auth Redirect');
 		});
 
 		it('returns null on timeout', async () => {

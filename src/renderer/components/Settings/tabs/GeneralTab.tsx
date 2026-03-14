@@ -25,6 +25,7 @@ import {
 	Battery,
 	Monitor,
 	PartyPopper,
+	PanelRightClose,
 	Tag,
 	Timer,
 	User,
@@ -79,6 +80,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultThreadProvider,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
+		autoCollapseRightPanel,
+		setAutoCollapseRightPanel,
 		// Tab naming
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
@@ -806,6 +809,16 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				description="Automatically scroll to the bottom when new AI output arrives. When disabled, a floating button appears for new messages."
 				checked={autoScrollAiMode}
 				onChange={setAutoScrollAiMode}
+				theme={theme}
+			/>
+
+			<SettingCheckbox
+				icon={PanelRightClose}
+				sectionLabel="Right Bar"
+				title="Auto-collapse the Right Bar"
+				description="After you focus the Right Bar, it will collapse automatically when you return to the Left Bar or Main Window."
+				checked={autoCollapseRightPanel}
+				onChange={setAutoCollapseRightPanel}
 				theme={theme}
 			/>
 

@@ -69,6 +69,8 @@ export interface CodexAppServerState {
 	nextClientRequestId: number;
 	threadId?: string;
 	turnId?: string;
+	currentTurnStartedAt?: number;
+	lastActivityAt?: number;
 	pendingUserInputRequest?: UserInputRequest;
 	pendingUserInputResponse?: UserInputResponse;
 	agentMessagePhases: Map<string, string>;
@@ -77,6 +79,7 @@ export interface CodexAppServerState {
 	pendingCorrectionPrompt?: string;
 	suppressedFinalAnswerText?: string;
 	startupTimeout?: NodeJS.Timeout;
+	turnActivityTimeout?: NodeJS.Timeout;
 	turnCompleted?: boolean;
 	pendingRequests?: Map<string, { type: 'steer' | 'interrupt' }>;
 }

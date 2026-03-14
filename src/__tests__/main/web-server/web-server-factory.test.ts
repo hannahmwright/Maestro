@@ -20,6 +20,9 @@ vi.mock('../../../main/web-server/WebServer', () => ({
 		});
 		setGetSessionDetailCallback = vi.fn();
 		setGetSessionModelsCallback = vi.fn();
+		setGetSessionModelCatalogCallback = vi.fn();
+		setGetSessionProviderUsageCallback = vi.fn();
+		setGetConductorSnapshotCallback = vi.fn();
 		setSetSessionModelCallback = vi.fn();
 		setTranscribeAudioCallback = vi.fn();
 		setGetVoiceTranscriptionStatusCallback = vi.fn();
@@ -38,12 +41,17 @@ vi.mock('../../../main/web-server/WebServer', () => ({
 		setSelectSessionCallback = vi.fn();
 		setSelectTabCallback = vi.fn();
 		setNewTabCallback = vi.fn();
+		setNewThreadCallback = vi.fn();
+		setForkThreadCallback = vi.fn();
 		setDeleteSessionCallback = vi.fn();
 		setCloseTabCallback = vi.fn();
 		setRenameTabCallback = vi.fn();
 		setStarTabCallback = vi.fn();
 		setReorderTabCallback = vi.fn();
 		setToggleBookmarkCallback = vi.fn();
+		setCreateConductorTaskCallback = vi.fn();
+		setUpdateConductorTaskCallback = vi.fn();
+		setDeleteConductorTaskCallback = vi.fn();
 
 		constructor(port: number) {
 			this.port = port;
@@ -127,6 +135,17 @@ describe('web-server-factory', () => {
 					return [{ id: 'group-1', name: 'Team One', emoji: 'T' }];
 				}),
 			},
+			threadsStore: {
+				get: vi.fn((_key: string, defaultValue?: unknown) => defaultValue),
+			},
+			conductorsStore: {
+				get: vi.fn((key: string, defaultValue?: unknown) => {
+					if (key === 'conductors' || key === 'tasks' || key === 'runs') {
+						return [];
+					}
+					return defaultValue;
+				}),
+			},
 			getMainWindow: vi.fn().mockReturnValue(mockMainWindow as BrowserWindow),
 			getProcessManager: vi.fn().mockReturnValue({
 				write: vi.fn().mockReturnValue(true),
@@ -162,12 +181,16 @@ describe('web-server-factory', () => {
 
 		expect(server.setGetSessionsCallback).toHaveBeenCalled();
 		expect(server.setGetSessionDetailCallback).toHaveBeenCalled();
+		expect(server.setGetConductorSnapshotCallback).toHaveBeenCalled();
 		expect(server.setGetThemeCallback).toHaveBeenCalled();
 		expect(server.setGetHistoryCallback).toHaveBeenCalled();
 		expect(server.setGetSessionLocalFileCallback).toHaveBeenCalled();
 		expect(server.setExecuteCommandCallback).toHaveBeenCalled();
 		expect(server.setSelectSessionCallback).toHaveBeenCalled();
 		expect(server.setRenameTabCallback).toHaveBeenCalled();
+		expect(server.setCreateConductorTaskCallback).toHaveBeenCalled();
+		expect(server.setUpdateConductorTaskCallback).toHaveBeenCalled();
+		expect(server.setDeleteConductorTaskCallback).toHaveBeenCalled();
 	});
 
 	it('maps stored sessions to web session data with group metadata', async () => {

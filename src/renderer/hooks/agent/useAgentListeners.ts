@@ -53,6 +53,7 @@ import { isCompletedDemoCapture, type DemoCard } from '../../../shared/demo-arti
 import type { UserInputRequest } from '../../../shared/user-input-requests';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { preserveTrailingReasoningAndAppend } from '../../utils/preservedReasoning';
 import { persistTabNameMetadata } from '../../utils/tabNamePersistence';
 
 // ============================================================================
@@ -779,9 +780,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								? {
 										...tab,
 										logs: [...tab.logs, logEntry],
-										...(isCompletedDemoCapture(demoCard)
-											? { demoCaptureRequested: false }
-											: {}),
+										...(isCompletedDemoCapture(demoCard) ? { demoCaptureRequested: false } : {}),
 									}
 								: tab
 						),
@@ -815,7 +814,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			return textParts.join('\n');
 		};
 
-		const maybeHarvestDemoFromLog = (sessionId: string, tabId: string | null, logEntry: LogEntry) => {
+		const maybeHarvestDemoFromLog = (
+			sessionId: string,
+			tabId: string | null,
+			logEntry: LogEntry
+		) => {
 			if (harvestedDemoLogIds.has(logEntry.id)) {
 				return;
 			}
@@ -1290,26 +1293,30 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						if (s.id !== actualSessionId) return s;
 
 						if (isFromAi) {
+							const clearExitedTabRuntime = (
+								tab: (typeof s.aiTabs)[number],
+								nextState: 'idle' | 'busy',
+								nextThinkingStartTime?: number
+							) => ({
+								...tab,
+								state: nextState,
+								thinkingStartTime: nextThinkingStartTime,
+								pendingUserInputRequest: null,
+								pendingSteer: null,
+								steerStatus: 'idle' as const,
+								activeTurnId: null,
+							});
+
 							if (s.state === 'error' && s.agentError) {
 								const updatedAiTabs =
 									s.aiTabs?.length > 0
 										? s.aiTabs.map((tab) => {
 												if (tabIdFromSession) {
 													return tab.id === tabIdFromSession
-														? {
-																...tab,
-																state: 'idle' as const,
-																thinkingStartTime: undefined,
-															}
+														? clearExitedTabRuntime(tab, 'idle')
 														: tab;
 												} else {
-													return tab.state === 'busy'
-														? {
-																...tab,
-																state: 'idle' as const,
-																thinkingStartTime: undefined,
-															}
-														: tab;
+													return tab.state === 'busy' ? clearExitedTabRuntime(tab, 'idle') : tab;
 												}
 											})
 										: s.aiTabs;
@@ -1343,17 +1350,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 								let updatedAiTabs = s.aiTabs.map((tab) => {
 									if (tab.id === targetTab.id) {
-										return {
-											...tab,
-											state: 'busy' as const,
-											thinkingStartTime: Date.now(),
-										};
+										return clearExitedTabRuntime(tab, 'busy', Date.now());
 									}
 									if (tabIdFromSession && tab.id === tabIdFromSession) {
-										return {
-											...tab,
-											state: 'idle' as const,
-										};
+										return clearExitedTabRuntime(tab, 'idle');
 									}
 									return tab;
 								});
@@ -1393,20 +1393,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									? s.aiTabs.map((tab) => {
 											if (tabIdFromSession) {
 												return tab.id === tabIdFromSession
-													? {
-															...tab,
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-														}
+													? clearExitedTabRuntime(tab, 'idle')
 													: tab;
 											} else {
-												return tab.state === 'busy'
-													? {
-															...tab,
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-														}
-													: tab;
+												return tab.state === 'busy' ? clearExitedTabRuntime(tab, 'idle') : tab;
 											}
 										})
 									: s.aiTabs;
@@ -2127,7 +2117,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									tab.id === targetTab.id
 										? {
 												...tab,
-												logs: [...tab.logs, errorLogEntry],
+												logs: preserveTrailingReasoningAndAppend(tab.logs, 'failed', errorLogEntry),
 												agentError: isSessionNotFound ? undefined : agentError,
 											}
 										: tab

@@ -12,8 +12,16 @@ import {
 	Trophy,
 	Clock3,
 	ArrowDownAZ,
+	FolderKanban,
 } from 'lucide-react';
-import type { Session, Group, Theme, Thread } from '../../types';
+import type {
+	Session,
+	Group,
+	Theme,
+	Thread,
+	SidebarThreadTarget,
+	SidebarNavTarget,
+} from '../../types';
 import { getBadgeForTime } from '../../constants/conductorBadges';
 import { SessionItem } from '../SessionItem';
 import { GroupChatList } from '../GroupChatList';
@@ -23,6 +31,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useBatchStore, selectActiveBatchSessionIds } from '../../stores/batchStore';
+import { useConductorStore } from '../../stores/conductorStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { getModalActions } from '../../stores/modalStore';
@@ -31,17 +40,21 @@ import { GroupContextMenu } from './GroupContextMenu';
 import { HamburgerMenuContent } from './HamburgerMenuContent';
 import { CollapsedSessionPill } from './CollapsedSessionPill';
 import { SidebarActions } from './SidebarActions';
-import { SkinnySidebar } from './SkinnySidebar';
+import { SkinnySidebar, type SkinnySidebarThreadItem } from './SkinnySidebar';
 import { LiveOverlayPanel } from './LiveOverlayPanel';
 import { useSessionFilterMode } from '../../hooks/session/useSessionFilterMode';
 import { compareNamesIgnoringEmojis as compareNames } from '../../../shared/emojiUtils';
+import { generateId } from '../../utils/ids';
 import {
 	getRuntimeIdForSession,
 	getRuntimeIdForThread,
 	getSessionLastActivity,
+	getThreadTabId,
 	getThreadDisplayTitle,
+	isThreadActiveForSession,
 } from '../../utils/workspaceThreads';
 import { buildDefaultThreadName } from '../../utils/sessionValidation';
+import { closeTab, createTab } from '../../utils/tabHelpers';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -50,11 +63,9 @@ import { buildDefaultThreadName } from '../../utils/sessionValidation';
 interface SessionListProps {
 	// Computed values (not in stores — remain as props)
 	theme: Theme;
-	sortedSessions: Session[];
 	isLiveMode: boolean;
 	webInterfaceUrl: string | null;
 	showSessionJumpNumbers?: boolean;
-	visibleSessions?: Session[];
 
 	// Ref for the sidebar container (for focus management)
 	sidebarContainerRef?: React.RefObject<HTMLDivElement>;
@@ -64,16 +75,10 @@ interface SessionListProps {
 	restartWebServer: () => Promise<string | null>;
 	toggleGroup: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
-	handleDragOver: (e: React.DragEvent) => void;
-	handleDropOnGroup: (groupId: string) => void;
-	handleDropOnUngrouped: () => void;
 	finishRenamingGroup: (groupId: string, newName: string) => void;
-	finishRenamingSession: (sessId: string, newName: string) => void;
 	startRenamingGroup: (groupId: string) => void;
 	startRenamingSession: (sessId: string) => void;
-	showConfirmation: (message: string, onConfirm: () => void) => void;
 	createNewGroup: () => void;
-	onCreateGroupAndMove?: (sessionId: string) => void;
 	addNewSession: () => void;
 	onCreateSession: (
 		agentId: string,
@@ -101,9 +106,6 @@ interface SessionListProps {
 
 	// Duplicate agent handlers (for context menu duplicate)
 	onNewAgentSession: () => void;
-
-	// Worktree handlers
-	onToggleWorktreeExpanded?: (sessionId: string) => void;
 	onOpenCreatePR?: (session: Session) => void;
 	onQuickCreateWorktree?: (session: Session) => void;
 	onOpenWorktreeConfig?: (session: Session) => void;
@@ -115,6 +117,7 @@ interface SessionListProps {
 	// Tour props
 	startTour?: () => void;
 	onOpenConductor?: (groupId: string) => void;
+	onOpenConductorHome?: () => void;
 
 	// Group Chat handlers
 	onOpenGroupChat?: (id: string) => void;
@@ -157,6 +160,18 @@ function getSidebarWorkspaceTextStyle(theme: Theme): React.CSSProperties {
 	};
 }
 
+function normalizeWorkspacePath(value: string | undefined): string {
+	return (value || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+function buildSidebarThreadTargetId(prefix: string, threadId: string): string {
+	return `${prefix}-${threadId}`;
+}
+
+function buildSidebarWorkspaceTargetId(workspaceId: string): string {
+	return `workspace-${workspaceId}`;
+}
+
 function SessionListInner(props: SessionListProps) {
 	// Store subscriptions
 	const sessions = useSessionStore((s) => s.sessions);
@@ -164,6 +179,7 @@ function SessionListInner(props: SessionListProps) {
 	const threads = useSessionStore((s) => s.threads);
 	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
+	const leftSidebarHidden = useUIStore((s) => s.leftSidebarHidden);
 	const activeFocus = useUIStore((s) => s.activeFocus);
 	const selectedSidebarIndex = useUIStore((s) => s.selectedSidebarIndex);
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
@@ -174,6 +190,8 @@ function SessionListInner(props: SessionListProps) {
 	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
 	const workspaceSortMode = useSettingsStore((s) => s.workspaceSortMode);
 	const defaultThreadProvider = useSettingsStore((s) => s.defaultThreadProvider);
+	const defaultSaveToHistory = useSettingsStore((s) => s.defaultSaveToHistory);
+	const defaultShowThinking = useSettingsStore((s) => s.defaultShowThinking);
 	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
 	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
 	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
@@ -190,10 +208,12 @@ function SessionListInner(props: SessionListProps) {
 	const participantStates = useGroupChatStore((s) => s.participantStates);
 	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
 	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const activeConductorView = useConductorStore((s) => s.activeConductorView);
 
 	// Stable store actions
 	const setActiveFocus = useUIStore.getState().setActiveFocus;
 	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
+	const setLeftSidebarHidden = useUIStore.getState().setLeftSidebarHidden;
 	const setGroupChatsExpanded = useUIStore.getState().setGroupChatsExpanded;
 	const setActiveSessionIdRaw = useSessionStore.getState().setActiveSessionId;
 	const setActiveGroupChatId = useGroupChatStore.getState().setActiveGroupChatId;
@@ -204,7 +224,11 @@ function SessionListInner(props: SessionListProps) {
 		},
 		[setActiveSessionIdRaw, setActiveGroupChatId]
 	);
+	const setEditingSessionId = useUIStore.getState().setEditingSessionId;
+	const setSidebarThreadTargets = useUIStore.getState().setSidebarThreadTargets;
+	const setSidebarNavTargets = useUIStore.getState().setSidebarNavTargets;
 	const setSessions = useSessionStore.getState().setSessions;
+	const setGroups = useSessionStore.getState().setGroups;
 	const setThreads = useSessionStore.getState().setThreads;
 	const setWebInterfaceUseCustomPort = useSettingsStore.getState().setWebInterfaceUseCustomPort;
 	const setWebInterfaceCustomPort = useSettingsStore.getState().setWebInterfaceCustomPort;
@@ -227,31 +251,25 @@ function SessionListInner(props: SessionListProps) {
 
 	const {
 		theme,
-		sortedSessions,
 		isLiveMode,
 		webInterfaceUrl,
 		toggleGlobalLive,
 		restartWebServer,
 		toggleGroup,
 		handleDragStart,
-		handleDragOver,
-		handleDropOnUngrouped,
 		finishRenamingGroup,
-		finishRenamingSession,
 		startRenamingGroup,
 		startRenamingSession,
 		onCreateSession,
 		onDeleteSession,
 		onEditAgent,
 		onNewAgentSession,
-		onToggleWorktreeExpanded,
 		onOpenCreatePR,
 		onQuickCreateWorktree,
 		onOpenWorktreeConfig,
 		onDeleteWorktree,
 		onDeleteWorktreeGroup,
 		showSessionJumpNumbers = false,
-		visibleSessions = [],
 		openWizard,
 		startTour,
 		sidebarContainerRef,
@@ -261,6 +279,8 @@ function SessionListInner(props: SessionListProps) {
 		onRenameGroupChat,
 		onDeleteGroupChat,
 		onArchiveGroupChat,
+		onOpenConductor,
+		onOpenConductorHome,
 	} = props;
 
 	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
@@ -312,6 +332,7 @@ function SessionListInner(props: SessionListProps) {
 		x: number;
 		y: number;
 		sessionId: string;
+		threadId?: string;
 	} | null>(null);
 	const [groupContextMenu, setGroupContextMenu] = useState<{
 		x: number;
@@ -322,9 +343,11 @@ function SessionListInner(props: SessionListProps) {
 		? sessions.find((s) => s.id === contextMenu.sessionId)
 		: null;
 	const contextMenuThread = contextMenuSession
-		? threads.find(
-				(thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(contextMenuSession)
-			)
+		? contextMenu?.threadId
+			? threads.find((thread) => thread.id === contextMenu.threadId) || null
+			: threads.find(
+					(thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(contextMenuSession)
+				) || null
 		: null;
 	const contextMenuGroup = groupContextMenu
 		? groups.find((group) => group.id === groupContextMenu.groupId)
@@ -337,38 +360,46 @@ function SessionListInner(props: SessionListProps) {
 	const [expandedArchivedByWorkspace, setExpandedArchivedByWorkspace] = useState<
 		Record<string, boolean>
 	>({});
+	const [archiveExpanded, setArchiveExpanded] = useState(false);
 
 	const toggleThreadPinned = useCallback(
 		(thread: Thread) => {
 			const nextPinned = !thread.pinned;
+			const runtimeId = getRuntimeIdForThread(thread);
+			const remainingPinnedSiblingExists = threads.some(
+				(candidate) =>
+					candidate.id !== thread.id &&
+					getRuntimeIdForThread(candidate) === runtimeId &&
+					candidate.pinned
+			);
+			const shouldBookmarkSession = nextPinned || remainingPinnedSiblingExists;
 			setThreads((prev) =>
 				prev.map((candidate) =>
 					candidate.id === thread.id
 						? {
 								...candidate,
 								pinned: nextPinned,
-								isOpen: nextPinned ? true : candidate.isOpen,
 							}
 						: candidate
 				)
 			);
 			setSessions((prev) =>
 				prev.map((s) =>
-					getRuntimeIdForSession(s) === getRuntimeIdForThread(thread)
-						? { ...s, bookmarked: nextPinned }
+					getRuntimeIdForSession(s) === runtimeId
+						? { ...s, bookmarked: shouldBookmarkSession }
 						: s
 				)
 			);
 		},
-		[setSessions, setThreads]
+		[setSessions, setThreads, threads]
 	);
 
 	// Context menu handlers - memoized to prevent SessionItem re-renders
-	const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string) => {
+	const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string, threadId?: string) => {
 		e.preventDefault();
 		e.stopPropagation();
 		setGroupContextMenu(null);
-		setContextMenu({ x: e.clientX, y: e.clientY, sessionId });
+		setContextMenu({ x: e.clientX, y: e.clientY, sessionId, threadId });
 	}, []);
 
 	const handleGroupContextMenu = useCallback((e: React.MouseEvent, groupId: string) => {
@@ -401,19 +432,65 @@ function SessionListInner(props: SessionListProps) {
 		[onDeleteSession, setActiveSessionId, setSessions, setThreads]
 	);
 
+	const handleDeleteThread = useCallback(
+		(thread: Thread) => {
+			const owningSession =
+				sessions.find((session) => getRuntimeIdForSession(session) === getRuntimeIdForThread(thread)) ||
+				null;
+			if (!owningSession) {
+				setThreads((prev) => prev.filter((candidate) => candidate.id !== thread.id));
+				setContextMenu(null);
+				return;
+			}
+
+			const siblingThreads = threads.filter(
+				(candidate) =>
+					candidate.id !== thread.id &&
+					getRuntimeIdForThread(candidate) === getRuntimeIdForSession(owningSession)
+			);
+			const resolvedTabId = getThreadTabId(thread, owningSession);
+
+			if (!resolvedTabId || siblingThreads.length === 0) {
+				handleDeleteSession(owningSession.id);
+				return;
+			}
+
+			setThreads((prev) => prev.filter((candidate) => candidate.id !== thread.id));
+			setSessions((prev) =>
+				prev.map((session) => {
+					if (session.id !== owningSession.id) {
+						return session;
+					}
+
+					const result = closeTab(session, resolvedTabId, false, { skipHistory: true });
+					return result?.session || session;
+				})
+			);
+			setContextMenu(null);
+		},
+		[handleDeleteSession, sessions, setSessions, setThreads, threads]
+	);
+
 	const handleSelectThread = useCallback(
 		(thread: Thread) => {
 			const runtimeId = getRuntimeIdForThread(thread);
+			const session = useSessionStore
+				.getState()
+				.sessions.find((candidate) => getRuntimeIdForSession(candidate) === runtimeId);
 			useSessionStore.setState((state) => ({
-				threads: state.threads.map((candidate) =>
-					candidate.id === thread.id
-						? { ...candidate, isOpen: true }
-						: candidate
-				),
 				activeSessionId: runtimeId,
 				cyclePosition: -1,
+				sessions: state.sessions.map((candidate) =>
+					candidate.id === session?.id
+						? {
+								...candidate,
+								activeTabId: getThreadTabId(thread, candidate) || candidate.activeTabId,
+							}
+						: candidate
+				),
 			}));
 			setActiveGroupChatId(null);
+			useConductorStore.getState().setActiveConductorView(null);
 		},
 		[setActiveGroupChatId]
 	);
@@ -444,6 +521,72 @@ function SessionListInner(props: SessionListProps) {
 		[setThreads]
 	);
 
+	const finishRenamingThread = useCallback(
+		(threadId: string, newName: string) => {
+			const trimmedName = newName.trim();
+			if (!trimmedName) {
+				setEditingSessionId(null);
+				return;
+			}
+
+			const thread = threads.find((candidate) => candidate.id === threadId);
+			if (!thread) {
+				setEditingSessionId(null);
+				return;
+			}
+
+			setThreads((prev) =>
+				prev.map((candidate) =>
+					candidate.id === threadId
+						? { ...candidate, title: trimmedName }
+						: candidate
+				)
+			);
+
+			const owningSession =
+				sessions.find((candidate) => getRuntimeIdForSession(candidate) === getRuntimeIdForThread(thread)) ||
+				null;
+			const resolvedTabId = owningSession ? getThreadTabId(thread, owningSession) : null;
+			if (owningSession && resolvedTabId) {
+				setSessions((prev) =>
+					prev.map((candidate) =>
+						candidate.id === owningSession.id
+							? {
+									...candidate,
+									aiTabs: candidate.aiTabs.map((tab) =>
+										tab.id === resolvedTabId ? { ...tab, name: trimmedName } : tab
+									),
+								}
+							: candidate
+					)
+				);
+			}
+
+			setEditingSessionId(null);
+		},
+		[sessions, setEditingSessionId, setSessions, setThreads, threads]
+	);
+
+	const handleToggleWorkspaceArchived = useCallback(
+		(workspaceId: string, archived: boolean) => {
+			setGroups((prev) =>
+				prev.map((group) =>
+					group.id === workspaceId
+						? {
+								...group,
+								archived,
+								collapsed: archived ? true : false,
+							}
+						: group
+				)
+			);
+			if (!archived) {
+				setArchiveExpanded(true);
+			}
+		},
+		[setGroups]
+	);
+
 	const openNewWorkspaceModal = useCallback(() => {
 		setNewInstanceModalOpen(true);
 		setNewInstanceMode('workspace');
@@ -470,6 +613,71 @@ function SessionListInner(props: SessionListProps) {
 				.sessions.filter((session) => !session.parentSessionId);
 			const provider = defaultThreadProvider || 'codex';
 			const name = buildDefaultThreadName(provider, currentSessions);
+			const normalizedWorkingDir = normalizeWorkspacePath(workingDir);
+			const reusableSession =
+				provider !== 'terminal'
+					? currentSessions
+							.filter(
+								(session) =>
+									session.groupId === workspace.id &&
+									session.toolType === provider &&
+									!session.conductorMetadata?.isConductorSession
+							)
+							.sort((left, right) => {
+								const leftPathMatch =
+									normalizeWorkspacePath(left.projectRoot || left.cwd) === normalizedWorkingDir ? 1 : 0;
+								const rightPathMatch =
+									normalizeWorkspacePath(right.projectRoot || right.cwd) === normalizedWorkingDir ? 1 : 0;
+								if (rightPathMatch !== leftPathMatch) {
+									return rightPathMatch - leftPathMatch;
+								}
+								return getSessionLastActivity(right) - getSessionLastActivity(left);
+							})[0] || null
+					: null;
+
+			if (reusableSession) {
+				const result = createTab(reusableSession, {
+					name,
+					saveToHistory: defaultSaveToHistory,
+					showThinking: defaultShowThinking,
+				});
+				if (result) {
+					const newThreadId = `thread-${generateId()}`;
+					setSessions((prev) =>
+						prev.map((session) => (session.id === reusableSession.id ? result.session : session))
+					);
+					setThreads((prev) => [
+						...prev.map((thread) =>
+							thread.sessionId === reusableSession.id
+								? {
+										...thread,
+										workspaceId: workspace.id,
+										projectRoot: workingDir,
+										lastUsedAt: Date.now(),
+									}
+								: thread
+						),
+						{
+							id: newThreadId,
+							workspaceId: workspace.id,
+							sessionId: reusableSession.id,
+							runtimeId: getRuntimeIdForSession(reusableSession),
+							tabId: result.tab.id,
+							title: name,
+							agentId: provider,
+							projectRoot: workingDir,
+							pinned: false,
+							archived: false,
+							isOpen: true,
+							createdAt: Date.now(),
+							lastUsedAt: Date.now(),
+						},
+					]);
+					setActiveSessionId(reusableSession.id);
+					setActiveFocus('main');
+					return;
+				}
+			}
 
 			await onCreateSession(
 				provider,
@@ -486,7 +694,16 @@ function SessionListInner(props: SessionListProps) {
 				workspace.id
 			);
 		},
-		[defaultThreadProvider, onCreateSession]
+		[
+			defaultShowThinking,
+			defaultSaveToHistory,
+			defaultThreadProvider,
+			onCreateSession,
+			setActiveFocus,
+			setActiveSessionId,
+			setSessions,
+			setThreads,
+		]
 	);
 
 	// Close menu when clicking outside
@@ -557,6 +774,10 @@ function SessionListInner(props: SessionListProps) {
 		() => new Map(topLevelSessions.map((session) => [session.id, session])),
 		[topLevelSessions]
 	);
+	const topLevelSessionsByRuntimeId = useMemo(
+		() => new Map(topLevelSessions.map((session) => [getRuntimeIdForSession(session), session])),
+		[topLevelSessions]
+	);
 	const topLevelSessionActivityByRuntimeId = useMemo(
 		() =>
 			new Map(
@@ -582,37 +803,10 @@ function SessionListInner(props: SessionListProps) {
 		return map;
 	}, [sessions]);
 
-	const sortedWorktreeChildrenByParentId = useMemo(() => {
-		const map = new Map<string, Session[]>();
-		worktreeChildrenByParentId.forEach((children, parentId) => {
-			map.set(parentId, [...children].sort((a, b) => compareNames(a.name, b.name)));
-		});
-		return map;
-	}, [worktreeChildrenByParentId]);
-
-	const sortedSessionIndexById = useMemo(() => {
-		const map = new Map<string, number>();
-		sortedSessions.forEach((session, index) => {
-			map.set(session.id, index);
-		});
-		return map;
-	}, [sortedSessions]);
-
 	const getWorktreeChildren = useCallback(
 		(parentId: string): Session[] => worktreeChildrenByParentId.get(parentId) || [],
 		[worktreeChildrenByParentId]
 	);
-
-	const threadBySessionId = useMemo(() => {
-		const map = new Map<string, Thread>();
-		threads.forEach((thread) => {
-			const runtimeId = getRuntimeIdForThread(thread);
-			if (topLevelSessionsById.has(runtimeId)) {
-				map.set(runtimeId, thread);
-			}
-		});
-		return map;
-	}, [threads, topLevelSessionsById]);
 
 	const getThreadRecentTimestamp = useCallback(
 		(thread: Thread) =>
@@ -623,14 +817,22 @@ function SessionListInner(props: SessionListProps) {
 		[topLevelSessionActivityByRuntimeId]
 	);
 
+	const archivedWorkspaceIds = useMemo(
+		() => new Set(groups.filter((group) => group.archived).map((group) => group.id)),
+		[groups]
+	);
+
 	const nonArchivedThreads = useMemo(
 		() =>
 			threads
 				.filter(
-					(thread) => !thread.archived && topLevelSessionsById.has(getRuntimeIdForThread(thread))
+					(thread) =>
+						!thread.archived &&
+						topLevelSessionsByRuntimeId.has(getRuntimeIdForThread(thread)) &&
+						!archivedWorkspaceIds.has(thread.workspaceId)
 				)
 				.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a)),
-		[threads, topLevelSessionsById, getThreadRecentTimestamp]
+		[threads, topLevelSessionsByRuntimeId, getThreadRecentTimestamp, archivedWorkspaceIds]
 	);
 
 	const pinnedThreads = useMemo(
@@ -659,13 +861,15 @@ function SessionListInner(props: SessionListProps) {
 					.filter(
 						(thread) =>
 							thread.workspaceId === workspace.id &&
-							topLevelSessionsById.has(getRuntimeIdForThread(thread))
+							topLevelSessionsByRuntimeId.has(getRuntimeIdForThread(thread))
 					)
 					.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a));
 				const workspaceSessionIds = new Set(
 					workspaceThreads.map((thread) => getRuntimeIdForThread(thread))
 				);
-				const workspaceSessions = topLevelSessions.filter((session) => workspaceSessionIds.has(session.id));
+				const workspaceSessions = topLevelSessions.filter((session) =>
+					workspaceSessionIds.has(getRuntimeIdForSession(session))
+				);
 				const statusSession = workspaceSessions[0] || null;
 				const unreadCount = workspaceSessions.reduce(
 					(count, session) =>
@@ -722,236 +926,300 @@ function SessionListInner(props: SessionListProps) {
 			}
 			return b.sortKey - a.sortKey || compareNames(a.workspace.name, b.workspace.name);
 		});
-	}, [
-		groups,
-		threads,
-		topLevelSessions,
-		topLevelSessionsById,
-		sessionFilter,
-		activeBatchSessionIds,
-		workspaceSortMode,
-		getThreadRecentTimestamp,
+		}, [
+			groups,
+			threads,
+			topLevelSessions,
+			topLevelSessionsByRuntimeId,
+			sessionFilter,
+			activeBatchSessionIds,
+			workspaceSortMode,
+			getThreadRecentTimestamp,
 	]);
 
-	// PERF: Cached callback maps to prevent SessionItem re-renders
-	// These Maps store stable function references keyed by session/editing ID
-	// The callbacks themselves are memoized, so the Map values remain stable
-	const selectHandlers = useMemo(() => {
-		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
-			const thread = threadBySessionId.get(s.id);
-			map.set(s.id, () => (thread ? handleSelectThread(thread) : setActiveSessionId(s.id)));
-		});
-		return map;
-	}, [sessions, handleSelectThread, setActiveSessionId, threadBySessionId]);
+	const activeWorkspaceEntries = useMemo(
+		() => filteredWorkspaces.filter((workspaceEntry) => !workspaceEntry.workspace.archived),
+		[filteredWorkspaces]
+	);
 
-	const dragStartHandlers = useMemo(() => {
-		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
-			map.set(s.id, () => handleDragStart(s.id));
-		});
-		return map;
-	}, [sessions, handleDragStart]);
+	const archivedWorkspaceEntries = useMemo(
+		() => filteredWorkspaces.filter((workspaceEntry) => workspaceEntry.workspace.archived),
+		[filteredWorkspaces]
+	);
 
-	const contextMenuHandlers = useMemo(() => {
-		const map = new Map<string, (e: React.MouseEvent) => void>();
-		sessions.forEach((s) => {
-			map.set(s.id, (e: React.MouseEvent) => handleContextMenu(e, s.id));
-		});
-		return map;
-	}, [sessions, handleContextMenu]);
-
-	const finishRenameHandlers = useMemo(() => {
-		const map = new Map<string, (newName: string) => void>();
-		sessions.forEach((s) => {
-			map.set(s.id, (newName: string) => finishRenamingSession(s.id, newName));
-		});
-		return map;
-	}, [sessions, finishRenamingSession]);
-
-	const toggleBookmarkHandlers = useMemo(() => {
-		const map = new Map<string, () => void>();
-		sessions.forEach((s) => {
-			const thread = threadBySessionId.get(s.id);
-			map.set(s.id, () => {
-				if (thread) {
-					toggleThreadPinned(thread);
-				}
+	const visibleSidebarThreadTargets = useMemo(() => {
+		const targets: SidebarThreadTarget[] = [];
+		const pushThread = (prefix: string, thread: Thread) => {
+			targets.push({
+				id: buildSidebarThreadTargetId(prefix, thread.id),
+				threadId: thread.id,
+				sessionId: thread.sessionId,
+				runtimeId: getRuntimeIdForThread(thread),
+				workspaceId: thread.workspaceId,
+				tabId: thread.tabId || null,
 			});
+		};
+
+		recentThreads.forEach((thread) => pushThread('recent', thread));
+		pinnedThreads.forEach((thread) => pushThread('pinned', thread));
+
+		const pushWorkspaceThreads = (workspaceEntry: (typeof filteredWorkspaces)[number]) => {
+			const workspaceId = workspaceEntry.workspace.id;
+			workspaceEntry.openThreads.forEach((thread) =>
+				pushThread(`workspace-open-${workspaceId}`, thread)
+			);
+			workspaceEntry.recentThreads.forEach((thread) =>
+				pushThread(`workspace-recent-${workspaceId}`, thread)
+			);
+			if (expandedOlderByWorkspace[workspaceId]) {
+				workspaceEntry.olderThreads.forEach((thread) =>
+					pushThread(`workspace-older-${workspaceId}`, thread)
+				);
+			}
+			if (expandedArchivedByWorkspace[workspaceId]) {
+				workspaceEntry.archivedThreads.forEach((thread) =>
+					pushThread(`workspace-archived-${workspaceId}`, thread)
+				);
+			}
+		};
+
+		activeWorkspaceEntries.forEach(pushWorkspaceThreads);
+		if (archiveExpanded) {
+			archivedWorkspaceEntries.forEach(pushWorkspaceThreads);
+		}
+
+		return targets;
+	}, [
+		activeWorkspaceEntries,
+		archiveExpanded,
+		archivedWorkspaceEntries,
+		expandedArchivedByWorkspace,
+		expandedOlderByWorkspace,
+		pinnedThreads,
+		recentThreads,
+	]);
+
+	useEffect(() => {
+		setSidebarThreadTargets(visibleSidebarThreadTargets);
+	}, [setSidebarThreadTargets, visibleSidebarThreadTargets]);
+
+	useEffect(
+		() => () => {
+			setSidebarThreadTargets([]);
+			setSidebarNavTargets([]);
+		},
+		[setSidebarNavTargets, setSidebarThreadTargets]
+	);
+
+	const sidebarThreadTargetIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		visibleSidebarThreadTargets.forEach((target, index) => {
+			map.set(target.id, index);
 		});
 		return map;
-	}, [sessions, threadBySessionId, toggleThreadPinned]);
+	}, [visibleSidebarThreadTargets]);
 
-	// Helper component: Renders a session item with its worktree children (if any)
-	const renderSessionWithWorktrees = (
-		session: Session,
-		variant: 'bookmark' | 'group' | 'flat' | 'ungrouped',
-		options: {
-			keyPrefix: string;
-			groupId?: string;
-			group?: Group;
-			onDrop?: () => void;
-			displayName?: string;
-			providerAgentId?: Session['toolType'];
-			workspaceEmoji?: string;
-		}
-	) => {
-		const worktreeChildren = getWorktreeChildren(session.id);
-		const hasWorktrees = worktreeChildren.length > 0;
-		const worktreesExpanded = session.worktreesExpanded ?? true;
-		const globalIdx = sortedSessionIndexById.get(session.id) ?? -1;
-		const isKeyboardSelected = activeFocus === 'sidebar' && globalIdx === selectedSidebarIndex;
-
-		// In flat/ungrouped view, wrap sessions with worktrees in a left-bordered container
-		// to visually associate parent and worktrees together (similar to grouped view)
-		const needsWorktreeWrapper = hasWorktrees && (variant === 'flat' || variant === 'ungrouped');
-
-		// When wrapped, use 'ungrouped' styling for flat sessions (no mx-3, consistent with grouped look)
-		const effectiveVariant = needsWorktreeWrapper && variant === 'flat' ? 'ungrouped' : variant;
-
-		const content = (
-			<>
-				{/* Parent session - no chevron, maintains alignment */}
-				<SessionItem
-					session={session}
-					variant={effectiveVariant}
-					theme={theme}
-					displayName={options.displayName}
-					isActive={activeSessionId === session.id && !activeGroupChatId}
-					isKeyboardSelected={isKeyboardSelected}
-					isDragging={draggingSessionId === session.id}
-					isEditing={editingSessionId === `${options.keyPrefix}-${session.id}`}
-					leftSidebarOpen={leftSidebarOpen}
-					group={options.group}
-					groupId={options.groupId}
-					providerAgentId={options.providerAgentId}
-					workspaceEmoji={options.workspaceEmoji}
-					isInBatch={activeBatchSessionIds.includes(session.id)}
-					jumpNumber={getSessionJumpNumber(session.id)}
-					onSelect={selectHandlers.get(session.id)!}
-					onDragStart={dragStartHandlers.get(session.id)!}
-					onDragOver={handleDragOver}
-					onDrop={options.onDrop || handleDropOnUngrouped}
-					onContextMenu={contextMenuHandlers.get(session.id)!}
-					onFinishRename={finishRenameHandlers.get(session.id)!}
-					onStartRename={() => startRenamingSession(`${options.keyPrefix}-${session.id}`)}
-					onToggleBookmark={toggleBookmarkHandlers.get(session.id)!}
-				/>
-
-				{/* Thin band below parent when worktrees exist but collapsed - click to expand */}
-				{hasWorktrees && !worktreesExpanded && onToggleWorktreeExpanded && (
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							onToggleWorktreeExpanded(session.id);
-						}}
-						className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
-						style={{
-							backgroundColor: theme.colors.accent + '15',
-							color: theme.colors.accent,
-						}}
-						title={`${worktreeChildren.length} worktree${worktreeChildren.length > 1 ? 's' : ''} (click to expand)`}
-					>
-						<GitBranch className="w-2.5 h-2.5" />
-						<span>
-							{worktreeChildren.length} worktree{worktreeChildren.length > 1 ? 's' : ''}
-						</span>
-						<ChevronDown className="w-2.5 h-2.5" />
-					</button>
-				)}
-
-				{/* Worktree children drawer (when expanded) */}
-				{hasWorktrees && worktreesExpanded && onToggleWorktreeExpanded && (
-					<div
-						className={`rounded-bl overflow-hidden ${needsWorktreeWrapper ? '' : 'ml-1'}`}
-						style={{
-							backgroundColor: theme.colors.accent + '10',
-							borderLeft: needsWorktreeWrapper ? 'none' : `1px solid ${theme.colors.accent}30`,
-							borderBottom: `1px solid ${theme.colors.accent}30`,
-						}}
-					>
-						{/* Worktree children list */}
-						<div>
-							{(sortedWorktreeChildrenByParentId.get(session.id) || []).map((child) => {
-								const childGlobalIdx = sortedSessionIndexById.get(child.id) ?? -1;
-								const isChildKeyboardSelected =
-									activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
-								return (
-									<SessionItem
-										key={`worktree-${session.id}-${child.id}`}
-										session={child}
-										variant="worktree"
-										theme={theme}
-										isActive={activeSessionId === child.id && !activeGroupChatId}
-										isKeyboardSelected={isChildKeyboardSelected}
-										isDragging={draggingSessionId === child.id}
-										isEditing={editingSessionId === `worktree-${session.id}-${child.id}`}
-										leftSidebarOpen={leftSidebarOpen}
-										isInBatch={activeBatchSessionIds.includes(child.id)}
-										jumpNumber={getSessionJumpNumber(child.id)}
-										onSelect={selectHandlers.get(child.id)!}
-										onDragStart={dragStartHandlers.get(child.id)!}
-										onContextMenu={contextMenuHandlers.get(child.id)!}
-										onFinishRename={finishRenameHandlers.get(child.id)!}
-										onStartRename={() => startRenamingSession(`worktree-${session.id}-${child.id}`)}
-										onToggleBookmark={toggleBookmarkHandlers.get(child.id)!}
-									/>
-								);
-							})}
-						</div>
-						{/* Drawer handle at bottom - click to collapse */}
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								onToggleWorktreeExpanded(session.id);
-							}}
-							className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
-							style={{
-								backgroundColor: theme.colors.accent + '20',
-								color: theme.colors.accent,
-							}}
-							title="Click to collapse worktrees"
-						>
-							<GitBranch className="w-2.5 h-2.5" />
-							<span>
-								{worktreeChildren.length} worktree{worktreeChildren.length > 1 ? 's' : ''}
-							</span>
-							<ChevronUp className="w-2.5 h-2.5" />
-						</button>
-					</div>
-				)}
-			</>
-		);
-
-		// Wrap in left-bordered container for flat/ungrouped sessions with worktrees
-		// Use ml-3 to align left edge, mr-3 minus the extra px-1 from ungrouped (px-4 vs px-3)
-		if (needsWorktreeWrapper) {
-			return (
-				<div
-					key={`${options.keyPrefix}-${session.id}`}
-					className="border-l ml-3 mr-2 mb-1"
-					style={{ borderColor: theme.colors.accent + '50' }}
-				>
-					{content}
-				</div>
+	const sidebarNavTargets = useMemo(() => {
+		if (!leftSidebarOpen) {
+			return visibleSidebarThreadTargets.map(
+				(target): SidebarNavTarget => ({
+					type: 'thread',
+					id: target.id,
+					thread: target,
+				})
 			);
 		}
 
-		return <div key={`${options.keyPrefix}-${session.id}`}>{content}</div>;
-	};
+		const targets: SidebarNavTarget[] = [];
+		recentThreads.forEach((thread) =>
+			targets.push({
+				type: 'thread',
+				id: buildSidebarThreadTargetId('recent', thread.id),
+				thread: {
+					id: buildSidebarThreadTargetId('recent', thread.id),
+					threadId: thread.id,
+					sessionId: thread.sessionId,
+					runtimeId: getRuntimeIdForThread(thread),
+					workspaceId: thread.workspaceId,
+					tabId: thread.tabId || null,
+				},
+			})
+		);
+		pinnedThreads.forEach((thread) =>
+			targets.push({
+				type: 'thread',
+				id: buildSidebarThreadTargetId('pinned', thread.id),
+				thread: {
+					id: buildSidebarThreadTargetId('pinned', thread.id),
+					threadId: thread.id,
+					sessionId: thread.sessionId,
+					runtimeId: getRuntimeIdForThread(thread),
+					workspaceId: thread.workspaceId,
+					tabId: thread.tabId || null,
+				},
+			})
+		);
 
-	// Precomputed jump number map (1-9, 0=10th) for sessions based on position in visibleSessions
+		const pushWorkspaceTargets = (workspaceEntry: (typeof filteredWorkspaces)[number]) => {
+			const workspaceId = workspaceEntry.workspace.id;
+			targets.push({
+				type: 'workspace',
+				id: buildSidebarWorkspaceTargetId(workspaceId),
+				workspace: {
+					id: buildSidebarWorkspaceTargetId(workspaceId),
+					workspaceId,
+				},
+			});
+
+			workspaceEntry.openThreads.forEach((thread) =>
+				targets.push({
+					type: 'thread',
+					id: buildSidebarThreadTargetId(`workspace-open-${workspaceId}`, thread.id),
+					thread: {
+						id: buildSidebarThreadTargetId(`workspace-open-${workspaceId}`, thread.id),
+						threadId: thread.id,
+						sessionId: thread.sessionId,
+						runtimeId: getRuntimeIdForThread(thread),
+						workspaceId: thread.workspaceId,
+						tabId: thread.tabId || null,
+					},
+				})
+			);
+			workspaceEntry.recentThreads.forEach((thread) =>
+				targets.push({
+					type: 'thread',
+					id: buildSidebarThreadTargetId(`workspace-recent-${workspaceId}`, thread.id),
+					thread: {
+						id: buildSidebarThreadTargetId(`workspace-recent-${workspaceId}`, thread.id),
+						threadId: thread.id,
+						sessionId: thread.sessionId,
+						runtimeId: getRuntimeIdForThread(thread),
+						workspaceId: thread.workspaceId,
+						tabId: thread.tabId || null,
+					},
+				})
+			);
+			if (expandedOlderByWorkspace[workspaceId]) {
+				workspaceEntry.olderThreads.forEach((thread) =>
+					targets.push({
+						type: 'thread',
+						id: buildSidebarThreadTargetId(`workspace-older-${workspaceId}`, thread.id),
+						thread: {
+							id: buildSidebarThreadTargetId(`workspace-older-${workspaceId}`, thread.id),
+							threadId: thread.id,
+							sessionId: thread.sessionId,
+							runtimeId: getRuntimeIdForThread(thread),
+							workspaceId: thread.workspaceId,
+							tabId: thread.tabId || null,
+						},
+					})
+				);
+			}
+			if (expandedArchivedByWorkspace[workspaceId]) {
+				workspaceEntry.archivedThreads.forEach((thread) =>
+					targets.push({
+						type: 'thread',
+						id: buildSidebarThreadTargetId(`workspace-archived-${workspaceId}`, thread.id),
+						thread: {
+							id: buildSidebarThreadTargetId(
+								`workspace-archived-${workspaceId}`,
+								thread.id
+							),
+							threadId: thread.id,
+							sessionId: thread.sessionId,
+							runtimeId: getRuntimeIdForThread(thread),
+							workspaceId: thread.workspaceId,
+							tabId: thread.tabId || null,
+						},
+					})
+				);
+			}
+		};
+
+		activeWorkspaceEntries.forEach(pushWorkspaceTargets);
+		if (archiveExpanded) {
+			archivedWorkspaceEntries.forEach(pushWorkspaceTargets);
+		}
+
+		return targets;
+	}, [
+		activeWorkspaceEntries,
+		archiveExpanded,
+		archivedWorkspaceEntries,
+		expandedArchivedByWorkspace,
+		expandedOlderByWorkspace,
+		filteredWorkspaces,
+		leftSidebarOpen,
+		pinnedThreads,
+		recentThreads,
+		visibleSidebarThreadTargets,
+	]);
+
+	useEffect(() => {
+		setSidebarNavTargets(sidebarNavTargets);
+	}, [setSidebarNavTargets, sidebarNavTargets]);
+
+	const sidebarNavTargetIndexById = useMemo(() => {
+		const map = new Map<string, number>();
+		sidebarNavTargets.forEach((target, index) => {
+			map.set(target.id, index);
+		});
+		return map;
+	}, [sidebarNavTargets]);
+
+	const activeSidebarThreadTargetId = useMemo(() => {
+		const activeSession = topLevelSessionsById.get(activeSessionId);
+		if (!activeSession) return null;
+
+		const activeThread =
+			threads.find((thread) => isThreadActiveForSession(thread, activeSession)) ||
+			threads.find((thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(activeSession)) ||
+			null;
+		if (!activeThread) return null;
+
+		return (
+			visibleSidebarThreadTargets.find(
+				(target) =>
+					target.threadId === activeThread.id &&
+					target.sessionId === activeSession.id &&
+					target.tabId === getThreadTabId(activeThread, activeSession)
+			)?.id ||
+			visibleSidebarThreadTargets.find(
+				(target) => target.threadId === activeThread.id && target.sessionId === activeSession.id
+			)?.id ||
+			null
+		);
+	}, [activeSessionId, threads, topLevelSessionsById, visibleSidebarThreadTargets]);
+
+	const skinnySidebarThreadItems = useMemo(() => {
+		return visibleSidebarThreadTargets
+			.map((target): SkinnySidebarThreadItem | null => {
+				const session = topLevelSessionsByRuntimeId.get(target.runtimeId);
+				const thread = threads.find((candidate) => candidate.id === target.threadId);
+				if (!session || !thread) return null;
+
+				return {
+					target,
+					session,
+					displayName: getThreadDisplayTitle(thread, session),
+					groupName: groups.find((group) => group.id === thread.workspaceId)?.name,
+				};
+			})
+			.filter((item): item is SkinnySidebarThreadItem => !!item);
+	}, [groups, threads, topLevelSessionsByRuntimeId, visibleSidebarThreadTargets]);
+
+	// Precomputed jump number map (1-9, 0=10th) for visible sidebar thread rows
 	const jumpNumberMap = useMemo(() => {
 		if (!showSessionJumpNumbers) return new Map<string, string>();
 		const map = new Map<string, string>();
-		for (let i = 0; i < Math.min(visibleSessions.length, 10); i++) {
-			map.set(visibleSessions[i].id, i === 9 ? '0' : String(i + 1));
+		for (let i = 0; i < Math.min(visibleSidebarThreadTargets.length, 10); i++) {
+			map.set(visibleSidebarThreadTargets[i].id, i === 9 ? '0' : String(i + 1));
 		}
 		return map;
-	}, [showSessionJumpNumbers, visibleSessions]);
+	}, [showSessionJumpNumbers, visibleSidebarThreadTargets]);
 
-	const getSessionJumpNumber = (sessionId: string): string | null => {
-		return jumpNumberMap.get(sessionId) ?? null;
+	const getThreadJumpNumber = (targetId: string): string | null => {
+		return jumpNumberMap.get(targetId) ?? null;
 	};
 
 	const renderThread = useCallback(
@@ -962,22 +1230,431 @@ function SessionListInner(props: SessionListProps) {
 				keyPrefix: string;
 				group?: Group;
 			}
-		) => {
-			const runtimeId = getRuntimeIdForThread(thread);
-			const session = topLevelSessionsById.get(runtimeId);
-			if (!session) return null;
+			) => {
+				const runtimeId = getRuntimeIdForThread(thread);
+				const session = topLevelSessionsByRuntimeId.get(runtimeId);
+				if (!session) return null;
+			const targetId = buildSidebarThreadTargetId(options.keyPrefix, thread.id);
 			const displayName = getThreadDisplayTitle(thread, session);
-			return renderSessionWithWorktrees(session, variant, {
-				keyPrefix: options.keyPrefix,
-				groupId: options.group?.id,
-				group: options.group,
-				displayName,
-				providerAgentId: thread.agentId,
-				workspaceEmoji: options.group?.emoji,
-			});
+			const targetIndex = sidebarNavTargetIndexById.get(targetId) ?? -1;
+			const isKeyboardSelected = activeFocus === 'sidebar' && targetIndex === selectedSidebarIndex;
+			return (
+				<div key={`${options.keyPrefix}-${thread.id}`}>
+					<SessionItem
+						session={session}
+						variant={variant}
+						theme={theme}
+						displayName={displayName}
+						providerAgentId={thread.agentId}
+						workspaceEmoji={options.group?.emoji}
+						bookmarkState={thread.pinned}
+						isActive={activeSessionId === session.id && isThreadActiveForSession(thread, session)}
+						isKeyboardSelected={isKeyboardSelected}
+						isDragging={draggingSessionId === session.id}
+						isEditing={editingSessionId === `thread-${thread.id}`}
+						leftSidebarOpen={leftSidebarOpen}
+						isInBatch={activeBatchSessionIds.includes(session.id)}
+						jumpNumber={getThreadJumpNumber(targetId)}
+						group={options.group}
+						groupId={options.group?.id}
+						onSelect={() => handleSelectThread(thread)}
+						onDragStart={() => handleDragStart(session.id)}
+						onContextMenu={(e) => handleContextMenu(e, session.id, thread.id)}
+						onFinishRename={(newName) => finishRenamingThread(thread.id, newName)}
+						onStartRename={() => startRenamingSession(`thread-${thread.id}`)}
+						onToggleBookmark={() => toggleThreadPinned(thread)}
+					/>
+				</div>
+			);
 		},
-		[topLevelSessionsById]
+		[
+			activeBatchSessionIds,
+			activeFocus,
+			activeSessionId,
+			draggingSessionId,
+			editingSessionId,
+			finishRenamingThread,
+			handleContextMenu,
+			handleDragStart,
+			handleSelectThread,
+			leftSidebarOpen,
+			selectedSidebarIndex,
+			sidebarNavTargetIndexById,
+			startRenamingSession,
+			theme,
+			toggleThreadPinned,
+				topLevelSessionsByRuntimeId,
+			]
+		);
+
+	const openSkinnySidebarThread = useCallback(
+		(target: SidebarThreadTarget) => {
+			const thread = threads.find((candidate) => candidate.id === target.threadId);
+			if (!thread) return;
+			handleSelectThread(thread);
+		},
+		[handleSelectThread, threads]
 	);
+
+	const renderWorkspaceEntry = useCallback(
+		(workspaceEntry: (typeof filteredWorkspaces)[number]) => {
+			const { workspace, openThreads, recentThreads, olderThreads, archivedThreads } =
+				workspaceEntry;
+			const expandedOlder = !!expandedOlderByWorkspace[workspace.id];
+			const expandedArchived = !!expandedArchivedByWorkspace[workspace.id];
+			const workspaceTargetId = buildSidebarWorkspaceTargetId(workspace.id);
+			const workspaceTargetIndex = sidebarNavTargetIndexById.get(workspaceTargetId) ?? -1;
+			const isWorkspaceKeyboardSelected =
+				activeFocus === 'sidebar' && workspaceTargetIndex === selectedSidebarIndex;
+				const workspaceGitFileCount = workspaceEntry.statusSession
+					? getFileCount(workspaceEntry.statusSession.id)
+					: undefined;
+				const collapsedPaletteThreads = workspaceEntry.threads
+					.map((thread) => topLevelSessionsByRuntimeId.get(getRuntimeIdForThread(thread)))
+					.filter((session): session is Session => !!session);
+
+			return (
+				<div key={workspace.id} className="mb-2">
+					<div
+						className="px-3 py-1.5 flex items-center gap-2 group rounded-lg"
+						onContextMenu={(e) => handleGroupContextMenu(e, workspace.id)}
+						style={getSidebarHeaderButtonStyle(theme, {
+							active:
+								(activeConductorView?.scope === 'workspace' &&
+									activeConductorView.groupId === workspace.id) ||
+								isWorkspaceKeyboardSelected,
+							tint: theme.colors.accent,
+						})}
+					>
+						<button
+							type="button"
+							onClick={() => toggleGroup(workspace.id)}
+							className="p-1 rounded hover:bg-white/10 transition-colors shrink-0"
+							style={{ color: theme.colors.textDim }}
+							title={workspace.collapsed ? 'Expand workspace' : 'Collapse workspace'}
+						>
+							{workspace.collapsed ? (
+								<ChevronRight className="w-3 h-3 shrink-0" />
+							) : (
+								<ChevronDown className="w-3 h-3 shrink-0" />
+							)}
+						</button>
+						<button
+							type="button"
+							onClick={() => onOpenConductor?.(workspace.id)}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									onOpenConductor?.(workspace.id);
+								}
+							}}
+							className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.08em] min-w-0 flex-1 text-left rounded px-1 py-0.5 hover:bg-white/5 transition-colors"
+							style={getSidebarWorkspaceTextStyle(theme)}
+							title={`Open ${workspace.name} kanban`}
+							aria-selected={isWorkspaceKeyboardSelected}
+						>
+							<span className="text-sm shrink-0">{workspace.emoji}</span>
+							{editingGroupId === workspace.id ? (
+								<input
+									autoFocus
+									className="bg-transparent outline-none w-full border-b border-indigo-500"
+									defaultValue={workspace.name}
+									onClick={(e) => e.stopPropagation()}
+									onBlur={(e) => {
+										if (ignoreNextBlurRef.current) {
+											ignoreNextBlurRef.current = false;
+											return;
+										}
+										finishRenamingGroup(workspace.id, e.target.value);
+									}}
+									onKeyDown={(e) => {
+										e.stopPropagation();
+										if (e.key === 'Enter') {
+											ignoreNextBlurRef.current = true;
+											finishRenamingGroup(workspace.id, e.currentTarget.value);
+										}
+									}}
+								/>
+							) : (
+								<span
+									className="truncate"
+									style={getSidebarWorkspaceTextStyle(theme)}
+									onDoubleClick={(e) => {
+										e.stopPropagation();
+										startRenamingGroup(workspace.id);
+									}}
+								>
+									{workspace.name}
+								</span>
+							)}
+							{workspaceEntry.hasBusy && (
+								<span
+									className="w-2 h-2 rounded-full shrink-0 animate-pulse"
+									style={{ backgroundColor: theme.colors.warning }}
+									title="Workspace has active threads"
+								/>
+							)}
+							{workspaceEntry.unreadCount > 0 && (
+								<span
+									className="px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0"
+									style={{
+										backgroundColor: `${theme.colors.accent}22`,
+										color: theme.colors.accent,
+									}}
+								>
+									{workspaceEntry.unreadCount}
+								</span>
+							)}
+							{workspaceEntry.statusSession && (
+								<>
+									{workspaceGitFileCount !== undefined && workspaceGitFileCount > 0 && (
+										<div
+											className="flex items-center gap-0.5 text-[10px] shrink-0"
+											style={{ color: theme.colors.warning }}
+											title={`${workspaceGitFileCount} changed file${workspaceGitFileCount === 1 ? '' : 's'}`}
+										>
+											<GitBranch className="w-2.5 h-2.5" />
+											<span>{workspaceGitFileCount}</span>
+										</div>
+									)}
+									{workspaceEntry.statusSession.isGitRepo ? (
+										<div
+											className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
+											style={{
+												backgroundColor: `${theme.colors.accent}30`,
+												color: theme.colors.accent,
+											}}
+											title="Git repository"
+										>
+											GIT
+										</div>
+									) : (
+										<div
+											className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
+											style={{
+												backgroundColor: workspaceEntry.statusSession.sessionSshRemoteConfig
+													?.enabled
+													? `${theme.colors.warning}30`
+													: `${theme.colors.textDim}20`,
+												color: workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
+													? theme.colors.warning
+													: theme.colors.textDim,
+											}}
+											title={
+												workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
+													? 'Running on remote host via SSH'
+													: 'Local directory'
+											}
+										>
+											{workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
+												? 'REMOTE'
+												: 'LOCAL'}
+										</div>
+									)}
+									{workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled &&
+										workspaceEntry.statusSession.isGitRepo && (
+											<div
+												className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center shrink-0"
+												style={{
+													backgroundColor: `${theme.colors.warning}30`,
+													color: theme.colors.warning,
+												}}
+												title="Running on remote host via SSH"
+											>
+												<Server className="w-3 h-3" />
+											</div>
+										)}
+								</>
+							)}
+						</button>
+						<button
+							type="button"
+							onClick={(e) => {
+								e.stopPropagation();
+								void createThreadForWorkspace(workspace);
+							}}
+							className="p-1 rounded hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.accent }}
+							title="New Thread"
+						>
+							<Plus className="w-3.5 h-3.5" />
+						</button>
+					</div>
+
+					{!workspace.collapsed ? (
+						<div
+							className="flex flex-col border-l ml-4 mt-1"
+							style={{ borderColor: 'rgba(255,255,255,0.06)' }}
+						>
+							{openThreads.length > 0 && (
+								<>
+									<div className="px-3 py-1 text-[10px] font-semibold tracking-[0.08em]">
+										<span style={getSidebarSectionTextStyle(theme)}>Open</span>
+									</div>
+									<div className="flex flex-col">
+										{openThreads.map((thread) =>
+											renderThread(thread, 'group', {
+												keyPrefix: `workspace-open-${workspace.id}`,
+												group: workspace,
+											})
+										)}
+									</div>
+								</>
+							)}
+
+							{recentThreads.length > 0 && (
+								<>
+									<div className="px-3 py-1 text-[10px] font-semibold tracking-[0.08em]">
+										<span style={getSidebarSectionTextStyle(theme)}>Recent</span>
+									</div>
+									<div className="flex flex-col">
+										{recentThreads.map((thread) =>
+											renderThread(thread, 'group', {
+												keyPrefix: `workspace-recent-${workspace.id}`,
+												group: workspace,
+											})
+										)}
+									</div>
+								</>
+							)}
+
+							{expandedOlder && (
+								<div className="flex flex-col">
+									{olderThreads.map((thread) =>
+										renderThread(thread, 'group', {
+											keyPrefix: `workspace-older-${workspace.id}`,
+											group: workspace,
+										})
+									)}
+								</div>
+							)}
+
+							{olderThreads.length > 0 && (
+								<button
+									type="button"
+									onClick={() =>
+										setExpandedOlderByWorkspace((prev) => ({
+											...prev,
+											[workspace.id]: !prev[workspace.id],
+										}))
+									}
+									className="mx-3 my-1 px-2 py-1 rounded text-[11px] text-left hover:bg-white/5 transition-colors"
+									style={{ color: theme.colors.textDim }}
+								>
+									{expandedOlder ? 'Hide older threads' : `Show older (${olderThreads.length})`}
+								</button>
+							)}
+
+							{expandedArchived && (
+								<div className="flex flex-col">
+									{archivedThreads.map((thread) =>
+										renderThread(thread, 'group', {
+											keyPrefix: `workspace-archived-${workspace.id}`,
+											group: workspace,
+										})
+									)}
+								</div>
+							)}
+
+							{archivedThreads.length > 0 && (
+								<button
+									type="button"
+									onClick={() =>
+										setExpandedArchivedByWorkspace((prev) => ({
+											...prev,
+											[workspace.id]: !prev[workspace.id],
+										}))
+									}
+									className="mx-3 my-1 px-2 py-1 rounded text-[11px] text-left hover:bg-white/5 transition-colors"
+									style={{ color: theme.colors.textDim }}
+								>
+									{expandedArchived
+										? 'Hide archived'
+										: `Show archived (${archivedThreads.length})`}
+								</button>
+							)}
+						</div>
+					) : (
+						<div
+							className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
+							onClick={() => toggleGroup(workspace.id)}
+						>
+							{collapsedPaletteThreads.map((session) => (
+								<CollapsedSessionPill
+									key={`workspace-collapsed-${workspace.id}-${session.id}`}
+									session={session}
+									keyPrefix={`workspace-collapsed-${workspace.id}`}
+									theme={theme}
+									activeBatchSessionIds={activeBatchSessionIds}
+									leftSidebarWidth={leftSidebarWidthState}
+									contextWarningYellowThreshold={contextWarningYellowThreshold}
+									contextWarningRedThreshold={contextWarningRedThreshold}
+									getFileCount={getFileCount}
+									getWorktreeChildren={getWorktreeChildren}
+									setActiveSessionId={setActiveSessionId}
+								/>
+							))}
+						</div>
+					)}
+				</div>
+			);
+		},
+		[
+			activeConductorView,
+			activeFocus,
+			activeBatchSessionIds,
+			contextWarningRedThreshold,
+			contextWarningYellowThreshold,
+			createThreadForWorkspace,
+			editingGroupId,
+			expandedArchivedByWorkspace,
+			expandedOlderByWorkspace,
+			finishRenamingGroup,
+			getFileCount,
+			getWorktreeChildren,
+			leftSidebarWidthState,
+			renderThread,
+			selectedSidebarIndex,
+			sidebarNavTargetIndexById,
+				setActiveSessionId,
+				startRenamingGroup,
+				theme,
+				toggleGroup,
+				topLevelSessionsByRuntimeId,
+			]
+		);
+
+	if (leftSidebarHidden) {
+		return (
+			<div
+				ref={sidebarContainerRef}
+				tabIndex={0}
+				className="flex shrink-0 outline-none relative z-20"
+				style={{ width: '14px', backgroundColor: theme.colors.bgSidebar } as React.CSSProperties}
+				onClick={() => setActiveFocus('sidebar')}
+				onFocus={() => setActiveFocus('sidebar')}
+			>
+				<button
+					type="button"
+					onClick={() => {
+						setLeftSidebarHidden(false);
+						setLeftSidebarOpen(true);
+					}}
+					className="absolute top-20 left-1/2 -translate-x-1/2 rounded-r-md border transition-colors hover:bg-white/5"
+					style={{
+						padding: '10px 4px',
+						backgroundColor: theme.colors.bgSidebar,
+						borderColor: theme.colors.border,
+						color: theme.colors.textDim,
+					}}
+					title="Show Sidebar"
+					aria-label="Show Sidebar"
+				>
+					<ChevronRight className="w-3.5 h-3.5" />
+				</button>
+			</div>
+		);
+	}
 
 	return (
 		<div
@@ -1238,6 +1915,30 @@ function SessionListInner(props: SessionListProps) {
 								</button>
 							</div>
 						</div>
+						{onOpenConductorHome && (
+							<button
+								type="button"
+								onClick={onOpenConductorHome}
+								className="mt-2 w-full flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-white/5"
+								style={{
+									borderColor:
+										activeConductorView?.scope === 'home'
+											? `${theme.colors.accent}40`
+											: theme.colors.border,
+									color: theme.colors.textMain,
+									backgroundColor:
+										activeConductorView?.scope === 'home'
+											? `${theme.colors.accent}10`
+											: 'transparent',
+								}}
+								title="Open Agent Review"
+							>
+								<span className="inline-flex items-center gap-2">
+									<FolderKanban className="w-4 h-4" style={{ color: theme.colors.accent }} />
+									<span>Agent Review</span>
+								</span>
+							</button>
+						)}
 					</div>
 
 					{recentThreads.length > 0 && (
@@ -1276,292 +1977,44 @@ function SessionListInner(props: SessionListProps) {
 						</div>
 					)}
 
-					{filteredWorkspaces.map((workspaceEntry) => {
-						const { workspace, openThreads, recentThreads, olderThreads, archivedThreads } =
-							workspaceEntry;
-						const expandedOlder = !!expandedOlderByWorkspace[workspace.id];
-						const expandedArchived = !!expandedArchivedByWorkspace[workspace.id];
-						const workspaceGitFileCount = workspaceEntry.statusSession
-							? getFileCount(workspaceEntry.statusSession.id)
-							: undefined;
-						const collapsedPaletteThreads = workspaceEntry.threads
-							.map((thread) => topLevelSessionsById.get(getRuntimeIdForThread(thread)))
-							.filter((session): session is Session => !!session);
+					{activeWorkspaceEntries.map(renderWorkspaceEntry)}
 
-						return (
-							<div key={workspace.id} className="mb-2">
+					{archivedWorkspaceEntries.length > 0 && (
+						<div className="mt-3">
+							<button
+								type="button"
+								onClick={() => setArchiveExpanded((prev) => !prev)}
+								className="mx-3 w-[calc(100%-24px)] px-3 py-1.5 flex items-center justify-between rounded-lg hover:bg-white/5 transition-colors"
+								style={getSidebarHeaderButtonStyle(theme, {
+									active: archiveExpanded,
+									tint: theme.colors.textDim,
+								})}
+							>
 								<div
-									role="button"
-									tabIndex={0}
-									aria-expanded={!workspace.collapsed}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											toggleGroup(workspace.id);
-										}
-									}}
-									onClick={() => toggleGroup(workspace.id)}
-									onContextMenu={(e) => handleGroupContextMenu(e, workspace.id)}
-									className="px-3 py-1.5 flex items-center justify-between cursor-pointer group rounded-lg"
-									style={getSidebarHeaderButtonStyle(theme, {
-										active: !workspace.collapsed,
-										tint: theme.colors.textDim,
-									})}
+									className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.08em]"
+									style={getSidebarWorkspaceTextStyle(theme)}
 								>
-									<div
-										className="flex items-center gap-2 text-[11px] font-semibold tracking-[0.08em] min-w-0 flex-1"
-										style={getSidebarWorkspaceTextStyle(theme)}
-									>
-										{workspace.collapsed ? (
-											<ChevronRight className="w-3 h-3 shrink-0" />
-										) : (
-											<ChevronDown className="w-3 h-3 shrink-0" />
-										)}
-										<span className="text-sm shrink-0">{workspace.emoji}</span>
-										{editingGroupId === workspace.id ? (
-											<input
-												autoFocus
-												className="bg-transparent outline-none w-full border-b border-indigo-500"
-												defaultValue={workspace.name}
-												onClick={(e) => e.stopPropagation()}
-												onBlur={(e) => {
-													if (ignoreNextBlurRef.current) {
-														ignoreNextBlurRef.current = false;
-														return;
-													}
-													finishRenamingGroup(workspace.id, e.target.value);
-												}}
-												onKeyDown={(e) => {
-													e.stopPropagation();
-													if (e.key === 'Enter') {
-														ignoreNextBlurRef.current = true;
-														finishRenamingGroup(workspace.id, e.currentTarget.value);
-													}
-												}}
-											/>
-										) : (
-											<span
-												className="truncate"
-												style={getSidebarWorkspaceTextStyle(theme)}
-												onDoubleClick={(e) => {
-													e.stopPropagation();
-													startRenamingGroup(workspace.id);
-												}}
-											>
-												{workspace.name}
-											</span>
-										)}
-										{workspaceEntry.hasBusy && (
-											<span
-												className="w-2 h-2 rounded-full shrink-0 animate-pulse"
-												style={{ backgroundColor: theme.colors.warning }}
-												title="Workspace has active threads"
-											/>
-										)}
-										{workspaceEntry.unreadCount > 0 && (
-											<span
-												className="px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0"
-												style={{
-													backgroundColor: `${theme.colors.accent}22`,
-													color: theme.colors.accent,
-												}}
-											>
-												{workspaceEntry.unreadCount}
-											</span>
-										)}
-										{workspaceEntry.statusSession && (
-											<>
-												{workspaceGitFileCount !== undefined && workspaceGitFileCount > 0 && (
-													<div
-														className="flex items-center gap-0.5 text-[10px] shrink-0"
-														style={{ color: theme.colors.warning }}
-														title={`${workspaceGitFileCount} changed file${workspaceGitFileCount === 1 ? '' : 's'}`}
-													>
-														<GitBranch className="w-2.5 h-2.5" />
-														<span>{workspaceGitFileCount}</span>
-													</div>
-												)}
-												{workspaceEntry.statusSession.isGitRepo ? (
-													<div
-														className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
-														style={{
-															backgroundColor: `${theme.colors.accent}30`,
-															color: theme.colors.accent,
-														}}
-														title="Git repository"
-													>
-														GIT
-													</div>
-												) : (
-													<div
-														className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase shrink-0"
-														style={{
-															backgroundColor: workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
-																? `${theme.colors.warning}30`
-																: `${theme.colors.textDim}20`,
-															color: workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
-																? theme.colors.warning
-																: theme.colors.textDim,
-														}}
-														title={
-															workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
-																? 'Running on remote host via SSH'
-																: 'Local directory'
-														}
-													>
-														{workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled
-															? 'REMOTE'
-															: 'LOCAL'}
-													</div>
-												)}
-												{workspaceEntry.statusSession.sessionSshRemoteConfig?.enabled &&
-													workspaceEntry.statusSession.isGitRepo && (
-														<div
-															className="px-1.5 py-0.5 rounded text-[9px] font-bold flex items-center shrink-0"
-															style={{
-																backgroundColor: `${theme.colors.warning}30`,
-																color: theme.colors.warning,
-															}}
-															title="Running on remote host via SSH"
-														>
-															<Server className="w-3 h-3" />
-														</div>
-													)}
-											</>
-										)}
-									</div>
-									<button
-										type="button"
-										onClick={(e) => {
-											e.stopPropagation();
-											void createThreadForWorkspace(workspace);
-										}}
-										className="p-1 rounded hover:bg-white/10 transition-colors"
-										style={{ color: theme.colors.accent }}
-										title="New Thread"
-									>
-										<Plus className="w-3.5 h-3.5" />
-									</button>
+									{archiveExpanded ? (
+										<ChevronDown className="w-3 h-3 shrink-0" />
+									) : (
+										<ChevronRight className="w-3 h-3 shrink-0" />
+									)}
+									<span>Archive</span>
 								</div>
+								<span
+									className="px-1.5 py-0.5 rounded-full text-[9px] font-bold shrink-0"
+									style={{
+										backgroundColor: `${theme.colors.textDim}18`,
+										color: theme.colors.textDim,
+									}}
+								>
+									{archivedWorkspaceEntries.length}
+								</span>
+							</button>
 
-								{!workspace.collapsed ? (
-									<div
-										className="flex flex-col border-l ml-4 mt-1"
-										style={{ borderColor: 'rgba(255,255,255,0.06)' }}
-									>
-										{openThreads.length > 0 && (
-											<>
-												<div className="px-3 py-1 text-[10px] font-semibold tracking-[0.08em]">
-													<span style={getSidebarSectionTextStyle(theme)}>Open</span>
-												</div>
-												<div className="flex flex-col">
-													{openThreads.map((thread) =>
-														renderThread(thread, 'group', {
-															keyPrefix: `workspace-open-${workspace.id}`,
-															group: workspace,
-														})
-													)}
-												</div>
-											</>
-										)}
-
-										{recentThreads.length > 0 && (
-											<>
-												<div className="px-3 py-1 text-[10px] font-semibold tracking-[0.08em]">
-													<span style={getSidebarSectionTextStyle(theme)}>Recent</span>
-												</div>
-												<div className="flex flex-col">
-													{recentThreads.map((thread) =>
-														renderThread(thread, 'group', {
-															keyPrefix: `workspace-recent-${workspace.id}`,
-															group: workspace,
-														})
-													)}
-												</div>
-											</>
-										)}
-
-										{expandedOlder && (
-											<div className="flex flex-col">
-												{olderThreads.map((thread) =>
-													renderThread(thread, 'group', {
-														keyPrefix: `workspace-older-${workspace.id}`,
-														group: workspace,
-													})
-												)}
-											</div>
-										)}
-
-										{olderThreads.length > 0 && (
-											<button
-												type="button"
-												onClick={() =>
-													setExpandedOlderByWorkspace((prev) => ({
-														...prev,
-														[workspace.id]: !prev[workspace.id],
-													}))
-												}
-												className="mx-3 my-1 px-2 py-1 rounded text-[11px] text-left hover:bg-white/5 transition-colors"
-												style={{ color: theme.colors.textDim }}
-											>
-												{expandedOlder ? 'Hide older threads' : `Show older (${olderThreads.length})`}
-											</button>
-										)}
-
-										{expandedArchived && (
-											<div className="flex flex-col">
-												{archivedThreads.map((thread) =>
-													renderThread(thread, 'group', {
-														keyPrefix: `workspace-archived-${workspace.id}`,
-														group: workspace,
-													})
-												)}
-											</div>
-										)}
-
-										{archivedThreads.length > 0 && (
-											<button
-												type="button"
-												onClick={() =>
-													setExpandedArchivedByWorkspace((prev) => ({
-														...prev,
-														[workspace.id]: !prev[workspace.id],
-													}))
-												}
-												className="mx-3 my-1 px-2 py-1 rounded text-[11px] text-left hover:bg-white/5 transition-colors"
-												style={{ color: theme.colors.textDim }}
-											>
-												{expandedArchived
-													? 'Hide archived'
-													: `Show archived (${archivedThreads.length})`}
-											</button>
-										)}
-									</div>
-								) : (
-									<div
-										className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
-										onClick={() => toggleGroup(workspace.id)}
-									>
-										{collapsedPaletteThreads.map((session) => (
-											<CollapsedSessionPill
-												key={`workspace-collapsed-${workspace.id}-${session.id}`}
-												session={session}
-												keyPrefix={`workspace-collapsed-${workspace.id}`}
-												theme={theme}
-												activeBatchSessionIds={activeBatchSessionIds}
-												leftSidebarWidth={leftSidebarWidthState}
-												contextWarningYellowThreshold={contextWarningYellowThreshold}
-												contextWarningRedThreshold={contextWarningRedThreshold}
-												getFileCount={getFileCount}
-												getWorktreeChildren={getWorktreeChildren}
-												setActiveSessionId={setActiveSessionId}
-											/>
-										))}
-									</div>
-								)}
-							</div>
-						);
-					})}
+							{archiveExpanded && <div className="mt-2">{archivedWorkspaceEntries.map(renderWorkspaceEntry)}</div>}
+						</div>
+					)}
 
 					{filteredWorkspaces.length === 0 && (
 						<div className="px-3 py-6 text-sm" style={{ color: theme.colors.textDim }}>
@@ -1602,14 +2055,13 @@ function SessionListInner(props: SessionListProps) {
 				/* SIDEBAR CONTENT: SKINNY MODE */
 				<SkinnySidebar
 					theme={theme}
-					sortedSessions={sortedSessions}
-					activeSessionId={activeSessionId}
-					groups={groups}
+					threadItems={skinnySidebarThreadItems}
+					activeThreadTargetId={activeSidebarThreadTargetId}
 					activeBatchSessionIds={activeBatchSessionIds}
 					contextWarningYellowThreshold={contextWarningYellowThreshold}
 					contextWarningRedThreshold={contextWarningRedThreshold}
 					getFileCount={getFileCount}
-					setActiveSessionId={setActiveSessionId}
+					openThreadTarget={openSkinnySidebarThread}
 					handleContextMenu={handleContextMenu}
 				/>
 			)}
@@ -1618,10 +2070,12 @@ function SessionListInner(props: SessionListProps) {
 			<SidebarActions
 				theme={theme}
 				leftSidebarOpen={leftSidebarOpen}
+				leftSidebarHidden={leftSidebarHidden}
 				hasNoSessions={sessions.length === 0}
 				shortcuts={shortcuts}
 				openWizard={openWizard}
 				setLeftSidebarOpen={setLeftSidebarOpen}
+				setLeftSidebarHidden={setLeftSidebarHidden}
 			/>
 
 			{/* Session Context Menu */}
@@ -1638,8 +2092,12 @@ function SessionListInner(props: SessionListProps) {
 						setRenameInstanceValue(
 							contextMenuThread ? getThreadDisplayTitle(contextMenuThread, contextMenuSession) : contextMenuSession.name
 						);
-						setRenameInstanceSessionId(contextMenuSession.id);
-						setRenameInstanceModalOpen(true);
+						if (contextMenuThread) {
+							startRenamingSession(`thread-${contextMenuThread.id}`);
+						} else {
+							setRenameInstanceSessionId(contextMenuSession.id);
+							setRenameInstanceModalOpen(true);
+						}
 					}}
 					onEdit={() => onEditAgent(contextMenuSession)}
 					onDuplicate={() => {
@@ -1654,7 +2112,9 @@ function SessionListInner(props: SessionListProps) {
 					onTogglePinned={() => contextMenuThread && toggleThreadPinned(contextMenuThread)}
 					onCloseThread={() => contextMenuThread && handleCloseThread(contextMenuThread.id)}
 					onToggleArchived={() => contextMenuThread && handleToggleArchived(contextMenuThread)}
-					onDelete={() => handleDeleteSession(contextMenuSession.id)}
+					onDelete={() =>
+						contextMenuThread ? handleDeleteThread(contextMenuThread) : handleDeleteSession(contextMenuSession.id)
+					}
 					onDismiss={() => setContextMenu(null)}
 					onCreatePR={
 						onOpenCreatePR && contextMenuSession.parentSessionId
@@ -1686,6 +2146,9 @@ function SessionListInner(props: SessionListProps) {
 					theme={theme}
 					group={contextMenuGroup}
 					onEdit={() => startRenamingGroup(contextMenuGroup.id)}
+					onToggleArchived={() =>
+						handleToggleWorkspaceArchived(contextMenuGroup.id, !contextMenuGroup.archived)
+					}
 					onDelete={() => onDeleteWorktreeGroup(contextMenuGroup.id)}
 					onDismiss={() => setGroupContextMenu(null)}
 				/>

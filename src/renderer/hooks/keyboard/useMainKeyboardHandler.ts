@@ -446,7 +446,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('toggleAutoRunExpanded');
 			}
 
-			// Opt+Cmd+NUMBER: Jump to visible session by number (1-9, 0=10th)
+			// Opt+Cmd+NUMBER: Jump to visible sidebar thread by number (1-9, 0=10th)
 			// Use e.code instead of e.key because Option key on macOS produces special characters
 			const digitMatch = e.code?.match(/^Digit([0-9])$/);
 			if (e.altKey && (e.metaKey || e.ctrlKey) && digitMatch) {
@@ -454,9 +454,9 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				const digit = digitMatch[1];
 				const num = digit === '0' ? 10 : parseInt(digit, 10);
 				const targetIndex = num - 1;
-				if (targetIndex >= 0 && targetIndex < ctx.visibleSessions.length) {
-					const targetSession = ctx.visibleSessions[targetIndex];
-					ctx.setActiveSessionId(targetSession.id);
+				if (targetIndex >= 0 && targetIndex < ctx.sidebarThreadTargets.length) {
+					const targetThread = ctx.sidebarThreadTargets[targetIndex];
+					ctx.openSidebarThreadTarget(targetThread);
 					trackShortcut('jumpToSession');
 					// Also expand sidebar if collapsed
 					if (!ctx.leftSidebarOpen) {

@@ -185,6 +185,7 @@ describe('RightPanel', () => {
 			rightPanelWidth: 400,
 			shortcuts: mockShortcuts,
 			showHiddenFiles: false,
+			autoCollapseRightPanel: true,
 		});
 		useFileExplorerStore.setState({
 			fileTreeFilter: '',
@@ -273,6 +274,37 @@ describe('RightPanel', () => {
 
 			const toggleButton = screen.getByTitle(/collapse right panel/i);
 			expect(toggleButton.title).toContain('Cmd+B');
+		});
+
+		it('auto-collapses after the right panel has been focused and focus leaves', () => {
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			act(() => {
+				useUIStore.getState().setActiveFocus('main');
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(false);
+		});
+
+		it('does not auto-collapse before the right panel has been focused', () => {
+			useUIStore.setState({ rightPanelOpen: true, activeFocus: 'main' });
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
+		});
+
+		it('does not auto-collapse when the setting is disabled', () => {
+			useSettingsStore.setState({ autoCollapseRightPanel: false });
+			const props = createDefaultProps();
+			render(<RightPanel {...props} />);
+
+			act(() => {
+				useUIStore.getState().setActiveFocus('main');
+			});
+
+			expect(useUIStore.getState().rightPanelOpen).toBe(true);
 		});
 	});
 

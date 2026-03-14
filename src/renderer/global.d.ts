@@ -40,6 +40,39 @@ type UserInputRequest = {
 	questions: UserInputQuestion[];
 };
 
+type ProviderUsageSource = 'codex-app-server' | 'claude-oauth-usage' | 'unknown';
+type ProviderUsageConfidence = 'high' | 'experimental' | 'low';
+
+type ProviderUsageWindow = {
+	id: string;
+	label: string;
+	usedPercent: number;
+	resetsAt: number | null;
+	windowDurationMins: number | null;
+	limitId?: string | null;
+	limitName?: string | null;
+};
+
+type ProviderUsageCredits = {
+	balance: string | null;
+	hasCredits: boolean;
+	unlimited: boolean;
+};
+
+type ProviderUsageSnapshot = {
+	provider: import('../shared/types').ToolType;
+	usedPercent: number | null;
+	resetsAt: number | null;
+	label: string | null;
+	planType: string | null;
+	accountType: string | null;
+	source: ProviderUsageSource;
+	confidence: ProviderUsageConfidence;
+	fetchedAt: number;
+	windows: ProviderUsageWindow[];
+	credits?: ProviderUsageCredits | null;
+};
+
 type ConversationRuntimeKind = 'batch' | 'live';
 type ConversationSteerMode = 'true-steer' | 'interrupt-fallback' | 'none';
 type ConversationInteractionKind = 'turn' | 'steer' | 'queued';
@@ -381,7 +414,6 @@ type GroupChatData = {
 
 type ConductorData = {
 	groupId: string;
-	templateSessionId: string | null;
 	status:
 		| 'needs_setup'
 		| 'idle'
@@ -394,6 +426,23 @@ type ConductorData = {
 		| 'completed'
 		| 'cancelled';
 	resourceProfile: 'conservative' | 'balanced' | 'aggressive';
+	keepConductorAgentSessions?: boolean;
+	providerRouting?: {
+		default: {
+			primary: 'workspace-lead' | 'claude-code' | 'codex' | 'opencode' | 'factory-droid';
+			fallback?: 'claude-code' | 'codex' | 'opencode' | 'factory-droid' | null;
+		};
+		ui: {
+			primary: 'workspace-lead' | 'claude-code' | 'codex' | 'opencode' | 'factory-droid';
+			fallback?: 'claude-code' | 'codex' | 'opencode' | 'factory-droid' | null;
+		};
+		backend: {
+			primary: 'workspace-lead' | 'claude-code' | 'codex' | 'opencode' | 'factory-droid';
+			fallback?: 'claude-code' | 'codex' | 'opencode' | 'factory-droid' | null;
+		};
+		pauseNearLimit: boolean;
+		nearLimitPercent: number;
+	};
 	validationCommand?: string;
 	publishPolicy?: 'none' | 'manual_pr';
 	deleteWorkerBranchesOnSuccess?: boolean;
@@ -404,14 +453,31 @@ type ConductorData = {
 type ConductorTaskData = {
 	id: string;
 	groupId: string;
+	parentTaskId?: string;
 	title: string;
 	description: string;
 	acceptanceCriteria: string[];
 	priority: 'low' | 'medium' | 'high' | 'critical';
-	status: 'draft' | 'ready' | 'running' | 'blocked' | 'needs_review' | 'done';
+	status:
+		| 'draft'
+		| 'planning'
+		| 'ready'
+		| 'running'
+		| 'needs_input'
+		| 'blocked'
+		| 'needs_review'
+		| 'cancelled'
+		| 'done';
 	dependsOn: string[];
 	scopePaths: string[];
-	source: 'manual' | 'planner' | 'worker_followup';
+	changedPaths?: string[];
+	source: 'manual' | 'planner' | 'worker_followup' | 'reviewer_followup';
+	plannerSessionId?: string;
+	plannerSessionName?: string;
+	workerSessionId?: string;
+	workerSessionName?: string;
+	reviewerSessionId?: string;
+	reviewerSessionName?: string;
 	createdAt: number;
 	updatedAt: number;
 };
@@ -419,9 +485,13 @@ type ConductorTaskData = {
 type ConductorRunData = {
 	id: string;
 	groupId: string;
-	kind?: 'planning' | 'execution' | 'integration';
+	kind?: 'planning' | 'execution' | 'review' | 'integration';
 	baseBranch: string;
 	sshRemoteId?: string;
+	plannerSessionId?: string;
+	agentSessionIds?: string[];
+	taskWorkerSessionIds?: Record<string, string>;
+	taskReviewerSessionIds?: Record<string, string>;
 	branchName?: string;
 	workerBranches?: string[];
 	taskBranches?: Record<string, string>;
@@ -447,9 +517,14 @@ type ConductorRunData = {
 			| 'execution_started'
 			| 'task_started'
 			| 'task_completed'
+			| 'task_needs_input'
 			| 'task_blocked'
+			| 'task_cancelled'
 			| 'execution_completed'
 			| 'execution_failed'
+			| 'review_started'
+			| 'review_passed'
+			| 'review_failed'
 			| 'integration_started'
 			| 'branch_merged'
 			| 'integration_conflict'
@@ -799,6 +874,54 @@ interface MaestroAPI {
 			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
 		) => () => void;
 		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
+		onRemoteCreateConductorTask: (
+			callback: (
+				input: {
+					groupId: string;
+					title: string;
+					description?: string;
+					priority?: 'low' | 'medium' | 'high' | 'critical';
+					status?:
+						| 'draft'
+						| 'planning'
+						| 'ready'
+						| 'running'
+						| 'needs_input'
+						| 'blocked'
+						| 'needs_review'
+						| 'cancelled'
+						| 'done';
+				},
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteCreateConductorTaskResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteUpdateConductorTask: (
+			callback: (
+				taskId: string,
+				updates: {
+					title?: string;
+					description?: string;
+					priority?: 'low' | 'medium' | 'high' | 'critical';
+					status?:
+						| 'draft'
+						| 'planning'
+						| 'ready'
+						| 'running'
+						| 'needs_input'
+						| 'blocked'
+						| 'needs_review'
+						| 'cancelled'
+						| 'done';
+				},
+				responseChannel: string
+			) => void
+		) => () => void;
+		sendRemoteUpdateConductorTaskResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteDeleteConductorTask: (
+			callback: (taskId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteDeleteConductorTaskResponse: (responseChannel: string, success: boolean) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onTaskTriageStarted: (
@@ -1088,6 +1211,20 @@ interface MaestroAPI {
 						output?: unknown;
 						[key: string]: unknown;
 					};
+					preservedReasoning?: {
+						reason: 'failed' | 'interrupted' | 'killed';
+						title: string;
+						excerpt?: string;
+						entryCount: number;
+						thinkingCount: number;
+						toolCount: number;
+						entries: Array<{
+							source: 'thinking' | 'tool';
+							text: string;
+							timestamp: number;
+							metadata?: Record<string, unknown>;
+						}>;
+					};
 				};
 			}
 		) => Promise<boolean>;
@@ -1117,6 +1254,17 @@ interface MaestroAPI {
 			remoteCwd?: string
 		) => Promise<{ stdout: string; stderr: string }>;
 		isRepo: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<boolean>;
+		initializeRepo: (
+			cwd: string,
+			createInitialCommit?: boolean,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{
+			success: boolean;
+			createdCommit?: boolean;
+			currentBranch?: string;
+			error?: string;
+		}>;
 		numstat: (
 			cwd: string,
 			sshRemoteId?: string,
@@ -1453,6 +1601,10 @@ interface MaestroAPI {
 			forceRefresh?: boolean,
 			sshRemoteId?: string
 		) => Promise<AgentModelCatalogGroup[]>;
+		getProviderUsage: (
+			agentId: import('../shared/types').ToolType,
+			forceRefresh?: boolean
+		) => Promise<ProviderUsageSnapshot | null>;
 		discoverSlashCommands: (
 			agentId: string,
 			cwd: string,
@@ -1620,9 +1772,7 @@ interface MaestroAPI {
 				lastActivityAt?: number;
 			}>
 		>;
-		discoverRecoverable: (
-			agentId: string
-		) => Promise<
+		discoverRecoverable: (agentId: string) => Promise<
 			Array<{
 				agentId: string;
 				sessionId: string;
@@ -2119,7 +2269,9 @@ interface MaestroAPI {
 		getArtifactFileInfo: (
 			artifactId: string
 		) => Promise<{ id: string; path: string; mimeType: string; filename: string } | null>;
-		harvestFromLogText: (request: import('../shared/demo-artifacts').DemoArtifactHarvestRequest) => Promise<DemoCard | null>;
+		harvestFromLogText: (
+			request: import('../shared/demo-artifacts').DemoArtifactHarvestRequest
+		) => Promise<DemoCard | null>;
 	};
 	// Auto Run file operations
 	// SSH remote support: Core operations accept optional sshRemoteId for remote file operations

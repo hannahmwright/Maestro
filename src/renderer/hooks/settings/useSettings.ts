@@ -270,6 +270,10 @@ export interface UseSettingsReturn {
 	sshRemoteHonorGitignore: boolean;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 
+	// Right panel behavior
+	autoCollapseRightPanel: boolean;
+	setAutoCollapseRightPanel: (value: boolean) => void;
+
 	// Automatic tab naming settings
 	automaticTabNamingEnabled: boolean;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;

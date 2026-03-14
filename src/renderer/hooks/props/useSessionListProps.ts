@@ -19,11 +19,9 @@ export interface UseSessionListPropsDeps {
 	theme: Theme;
 
 	// Computed values (not raw store fields)
-	sortedSessions: Session[];
 	isLiveMode: boolean;
 	webInterfaceUrl: string | null;
 	showSessionJumpNumbers: boolean;
-	visibleSessions: Session[];
 
 	// Ref
 	sidebarContainerRef: React.RefObject<HTMLDivElement>;
@@ -33,16 +31,10 @@ export interface UseSessionListPropsDeps {
 	restartWebServer: () => Promise<string | null>;
 	toggleGroup: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
-	handleDragOver: (e: React.DragEvent) => void;
-	handleDropOnGroup: (groupId: string) => void;
-	handleDropOnUngrouped: () => void;
 	finishRenamingGroup: (groupId: string, newName: string) => void;
-	finishRenamingSession: (sessId: string, newName: string) => void;
 	startRenamingGroup: (groupId: string) => void;
 	startRenamingSession: (sessId: string) => void;
-	showConfirmation: (message: string, onConfirm: () => void) => void;
 	createNewGroup: () => void;
-	handleCreateGroupAndMove: (sessionId: string) => void;
 	addNewSession: () => void;
 	createNewSession: (
 		agentId: string,
@@ -69,10 +61,10 @@ export interface UseSessionListPropsDeps {
 	handleQuickCreateWorktree: (session: Session) => void;
 	handleOpenWorktreeConfigSession: (session: Session) => void;
 	handleDeleteWorktreeSession: (session: Session) => void;
-	handleToggleWorktreeExpanded: (sessionId: string) => void;
 	openWizardModal: () => void;
 	handleStartTour: () => void;
 	handleOpenConductor: (groupId: string) => void;
+	handleOpenConductorHome: () => void;
 
 	// Group Chat handlers
 	handleOpenGroupChat: (id: string) => void;
@@ -94,11 +86,9 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 		() => ({
 			// Theme & computed values
 			theme: deps.theme,
-			sortedSessions: deps.sortedSessions,
 			isLiveMode: deps.isLiveMode,
 			webInterfaceUrl: deps.webInterfaceUrl,
 			showSessionJumpNumbers: deps.showSessionJumpNumbers,
-			visibleSessions: deps.visibleSessions,
 
 			// Ref
 			sidebarContainerRef: deps.sidebarContainerRef,
@@ -108,23 +98,16 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			restartWebServer: deps.restartWebServer,
 			toggleGroup: deps.toggleGroup,
 			handleDragStart: deps.handleDragStart,
-			handleDragOver: deps.handleDragOver,
-			handleDropOnGroup: deps.handleDropOnGroup,
-			handleDropOnUngrouped: deps.handleDropOnUngrouped,
 			finishRenamingGroup: deps.finishRenamingGroup,
-			finishRenamingSession: deps.finishRenamingSession,
 			startRenamingGroup: deps.startRenamingGroup,
 			startRenamingSession: deps.startRenamingSession,
-			showConfirmation: deps.showConfirmation,
 			createNewGroup: deps.createNewGroup,
-			onCreateGroupAndMove: deps.handleCreateGroupAndMove,
 			addNewSession: deps.addNewSession,
 			onCreateSession: deps.createNewSession,
 			onDeleteSession: deps.deleteSession,
 			onDeleteWorktreeGroup: deps.deleteWorktreeGroup,
 			onEditAgent: deps.handleEditAgent,
 			onNewAgentSession: deps.addNewSession,
-			onToggleWorktreeExpanded: deps.handleToggleWorktreeExpanded,
 			onOpenCreatePR: deps.handleOpenCreatePRSession,
 			onQuickCreateWorktree: deps.handleQuickCreateWorktree,
 			onOpenWorktreeConfig: deps.handleOpenWorktreeConfigSession,
@@ -132,6 +115,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			openWizard: deps.openWizardModal,
 			startTour: deps.handleStartTour,
 			onOpenConductor: deps.handleOpenConductor,
+			onOpenConductorHome: deps.handleOpenConductorHome,
 
 			// Group Chat handlers
 			onOpenGroupChat: deps.handleOpenGroupChat,
@@ -143,27 +127,19 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 		}),
 		[
 			deps.theme,
-			deps.sortedSessions,
 			deps.isLiveMode,
 			deps.webInterfaceUrl,
 			deps.showSessionJumpNumbers,
-			deps.visibleSessions,
 			deps.sidebarContainerRef,
 			// Stable callbacks
 			deps.toggleGlobalLive,
 			deps.restartWebServer,
 			deps.toggleGroup,
 			deps.handleDragStart,
-			deps.handleDragOver,
-			deps.handleDropOnGroup,
-			deps.handleDropOnUngrouped,
 			deps.finishRenamingGroup,
-			deps.finishRenamingSession,
 			deps.startRenamingGroup,
 			deps.startRenamingSession,
-			deps.showConfirmation,
 			deps.createNewGroup,
-			deps.handleCreateGroupAndMove,
 			deps.addNewSession,
 			deps.createNewSession,
 			deps.deleteSession,
@@ -173,10 +149,10 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.handleQuickCreateWorktree,
 			deps.handleOpenWorktreeConfigSession,
 			deps.handleDeleteWorktreeSession,
-			deps.handleToggleWorktreeExpanded,
 			deps.openWizardModal,
 			deps.handleStartTour,
 			deps.handleOpenConductor,
+			deps.handleOpenConductorHome,
 			deps.handleOpenGroupChat,
 			deps.handleNewGroupChat,
 			deps.handleEditGroupChat,

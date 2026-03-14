@@ -25,6 +25,7 @@ export interface Group {
 	name: string;
 	emoji: string;
 	collapsed: boolean;
+	archived: boolean;
 	projectRoot?: string;
 	lastUsedAt?: number;
 }
@@ -34,6 +35,7 @@ export interface Thread {
 	workspaceId: string;
 	sessionId: string;
 	runtimeId: string;
+	tabId?: string;
 	title: string;
 	agentId: ToolType;
 	projectRoot: string;
@@ -162,20 +164,64 @@ export type ConductorResourceProfile = 'conservative' | 'balanced' | 'aggressive
 
 export type ConductorTaskStatus =
 	| 'draft'
+	| 'planning'
 	| 'ready'
 	| 'running'
+	| 'needs_input'
 	| 'blocked'
 	| 'needs_review'
+	| 'cancelled'
 	| 'done';
 
 export type ConductorTaskPriority = 'low' | 'medium' | 'high' | 'critical';
+export type ConductorAgentRole = 'planner' | 'worker' | 'reviewer';
+export type ConductorProviderAgent = Exclude<ToolType, 'terminal'>;
+export type ConductorProviderChoice = ConductorProviderAgent | 'workspace-lead';
+export type ConductorProviderRouteKey = 'default' | 'ui' | 'backend';
+export interface ConductorProviderRoute {
+	primary: ConductorProviderChoice;
+	fallback?: ConductorProviderAgent | null;
+}
+
+export interface ConductorProviderRouting {
+	default: ConductorProviderRoute;
+	ui: ConductorProviderRoute;
+	backend: ConductorProviderRoute;
+	pauseNearLimit: boolean;
+	nearLimitPercent: number;
+}
+export type ConductorTaskSource =
+	| 'manual'
+	| 'planner'
+	| 'worker_followup'
+	| 'reviewer_followup';
+
+export interface ConductorSessionMetadata {
+	isConductorSession: true;
+	groupId: string;
+	role: ConductorAgentRole;
+	runId?: string;
+	taskId?: string;
+	taskTitle?: string;
+	createdAt: number;
+}
+
+export type ConductorView =
+	| {
+			scope: 'home';
+	  }
+	| {
+			scope: 'workspace';
+			groupId: string;
+	  };
 
 export interface Conductor {
 	groupId: string;
-	templateSessionId: string | null;
 	status: ConductorStatus;
 	resourceProfile: ConductorResourceProfile;
 	autoExecuteOnPlanCreation?: boolean;
+	keepConductorAgentSessions?: boolean;
+	providerRouting?: ConductorProviderRouting;
 	validationCommand?: string;
 	publishPolicy?: 'none' | 'manual_pr';
 	deleteWorkerBranchesOnSuccess?: boolean;
@@ -186,6 +232,7 @@ export interface Conductor {
 export interface ConductorTask {
 	id: string;
 	groupId: string;
+	parentTaskId?: string;
 	title: string;
 	description: string;
 	acceptanceCriteria: string[];
@@ -193,7 +240,14 @@ export interface ConductorTask {
 	status: ConductorTaskStatus;
 	dependsOn: string[];
 	scopePaths: string[];
-	source: 'manual' | 'planner' | 'worker_followup';
+	changedPaths?: string[];
+	source: ConductorTaskSource;
+	plannerSessionId?: string;
+	plannerSessionName?: string;
+	workerSessionId?: string;
+	workerSessionName?: string;
+	reviewerSessionId?: string;
+	reviewerSessionName?: string;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -210,9 +264,14 @@ export interface ConductorRunEvent {
 		| 'execution_started'
 		| 'task_started'
 		| 'task_completed'
+		| 'task_needs_input'
 		| 'task_blocked'
+		| 'task_cancelled'
 		| 'execution_completed'
 		| 'execution_failed'
+		| 'review_started'
+		| 'review_passed'
+		| 'review_failed'
 		| 'integration_started'
 		| 'branch_merged'
 		| 'integration_conflict'
@@ -229,9 +288,13 @@ export interface ConductorRunEvent {
 export interface ConductorRun {
 	id: string;
 	groupId: string;
-	kind?: 'planning' | 'execution' | 'integration';
+	kind?: 'planning' | 'execution' | 'review' | 'integration';
 	baseBranch: string;
 	sshRemoteId?: string;
+	plannerSessionId?: string;
+	agentSessionIds?: string[];
+	taskWorkerSessionIds?: Record<string, string>;
+	taskReviewerSessionIds?: Record<string, string>;
 	branchName?: string;
 	workerBranches?: string[];
 	taskBranches?: Record<string, string>;

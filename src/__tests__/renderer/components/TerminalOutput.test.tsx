@@ -1996,6 +1996,53 @@ describe('TerminalOutput', () => {
 	});
 
 	describe('tool log detail extraction', () => {
+		it('keeps completed tool activity grouped for earlier turns', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'First prompt', source: 'user' }),
+				createLogEntry({
+					id: 'tool-1',
+					text: 'bash',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: { command: ['npm', 'run', 'build'] },
+							output: 'done',
+						},
+					},
+				}),
+				createLogEntry({ id: 'assistant-1', text: 'First answer', source: 'stdout' }),
+				createLogEntry({ id: 'user-2', text: 'Second prompt', source: 'user' }),
+				createLogEntry({
+					id: 'tool-2',
+					text: 'web:search',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: { query: 'maestro tool panels' },
+							output: 'summary',
+						},
+					},
+				}),
+				createLogEntry({ id: 'assistant-2', text: 'Second answer', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				state: 'idle',
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			render(<TerminalOutput {...createDefaultProps({ session })} />);
+
+			expect(screen.getAllByRole('button', { name: /Expand details\./i })).toHaveLength(2);
+			expect(screen.queryByText('Building the app')).not.toBeInTheDocument();
+			expect(screen.queryByText('Searching the web')).not.toBeInTheDocument();
+			expect(screen.getByText('First answer')).toBeInTheDocument();
+			expect(screen.getByText('Second answer')).toBeInTheDocument();
+		});
+
 		it('renders TodoWrite tool with task summary from todos array', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({

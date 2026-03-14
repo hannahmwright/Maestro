@@ -199,6 +199,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					// Create a promise that resolves when we get the tab name
 					return new Promise<string | null>((resolve) => {
 						let output = '';
+						let assistantStreamOutput = '';
 						let resolved = false;
 
 						// Set timeout
@@ -217,6 +218,27 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							output += data;
 						};
 
+						const onAssistantStream = (
+							streamSessionId: string,
+							event: { mode: 'append' | 'replace' | 'commit' | 'discard'; text?: string }
+						) => {
+							if (streamSessionId !== sessionId) return;
+
+							if (event.mode === 'discard') {
+								assistantStreamOutput = '';
+								return;
+							}
+
+							if (event.mode === 'replace') {
+								assistantStreamOutput = event.text || '';
+								return;
+							}
+
+							if (event.mode === 'append' && event.text) {
+								assistantStreamOutput += event.text;
+							}
+						};
+
 						// Listen for process exit
 						const onExit = (exitSessionId: string, code?: number) => {
 							if (exitSessionId !== sessionId) return;
@@ -224,6 +246,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							// Clean up
 							clearTimeout(timeoutId);
 							processManager.off('data', onData);
+							processManager.off('assistant-stream', onAssistantStream);
 							processManager.off('exit', onExit);
 
 							if (resolved) return;
@@ -231,17 +254,19 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 
 							// Extract the tab name from the output
 							// The agent should return just the tab name, but we clean up any extra whitespace/formatting
-							const tabName = extractTabName(output);
+							const tabName = extractTabName(assistantStreamOutput || output);
 							logger.info('Tab naming completed', LOG_CONTEXT, {
 								sessionId,
 								exitCode: code,
 								outputLength: output.length,
+								assistantStreamOutputLength: assistantStreamOutput.length,
 								tabName,
 							});
 							resolve(tabName);
 						};
 
 						processManager.on('data', onData);
+						processManager.on('assistant-stream', onAssistantStream);
 						processManager.on('exit', onExit);
 
 						// Spawn the process

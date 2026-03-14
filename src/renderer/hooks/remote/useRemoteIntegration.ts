@@ -3,6 +3,7 @@ import type { Session, ThinkingMode } from '../../types';
 import { createTab, closeTab } from '../../utils/tabHelpers';
 import { buildDefaultThreadName } from '../../utils/sessionValidation';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useConductorStore } from '../../stores/conductorStore';
 import { WEB_APP_BASE_PATH, type ResponseCompletedEvent } from '../../../shared/remote-web';
 import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 
@@ -594,6 +595,132 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				);
 			}) || (() => {});
 
+		const unsubscribeCreateConductorTask =
+			window.maestro.process.onRemoteCreateConductorTask?.((input, responseChannel) => {
+				try {
+					const conductorStore = useConductorStore.getState();
+					const existingTaskIds = new Set(conductorStore.tasks.map((task) => task.id));
+					conductorStore.addTask(input.groupId, {
+						title: input.title,
+						description: input.description,
+						priority: input.priority,
+						status: input.status,
+					});
+					const snapshot = useConductorStore.getState();
+					const createdTask = snapshot.tasks.find((task) => !existingTaskIds.has(task.id));
+					if (!createdTask) {
+						window.maestro.process.sendRemoteCreateConductorTaskResponse(responseChannel, false);
+						return;
+					}
+					void Promise.resolve(
+						window.maestro.conductors?.setAll({
+							conductors: snapshot.conductors,
+							tasks: snapshot.tasks,
+							runs: snapshot.runs,
+						})
+					)
+						.then((result) => {
+							window.maestro.process.sendRemoteCreateConductorTaskResponse(
+								responseChannel,
+								result !== false
+							);
+						})
+						.catch(() => {
+							window.maestro.process.sendRemoteCreateConductorTaskResponse(
+								responseChannel,
+								false
+							);
+						});
+				} catch (error) {
+					console.error('[Remote] Failed to create conductor task:', error);
+					window.maestro.process.sendRemoteCreateConductorTaskResponse(responseChannel, false);
+				}
+			}) || (() => {});
+
+		const unsubscribeUpdateConductorTask =
+			window.maestro.process.onRemoteUpdateConductorTask?.(
+				(taskId: string, updates, responseChannel: string) => {
+					try {
+						const conductorStore = useConductorStore.getState();
+						const existingTask = conductorStore.tasks.find((task) => task.id === taskId);
+						if (!existingTask) {
+							window.maestro.process.sendRemoteUpdateConductorTaskResponse(
+								responseChannel,
+								false
+							);
+							return;
+						}
+
+						conductorStore.updateTask(taskId, updates);
+						const snapshot = useConductorStore.getState();
+						void Promise.resolve(
+							window.maestro.conductors?.setAll({
+								conductors: snapshot.conductors,
+								tasks: snapshot.tasks,
+								runs: snapshot.runs,
+							})
+						)
+							.then((result) => {
+								window.maestro.process.sendRemoteUpdateConductorTaskResponse(
+									responseChannel,
+									result !== false
+								);
+							})
+							.catch(() => {
+								window.maestro.process.sendRemoteUpdateConductorTaskResponse(
+									responseChannel,
+									false
+								);
+							});
+					} catch (error) {
+						console.error('[Remote] Failed to update conductor task:', error);
+						window.maestro.process.sendRemoteUpdateConductorTaskResponse(responseChannel, false);
+					}
+				}
+			) || (() => {});
+
+		const unsubscribeDeleteConductorTask =
+			window.maestro.process.onRemoteDeleteConductorTask?.(
+				(taskId: string, responseChannel: string) => {
+					try {
+						const conductorStore = useConductorStore.getState();
+						const existingTask = conductorStore.tasks.find((task) => task.id === taskId);
+						if (!existingTask) {
+							window.maestro.process.sendRemoteDeleteConductorTaskResponse(
+								responseChannel,
+								false
+							);
+							return;
+						}
+
+						conductorStore.deleteTask(taskId);
+						const snapshot = useConductorStore.getState();
+						void Promise.resolve(
+							window.maestro.conductors?.setAll({
+								conductors: snapshot.conductors,
+								tasks: snapshot.tasks,
+								runs: snapshot.runs,
+							})
+						)
+							.then((result) => {
+								window.maestro.process.sendRemoteDeleteConductorTaskResponse(
+									responseChannel,
+									result !== false
+								);
+							})
+							.catch(() => {
+								window.maestro.process.sendRemoteDeleteConductorTaskResponse(
+									responseChannel,
+									false
+								);
+							});
+					} catch (error) {
+						console.error('[Remote] Failed to delete conductor task:', error);
+						window.maestro.process.sendRemoteDeleteConductorTaskResponse(responseChannel, false);
+					}
+				}
+			) || (() => {});
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
@@ -606,6 +733,9 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeStarTab();
 			unsubscribeReorderTab();
 			unsubscribeToggleBookmark();
+			unsubscribeCreateConductorTask();
+			unsubscribeUpdateConductorTask();
+			unsubscribeDeleteConductorTask();
 		};
 	}, [
 		sessionsRef,

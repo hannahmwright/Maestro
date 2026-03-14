@@ -1,55 +1,61 @@
 import { memo } from 'react';
 import { Loader2 } from 'lucide-react';
-import type { Session, Group, Theme } from '../../types';
+import type { Session, Theme, SidebarThreadTarget } from '../../types';
 import { SessionTooltipContent } from './SessionTooltipContent';
+
+export interface SkinnySidebarThreadItem {
+	target: SidebarThreadTarget;
+	session: Session;
+	displayName: string;
+	groupName?: string;
+}
 
 interface SkinnySidebarProps {
 	theme: Theme;
-	sortedSessions: Session[];
-	activeSessionId: string;
-	groups: Group[];
+	threadItems: SkinnySidebarThreadItem[];
+	activeThreadTargetId: string | null;
 	activeBatchSessionIds: string[];
 	contextWarningYellowThreshold: number;
 	contextWarningRedThreshold: number;
 	getFileCount: (sessionId: string) => number;
-	setActiveSessionId: (id: string) => void;
-	handleContextMenu: (e: React.MouseEvent, sessionId: string) => void;
+	openThreadTarget: (target: SidebarThreadTarget) => void;
+	handleContextMenu: (e: React.MouseEvent, sessionId: string, threadId?: string) => void;
 }
 
 export const SkinnySidebar = memo(function SkinnySidebar({
 	theme,
-	sortedSessions,
-	activeSessionId,
-	groups,
+	threadItems,
+	activeThreadTargetId,
 	activeBatchSessionIds,
 	contextWarningYellowThreshold,
 	contextWarningRedThreshold,
 	getFileCount,
-	setActiveSessionId,
+	openThreadTarget,
 	handleContextMenu,
 }: SkinnySidebarProps) {
 	return (
 		<div className="flex-1 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
-			{sortedSessions.map((session) => {
+			{threadItems.map(({ target, session, displayName, groupName }) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
 				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
 				const isWorking = session.state === 'busy' || isInBatch;
+				const isActive = activeThreadTargetId === target.id;
 
 				return (
 					<div
-						key={session.id}
+						key={target.id}
 						role="button"
 						tabIndex={0}
-						aria-label={`Switch to ${session.name}`}
-						onClick={() => setActiveSessionId(session.id)}
-						onContextMenu={(e) => handleContextMenu(e, session.id)}
+						aria-label={`Switch to ${displayName}`}
+						onClick={() => openThreadTarget(target)}
+						onContextMenu={(e) => handleContextMenu(e, session.id, target.threadId)}
 						onKeyDown={(e) => {
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
-								setActiveSessionId(session.id);
+								openThreadTarget(target);
 							}
 						}}
-						className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all outline-none ${activeSessionId === session.id ? '' : 'hover:bg-white/10'}`}
+						className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all outline-none ${isActive ? '' : 'hover:bg-white/10'}`}
 					>
 						<div className="relative">
 							{isWorking ? (
@@ -57,7 +63,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 									<Loader2
 										className="w-3 h-3 animate-spin"
 										style={{
-											opacity: activeSessionId === session.id ? 1 : 0.6,
+											opacity: isActive ? 1 : 0.6,
 											color: isInBatch ? theme.colors.warning : theme.colors.accent,
 										}}
 									/>
@@ -66,7 +72,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 								<div
 									className="w-2 h-2 rounded-full"
 									style={{
-										opacity: activeSessionId === session.id ? 1 : 0.7,
+										opacity: isActive ? 1 : 0.7,
 										backgroundColor: theme.colors.accent,
 									}}
 									title="Awaiting your input"
@@ -75,7 +81,7 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 								<div
 									className="w-2 h-2 rounded-full"
 									style={{
-										opacity: activeSessionId === session.id ? 0.9 : 0.35,
+										opacity: isActive ? 0.9 : 0.35,
 										border: `1px solid ${theme.colors.textDim}`,
 										backgroundColor: 'transparent',
 									}}
@@ -97,8 +103,9 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 							<SessionTooltipContent
 								session={session}
 								theme={theme}
+								displayName={displayName}
 								gitFileCount={getFileCount(session.id)}
-								groupName={groups.find((g) => g.id === session.groupId)?.name}
+								groupName={groupName}
 								isInBatch={isInBatch}
 								contextWarningYellowThreshold={contextWarningYellowThreshold}
 								contextWarningRedThreshold={contextWarningRedThreshold}

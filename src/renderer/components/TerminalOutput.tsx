@@ -559,12 +559,15 @@ const LogItemComponent = memo(
 				: userMessageAlignment === 'right';
 		const isToolLog = log.source === 'tool';
 		const isThinkingLog = log.source === 'thinking';
+		const preservedReasoning = log.metadata?.preservedReasoning;
+		const isPreservedReasoningLog = !!preservedReasoning;
 		const multipleChoiceQuestions =
 			isAIMode &&
 			!isTerminal &&
 			!isUserMessage &&
 			!isToolLog &&
 			!isThinkingLog &&
+			!isPreservedReasoningLog &&
 			log.source !== 'error'
 				? parseMultipleChoiceQuestions(effectiveFilteredText)
 				: [];
@@ -580,11 +583,13 @@ const LogItemComponent = memo(
 			!isUserMessage &&
 			!isToolLog &&
 			!isThinkingLog &&
+			!isPreservedReasoningLog &&
 			log.source !== 'error' &&
 			log.source !== 'stderr';
-		const hideBubbleBorder = isToolLog || isModelResponseMessage || isUserAiMessage;
-		const useStackedTimestampLayout = isAIMode && !isThinkingLog;
-		const showActionButtons = !isToolLog && !isThinkingLog;
+		const hideBubbleBorder =
+			isToolLog || isModelResponseMessage || isUserAiMessage || isPreservedReasoningLog;
+		const useStackedTimestampLayout = isAIMode && !isToolLog;
+		const showActionButtons = !isToolLog && !isThinkingLog && !isPreservedReasoningLog;
 		const showDeliveredAtTimestamp = isUserAiMessage && !!log.delivered;
 		const showDateSeparator =
 			isAIMode &&
@@ -760,7 +765,7 @@ const LogItemComponent = memo(
 											: log.source === 'stderr' || log.source === 'error'
 												? theme.colors.error
 												: theme.colors.border,
-								textAlign: isUserAiMessage ? 'right' : undefined,
+								textAlign: isUserAiMessage ? 'left' : undefined,
 							}}
 						>
 							{/* Local filter icon for system output only */}
@@ -816,6 +821,130 @@ const LogItemComponent = memo(
 								</div>
 							)}
 							{/* Special rendering for error log entries */}
+							{isPreservedReasoningLog && preservedReasoning && (
+								<div
+									className="flex flex-col gap-3"
+									style={{
+										padding: '12px 14px',
+										borderRadius: '12px',
+										backgroundColor: `${theme.colors.bgSidebar}cc`,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+								>
+									<div className="flex items-start justify-between gap-3">
+										<div className="min-w-0 flex-1">
+											<div className="flex items-center gap-2 flex-wrap">
+												<span
+													className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide font-bold"
+													style={{
+														backgroundColor:
+															preservedReasoning.reason === 'failed'
+																? `${theme.colors.error}20`
+																: `${theme.colors.warning}20`,
+														color:
+															preservedReasoning.reason === 'failed'
+																? theme.colors.error
+																: theme.colors.warning,
+													}}
+												>
+													{preservedReasoning.reason}
+												</span>
+												<span
+													className="text-sm font-semibold"
+													style={{ color: theme.colors.textMain }}
+												>
+													{preservedReasoning.title}
+												</span>
+											</div>
+											<div className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
+												{preservedReasoning.thinkingCount} thinking update
+												{preservedReasoning.thinkingCount === 1 ? '' : 's'}
+												{' • '}
+												{preservedReasoning.toolCount} tool event
+												{preservedReasoning.toolCount === 1 ? '' : 's'}
+											</div>
+											{preservedReasoning.excerpt && !isExpanded && (
+												<p className="mt-2 text-sm" style={{ color: theme.colors.textMain }}>
+													{preservedReasoning.excerpt}
+												</p>
+											)}
+										</div>
+										<button
+											type="button"
+											onClick={handleExpandToggle}
+											className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs border hover:opacity-80 transition-opacity shrink-0"
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textMain,
+												backgroundColor: theme.colors.bgMain,
+											}}
+										>
+											{isExpanded ? (
+												<ChevronUp className="w-3 h-3" />
+											) : (
+												<ChevronDown className="w-3 h-3" />
+											)}
+											{isExpanded ? 'Hide details' : 'Show details'}
+										</button>
+									</div>
+
+									{isExpanded && (
+										<div className="flex flex-col gap-3">
+											{preservedReasoning.entries.map((entry, entryIndex) => (
+												<div
+													key={`${log.id}-preserved-${entryIndex}`}
+													className="rounded-lg border p-3"
+													style={{
+														borderColor: theme.colors.border,
+														backgroundColor: theme.colors.bgMain,
+													}}
+												>
+													<div className="flex items-center gap-2 mb-2">
+														<span
+															className="text-[10px] px-1.5 py-0.5 rounded uppercase tracking-wide font-bold"
+															style={{
+																backgroundColor:
+																	entry.source === 'thinking'
+																		? `${theme.colors.accent}22`
+																		: `${theme.colors.warning}22`,
+																color:
+																	entry.source === 'thinking'
+																		? theme.colors.accent
+																		: theme.colors.warning,
+															}}
+														>
+															{entry.source}
+														</span>
+														{entry.source === 'tool' && entry.metadata?.toolState?.status && (
+															<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+																{String(entry.metadata.toolState.status)}
+															</span>
+														)}
+													</div>
+													{entry.source === 'thinking' ? (
+														<MarkdownRenderer
+															content={entry.text}
+															theme={theme}
+															onCopy={copyToClipboard}
+															fileTree={fileTree}
+															cwd={cwd}
+															projectRoot={projectRoot}
+															onFileClick={onFileClick}
+														/>
+													) : (
+														<div
+															className="text-sm whitespace-pre-wrap break-words"
+															style={{ color: theme.colors.textMain }}
+														>
+															{entry.text}
+														</div>
+													)}
+												</div>
+											))}
+										</div>
+									)}
+								</div>
+							)}
 							{log.source === 'error' && (
 								<div className="flex flex-col gap-3">
 									<div className="flex items-center gap-2">
@@ -892,6 +1021,7 @@ const LogItemComponent = memo(
 							{log.source !== 'error' &&
 								log.source !== 'thinking' &&
 								log.source !== 'tool' &&
+								!isPreservedReasoningLog &&
 								(hasNoMatches ? (
 									<div
 										className="flex items-center justify-center py-8 text-sm"
@@ -1865,59 +1995,83 @@ export const TerminalOutput = memo(
 			(): LogEntry[] => (session.inputMode === 'ai' ? (activeTab?.logs ?? []) : session.shellLogs),
 			[session.inputMode, activeTab?.logs, session.shellLogs]
 		);
-		const latestTurnToolLogs = useMemo(() => {
-			if (session.inputMode !== 'ai') return [];
+		// PERF: Debounce search query to avoid filtering on every keystroke
+		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
+		const toolActivityPanelGroups = useMemo(() => {
+			if (session.inputMode !== 'ai' || debouncedSearchQuery) {
+				return [];
+			}
 
-			let latestUserIndex = -1;
-			for (let index = activeLogs.length - 1; index >= 0; index -= 1) {
-				if (activeLogs[index]?.source === 'user') {
-					latestUserIndex = index;
-					break;
+			const groups: Array<{
+				key: string;
+				insertBeforeLogId: string | null;
+				isBusy: boolean;
+				logs: LogEntry[];
+			}> = [];
+			let currentTurnToolLogs: LogEntry[] = [];
+			let firstRenderableLogId: string | null = null;
+
+			const flushTurn = (nextUserLogId: string | null, isLatestTurn: boolean) => {
+				if (currentTurnToolLogs.length === 0) {
+					firstRenderableLogId = null;
+					return;
+				}
+
+				groups.push({
+					key: currentTurnToolLogs.map((log) => log.id).join('|'),
+					insertBeforeLogId: firstRenderableLogId ?? nextUserLogId ?? null,
+					isBusy:
+						currentTurnToolLogs.some(
+							(log) => normalizeToolStatus(log.metadata?.toolState?.status) === 'running'
+						) ||
+						(isLatestTurn && session.state === 'busy'),
+					logs: currentTurnToolLogs,
+				});
+
+				currentTurnToolLogs = [];
+				firstRenderableLogId = null;
+			};
+
+			for (const log of activeLogs) {
+				if (log.source === 'user') {
+					flushTurn(log.id, false);
+					continue;
+				}
+
+				if (log.source === 'tool') {
+					currentTurnToolLogs = [...currentTurnToolLogs, log];
+					continue;
+				}
+
+				if (firstRenderableLogId === null) {
+					firstRenderableLogId = log.id;
 				}
 			}
 
-			return activeLogs
-				.slice(latestUserIndex >= 0 ? latestUserIndex + 1 : 0)
-				.filter((log) => log.source === 'tool');
-		}, [activeLogs, session.inputMode]);
-		const latestTurnToolLogRefs = useMemo(() => new Set(latestTurnToolLogs), [latestTurnToolLogs]);
+			flushTurn(null, true);
+			return groups;
+		}, [activeLogs, debouncedSearchQuery, session.inputMode, session.state]);
+		const groupedToolLogRefs = useMemo(
+			() => new Set(toolActivityPanelGroups.flatMap((group) => group.logs)),
+			[toolActivityPanelGroups]
+		);
 		const displayLogs = useMemo(() => {
-			if (session.inputMode !== 'ai' || latestTurnToolLogs.length === 0) {
+			if (session.inputMode !== 'ai' || toolActivityPanelGroups.length === 0) {
 				return activeLogs;
 			}
 
-			return activeLogs.filter((log) => !latestTurnToolLogRefs.has(log));
-		}, [activeLogs, latestTurnToolLogRefs, latestTurnToolLogs.length, session.inputMode]);
-		const toolPanelInsertLogId = useMemo(() => {
-			if (session.inputMode !== 'ai' || latestTurnToolLogs.length === 0) {
-				return null;
+			return activeLogs.filter((log) => !groupedToolLogRefs.has(log));
+		}, [activeLogs, groupedToolLogRefs, session.inputMode, toolActivityPanelGroups.length]);
+		const toolActivityPanelsByInsertLogId = useMemo(() => {
+			const panels = new Map<string | null, typeof toolActivityPanelGroups>();
+
+			for (const group of toolActivityPanelGroups) {
+				const existing = panels.get(group.insertBeforeLogId) ?? [];
+				panels.set(group.insertBeforeLogId, [...existing, group]);
 			}
 
-			let latestUserIndex = -1;
-			for (let index = displayLogs.length - 1; index >= 0; index -= 1) {
-				if (displayLogs[index]?.source === 'user') {
-					latestUserIndex = index;
-					break;
-				}
-			}
-
-			for (let index = latestUserIndex + 1; index < displayLogs.length; index += 1) {
-				const entry = displayLogs[index];
-				if (entry?.source !== 'user') {
-					return entry.id;
-				}
-			}
-
-			return null;
-		}, [displayLogs, latestTurnToolLogs.length, session.inputMode]);
-		const isToolPanelBusy = useMemo(
-			() =>
-				latestTurnToolLogs.some(
-					(log) => normalizeToolStatus(log.metadata?.toolState?.status) === 'running'
-				) ||
-				(session.inputMode === 'ai' && session.state === 'busy'),
-			[latestTurnToolLogs, session.inputMode, session.state]
-		);
+			return panels;
+		}, [toolActivityPanelGroups]);
 
 		useEffect(() => {
 			setPendingQuestionIndex(0);
@@ -2030,9 +2184,6 @@ export const TerminalOutput = memo(
 			return result;
 		}, [displayLogs, session.inputMode]);
 
-		// PERF: Debounce search query to avoid filtering on every keystroke
-		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
-
 		// Filter logs based on search query - memoized for performance
 		// Uses debounced query to reduce CPU usage during rapid typing
 		const filteredLogs = useMemo(() => {
@@ -2041,8 +2192,8 @@ export const TerminalOutput = memo(
 			return collapsedLogs.filter((log) => log.text.toLowerCase().includes(lowerQuery));
 		}, [collapsedLogs, debouncedSearchQuery]);
 
-		const showToolActivityPanel =
-			session.inputMode === 'ai' && latestTurnToolLogs.length > 0 && !debouncedSearchQuery;
+		const showToolActivityPanels =
+			session.inputMode === 'ai' && toolActivityPanelGroups.length > 0 && !debouncedSearchQuery;
 
 		const syncActiveUserTurn = useCallback(() => {
 			const markers = userTurnMarkersRef.current;
@@ -2550,13 +2701,15 @@ export const TerminalOutput = memo(
 					{/* Log entries */}
 					{filteredLogs.map((log, index) => (
 						<React.Fragment key={log.id}>
-							{showToolActivityPanel && toolPanelInsertLogId === log.id && (
-								<ToolActivityPanel
-									logs={latestTurnToolLogs}
-									theme={theme}
-									isSessionBusy={isToolPanelBusy}
-								/>
-							)}
+							{showToolActivityPanels &&
+								(toolActivityPanelsByInsertLogId.get(log.id) ?? []).map((group) => (
+									<ToolActivityPanel
+										key={group.key}
+										logs={group.logs}
+										theme={theme}
+										isSessionBusy={group.isBusy}
+									/>
+								))}
 							<LogItemComponent
 								log={log}
 								index={index}
@@ -2602,13 +2755,15 @@ export const TerminalOutput = memo(
 							/>
 						</React.Fragment>
 					))}
-					{showToolActivityPanel && toolPanelInsertLogId === null && (
-						<ToolActivityPanel
-							logs={latestTurnToolLogs}
-							theme={theme}
-							isSessionBusy={isToolPanelBusy}
-						/>
-					)}
+					{showToolActivityPanels &&
+						(toolActivityPanelsByInsertLogId.get(null) ?? []).map((group) => (
+							<ToolActivityPanel
+								key={group.key}
+								logs={group.logs}
+								theme={theme}
+								isSessionBusy={group.isBusy}
+							/>
+						))}
 
 					{/* Terminal busy indicator - only show for terminal commands (AI thinking moved to ThinkingStatusPill) */}
 					{session.state === 'busy' &&

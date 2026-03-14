@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, powerMonitor } from 'electron';
+import { app, BrowserWindow, Menu, nativeImage, powerMonitor } from 'electron';
 import path from 'path';
 import os from 'os';
 import crypto from 'crypto';
@@ -289,6 +289,7 @@ const createWebServer = createWebServerFactory({
 	sessionsStore,
 	groupsStore,
 	threadsStore,
+	conductorsStore,
 	getMainWindow: () => mainWindow,
 	getProcessManager: () => processManager,
 	getAgentDetector: () => agentDetector,
@@ -307,6 +308,23 @@ function createWindow() {
 	mainWindow.on('closed', () => {
 		mainWindow = null;
 	});
+}
+
+function applyDevelopmentAppIcon() {
+	if (!isDevelopment || process.platform !== 'darwin' || typeof app.dock?.setIcon !== 'function') {
+		return;
+	}
+
+	const dockIconPath = path.join(app.getAppPath(), 'build', 'icon.png');
+	const dockIcon = nativeImage.createFromPath(dockIconPath);
+
+	if (dockIcon.isEmpty()) {
+		logger.warn(`Failed to load development dock icon from ${dockIconPath}`, 'Startup');
+		return;
+	}
+
+	app.dock.setIcon(dockIcon);
+	logger.info(`Applied development dock icon from ${dockIconPath}`, 'Startup');
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -424,6 +442,8 @@ app.whenReady().then(async () => {
 		// On Windows/Linux, hide the menu bar entirely (Maestro uses its own UI)
 		Menu.setApplicationMenu(null);
 	}
+
+	applyDevelopmentAppIcon();
 
 	// Create main window
 	logger.info('Creating main window', 'Startup');

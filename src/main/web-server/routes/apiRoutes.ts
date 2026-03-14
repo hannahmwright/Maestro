@@ -28,9 +28,22 @@ import {
 } from '../../../shared/remote-web';
 import type { AgentModelCatalogGroup } from '../../../shared/agent-model-catalog';
 import type { DemoCard, DemoDetail } from '../../../shared/demo-artifacts';
-import { HistoryEntry, type ToolType } from '../../../shared/types';
+import {
+	HistoryEntry,
+	type ToolType,
+	type ConductorTaskPriority,
+	type ConductorTaskStatus,
+} from '../../../shared/types';
 import { logger } from '../../utils/logger';
-import type { Theme, SessionData, SessionDetail, LiveSessionInfo, RateLimitConfig } from '../types';
+import type {
+	Theme,
+	SessionData,
+	SessionDetail,
+	LiveSessionInfo,
+	RateLimitConfig,
+	ConductorSnapshot,
+	UpdateConductorTaskInput,
+} from '../types';
 import type { ProviderUsageSnapshot } from '../../../shared/provider-usage';
 
 // Re-export types for backwards compatibility
@@ -63,6 +76,7 @@ export interface ApiRouteCallbacks {
 		sessionId: string,
 		forceRefresh?: boolean
 	) => Promise<ProviderUsageSnapshot | null> | ProviderUsageSnapshot | null;
+	getConductorSnapshot: () => Promise<ConductorSnapshot> | ConductorSnapshot;
 	getSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]> | DemoCard[];
 	getDemoDetail: (demoId: string) => Promise<DemoDetail | null> | DemoDetail | null;
 	getArtifactContent: (
@@ -107,6 +121,15 @@ export interface ApiRouteCallbacks {
 	) => PushSubscriptionRecord;
 	unsubscribePush: (endpoint: string) => boolean;
 	sendTestPush: (endpoint?: string) => Promise<boolean>;
+	createConductorTask: (input: {
+		groupId: string;
+		title: string;
+		description?: string;
+		priority?: ConductorTaskPriority;
+		status?: ConductorTaskStatus;
+	}) => Promise<boolean>;
+	updateConductorTask: (taskId: string, updates: UpdateConductorTaskInput) => Promise<boolean>;
+	deleteConductorTask: (taskId: string) => Promise<boolean>;
 }
 
 /**
@@ -450,6 +473,141 @@ export class ApiRoutes {
 					count: sessionData.length,
 					timestamp: Date.now(),
 				};
+			}
+		);
+
+		server.get(
+			`${WEB_APP_API_BASE_PATH}/conductor`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (_request, reply) => {
+				if (!this.callbacks.getConductorSnapshot) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Conductor service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const snapshot = await this.callbacks.getConductorSnapshot();
+				return {
+					...snapshot,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/conductor/tasks`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.createConductorTask) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Conductor task creation is not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const body = (request.body || {}) as {
+					groupId?: string;
+					title?: string;
+					description?: string;
+					priority?: ConductorTaskPriority;
+					status?: ConductorTaskStatus;
+				};
+
+				if (!body.groupId || !body.title?.trim()) {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: 'groupId and title are required',
+						timestamp: Date.now(),
+					});
+				}
+
+				const success = await this.callbacks.createConductorTask({
+					groupId: body.groupId,
+					title: body.title.trim(),
+					description: body.description?.trim() || '',
+					priority: body.priority,
+					status: body.status,
+				});
+
+				return reply.code(success ? 200 : 500).send({
+					success,
+					timestamp: Date.now(),
+				});
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/conductor/tasks/:taskId`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.updateConductorTask) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Conductor task updates are not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const { taskId } = request.params as { taskId: string };
+				const body = (request.body || {}) as UpdateConductorTaskInput;
+				const success = await this.callbacks.updateConductorTask(taskId, body);
+
+				return reply.code(success ? 200 : 500).send({
+					success,
+					timestamp: Date.now(),
+				});
+			}
+		);
+
+		server.delete(
+			`${WEB_APP_API_BASE_PATH}/conductor/tasks/:taskId`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.deleteConductorTask) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Conductor task deletion is not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const { taskId } = request.params as { taskId: string };
+				const success = await this.callbacks.deleteConductorTask(taskId);
+				return reply.code(success ? 200 : 500).send({
+					success,
+					timestamp: Date.now(),
+				});
 			}
 		);
 

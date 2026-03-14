@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch, Plus } from 'lucide-react';
+import { GitBranch, LayoutGrid, Plus } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import type { Session } from '../hooks/useSessions';
@@ -16,6 +16,8 @@ interface MobileNavigationDrawerProps {
 	onDeleteSession?: (sessionId: string) => void;
 	onOpenTabSearch?: () => void;
 	canOpenTabSearch: boolean;
+	onOpenKanbanHome?: () => void;
+	onOpenWorkspaceKanban?: (workspaceId: string) => void;
 }
 
 interface WorkspaceSection {
@@ -381,6 +383,8 @@ export function MobileNavigationDrawer({
 	onDeleteSession,
 	onOpenTabSearch,
 	canOpenTabSearch,
+	onOpenKanbanHome,
+	onOpenWorkspaceKanban,
 }: MobileNavigationDrawerProps) {
 	const colors = useThemeColors();
 	const [searchQuery, setSearchQuery] = useState('');
@@ -720,6 +724,47 @@ export function MobileNavigationDrawer({
 								<span>Threads</span>
 							</button>
 						)}
+						{onOpenKanbanHome && (
+							<button
+								type="button"
+								onClick={() => {
+									searchInputRef.current?.blur();
+									setSearchQuery('');
+									onOpenKanbanHome();
+								}}
+								style={{
+									...glassSurface,
+									height: '40px',
+									padding: '0 14px',
+									borderRadius: '12px',
+									color: colors.textMain,
+									fontSize: '12px',
+									fontWeight: 600,
+									cursor: 'pointer',
+									display: 'flex',
+									alignItems: 'center',
+									gap: '10px',
+									textAlign: 'left',
+								}}
+							>
+								<span
+									style={{
+										display: 'inline-flex',
+										alignItems: 'center',
+										justifyContent: 'center',
+										width: '24px',
+										height: '24px',
+										borderRadius: '999px',
+										background: 'rgba(255, 255, 255, 0.08)',
+										color: colors.accent,
+										flexShrink: 0,
+									}}
+								>
+									<LayoutGrid size={14} />
+								</span>
+								<span>Boards</span>
+							</button>
+						)}
 					</div>
 				</div>
 
@@ -990,6 +1035,29 @@ export function MobileNavigationDrawer({
 												gap: '8px',
 											}}
 										>
+											{onOpenWorkspaceKanban && (
+												<button
+													type="button"
+													onClick={() => onOpenWorkspaceKanban?.(group.id)}
+													aria-label={`Open ${group.name} kanban`}
+													title={`Open ${group.name} kanban`}
+													style={{
+														width: '24px',
+														height: '24px',
+														borderRadius: '999px',
+														border: '1px solid rgba(255, 255, 255, 0.08)',
+														background: 'rgba(255, 255, 255, 0.06)',
+														color: colors.textMain,
+														display: 'inline-flex',
+														alignItems: 'center',
+														justifyContent: 'center',
+														cursor: 'pointer',
+														flexShrink: 0,
+													}}
+												>
+													<LayoutGrid size={14} />
+												</button>
+											)}
 											{onNewThreadInWorkspace && (
 												<button
 													type="button"

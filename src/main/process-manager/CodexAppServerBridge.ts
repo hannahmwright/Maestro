@@ -10,14 +10,12 @@ import type {
 	UserInputResponse,
 } from '../../shared/user-input-requests';
 import type { AgentError } from '../../shared/types';
-import type {
-	ConversationEvent,
-	ConversationInputItem,
-} from '../../shared/conversation';
+import type { ConversationEvent, ConversationInputItem } from '../../shared/conversation';
 
 const LOG_CONTEXT = 'CodexAppServerBridge';
 const LISTENING_URL_RE = /listening on:\s*(ws:\/\/[^\s]+)/i;
 const STARTUP_TIMEOUT_MS = 15000;
+const LIVE_TURN_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;
 const MAX_CHAT_QUESTION_CORRECTIONS = 2;
 const PLAN_MODE_DEVELOPER_INSTRUCTIONS =
 	'If you need user input before proceeding, use the request_user_input tool with concise multiple-choice questions instead of asking plain-text blocking questions in the response.';
@@ -206,6 +204,9 @@ export class CodexAppServerBridge {
 			if (codexAppServerState.startupTimeout) {
 				clearTimeout(codexAppServerState.startupTimeout);
 			}
+			if (codexAppServerState.turnActivityTimeout) {
+				clearTimeout(codexAppServerState.turnActivityTimeout);
+			}
 			codexAppServerState.ws?.removeAllListeners();
 			codexAppServerState.ws?.close();
 			this.finishProcess(managedProcess, code ?? (codexAppServerState.turnCompleted ? 0 : 1));
@@ -229,7 +230,13 @@ export class CodexAppServerBridge {
 		const managedProcess = this.processes.get(sessionId);
 		const state = managedProcess?.codexAppServerState;
 		const ws = state?.ws;
-		if (!managedProcess || !state?.threadId || !state.turnId || !ws || ws.readyState !== WebSocket.OPEN) {
+		if (
+			!managedProcess ||
+			!state?.threadId ||
+			!state.turnId ||
+			!ws ||
+			ws.readyState !== WebSocket.OPEN
+		) {
 			return false;
 		}
 
@@ -256,7 +263,13 @@ export class CodexAppServerBridge {
 		const managedProcess = this.processes.get(sessionId);
 		const state = managedProcess?.codexAppServerState;
 		const ws = state?.ws;
-		if (!managedProcess || !state?.threadId || !state.turnId || !ws || ws.readyState !== WebSocket.OPEN) {
+		if (
+			!managedProcess ||
+			!state?.threadId ||
+			!state.turnId ||
+			!ws ||
+			ws.readyState !== WebSocket.OPEN
+		) {
 			return false;
 		}
 
@@ -355,7 +368,42 @@ export class CodexAppServerBridge {
 		});
 
 		ws.on('message', (data) => {
+			this.recordTurnActivity(managedProcess, 'message');
 			this.handleWebSocketMessage(managedProcess, config, data.toString());
+		});
+
+		ws.on('close', (code, reasonBuffer) => {
+			const reason =
+				typeof reasonBuffer === 'string' ? reasonBuffer : reasonBuffer?.toString('utf8') || '';
+			logger.warn('[CodexAppServerBridge] Websocket closed', LOG_CONTEXT, {
+				sessionId: managedProcess.sessionId,
+				code,
+				reason: reason || undefined,
+				turnId: state.turnId,
+				threadId: state.threadId,
+			});
+			if (state.turnActivityTimeout) {
+				clearTimeout(state.turnActivityTimeout);
+				state.turnActivityTimeout = undefined;
+			}
+			state.ws = undefined;
+			if (!state.turnCompleted) {
+				this.emitAgentError(
+					managedProcess.sessionId,
+					'Codex app-server websocket closed before the turn completed.'
+				);
+				this.emitConversationEvent(managedProcess, {
+					type: 'turn_failed',
+					sessionId: managedProcess.sessionId,
+					runtimeKind: managedProcess.conversationRuntime || 'batch',
+					timestamp: Date.now(),
+					threadId: state.threadId,
+					turnId: state.turnId || null,
+					message: 'Codex app-server websocket closed before the turn completed.',
+				});
+			}
+			this.killProcess(managedProcess);
+			this.finishProcess(managedProcess, state.turnCompleted ? 0 : 1);
 		});
 
 		ws.on('error', (error) => {
@@ -408,6 +456,7 @@ export class CodexAppServerBridge {
 			const turnId = asString(turn?.id);
 			if (turnId && managedProcess.codexAppServerState) {
 				managedProcess.codexAppServerState.turnId = turnId;
+				this.recordTurnActivity(managedProcess, 'turn-started');
 				this.emitConversationEvent(managedProcess, {
 					type: 'turn_started',
 					sessionId: managedProcess.sessionId,
@@ -479,6 +528,8 @@ export class CodexAppServerBridge {
 					}
 					const completedTurnId = managedProcess.codexAppServerState.turnId || null;
 					managedProcess.codexAppServerState.turnId = undefined;
+					managedProcess.codexAppServerState.currentTurnStartedAt = undefined;
+					this.clearTurnActivityTimeout(managedProcess.codexAppServerState);
 					this.emitConversationEvent(managedProcess, {
 						type: 'turn_completed',
 						sessionId: managedProcess.sessionId,
@@ -853,15 +904,63 @@ export class CodexAppServerBridge {
 		}
 	}
 
-	private emitConversationEvent(
-		managedProcess: ManagedProcess,
-		event: ConversationEvent
-	): void {
+	private emitConversationEvent(managedProcess: ManagedProcess, event: ConversationEvent): void {
 		this.emitter.emit('conversation-event', managedProcess.sessionId, event);
 	}
 
 	private sendJson(ws: WebSocket, payload: JsonRpcMessage): void {
 		ws.send(JSON.stringify(payload));
+	}
+
+	private clearTurnActivityTimeout(state: CodexAppServerState): void {
+		if (!state.turnActivityTimeout) return;
+		clearTimeout(state.turnActivityTimeout);
+		state.turnActivityTimeout = undefined;
+	}
+
+	private recordTurnActivity(managedProcess: ManagedProcess, reason: string): void {
+		if (managedProcess.conversationRuntime !== 'live') {
+			return;
+		}
+
+		const state = managedProcess.codexAppServerState;
+		if (!state || state.turnCompleted || !state.currentTurnStartedAt) {
+			if (state) {
+				this.clearTurnActivityTimeout(state);
+			}
+			return;
+		}
+
+		state.lastActivityAt = Date.now();
+		this.clearTurnActivityTimeout(state);
+		state.turnActivityTimeout = setTimeout(() => {
+			const stuckState = managedProcess.codexAppServerState;
+			if (!stuckState?.currentTurnStartedAt || stuckState.turnCompleted) return;
+
+			logger.warn('[CodexAppServerBridge] Live turn inactivity timeout', LOG_CONTEXT, {
+				sessionId: managedProcess.sessionId,
+				threadId: stuckState.threadId,
+				turnId: stuckState.turnId,
+				lastActivityAt: stuckState.lastActivityAt,
+				currentTurnStartedAt: stuckState.currentTurnStartedAt,
+				reason,
+			});
+			this.emitAgentError(
+				managedProcess.sessionId,
+				'Codex live turn stalled after 20 minutes of inactivity. The stuck runtime was stopped automatically.'
+			);
+			this.emitConversationEvent(managedProcess, {
+				type: 'turn_failed',
+				sessionId: managedProcess.sessionId,
+				runtimeKind: managedProcess.conversationRuntime || 'batch',
+				timestamp: Date.now(),
+				threadId: stuckState.threadId,
+				turnId: stuckState.turnId || null,
+				message: 'Codex live turn stalled after 20 minutes of inactivity.',
+			});
+			this.killProcess(managedProcess);
+			this.finishProcess(managedProcess, 1);
+		}, LIVE_TURN_INACTIVITY_TIMEOUT_MS);
 	}
 
 	private startTurn(
@@ -878,9 +977,12 @@ export class CodexAppServerBridge {
 
 		state.turnCompleted = false;
 		state.turnId = undefined;
+		state.currentTurnStartedAt = Date.now();
+		state.lastActivityAt = state.currentTurnStartedAt;
 		state.currentTurnHadUserInputRequest = false;
 		state.pendingCorrectionPrompt = undefined;
 		state.suppressedFinalAnswerText = undefined;
+		this.clearTurnActivityTimeout(state);
 
 		logger.info('[CodexAppServerBridge] Starting turn', LOG_CONTEXT, {
 			sessionId: managedProcess.sessionId,
@@ -934,6 +1036,7 @@ export class CodexAppServerBridge {
 				}),
 			},
 		});
+		this.recordTurnActivity(managedProcess, 'turn-start');
 	}
 
 	private emitAgentError(sessionId: string, message: string, raw?: unknown): void {
@@ -956,6 +1059,11 @@ export class CodexAppServerBridge {
 	private finishProcess(managedProcess: ManagedProcess, code: number): void {
 		const existing = this.processes.get(managedProcess.sessionId);
 		if (!existing) return;
+
+		if (existing.codexAppServerState?.turnActivityTimeout) {
+			clearTimeout(existing.codexAppServerState.turnActivityTimeout);
+			existing.codexAppServerState.turnActivityTimeout = undefined;
+		}
 
 		this.processes.delete(managedProcess.sessionId);
 		this.emitter.emit('query-complete', managedProcess.sessionId, {

@@ -35,6 +35,7 @@ import { SessionWorkflowBadge } from './SessionWorkflowBadge';
 import { TabBar } from './TabBar';
 import { ThreadBar } from './ThreadBar';
 import { WizardConversationView, DocumentGenerationView } from './InlineWizard';
+import { ProviderModelIcon, getProviderBrandColor } from './shared/ProviderModelIcon';
 import { gitService } from '../services/git';
 import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
 import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitStatusContext';
@@ -42,8 +43,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { calculateContextDisplay } from '../utils/contextUsage';
 import { resolveSessionWorkflowState } from '../utils/handoffWorkflow';
 import {
-	getRuntimeIdForSession,
-	getRuntimeIdForThread,
+	findActiveThreadForSession,
 	getThreadDisplayTitle,
 	getWorkspaceDisplayName,
 } from '../utils/workspaceThreads';
@@ -62,7 +62,9 @@ import type {
 	AgentError,
 	ReasoningEffort,
 	AgentExecutionMode,
+	ToolType,
 } from '../types';
+import type { ProviderUsageSnapshot, ProviderUsageWindow } from '../../shared/provider-usage';
 import type { UserInputRequest, UserInputResponse } from '../../shared/user-input-requests';
 
 interface SlashCommand {
@@ -336,6 +338,68 @@ interface MainPanelProps {
 	onWizardCancelGeneration?: () => void;
 }
 
+const SUBSCRIPTION_USAGE_PROVIDERS: ToolType[] = ['claude-code', 'codex'];
+
+function supportsProviderSubscriptionUsage(
+	provider?: ToolType | null
+): provider is 'claude-code' | 'codex' {
+	return provider === 'claude-code' || provider === 'codex';
+}
+
+function getProviderDisplayName(provider?: ToolType | null): string {
+	switch (provider) {
+		case 'claude-code':
+			return 'Claude';
+		case 'codex':
+			return 'Codex';
+		case 'opencode':
+			return 'OpenCode';
+		case 'factory-droid':
+			return 'Factory Droid';
+		case 'terminal':
+			return 'Terminal';
+		default:
+			return 'Provider';
+	}
+}
+
+function formatUsageWindowLabel(window: ProviderUsageWindow): string {
+	if (window.windowDurationMins === 10080) {
+		return 'Weekly allowance';
+	}
+
+	if (window.windowDurationMins === 300) {
+		return 'Current 5h window';
+	}
+
+	if (typeof window.windowDurationMins === 'number' && window.windowDurationMins > 0) {
+		if (window.windowDurationMins % 60 === 0) {
+			return `${window.windowDurationMins / 60}h window`;
+		}
+
+		return `${window.windowDurationMins}m window`;
+	}
+
+	return window.label;
+}
+
+function formatUsageResetTime(timestamp: number | null): string {
+	if (!timestamp) {
+		return 'Reset time unavailable';
+	}
+
+	try {
+		return new Intl.DateTimeFormat(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: '2-digit',
+		}).format(new Date(timestamp * 1000));
+	} catch {
+		return 'Reset time unavailable';
+	}
+}
+
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
@@ -469,11 +533,14 @@ export const MainPanel = React.memo(
 		const headerRef = useRef<HTMLDivElement>(null);
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
-		const contextWidgetRef = useRef<HTMLButtonElement>(null);
-		const contextPopoverRef = useRef<HTMLDivElement>(null);
+		const providerUsageWidgetRef = useRef<HTMLButtonElement>(null);
+		const providerUsagePopoverRef = useRef<HTMLDivElement>(null);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
 		const [agentReasoningEffort, setAgentReasoningEffort] = useState<ReasoningEffort>('high');
-		const [isContextPopoverOpen, setIsContextPopoverOpen] = useState(false);
+		const [isProviderUsagePopoverOpen, setIsProviderUsagePopoverOpen] = useState(false);
+		const [providerUsageSnapshots, setProviderUsageSnapshots] = useState<
+			Partial<Record<ToolType, ProviderUsageSnapshot | null>>
+		>({});
 
 		// Extract tab handlers from props
 		const {
@@ -520,10 +587,7 @@ export const MainPanel = React.memo(
 				return null;
 			}
 
-			const sessionRuntimeId = getRuntimeIdForSession(activeSession);
-			return (
-				threads.find((thread) => getRuntimeIdForThread(thread) === sessionRuntimeId) ?? null
-			);
+			return findActiveThreadForSession(threads, activeSession);
 		}, [activeSession, threads]);
 		const threadTitle = useMemo(
 			() =>
@@ -562,6 +626,46 @@ export const MainPanel = React.memo(
 			groups,
 		]);
 		const activeTabError = activeTab?.agentError;
+		const providerUsageOrder = useMemo(() => {
+			const orderedProviders: ToolType[] = [];
+
+			if (activeSession?.toolType) {
+				orderedProviders.push(activeSession.toolType);
+			}
+
+			for (const provider of SUBSCRIPTION_USAGE_PROVIDERS) {
+				if (!orderedProviders.includes(provider)) {
+					orderedProviders.push(provider);
+				}
+			}
+
+			return orderedProviders;
+		}, [activeSession?.toolType]);
+		const activeProviderUsageSnapshot = activeSession?.toolType
+			? providerUsageSnapshots[activeSession.toolType] ?? null
+			: null;
+		const activeProviderUsagePercent = activeProviderUsageSnapshot?.usedPercent ?? null;
+		const loadProviderUsageSnapshot = useCallback(
+			async (provider: ToolType, forceRefresh = false): Promise<ProviderUsageSnapshot | null> => {
+				if (!supportsProviderSubscriptionUsage(provider)) {
+					setProviderUsageSnapshots((current) =>
+						current[provider] === null ? current : { ...current, [provider]: null }
+					);
+					return null;
+				}
+
+				try {
+					const snapshot = await window.maestro.agents.getProviderUsage(provider, forceRefresh);
+					setProviderUsageSnapshots((current) => ({ ...current, [provider]: snapshot }));
+					return snapshot;
+				} catch (error) {
+					console.error(`Failed to load provider usage for ${provider}`, error);
+					setProviderUsageSnapshots((current) => ({ ...current, [provider]: null }));
+					return null;
+				}
+			},
+			[]
+		);
 
 		const normalizeReasoningEffort = useCallback((value: unknown): ReasoningEffort => {
 			if (typeof value !== 'string') return 'high';
@@ -654,7 +758,7 @@ export const MainPanel = React.memo(
 
 		// Compute context tokens and percentage using the shared helper.
 		// Handles accumulated multi-tool turns by falling back to session.contextUsage.
-		const { tokens: activeTabContextTokens, percentage: activeTabContextUsage } = useMemo(() => {
+		const { percentage: activeTabContextUsage } = useMemo(() => {
 			if (!activeTab?.usageStats) return { tokens: 0, percentage: 0 };
 			return calculateContextDisplay(
 				{
@@ -673,6 +777,56 @@ export const MainPanel = React.memo(
 			activeTabContextWindow,
 			activeSession?.contextUsage,
 		]);
+
+		useEffect(() => {
+			let isActive = true;
+
+			if (activeSession?.inputMode !== 'ai' || !activeSession.toolType) {
+				return () => {
+					isActive = false;
+				};
+			}
+
+			const provider = activeSession.toolType;
+			if (!supportsProviderSubscriptionUsage(provider)) {
+				setProviderUsageSnapshots((current) =>
+					current[provider] === null ? current : { ...current, [provider]: null }
+				);
+				return () => {
+					isActive = false;
+				};
+			}
+
+			const loadCurrentProviderUsage = async () => {
+				if (!isActive) {
+					return;
+				}
+
+				await loadProviderUsageSnapshot(provider);
+			};
+
+			void loadCurrentProviderUsage();
+			const intervalId = window.setInterval(() => {
+				void loadCurrentProviderUsage();
+			}, 60000);
+
+			return () => {
+				isActive = false;
+				window.clearInterval(intervalId);
+			};
+		}, [activeSession?.id, activeSession?.inputMode, activeSession?.toolType, loadProviderUsageSnapshot]);
+
+		useEffect(() => {
+			if (!isProviderUsagePopoverOpen) {
+				return;
+			}
+
+			for (const provider of providerUsageOrder) {
+				if (supportsProviderSubscriptionUsage(provider)) {
+					void loadProviderUsageSnapshot(provider);
+				}
+			}
+		}, [isProviderUsagePopoverOpen, loadProviderUsageSnapshot, providerUsageOrder]);
 
 		// Git status from focused contexts (reduces cascade re-renders)
 		// Branch info: branch name, remote, ahead/behind - rarely changes
@@ -768,22 +922,22 @@ export const MainPanel = React.memo(
 		);
 
 		useEffect(() => {
-			if (!isContextPopoverOpen) return;
+			if (!isProviderUsagePopoverOpen) return;
 
 			const handleClickOutside = (event: MouseEvent) => {
 				const target = event.target as Node;
 				if (
-					contextWidgetRef.current?.contains(target) ||
-					contextPopoverRef.current?.contains(target)
+					providerUsageWidgetRef.current?.contains(target) ||
+					providerUsagePopoverRef.current?.contains(target)
 				) {
 					return;
 				}
-				setIsContextPopoverOpen(false);
+				setIsProviderUsagePopoverOpen(false);
 			};
 
 			const handleEscape = (event: KeyboardEvent) => {
 				if (event.key === 'Escape') {
-					setIsContextPopoverOpen(false);
+					setIsProviderUsagePopoverOpen(false);
 				}
 			};
 
@@ -793,16 +947,16 @@ export const MainPanel = React.memo(
 				document.removeEventListener('mousedown', handleClickOutside);
 				document.removeEventListener('keydown', handleEscape);
 			};
-		}, [isContextPopoverOpen]);
+		}, [isProviderUsagePopoverOpen]);
 
 		useEffect(() => {
-			setIsContextPopoverOpen(false);
+			setIsProviderUsagePopoverOpen(false);
 		}, [activeSession?.id, activeSession?.activeTabId, activeFileTabId]);
 
 		// Memoized props for FilePreview to prevent re-renders that cause image flickering
 		// The file object must be stable - recreating it on each render causes the <img> to remount
 		const memoizedFilePreviewFile = useMemo(() => {
-			if (!activeFileTab) return null;
+			if (!activeFileTab || activeFileTab.content === null) return null;
 			return {
 				name: activeFileTab.name + activeFileTab.extension,
 				content: activeFileTab.content,
@@ -853,7 +1007,7 @@ export const MainPanel = React.memo(
 		const handleFilePreviewEditContentChange = useCallback(
 			(content: string) => {
 				if (activeFileTabId && activeFileTab) {
-					const hasChanges = content !== activeFileTab.content;
+					const hasChanges = content !== (activeFileTab.content ?? '');
 					onFileTabEditContentChange?.(activeFileTabId, hasChanges ? content : undefined);
 				}
 			},
@@ -1335,36 +1489,6 @@ export const MainPanel = React.memo(
 								)}
 
 								<div className="flex items-center gap-3 justify-end shrink-0">
-									{/* Session UUID Pill - click to copy full UUID, hidden at narrow widths via CSS container query */}
-									{/* Hide when file preview tab is focused - session stats are only relevant for AI tabs */}
-									{activeSession.inputMode === 'ai' &&
-										!activeFileTabId &&
-										activeTab?.agentSessionId &&
-										hasCapability('supportsSessionId') && (
-											<button
-												className="header-uuid-pill text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border transition-colors hover:opacity-80"
-												style={{
-													backgroundColor: theme.colors.accent + '20',
-													color: theme.colors.accent,
-													borderColor: theme.colors.accent + '30',
-												}}
-												title={
-													activeTab.name
-														? `${activeTab.name}\nClick to copy: ${activeTab.agentSessionId}`
-														: `Click to copy: ${activeTab.agentSessionId}`
-												}
-												onClick={(e) => {
-													e.stopPropagation();
-													copyToClipboard(
-														activeTab.agentSessionId!,
-														'Session ID Copied to Clipboard'
-													);
-												}}
-											>
-												{activeTab.agentSessionId.split('-')[0].toUpperCase()}
-											</button>
-										)}
-
 									{/* Cost Tracker - styled as pill, hidden at narrow widths via CSS container query */}
 									{/* Hide when file preview tab is focused - cost tracking is only relevant for AI tabs */}
 									{activeSession.inputMode === 'ai' &&
@@ -1376,195 +1500,230 @@ export const MainPanel = React.memo(
 											</span>
 										)}
 
-									{/* Context Window Widget with click popover - only show when context window is configured and agent supports usage stats */}
-									{/* Hide when file preview tab is focused - context usage is only relevant for AI tabs */}
-									{activeSession.inputMode === 'ai' &&
-										!activeFileTabId &&
-										(activeTab?.agentSessionId || activeTab?.usageStats) &&
-										hasCapability('supportsUsageStats') &&
-										activeTabContextWindow > 0 && (
-											<div className="relative mr-2">
-												<button
-													ref={contextWidgetRef}
-													onClick={(e) => {
-														e.stopPropagation();
-														setIsContextPopoverOpen((prev) => !prev);
-													}}
-													className="header-context-widget flex flex-col items-end rounded px-1 py-0.5 hover:bg-white/5 transition-colors"
-													title="Open context details"
-												>
+									{/* Provider subscription usage widget - uses the thread's provider when collapsed */}
+									{activeSession.inputMode === 'ai' && !activeFileTabId && (
+										<div className="relative mr-2">
+											<button
+												ref={providerUsageWidgetRef}
+												onClick={(e) => {
+													e.stopPropagation();
+													setIsProviderUsagePopoverOpen((prev) => !prev);
+												}}
+												className="header-provider-usage-widget flex flex-col items-end rounded px-2 py-1 hover:bg-white/5 transition-colors"
+												title={`Open provider subscription usage for ${getProviderDisplayName(activeSession.toolType)}`}
+												aria-label={`${getProviderDisplayName(activeSession.toolType)} subscription usage ${activeProviderUsagePercent === null ? 'unavailable' : `${activeProviderUsagePercent}%`}`}
+											>
+												<div className="flex items-center gap-1.5">
+													<ProviderModelIcon
+														toolType={activeSession.toolType}
+														color={getProviderBrandColor(
+															activeSession.toolType,
+															theme.colors.accent
+														)}
+														size={12}
+													/>
 													<span
-														className="header-context-label-full text-[10px] font-bold uppercase"
+														className="text-[10px] font-bold uppercase"
 														style={{ color: theme.colors.textDim }}
 													>
-														Context Window
+														{getProviderDisplayName(activeSession.toolType)}
 													</span>
-													<span
-														className="header-context-label-compact text-[10px] font-bold uppercase hidden"
-														style={{ color: theme.colors.textDim }}
-														aria-hidden="true"
-													>
-														Context
-													</span>
-													<div className="flex items-center gap-1 mt-1">
-														<div
-															className="header-context-gauge w-24 h-1.5 rounded-full overflow-hidden"
-															style={{ backgroundColor: theme.colors.border }}
-														>
-															<div
-																className="h-full transition-all duration-500 ease-out"
-																style={{
-																	width: `${activeTabContextUsage}%`,
-																	backgroundColor: getContextColor(activeTabContextUsage, theme),
-																}}
-															/>
-														</div>
-														<span
-															className="text-[10px] font-mono font-bold"
-															style={{
-																color: getContextColor(activeTabContextUsage, theme),
-															}}
-														>
-															{activeTabContextUsage}%
-														</span>
-													</div>
-												</button>
-
-												{isContextPopoverOpen && activeSession.inputMode === 'ai' && (
+												</div>
+												<div className="flex items-center gap-1 mt-1">
 													<div
-														ref={contextPopoverRef}
-														className="absolute top-full right-0 mt-2 w-72 z-50"
+														className="w-24 h-1.5 rounded-full overflow-hidden"
+														style={{ backgroundColor: theme.colors.border }}
 													>
 														<div
-															className="border rounded-lg p-3 shadow-xl"
+															className="h-full transition-all duration-500 ease-out"
 															style={{
-																backgroundColor: theme.colors.bgSidebar,
-																borderColor: theme.colors.border,
+																width:
+																	activeProviderUsagePercent === null
+																		? '0%'
+																		: `${activeProviderUsagePercent}%`,
+																backgroundColor:
+																	activeProviderUsagePercent === null
+																		? theme.colors.textDim
+																		: getContextColor(activeProviderUsagePercent, theme),
 															}}
-														>
-															<div
-																className="text-[10px] uppercase font-bold mb-3"
-																style={{ color: theme.colors.textDim }}
-															>
-																Context Details
-															</div>
+														/>
+													</div>
+													<span
+														className="text-[10px] font-mono font-bold"
+														style={{
+															color:
+																activeProviderUsagePercent === null
+																	? theme.colors.textDim
+																	: getContextColor(activeProviderUsagePercent, theme),
+														}}
+													>
+														{activeProviderUsagePercent === null
+															? '--'
+															: `${activeProviderUsagePercent}%`}
+													</span>
+												</div>
+											</button>
 
-															<div className="space-y-2">
-																<div className="flex justify-between items-center">
-																	<span
-																		className="text-xs font-bold"
-																		style={{ color: theme.colors.textDim }}
-																	>
-																		Usage
-																	</span>
-																	<span
-																		className="text-xs font-mono font-bold"
+											{isProviderUsagePopoverOpen && activeSession.inputMode === 'ai' && (
+												<div
+													ref={providerUsagePopoverRef}
+													className="absolute top-full right-0 mt-2 w-80 z-50"
+												>
+													<div
+														className="border rounded-lg p-3 shadow-xl"
+														style={{
+															backgroundColor: theme.colors.bgSidebar,
+															borderColor: theme.colors.border,
+														}}
+													>
+														<div
+															className="text-[10px] uppercase font-bold mb-3"
+															style={{ color: theme.colors.textDim }}
+														>
+															Provider Subscription Usage
+														</div>
+
+														<div className="space-y-3">
+															{providerUsageOrder.map((provider) => {
+																const snapshot = providerUsageSnapshots[provider] ?? null;
+																const usedPercent = snapshot?.usedPercent ?? null;
+																const windows = snapshot?.windows ?? [];
+																const providerColor = getProviderBrandColor(
+																	provider,
+																	theme.colors.accent
+																);
+																const isSupportedProvider =
+																	supportsProviderSubscriptionUsage(provider);
+
+																return (
+																	<div
+																		key={provider}
+																		className="rounded-lg border p-3"
 																		style={{
-																			color: getContextColor(activeTabContextUsage, theme),
+																			backgroundColor: theme.colors.bgMain,
+																			borderColor: theme.colors.border,
 																		}}
 																	>
-																		{activeTabContextUsage}%
-																	</span>
-																</div>
-																<div className="flex justify-between items-center">
-																	<span
-																		className="text-xs font-bold"
-																		style={{ color: theme.colors.textDim }}
-																	>
-																		Tokens
-																	</span>
-																	<span
-																		className="text-xs font-mono font-bold"
-																		style={{ color: theme.colors.accent }}
-																	>
-																		{activeTabContextTokens.toLocaleString('en-US')} /{' '}
-																		{activeTabContextWindow.toLocaleString('en-US')}
-																	</span>
-																</div>
-																<div className="flex justify-between items-center">
-																	<span className="text-xs" style={{ color: theme.colors.textDim }}>
-																		Input Tokens
-																	</span>
-																	<span
-																		className="text-xs font-mono"
-																		style={{ color: theme.colors.textMain }}
-																	>
-																		{(activeTab?.usageStats?.inputTokens ?? 0).toLocaleString(
-																			'en-US'
-																		)}
-																	</span>
-																</div>
-																<div className="flex justify-between items-center">
-																	<span className="text-xs" style={{ color: theme.colors.textDim }}>
-																		Output Tokens
-																	</span>
-																	<span
-																		className="text-xs font-mono"
-																		style={{ color: theme.colors.textMain }}
-																	>
-																		{(activeTab?.usageStats?.outputTokens ?? 0).toLocaleString(
-																			'en-US'
-																		)}
-																	</span>
-																</div>
-																{(activeTab?.usageStats?.reasoningTokens ?? 0) > 0 && (
-																	<div className="flex justify-between items-center">
-																		<span
-																			className="text-xs"
-																			style={{ color: theme.colors.textDim }}
-																		>
-																			Reasoning Tokens
-																		</span>
-																		<span
-																			className="text-xs font-mono"
-																			style={{ color: theme.colors.textMain }}
-																		>
-																			{(activeTab?.usageStats?.reasoningTokens ?? 0).toLocaleString(
-																				'en-US'
-																			)}
-																		</span>
-																	</div>
-																)}
-															</div>
+																		<div className="flex items-start justify-between gap-3">
+																			<div className="min-w-0">
+																				<div className="flex items-center gap-2">
+																					<ProviderModelIcon
+																						toolType={provider}
+																						color={providerColor}
+																						size={14}
+																					/>
+																					<span
+																						className="text-sm font-semibold"
+																						style={{ color: theme.colors.textMain }}
+																					>
+																						{getProviderDisplayName(provider)}
+																					</span>
+																				</div>
+																				<div
+																					className="text-[11px] mt-1"
+																					style={{ color: theme.colors.textDim }}
+																				>
+																					{snapshot?.label ||
+																						(isSupportedProvider
+																							? 'Usage unavailable'
+																							: 'Subscription usage not supported')}
+																				</div>
+																				{snapshot?.planType && (
+																					<div
+																						className="text-[11px]"
+																						style={{ color: theme.colors.textDim }}
+																					>
+																						{snapshot.planType}
+																						{snapshot.accountType
+																							? ` • ${snapshot.accountType}`
+																							: ''}
+																					</div>
+																				)}
+																			</div>
+																			<span
+																				className="text-sm font-mono font-bold shrink-0"
+																				style={{
+																					color:
+																						usedPercent === null
+																							? theme.colors.textDim
+																							: getContextColor(usedPercent, theme),
+																				}}
+																			>
+																				{usedPercent === null ? '--' : `${usedPercent}%`}
+																			</span>
+																		</div>
 
-															<div
-																className="border-t mt-3 pt-3"
-																style={{ borderColor: theme.colors.border }}
-															>
-																<button
-																	onClick={() => {
-																		if (activeSession?.activeTabId && onSummarizeAndContinue) {
-																			onSummarizeAndContinue(activeSession.activeTabId);
-																			setIsContextPopoverOpen(false);
-																		}
-																	}}
-																	disabled={
-																		!activeSession?.activeTabId ||
-																		!onSummarizeAndContinue ||
-																		isSummarizing
-																	}
-																	className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-																	style={{
-																		backgroundColor: `${theme.colors.accent}25`,
-																		color: theme.colors.accent,
-																		border: `1px solid ${theme.colors.accent}40`,
-																	}}
-																>
-																	{isSummarizing ? (
-																		<Loader2 className="w-3.5 h-3.5 animate-spin" />
-																	) : (
-																		<Wand2 className="w-3.5 h-3.5" />
-																	)}
-																	<span>
-																		{isSummarizing ? 'Summarizing...' : 'Summarize & Continue'}
-																	</span>
-																</button>
-															</div>
+																		{snapshot?.credits?.balance && (
+																			<div
+																				className="text-[11px] mt-2"
+																				style={{ color: theme.colors.textDim }}
+																			>
+																				Credits: {snapshot.credits.balance}
+																				{snapshot.credits.unlimited ? ' unlimited' : ''}
+																			</div>
+																		)}
+
+																		<div className="space-y-2 mt-3">
+																			{windows.length > 0 ? (
+																				windows.map((window) => (
+																					<div
+																						key={window.id}
+																						className="flex items-center justify-between gap-3 rounded-md px-2.5 py-2"
+																						style={{
+																							backgroundColor: theme.colors.bgSidebar,
+																						}}
+																					>
+																						<div className="min-w-0">
+																							<div
+																								className="text-xs font-semibold"
+																								style={{
+																									color: theme.colors.textMain,
+																								}}
+																							>
+																								{formatUsageWindowLabel(window)}
+																							</div>
+																							<div
+																								className="text-[11px]"
+																								style={{
+																									color: theme.colors.textDim,
+																								}}
+																							>
+																								Resets {formatUsageResetTime(window.resetsAt)}
+																							</div>
+																						</div>
+																						<div
+																							className="text-xs font-mono font-bold shrink-0"
+																							style={{
+																								color: getContextColor(
+																									window.usedPercent,
+																									theme
+																								),
+																							}}
+																						>
+																							{window.usedPercent}%
+																						</div>
+																					</div>
+																				))
+																			) : (
+																				<div
+																					className="text-[11px]"
+																					style={{ color: theme.colors.textDim }}
+																				>
+																					{isSupportedProvider
+																						? 'No provider usage windows available yet.'
+																						: 'This provider does not currently expose subscription usage.'}
+																				</div>
+																			)}
+																		</div>
+																	</div>
+																);
+															})}
 														</div>
 													</div>
-												)}
-											</div>
-										)}
+												</div>
+											)}
+										</div>
+									)}
 
 									{/* Agent Sessions Button - only show if agent supports session storage */}
 									{hasCapability('supportsSessionStorage') && (
@@ -1698,7 +1857,9 @@ export const MainPanel = React.memo(
 						{/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */}
 						{/* Skip rendering when loading remote file - loading state takes over entire main area */}
 						{activeSession.inputMode === 'ai' &&
-						((filePreviewLoading && !activeFileTabId) || activeFileTab?.isLoading) ? (
+						((filePreviewLoading && !activeFileTabId) ||
+							activeFileTab?.isLoading ||
+							(activeFileTabId && activeFileTab?.content === null)) ? (
 							<div
 								className="flex-1 flex items-center justify-center"
 								style={{ backgroundColor: theme.colors.bgMain }}
@@ -1716,7 +1877,7 @@ export const MainPanel = React.memo(
 												: filePreviewLoading?.name}
 										</div>
 										<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
-											Fetching from remote server...
+											Preparing file preview...
 										</div>
 									</div>
 								</div>

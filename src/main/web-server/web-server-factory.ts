@@ -70,6 +70,11 @@ interface ThreadsStore {
 	get<T>(key: string, defaultValue?: T): T;
 }
 
+/** Store interface for conductors */
+interface ConductorsStore {
+	get<T>(key: string, defaultValue?: T): T;
+}
+
 /** Dependencies required for creating the web server */
 export interface WebServerFactoryDependencies {
 	/** Settings store for reading web interface configuration */
@@ -80,6 +85,8 @@ export interface WebServerFactoryDependencies {
 	groupsStore: GroupsStore;
 	/** Threads store for reading thread data */
 	threadsStore: ThreadsStore;
+	/** Conductors store for reading kanban data */
+	conductorsStore: ConductorsStore;
 	/** Function to get the main window reference */
 	getMainWindow: () => BrowserWindow | null;
 	/** Function to get the process manager reference */
@@ -102,6 +109,7 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		sessionsStore,
 		groupsStore,
 		threadsStore,
+		conductorsStore,
 		getMainWindow,
 		getProcessManager,
 		getAgentDetector,
@@ -417,6 +425,50 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 		}
 
 		return null;
+	}
+
+	async function requestRendererBooleanResponse(
+		eventName: string,
+		timeoutLabel: string,
+		payload: unknown[]
+	): Promise<boolean> {
+		const mainWindow = getMainWindow();
+		if (!mainWindow) {
+			logger.warn(`mainWindow is null for ${timeoutLabel}`, 'WebServer');
+			return false;
+		}
+
+		return new Promise((resolve) => {
+			const responseChannel = `${eventName}:response:${Date.now()}`;
+			let resolved = false;
+
+			const handleResponse = (_event: Electron.IpcMainEvent, result: boolean | null) => {
+				if (resolved) return;
+				resolved = true;
+				clearTimeout(timeoutId);
+				resolve(Boolean(result));
+			};
+
+			ipcMain.once(responseChannel, handleResponse);
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for renderer request', 'WebServer', {
+					eventName,
+				});
+				ipcMain.removeListener(responseChannel, handleResponse);
+				resolve(false);
+				return;
+			}
+
+			mainWindow.webContents.send(eventName, ...payload, responseChannel);
+
+			const timeoutId = setTimeout(() => {
+				if (resolved) return;
+				resolved = true;
+				ipcMain.removeListener(responseChannel, handleResponse);
+				logger.warn(`${timeoutLabel} timed out`, 'WebServer');
+				resolve(false);
+			}, 5000);
+		});
 	}
 
 	/**
@@ -742,6 +794,13 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return customCommands;
 		});
 
+		server.setGetConductorSnapshotCallback(() => ({
+			groups: groupsStore.get<Group[]>('groups', []),
+			conductors: conductorsStore.get('conductors', []),
+			tasks: conductorsStore.get('tasks', []),
+			runs: conductorsStore.get('runs', []),
+		}));
+
 		// Set up callback for web server to fetch history entries
 		// Uses HistoryManager for per-session storage
 		server.setGetHistoryCallback((projectPath?: string, sessionId?: string) => {
@@ -763,6 +822,21 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			// Return all entries (for global view)
 			return historyManager.getAllEntries();
 		});
+
+		server.setCreateConductorTaskCallback(async (input) =>
+			requestRendererBooleanResponse('remote:createConductorTask', 'createConductorTask', [input])
+		);
+
+		server.setUpdateConductorTaskCallback(async (taskId, updates) =>
+			requestRendererBooleanResponse('remote:updateConductorTask', 'updateConductorTask', [
+				taskId,
+				updates,
+			])
+		);
+
+		server.setDeleteConductorTaskCallback(async (taskId) =>
+			requestRendererBooleanResponse('remote:deleteConductorTask', 'deleteConductorTask', [taskId])
+		);
 
 		// Set up callback for web server to write commands to sessions
 		// Note: Process IDs have -ai or -terminal suffix based on session's inputMode

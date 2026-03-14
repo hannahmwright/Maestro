@@ -288,6 +288,7 @@ const mockMaestro = {
 		refresh: vi.fn().mockResolvedValue({ agents: [], debugInfo: null }),
 		// Model discovery for agents that support model selection
 		getModels: vi.fn().mockResolvedValue([]),
+		getProviderUsage: vi.fn().mockResolvedValue(null),
 		// Capabilities for gating UI features based on agent type
 		getCapabilities: vi.fn().mockResolvedValue({
 			supportsResume: true,
