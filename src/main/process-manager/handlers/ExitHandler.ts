@@ -2,9 +2,11 @@
 
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
+import { getDemoArtifactService } from '../../artifacts';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
 import { cleanupTempFiles } from '../utils/imageUtils';
+import { extractStructuredDemoEventOutput } from '../utils/demoEventOutput';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -32,7 +34,7 @@ export class ExitHandler {
 	/**
 	 * Handle process exit event
 	 */
-	handleExit(sessionId: string, code: number): void {
+	async handleExit(sessionId: string, code: number): Promise<void> {
 		const managedProcess = this.processes.get(sessionId);
 		if (!managedProcess) {
 			this.emitter.emit('exit', sessionId, code);
@@ -85,6 +87,11 @@ export class ExitHandler {
 				remainingLinePreview: remainingLine.substring(0, 200),
 			});
 			try {
+				const rawMessage = JSON.parse(remainingLine);
+				const demoEventOutput = extractStructuredDemoEventOutput(toolType, rawMessage);
+				if (demoEventOutput) {
+					this.emitter.emit('data', sessionId, `${demoEventOutput}\n`);
+				}
 				const event = outputParser.parseJsonLine(remainingLine);
 				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 					const resultText = event.text || managedProcess.streamedText || '';
@@ -124,6 +131,10 @@ export class ExitHandler {
 			} else {
 				this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
 			}
+		}
+
+		if (managedProcess.demoCapturePending) {
+			await managedProcess.demoCapturePending;
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -210,92 +221,48 @@ export class ExitHandler {
 			}
 		}
 
-		if (
-			!managedProcess.errorEmitted &&
-			code === 0 &&
-			managedProcess.demoCaptureEnabled &&
-			managedProcess.demoCaptureFailed
-		) {
-			managedProcess.errorEmitted = true;
-			const agentError: AgentError = {
-				type: 'unknown',
-				message: 'Demo capture failed for this run.',
-				recoverable: false,
-				agentId: toolType,
-				sessionId,
-				timestamp: Date.now(),
-				raw: {
-					exitCode: code,
-					stderr: managedProcess.stderrBuffer || '',
-					stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
-				},
-			};
-			logger.warn('[ProcessManager] Demo capture emitted a failure event', 'ProcessManager', {
-				sessionId,
-				toolType,
-			});
-			this.emitter.emit('agent-error', sessionId, agentError);
-		}
+		if (!managedProcess.errorEmitted && code === 0 && managedProcess.demoCaptureEnabled) {
+			const outcome = managedProcess.demoCaptureContext
+				? getDemoArtifactService().getTurnRequirementOutcome({
+						sessionId: managedProcess.demoCaptureContext.sessionId,
+						tabId: managedProcess.demoCaptureContext.tabId,
+						turnId: managedProcess.demoCaptureContext.turnId,
+						captureRunId: managedProcess.demoCaptureContext.captureRunId,
+					})
+				: {
+						satisfied: !managedProcess.demoCaptureFailed && managedProcess.demoCaptureArtifactSeen,
+						message:
+							managedProcess.demoCaptureFailed
+								? 'Demo capture failed for this run.'
+								: !managedProcess.demoCaptureFinalized
+									? 'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.'
+									: 'Demo capture was requested for this run, but no screenshot or video artifacts were produced.',
+					};
 
-		if (
-			!managedProcess.errorEmitted &&
-			code === 0 &&
-			managedProcess.demoCaptureEnabled &&
-			!managedProcess.demoCaptureFinalized
-		) {
-			managedProcess.errorEmitted = true;
-			const agentError: AgentError = {
-				type: 'unknown',
-				message:
-					'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.',
-				recoverable: false,
-				agentId: toolType,
-				sessionId,
-				timestamp: Date.now(),
-				raw: {
-					exitCode: code,
-					stderr: managedProcess.stderrBuffer || '',
-					stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
-				},
-			};
-			logger.warn('[ProcessManager] Demo capture requested but no final demo event was emitted', 'ProcessManager', {
-				sessionId,
-				toolType,
-			});
-			this.emitter.emit('agent-error', sessionId, agentError);
-		}
-
-		if (
-			!managedProcess.errorEmitted &&
-			code === 0 &&
-			managedProcess.demoCaptureEnabled &&
-			managedProcess.demoCaptureFinalized &&
-			!managedProcess.demoCaptureArtifactSeen
-		) {
-			managedProcess.errorEmitted = true;
-			const agentError: AgentError = {
-				type: 'unknown',
-				message:
-					'Demo capture was requested for this run, but no screenshot or video artifacts were produced.',
-				recoverable: false,
-				agentId: toolType,
-				sessionId,
-				timestamp: Date.now(),
-				raw: {
-					exitCode: code,
-					stderr: managedProcess.stderrBuffer || '',
-					stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
-				},
-			};
-			logger.warn(
-				'[ProcessManager] Demo capture finalized without any screenshot or video artifacts',
-				'ProcessManager',
-				{
+			if (!outcome.satisfied) {
+				managedProcess.errorEmitted = true;
+				const agentError: AgentError = {
+					type: 'unknown',
+					message: outcome.message || 'Demo capture failed for this run.',
+					recoverable: false,
+					agentId: toolType,
+					sessionId,
+					timestamp: Date.now(),
+					raw: {
+						exitCode: code,
+						stderr: managedProcess.stderrBuffer || '',
+						stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
+					},
+				};
+				logger.warn('[ProcessManager] Demo capture requirement was not satisfied', 'ProcessManager', {
 					sessionId,
 					toolType,
-				}
-			);
-			this.emitter.emit('agent-error', sessionId, agentError);
+					captureRunId: managedProcess.demoCaptureContext?.captureRunId,
+					turnId: managedProcess.demoCaptureContext?.turnId,
+					message: outcome.message,
+				});
+				this.emitter.emit('agent-error', sessionId, agentError);
+			}
 		}
 
 		// Clean up temp image files if any

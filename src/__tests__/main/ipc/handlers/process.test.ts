@@ -25,6 +25,11 @@ vi.mock('electron', () => ({
 		handle: vi.fn(),
 		removeHandler: vi.fn(),
 	},
+	app: {
+		getPath: vi.fn(() => '/tmp/maestro-process-tests'),
+		getAppPath: vi.fn(() => '/tmp/maestro-process-tests/app'),
+		isPackaged: false,
+	},
 }));
 
 // Mock the logger
@@ -35,6 +40,44 @@ vi.mock('../../../../main/utils/logger', () => ({
 		error: vi.fn(),
 		debug: vi.fn(),
 	},
+}));
+
+vi.mock('../../../../main/artifacts', () => ({
+	getDemoArtifactService: () => ({
+		prepareDemoTurn: vi.fn(async (input: any) => ({
+			sessionId: input.sessionId,
+			tabId: input.tabId || null,
+			captureRunId: 'capture-run-test',
+			externalRunId: 'external-run-test',
+			turnId: 'turn-test',
+			turnToken: 'turn-token-test',
+			provider: input.provider || null,
+			model: input.model || null,
+			requestedTarget: input.requestedTarget || null,
+			contextFilePath: input.contextFilePath,
+			stateFilePath: input.stateFilePath,
+			outputDir: input.outputDir,
+		})),
+	}),
+}));
+
+vi.mock('../../../../main/artifacts/maestroDemoRuntime', () => ({
+	ensureMaestroDemoCommand: vi.fn(async () => ({
+		binDir: '/tmp/maestro-demo-bin',
+		commandName: 'maestro-demo',
+		contextDir: '/tmp/maestro-demo-contexts',
+		stateDir: '/tmp/maestro-demo-states',
+		contextFilePath: '',
+	})),
+	buildDemoContextFilePath: vi.fn(() => ({
+		contextFilePath: '/tmp/maestro-demo-contexts/context.json',
+		stateFilePath: '/tmp/maestro-demo-states/state.json',
+	})),
+	extractRequestedTarget: vi.fn(() => null),
+	prependPathEntry: vi.fn((existingPath: string, entry: string) =>
+		existingPath ? `${entry}:${existingPath}` : entry
+	),
+	writeDemoTurnContextFile: vi.fn(async () => undefined),
 }));
 
 // Mock the agent-args utilities

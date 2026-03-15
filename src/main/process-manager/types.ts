@@ -16,6 +16,7 @@ import type {
 	TaskLifecycleEvent,
 	TaskDiagnosticsSummary,
 } from '../core-upgrades/types';
+import type { DemoTurnContextRecord } from '../artifacts/types';
 
 /**
  * Configuration for spawning a new process
@@ -60,6 +61,7 @@ export interface ProcessConfig {
 	resolvedModel?: string;
 	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 	demoCapture?: DemoCaptureRequest;
+	demoCaptureContext?: DemoTurnContextRecord;
 	conversationRuntime?: ConversationRuntimeKind;
 }
 
@@ -69,17 +71,15 @@ export interface CodexAppServerState {
 	nextClientRequestId: number;
 	threadId?: string;
 	turnId?: string;
-	currentTurnStartedAt?: number;
-	lastActivityAt?: number;
 	pendingUserInputRequest?: UserInputRequest;
 	pendingUserInputResponse?: UserInputResponse;
 	agentMessagePhases: Map<string, string>;
+	toolItemNames: Map<string, string>;
 	currentTurnHadUserInputRequest?: boolean;
 	currentTurnCorrectionCount?: number;
 	pendingCorrectionPrompt?: string;
 	suppressedFinalAnswerText?: string;
 	startupTimeout?: NodeJS.Timeout;
-	turnActivityTimeout?: NodeJS.Timeout;
 	turnCompleted?: boolean;
 	pendingRequests?: Map<string, { type: 'steer' | 'interrupt' }>;
 }
@@ -154,6 +154,8 @@ export interface ManagedProcess {
 	demoCaptureFinalized?: boolean;
 	demoCaptureArtifactSeen?: boolean;
 	demoCaptureFailed?: boolean;
+	demoCaptureContext?: DemoTurnContextRecord;
+	demoCapturePending?: Promise<void>;
 }
 
 export interface UsageTotals {

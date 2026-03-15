@@ -7,6 +7,7 @@ let artifactRow: any = null;
 let demoRows: any[] = [];
 let deleteRuns: any[] = [];
 let insertRuns: any[] = [];
+let tableInfoRows: Record<string, Array<{ name: string }>> = {};
 const mockExec = vi.fn();
 const mockPragma = vi.fn();
 const mockClose = vi.fn();
@@ -21,6 +22,14 @@ const mockStatement = {
 };
 
 const mockPrepare = vi.fn((sql: string) => {
+	const tableInfoMatch = sql.match(/^PRAGMA table_info\(([^)]+)\)$/);
+	if (tableInfoMatch) {
+		const tableName = tableInfoMatch[1];
+		return {
+			all: vi.fn(() => tableInfoRows[tableName] || []),
+		};
+	}
+
 	if (sql.includes('DELETE FROM demo_steps')) {
 		return {
 			run: vi.fn((...args: unknown[]) => {
@@ -97,6 +106,7 @@ describe('ArtifactsDB', () => {
 		demoRows = [];
 		deleteRuns = [];
 		insertRuns = [];
+		tableInfoRows = {};
 		mockExistsSync.mockReturnValue(true);
 	});
 
@@ -122,6 +132,39 @@ describe('ArtifactsDB', () => {
 		);
 		expect(mockExec).toHaveBeenCalledWith(
 			expect.stringContaining('CREATE TABLE IF NOT EXISTS demo_steps')
+		);
+	});
+
+	it('adds turn columns before creating turn-based indexes for legacy databases', async () => {
+		tableInfoRows.capture_runs = [
+			{ name: 'id' },
+			{ name: 'session_id' },
+			{ name: 'tab_id' },
+			{ name: 'external_run_id' },
+			{ name: 'status' },
+			{ name: 'title' },
+			{ name: 'summary' },
+			{ name: 'created_at' },
+			{ name: 'updated_at' },
+		];
+
+		const { ArtifactsDB } = await import('../../../main/artifacts/ArtifactsDB');
+		const db = new ArtifactsDB();
+		db.initialize();
+
+		expect(mockExec.mock.calls[0]?.[0]).toContain('CREATE TABLE IF NOT EXISTS capture_runs');
+		expect(mockExec.mock.calls[0]?.[0]).not.toContain('idx_capture_runs_turn');
+		expect(mockExec).toHaveBeenCalledWith(
+			'ALTER TABLE capture_runs ADD COLUMN turn_id TEXT'
+		);
+		expect(mockExec).toHaveBeenCalledWith(
+			'ALTER TABLE capture_runs ADD COLUMN turn_token TEXT'
+		);
+		expect(mockExec).toHaveBeenCalledWith(
+			expect.stringContaining('CREATE UNIQUE INDEX IF NOT EXISTS idx_capture_runs_turn')
+		);
+		expect(mockExec).toHaveBeenCalledWith(
+			expect.stringContaining('CREATE UNIQUE INDEX IF NOT EXISTS idx_capture_runs_turn_token')
 		);
 	});
 

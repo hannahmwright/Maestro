@@ -14,6 +14,7 @@ describe('Error Listener', () => {
 	let mockProcessManager: ProcessManager;
 	let mockSafeSend: SafeSendFn;
 	let mockLogger: ProcessListenerDependencies['logger'];
+	let mockGetWebServer: ProcessListenerDependencies['getWebServer'];
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
 
 	beforeEach(() => {
@@ -21,6 +22,7 @@ describe('Error Listener', () => {
 		eventHandlers = new Map();
 
 		mockSafeSend = vi.fn();
+		mockGetWebServer = vi.fn(() => null);
 		mockLogger = {
 			info: vi.fn(),
 			error: vi.fn(),
@@ -36,13 +38,21 @@ describe('Error Listener', () => {
 	});
 
 	it('should register the agent-error event listener', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			safeSend: mockSafeSend,
+			logger: mockLogger,
+			getWebServer: mockGetWebServer,
+		});
 
 		expect(mockProcessManager.on).toHaveBeenCalledWith('agent-error', expect.any(Function));
 	});
 
 	it('should log agent error and forward to renderer', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			safeSend: mockSafeSend,
+			logger: mockLogger,
+			getWebServer: mockGetWebServer,
+		});
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'test-session-123';
@@ -72,7 +82,11 @@ describe('Error Listener', () => {
 	});
 
 	it('should handle token exhaustion errors', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			safeSend: mockSafeSend,
+			logger: mockLogger,
+			getWebServer: mockGetWebServer,
+		});
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'session-456';
@@ -90,7 +104,11 @@ describe('Error Listener', () => {
 	});
 
 	it('should handle rate limit errors', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			safeSend: mockSafeSend,
+			logger: mockLogger,
+			getWebServer: mockGetWebServer,
+		});
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'session-789';
@@ -114,5 +132,79 @@ describe('Error Listener', () => {
 		);
 
 		expect(mockSafeSend).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
+	});
+
+	it('broadcasts agent errors to web clients as session logs and error state', () => {
+		const mockWebServer = {
+			broadcastSessionLogEntry: vi.fn(),
+			broadcastSessionStateChange: vi.fn(),
+		};
+		mockGetWebServer = vi.fn(() => mockWebServer as any);
+
+		setupErrorListener(mockProcessManager, {
+			safeSend: mockSafeSend,
+			logger: mockLogger,
+			getWebServer: mockGetWebServer,
+		});
+
+		const handler = eventHandlers.get('agent-error');
+		const timestamp = Date.now();
+		const testAgentError: AgentError = {
+			type: 'unknown',
+			agentId: 'codex',
+			message: 'Demo capture was requested, but no artifacts were produced.',
+			recoverable: false,
+			timestamp,
+		};
+
+		handler?.('session-1-ai-tab-9', testAgentError);
+
+		expect(mockWebServer.broadcastSessionLogEntry).toHaveBeenCalledWith(
+			'session-1',
+			'tab-9',
+			'ai',
+			expect.objectContaining({
+				id: `agent-error-${timestamp}-unknown`,
+				source: 'error',
+				text: testAgentError.message,
+			})
+		);
+		expect(mockWebServer.broadcastSessionStateChange).toHaveBeenCalledWith('session-1', 'error');
+	});
+
+	it('does not force error state for session_not_found events on the web', () => {
+		const mockWebServer = {
+			broadcastSessionLogEntry: vi.fn(),
+			broadcastSessionStateChange: vi.fn(),
+		};
+		mockGetWebServer = vi.fn(() => mockWebServer as any);
+
+		setupErrorListener(mockProcessManager, {
+			safeSend: mockSafeSend,
+			logger: mockLogger,
+			getWebServer: mockGetWebServer,
+		});
+
+		const handler = eventHandlers.get('agent-error');
+		const testAgentError: AgentError = {
+			type: 'session_not_found',
+			agentId: 'claude-code',
+			message: 'Session was not found',
+			recoverable: true,
+			timestamp: Date.now(),
+		};
+
+		handler?.('session-2-ai-tab-1', testAgentError);
+
+		expect(mockWebServer.broadcastSessionLogEntry).toHaveBeenCalledWith(
+			'session-2',
+			'tab-1',
+			'ai',
+			expect.objectContaining({
+				source: 'system',
+				text: testAgentError.message,
+			})
+		);
+		expect(mockWebServer.broadcastSessionStateChange).not.toHaveBeenCalled();
 	});
 });

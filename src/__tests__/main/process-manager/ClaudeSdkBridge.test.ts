@@ -233,4 +233,76 @@ describe('ClaudeSdkBridge', () => {
 			action: 'cancel',
 		});
 	});
+
+	it('refreshes demo capture state when a new live turn starts', () => {
+		const managedProcess = createManagedProcess({
+			demoCaptureEnabled: false,
+			demoCaptureFinalized: true,
+			demoCaptureArtifactSeen: true,
+			demoCaptureFailed: true,
+			claudeSdkState: {
+				sdkSessionId: 'claude-session-1',
+				activeTurnId: undefined,
+				nextTurnSequence: 2,
+				inputQueue: {
+					push: vi.fn(() => true),
+				},
+			} as any,
+		});
+		processes.set(managedProcess.sessionId, managedProcess);
+
+		const result = bridge.sendTurn({
+			sessionId: managedProcess.sessionId,
+			toolType: 'claude-code',
+			cwd: '/tmp',
+			command: 'claude',
+			args: [],
+			prompt: 'Capture the board flow',
+			conversationRuntime: 'live',
+			demoCapture: { enabled: true },
+		} as any);
+
+		expect(result.success).toBe(true);
+		expect(managedProcess.demoCaptureEnabled).toBe(true);
+		expect(managedProcess.demoCaptureFinalized).toBe(false);
+		expect(managedProcess.demoCaptureArtifactSeen).toBe(false);
+		expect(managedProcess.demoCaptureFailed).toBe(false);
+		expect(managedProcess.claudeSdkState?.activeTurnId).toBe('claude-turn-2');
+	});
+
+	it('forwards demo sentinel lines from Claude tool results into the data pipeline', () => {
+		const managedProcess = createManagedProcess();
+		const dataSpy = vi.fn();
+		emitter.on('data', dataSpy);
+
+		(bridge as any).handleUserMessage(managedProcess, {
+			type: 'user',
+			message: {
+				content: [
+					{
+						type: 'tool_result',
+						tool_use_id: 'tool-1',
+						content:
+							'### Result\nok\n__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1"}',
+					},
+				],
+			},
+			parent_tool_use_id: null,
+			tool_use_result: {
+				stdout:
+					'noise\n__MAESTRO_DEMO_EVENT__ {"type":"step_created","runId":"run-1","title":"Shot"}',
+			},
+			session_id: 'claude-session-1',
+			uuid: 'user-1',
+		});
+
+		expect(dataSpy).toHaveBeenCalledWith(
+			managedProcess.sessionId,
+			[
+				'__MAESTRO_DEMO_EVENT__ {"type":"step_created","runId":"run-1","title":"Shot"}',
+				'__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1"}',
+				'',
+			].join('\n')
+		);
+	});
 });

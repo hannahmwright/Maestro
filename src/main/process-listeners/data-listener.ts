@@ -96,6 +96,12 @@ export function setupDataListener(
 		}
 
 		const managedProcess = getProcessManager()?.get(sessionId);
+		const artifactSessionId = managedProcess?.demoCaptureContext
+			? managedProcess.demoCaptureContext.sessionId
+			: sessionId;
+		const artifactTabId = managedProcess?.demoCaptureContext
+			? managedProcess.demoCaptureContext.tabId
+			: managedProcess?.tabId ?? null;
 		if (managedProcess) {
 			if (event.type === 'artifact_created' || event.type === 'step_created') {
 				managedProcess.demoCaptureArtifactSeen = true;
@@ -108,25 +114,35 @@ export function setupDataListener(
 			}
 		}
 
-		void getDemoArtifactService()
-			.handleCaptureEvent({
+		const runCaptureTask = async () => {
+			const demoCard = await getDemoArtifactService().handleCaptureEvent({
 				context: {
-					sessionId: context.baseSessionId,
-					tabId: context.tabId,
+					sessionId: artifactSessionId,
+					tabId: artifactTabId,
 					sshRemoteId: managedProcess?.sshRemoteId ?? null,
 					sshRemoteHost: managedProcess?.sshRemoteHost ?? null,
 				},
 				event,
-			})
-			.then((demoCard) => {
-				if (!demoCard) {
-					return;
-				}
-				safeSend('process:demo-generated', context.baseSessionId, context.tabId, demoCard);
-			})
-			.catch((error) => {
+			});
+			if (!demoCard) {
+				return;
+			}
+			safeSend('process:demo-generated', context.baseSessionId, context.tabId, demoCard);
+		};
+
+		if (managedProcess) {
+			const previousTask = managedProcess.demoCapturePending || Promise.resolve();
+			managedProcess.demoCapturePending = previousTask
+				.catch(() => undefined)
+				.then(runCaptureTask)
+				.catch((error) => {
+					debugLog('DemoCapture', `Failed to handle demo event for ${sessionId}: ${String(error)}`);
+				});
+		} else {
+			void runCaptureTask().catch((error) => {
 				debugLog('DemoCapture', `Failed to handle demo event for ${sessionId}: ${String(error)}`);
 			});
+		}
 
 		return true;
 	};

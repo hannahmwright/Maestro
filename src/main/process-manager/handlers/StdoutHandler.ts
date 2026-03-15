@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
+import { extractStructuredDemoEventOutput } from '../utils/demoEventOutput';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -203,6 +204,10 @@ export class StdoutHandler {
 		// Parse JSON line
 		try {
 			const msg = JSON.parse(line);
+			const demoEventOutput = extractStructuredDemoEventOutput(toolType, msg);
+			if (demoEventOutput) {
+				this.emitter.emit('data', sessionId, `${demoEventOutput}\n`);
+			}
 
 			if (outputParser) {
 				this.handleParsedEvent(sessionId, managedProcess, line, outputParser);

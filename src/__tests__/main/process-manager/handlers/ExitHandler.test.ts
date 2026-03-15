@@ -40,6 +40,14 @@ vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	cleanupTempFiles: vi.fn(),
 }));
 
+const mockGetTurnRequirementOutcome = vi.fn(() => ({ satisfied: true }));
+
+vi.mock('../../../../main/artifacts', () => ({
+	getDemoArtifactService: () => ({
+		getTurnRequirementOutcome: mockGetTurnRequirementOutcome,
+	}),
+}));
+
 // ── Imports (after mocks) ──────────────────────────────────────────────────
 
 import { ExitHandler } from '../../../../main/process-manager/handlers/ExitHandler';
@@ -103,6 +111,8 @@ describe('ExitHandler', () => {
 	let exitHandler: ExitHandler;
 
 	beforeEach(() => {
+		mockGetTurnRequirementOutcome.mockReset();
+		mockGetTurnRequirementOutcome.mockReturnValue({ satisfied: true });
 		processes = new Map();
 		emitter = new EventEmitter();
 		bufferManager = new DataBufferManager(processes, emitter);
@@ -232,6 +242,46 @@ describe('ExitHandler', () => {
 			exitHandler.handleExit('test-session', 0);
 
 			expect(dataEvents).toContain('Accumulated streaming text');
+		});
+
+		it('waits for pending demo capture ingestion before checking required demo outcome', async () => {
+			let resolvePending: (() => void) | null = null;
+			const pending = new Promise<void>((resolve) => {
+				resolvePending = resolve;
+			});
+
+			const proc = createMockProcess({
+				demoCaptureEnabled: true,
+				demoCaptureContext: {
+					sessionId: 'test-session',
+					tabId: null,
+					captureRunId: 'capture-1',
+					externalRunId: 'run-1',
+					turnId: 'turn-1',
+					turnToken: 'token-1',
+					provider: 'claude-code',
+					model: 'claude-opus-4-6',
+					requestedTarget: { url: 'https://example.com', domain: 'example.com' },
+					contextFilePath: '/tmp/context.json',
+					stateFilePath: '/tmp/state.json',
+					outputDir: 'output/playwright',
+				},
+				demoCapturePending: pending,
+			});
+			processes.set('test-session', proc);
+
+			const exitPromise = exitHandler.handleExit('test-session', 0);
+			expect(mockGetTurnRequirementOutcome).not.toHaveBeenCalled();
+
+			resolvePending?.();
+			await exitPromise;
+
+			expect(mockGetTurnRequirementOutcome).toHaveBeenCalledWith({
+				sessionId: 'test-session',
+				tabId: null,
+				turnId: 'turn-1',
+				captureRunId: 'capture-1',
+			});
 		});
 	});
 

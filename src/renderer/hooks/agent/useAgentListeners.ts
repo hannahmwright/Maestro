@@ -18,6 +18,7 @@
 import { useEffect, useRef } from 'react';
 import type {
 	ToolType,
+	Session,
 	SessionState,
 	LogEntry,
 	QueuedItem,
@@ -755,12 +756,115 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				});
 		};
 
-		const appendDemoCardLog = (sessionId: string, tabId: string | null, demoCard: DemoCard) => {
-			const logEntry: LogEntry = {
+		const broadcastSessionState = (session: Session) => {
+			if (!window.maestro.web.broadcastSessionState) {
+				return;
+			}
+
+			void window.maestro.web
+				.broadcastSessionState(session.id, 'error', {
+					name: session.name,
+					toolType: session.toolType,
+					inputMode: session.inputMode,
+					cwd: session.cwd,
+					contextUsage: session.contextUsage,
+					effectiveContextWindow:
+						typeof session.customContextWindow === 'number' && session.customContextWindow > 0
+							? session.customContextWindow
+							: null,
+				})
+				.catch((error) => {
+					console.error('[Web] Failed to broadcast session state', error);
+				});
+		};
+
+		const markDemoCaptureFailure = (
+			actualSessionId: string,
+			targetTabId: string,
+			turnStartedAt: number,
+			message: string
+		) => {
+			const session = getSessions().find((candidate) => candidate.id === actualSessionId);
+			if (!session) {
+				return;
+			}
+
+			const targetTab = session.aiTabs.find((candidate) => candidate.id === targetTabId);
+			if (!targetTab) {
+				return;
+			}
+
+			const existingFailureLog = targetTab.logs.some(
+				(log) =>
+					log.timestamp >= turnStartedAt &&
+					((log.source === 'error' && log.text === message) ||
+						log.metadata?.demoCard?.status === 'failed')
+			);
+			const agentError: AgentError = {
+				type: 'unknown',
+				message,
+				recoverable: false,
+				agentId: session.toolType,
+				sessionId: actualSessionId,
+				timestamp: Date.now(),
+			};
+			const errorLogEntry: LogEntry = {
 				id: generateId(),
+				timestamp: agentError.timestamp,
+				source: 'error',
+				text: message,
+				agentError,
+			};
+
+			setSessions((prev) =>
+				prev.map((candidate) => {
+					if (candidate.id !== actualSessionId) return candidate;
+
+					return {
+						...candidate,
+						agentError,
+						agentErrorTabId: targetTabId,
+						agentErrorPaused: true,
+						state: 'error' as SessionState,
+						aiTabs: candidate.aiTabs.map((tab) =>
+							tab.id === targetTabId
+								? {
+										...tab,
+										logs: existingFailureLog
+											? tab.logs
+											: preserveTrailingReasoningAndAppend(tab.logs, 'failed', errorLogEntry),
+										agentError,
+									}
+								: tab
+						),
+					};
+				})
+			);
+
+			if (!existingFailureLog) {
+				broadcastSessionLogEntry(actualSessionId, targetTabId, 'ai', errorLogEntry);
+			}
+			broadcastSessionState(session);
+			notifyToast({
+				type: 'error',
+				title: 'Demo capture failed',
+				message,
+				sessionId: actualSessionId,
+			});
+		};
+
+		const appendDemoCardLog = (sessionId: string, tabId: string | null, demoCard: DemoCard) => {
+			const logEntryId = `demo-card-${demoCard.demoId}`;
+			const logEntry: LogEntry = {
+				id: logEntryId,
 				timestamp: demoCard.updatedAt || Date.now(),
 				source: 'system',
-				text: demoCard.status === 'failed' ? 'Demo capture failed' : 'Demo ready',
+				text:
+					demoCard.status === 'completed'
+						? 'Demo ready'
+						: demoCard.status === 'failed' || demoCard.status === 'blocked'
+							? 'Demo capture failed'
+							: 'Demo capture update',
 				metadata: {
 					demoCard,
 				},
@@ -779,7 +883,12 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							tab.id === targetTabId
 								? {
 										...tab,
-										logs: [...tab.logs, logEntry],
+										logs: [
+											...tab.logs.filter(
+												(log) => log.metadata?.demoCard?.demoId !== demoCard.demoId
+											),
+											logEntry,
+										],
 										...(isCompletedDemoCapture(demoCard) ? { demoCaptureRequested: false } : {}),
 									}
 								: tab
@@ -789,6 +898,22 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			);
 
 			broadcastSessionLogEntry(sessionId, tabId, 'ai', logEntry);
+
+			if (
+				(demoCard.status === 'failed' || demoCard.status === 'blocked') &&
+				tabId
+			) {
+				const message =
+					demoCard.summary ||
+					(demoCard.failureReason === 'wrong_target'
+						? 'Demo capture completed against the wrong target.'
+						: demoCard.failureReason === 'simulated_capture'
+							? 'Demo capture used a simulated or local reproduction instead of the requested app.'
+							: demoCard.failureReason === 'auth_blocked'
+								? 'Demo capture never reached the authenticated target content.'
+								: 'Demo capture failed for this turn.');
+				markDemoCaptureFailure(sessionId, tabId, demoCard.updatedAt || Date.now(), message);
+			}
 		};
 
 		const extractHarvestTextFromLog = (logEntry: LogEntry): string => {

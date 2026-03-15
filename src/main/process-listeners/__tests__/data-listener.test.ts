@@ -344,6 +344,11 @@ describe('Data Listener', () => {
 		it('should strip demo event lines from forwarded output and emit a generated demo card', async () => {
 			mockGetProcessManager = vi.fn().mockReturnValue({
 				get: vi.fn().mockReturnValue({
+					tabId: 'renderer-tab-1',
+					demoCaptureContext: {
+						sessionId: 'session-123-ai-tab-456',
+						tabId: null,
+					},
 					sshRemoteId: 'remote-1',
 					sshRemoteHost: 'dev.example.com',
 				}),
@@ -369,12 +374,12 @@ describe('Data Listener', () => {
 				'session-123-ai-tab-456',
 				`before\n__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1","title":"Checkout demo"}\nafter\n`
 			);
-			await Promise.resolve();
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			expect(mockHandleCaptureEvent).toHaveBeenCalledWith({
 				context: {
-					sessionId: 'session-123',
-					tabId: 'tab-456',
+					sessionId: 'session-123-ai-tab-456',
+					tabId: null,
 					sshRemoteId: 'remote-1',
 					sshRemoteHost: 'dev.example.com',
 				},
@@ -412,12 +417,12 @@ describe('Data Listener', () => {
 				'visible line\n__MAESTRO_DEMO_EVENT__ {"type":"capture_started"'
 			);
 			handler?.('session-999-ai-tab-abc', ',"runId":"run-9","title":"Demo"}\nfinal line');
-			await Promise.resolve();
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			expect(mockHandleCaptureEvent).toHaveBeenCalledWith({
 				context: {
-					sessionId: 'session-999',
-					tabId: 'tab-abc',
+					sessionId: 'session-999-ai-tab-abc',
+					tabId: null,
 					sshRemoteId: null,
 					sshRemoteHost: null,
 				},
@@ -469,12 +474,12 @@ describe('Data Listener', () => {
 				'visible line\n__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-5","title":"Final demo"}'
 			);
 			exitHandler?.('session-555-ai-tab-final', 0);
-			await Promise.resolve();
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
 			expect(mockHandleCaptureEvent).toHaveBeenCalledWith({
 				context: {
-					sessionId: 'session-555',
-					tabId: 'tab-final',
+					sessionId: 'session-555-ai-tab-final',
+					tabId: null,
 					sshRemoteId: null,
 					sshRemoteHost: null,
 				},

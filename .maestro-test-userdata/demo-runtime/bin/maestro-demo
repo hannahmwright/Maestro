@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node "/Users/hannahwright/Documents/Code/Maestro/dist/main/artifacts/maestro-demo.js" "$@"

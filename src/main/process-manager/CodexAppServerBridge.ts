@@ -2,7 +2,10 @@ import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import { WebSocket } from 'ws';
 import { logger } from '../utils/logger';
+import { getDemoArtifactService } from '../artifacts';
+import { writeDemoTurnContextFile } from '../artifacts/maestroDemoRuntime';
 import { buildChildProcessEnv } from './utils/envBuilder';
+import { extractDemoEventOutput } from '../../shared/demo-artifacts';
 import type { CodexAppServerState, ManagedProcess, ProcessConfig, SpawnResult } from './types';
 import type {
 	UserInputRequest,
@@ -15,7 +18,6 @@ import type { ConversationEvent, ConversationInputItem } from '../../shared/conv
 const LOG_CONTEXT = 'CodexAppServerBridge';
 const LISTENING_URL_RE = /listening on:\s*(ws:\/\/[^\s]+)/i;
 const STARTUP_TIMEOUT_MS = 15000;
-const LIVE_TURN_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000;
 const MAX_CHAT_QUESTION_CORRECTIONS = 2;
 const PLAN_MODE_DEVELOPER_INSTRUCTIONS =
 	'If you need user input before proceeding, use the request_user_input tool with concise multiple-choice questions instead of asking plain-text blocking questions in the response.';
@@ -44,6 +46,18 @@ type TokenUsageMessage = {
 	};
 };
 
+type ThreadTokenUsageMessage = {
+	tokenUsage?: {
+		last?: {
+			inputTokens?: number;
+			outputTokens?: number;
+			cachedInputTokens?: number;
+			reasoningOutputTokens?: number;
+		};
+		modelContextWindow?: number;
+	};
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
 	if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
 	return value as Record<string, unknown>;
@@ -51,6 +65,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+	return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function asRequestId(value: unknown): UserInputRequestId | undefined {
@@ -149,6 +167,7 @@ export class CodexAppServerBridge {
 		const codexAppServerState: CodexAppServerState = {
 			nextClientRequestId: 1,
 			agentMessagePhases: new Map(),
+			toolItemNames: new Map(),
 			currentTurnCorrectionCount: 0,
 			pendingRequests: new Map(),
 		};
@@ -174,6 +193,7 @@ export class CodexAppServerBridge {
 			demoCaptureFinalized: false,
 			demoCaptureArtifactSeen: false,
 			demoCaptureFailed: false,
+			demoCaptureContext: config.demoCaptureContext,
 		};
 
 		this.processes.set(config.sessionId, managedProcess);
@@ -203,9 +223,6 @@ export class CodexAppServerBridge {
 		childProcess.on('exit', (code) => {
 			if (codexAppServerState.startupTimeout) {
 				clearTimeout(codexAppServerState.startupTimeout);
-			}
-			if (codexAppServerState.turnActivityTimeout) {
-				clearTimeout(codexAppServerState.turnActivityTimeout);
 			}
 			codexAppServerState.ws?.removeAllListeners();
 			codexAppServerState.ws?.close();
@@ -368,7 +385,6 @@ export class CodexAppServerBridge {
 		});
 
 		ws.on('message', (data) => {
-			this.recordTurnActivity(managedProcess, 'message');
 			this.handleWebSocketMessage(managedProcess, config, data.toString());
 		});
 
@@ -382,10 +398,6 @@ export class CodexAppServerBridge {
 				turnId: state.turnId,
 				threadId: state.threadId,
 			});
-			if (state.turnActivityTimeout) {
-				clearTimeout(state.turnActivityTimeout);
-				state.turnActivityTimeout = undefined;
-			}
 			state.ws = undefined;
 			if (!state.turnCompleted) {
 				this.emitAgentError(
@@ -452,20 +464,7 @@ export class CodexAppServerBridge {
 
 		if (message.id === 'turn') {
 			const result = asRecord(message.result);
-			const turn = asRecord(result?.turn);
-			const turnId = asString(turn?.id);
-			if (turnId && managedProcess.codexAppServerState) {
-				managedProcess.codexAppServerState.turnId = turnId;
-				this.recordTurnActivity(managedProcess, 'turn-started');
-				this.emitConversationEvent(managedProcess, {
-					type: 'turn_started',
-					sessionId: managedProcess.sessionId,
-					runtimeKind: managedProcess.conversationRuntime || 'batch',
-					timestamp: Date.now(),
-					threadId: managedProcess.codexAppServerState.threadId || '',
-					turnId,
-				});
-			}
+			this.handleTurnStarted(managedProcess, result?.turn);
 			return;
 		}
 
@@ -475,6 +474,9 @@ export class CodexAppServerBridge {
 		}
 
 		switch (method) {
+			case 'turn/started':
+				this.handleTurnStarted(managedProcess, asRecord(message.params)?.turn);
+				return;
 			case 'item/tool/requestUserInput':
 				this.handleUserInputRequest(managedProcess, message);
 				return;
@@ -484,11 +486,31 @@ export class CodexAppServerBridge {
 			case 'item/agentMessage/delta':
 				this.handleAgentMessageDelta(managedProcess, message.params);
 				return;
+			case 'item/reasoning/textDelta':
+			case 'item/reasoning/summaryTextDelta':
+			case 'item/plan/delta':
+				this.handleThinkingDelta(managedProcess, message.params);
+				return;
+			case 'item/commandExecution/outputDelta':
+				this.handleCommandExecutionOutputDelta(managedProcess, message.params);
+				return;
+			case 'item/commandExecution/terminalInteraction':
+				this.handleCommandExecutionTerminalInteraction(managedProcess, message.params);
+				return;
+			case 'item/fileChange/outputDelta':
+				this.handleFileChangeOutputDelta(managedProcess, message.params);
+				return;
+			case 'item/mcpToolCall/progress':
+				this.handleMcpToolCallProgress(managedProcess, message.params);
+				return;
 			case 'item/completed':
 				this.handleItemCompleted(managedProcess, message.params);
 				return;
 			case 'codex/event/token_count':
 				this.handleTokenCount(managedProcess, message.params);
+				return;
+			case 'thread/tokenUsage/updated':
+				this.handleThreadTokenUsageUpdated(managedProcess, message.params);
 				return;
 			case 'turn/completed':
 				logger.info('[CodexAppServerBridge] Turn completed notification', LOG_CONTEXT, {
@@ -528,8 +550,43 @@ export class CodexAppServerBridge {
 					}
 					const completedTurnId = managedProcess.codexAppServerState.turnId || null;
 					managedProcess.codexAppServerState.turnId = undefined;
-					managedProcess.codexAppServerState.currentTurnStartedAt = undefined;
-					this.clearTurnActivityTimeout(managedProcess.codexAppServerState);
+					let completionStatus:
+						| 'interrupted'
+						| 'failed'
+						| 'completed' =
+						turnStatus === 'interrupted'
+							? 'interrupted'
+							: turnStatus === 'failed'
+								? 'failed'
+								: 'completed';
+					if (
+						completionStatus === 'completed' &&
+						managedProcess.demoCaptureEnabled === true &&
+						managedProcess.demoCaptureContext
+					) {
+						const outcome = getDemoArtifactService().getTurnRequirementOutcome({
+							sessionId: managedProcess.demoCaptureContext.sessionId,
+							tabId: managedProcess.demoCaptureContext.tabId,
+							turnId: managedProcess.demoCaptureContext.turnId,
+							captureRunId: managedProcess.demoCaptureContext.captureRunId,
+						});
+						if (!outcome.satisfied) {
+							completionStatus = 'failed';
+							this.emitAgentError(
+								managedProcess.sessionId,
+								outcome.message || 'Demo capture failed for this turn.'
+							);
+							this.emitConversationEvent(managedProcess, {
+								type: 'turn_failed',
+								sessionId: managedProcess.sessionId,
+								runtimeKind: managedProcess.conversationRuntime || 'batch',
+								timestamp: Date.now(),
+								threadId: managedProcess.codexAppServerState.threadId,
+								turnId: completedTurnId,
+								message: outcome.message || 'Demo capture failed for this turn.',
+							});
+						}
+					}
 					this.emitConversationEvent(managedProcess, {
 						type: 'turn_completed',
 						sessionId: managedProcess.sessionId,
@@ -537,12 +594,7 @@ export class CodexAppServerBridge {
 						timestamp: Date.now(),
 						threadId: managedProcess.codexAppServerState.threadId,
 						turnId: completedTurnId,
-						status:
-							turnStatus === 'interrupted'
-								? 'interrupted'
-								: turnStatus === 'failed'
-									? 'failed'
-									: 'completed',
+						status: completionStatus,
 					});
 					if (managedProcess.conversationRuntime === 'live') {
 						this.emitter.emit('query-complete', managedProcess.sessionId, {
@@ -688,6 +740,24 @@ export class CodexAppServerBridge {
 		return this.buildConversationInput(config.prompt, config.images);
 	}
 
+	private handleTurnStarted(managedProcess: ManagedProcess, rawTurn: unknown): void {
+		const turn = asRecord(rawTurn);
+		const turnId = asString(turn?.id);
+		const state = managedProcess.codexAppServerState;
+		if (!turnId || !state) return;
+		if (state.turnId === turnId) return;
+
+		state.turnId = turnId;
+		this.emitConversationEvent(managedProcess, {
+			type: 'turn_started',
+			sessionId: managedProcess.sessionId,
+			runtimeKind: managedProcess.conversationRuntime || 'batch',
+			timestamp: Date.now(),
+			threadId: state.threadId || '',
+			turnId,
+		});
+	}
+
 	private buildConversationInput(
 		text?: string,
 		images?: string[]
@@ -773,11 +843,18 @@ export class CodexAppServerBridge {
 	private handleItemStarted(managedProcess: ManagedProcess, rawParams: unknown): void {
 		const params = asRecord(rawParams);
 		const item = asRecord(params?.item);
-		if (!item || asString(item.type) !== 'agentMessage') return;
-		const itemId = asString(item.id);
-		const phase = asString(item.phase);
-		if (!itemId || !phase || !managedProcess.codexAppServerState) return;
-		managedProcess.codexAppServerState.agentMessagePhases.set(itemId, phase);
+		if (!item) return;
+		const itemType = asString(item.type);
+
+		if (itemType === 'agentMessage') {
+			const itemId = asString(item.id);
+			const phase = asString(item.phase);
+			if (!itemId || !phase || !managedProcess.codexAppServerState) return;
+			managedProcess.codexAppServerState.agentMessagePhases.set(itemId, phase);
+			return;
+		}
+
+		this.emitToolEventForItem(managedProcess, item, 'running');
 	}
 
 	private handleAgentMessageDelta(managedProcess: ManagedProcess, rawParams: unknown): void {
@@ -804,7 +881,15 @@ export class CodexAppServerBridge {
 	private handleItemCompleted(managedProcess: ManagedProcess, rawParams: unknown): void {
 		const params = asRecord(rawParams);
 		const item = asRecord(params?.item);
-		if (!item || asString(item.type) !== 'agentMessage') return;
+		if (!item) return;
+		const itemType = asString(item.type);
+
+		if (itemType && itemType !== 'agentMessage') {
+			this.emitToolEventForItem(managedProcess, item, this.getItemCompletionStatus(item));
+			return;
+		}
+
+		if (itemType !== 'agentMessage') return;
 		const phase = asString(item.phase);
 		const text = asString(item.text);
 		const itemId = asString(item.id);
@@ -852,7 +937,7 @@ export class CodexAppServerBridge {
 		const msg = asRecord(params?.msg) as TokenUsageMessage | null;
 		const usage = msg?.info?.last_token_usage;
 		if (!usage) return;
-		this.emitter.emit('usage', managedProcess.sessionId, {
+		this.emitUsage(managedProcess, {
 			inputTokens: usage.input_tokens || 0,
 			outputTokens: usage.output_tokens || 0,
 			cacheReadInputTokens: usage.cached_input_tokens || 0,
@@ -861,6 +946,298 @@ export class CodexAppServerBridge {
 			contextWindow: msg?.info?.model_context_window || managedProcess.contextWindow || 400000,
 			reasoningTokens: usage.reasoning_output_tokens || 0,
 		});
+	}
+
+	private handleThreadTokenUsageUpdated(managedProcess: ManagedProcess, rawParams: unknown): void {
+		const params = asRecord(rawParams) as ThreadTokenUsageMessage | null;
+		const usage = params?.tokenUsage?.last;
+		if (!usage) return;
+		this.emitUsage(managedProcess, {
+			inputTokens: usage.inputTokens || 0,
+			outputTokens: usage.outputTokens || 0,
+			cacheReadInputTokens: usage.cachedInputTokens || 0,
+			cacheCreationInputTokens: 0,
+			totalCostUsd: 0,
+			contextWindow:
+				params?.tokenUsage?.modelContextWindow || managedProcess.contextWindow || 400000,
+			reasoningTokens: usage.reasoningOutputTokens || 0,
+		});
+	}
+
+	private emitUsage(
+		managedProcess: ManagedProcess,
+		usage: {
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadInputTokens: number;
+			cacheCreationInputTokens: number;
+			totalCostUsd: number;
+			contextWindow: number;
+			reasoningTokens: number;
+		}
+	): void {
+		this.emitter.emit('usage', managedProcess.sessionId, {
+			...usage,
+		});
+	}
+
+	private handleThinkingDelta(managedProcess: ManagedProcess, rawParams: unknown): void {
+		const delta = asString(asRecord(rawParams)?.delta);
+		if (!delta) return;
+		this.emitter.emit('thinking-chunk', managedProcess.sessionId, delta);
+	}
+
+	private handleCommandExecutionOutputDelta(
+		managedProcess: ManagedProcess,
+		rawParams: unknown
+	): void {
+		const params = asRecord(rawParams);
+		const itemId = asString(params?.itemId);
+		const delta = asString(params?.delta);
+		if (!itemId || !delta) return;
+
+		this.emitter.emit('tool-execution', managedProcess.sessionId, {
+			toolName: 'shell_command',
+			state: {
+				id: itemId,
+				status: 'running',
+				output: delta,
+			},
+			timestamp: Date.now(),
+		});
+	}
+
+	private handleFileChangeOutputDelta(managedProcess: ManagedProcess, rawParams: unknown): void {
+		const params = asRecord(rawParams);
+		const itemId = asString(params?.itemId);
+		const delta = asString(params?.delta);
+		if (!itemId || !delta) return;
+
+		this.emitToolExecution(managedProcess, 'apply_patch', {
+			id: itemId,
+			status: 'running',
+			output: delta,
+		});
+	}
+
+	private handleMcpToolCallProgress(managedProcess: ManagedProcess, rawParams: unknown): void {
+		const params = asRecord(rawParams);
+		const itemId = asString(params?.itemId);
+		const message = asString(params?.message);
+		if (!itemId || !message) return;
+
+		this.emitToolExecution(managedProcess, this.getToolNameForItem(managedProcess, itemId, 'mcp_tool'), {
+			id: itemId,
+			status: 'running',
+			output: message,
+		});
+	}
+
+	private handleCommandExecutionTerminalInteraction(
+		managedProcess: ManagedProcess,
+		rawParams: unknown
+	): void {
+		const params = asRecord(rawParams);
+		const itemId = asString(params?.itemId);
+		const processId = asString(params?.processId);
+		const stdin = asString(params?.stdin);
+		if (!itemId || !stdin) return;
+
+		this.emitter.emit('tool-execution', managedProcess.sessionId, {
+			toolName: 'shell_command',
+			state: {
+				id: itemId,
+				processId,
+				status: 'running',
+				stdin,
+			},
+			timestamp: Date.now(),
+		});
+	}
+
+	private emitToolEventForItem(
+		managedProcess: ManagedProcess,
+		item: Record<string, unknown>,
+		status: 'running' | 'completed' | 'error'
+	): void {
+		const itemType = asString(item.type);
+		switch (itemType) {
+			case 'commandExecution':
+				this.emitCommandExecutionToolEvent(managedProcess, item, status);
+				return;
+			case 'fileChange':
+				this.emitGenericToolItemEvent(managedProcess, item, status, 'apply_patch', {
+					input: {
+						changes: Array.isArray(item.changes) ? item.changes : undefined,
+					},
+				});
+				return;
+			case 'mcpToolCall': {
+				const toolName = asString(item.tool) || 'mcp_tool';
+				this.emitGenericToolItemEvent(managedProcess, item, status, toolName, {
+					input: {
+						server: asString(item.server),
+						arguments: item.arguments,
+					},
+					output: item.result ?? item.error ?? undefined,
+					durationMs: asNumber(item.durationMs),
+				});
+				return;
+			}
+			case 'dynamicToolCall': {
+				const toolName = asString(item.tool) || 'dynamic_tool';
+				this.emitGenericToolItemEvent(managedProcess, item, status, toolName, {
+					input: {
+						arguments: item.arguments,
+					},
+					output: item.contentItems ?? undefined,
+					durationMs: asNumber(item.durationMs),
+				});
+				return;
+			}
+			case 'collabAgentToolCall': {
+				const toolName = asString(item.tool) || 'collab_agent_tool';
+				this.emitGenericToolItemEvent(managedProcess, item, status, toolName, {
+					input: {
+						prompt: asString(item.prompt),
+						model: asString(item.model),
+						reasoningEffort: asString(item.reasoningEffort),
+						receiverThreadIds: Array.isArray(item.receiverThreadIds)
+							? item.receiverThreadIds
+							: undefined,
+					},
+					output: item.agentsStates ?? undefined,
+				});
+				return;
+			}
+			case 'webSearch':
+				this.emitGenericToolItemEvent(managedProcess, item, status, 'web_search', {
+					input: {
+						query: asString(item.query),
+						action: item.action,
+					},
+				});
+				return;
+			case 'imageView':
+				this.emitGenericToolItemEvent(managedProcess, item, status, 'view_image', {
+					input: {
+						path: asString(item.path),
+					},
+				});
+				return;
+			case 'imageGeneration':
+				this.emitGenericToolItemEvent(managedProcess, item, status, 'image_generation', {
+					input: {
+						revisedPrompt: asString(item.revisedPrompt),
+					},
+					output: asString(item.result) || undefined,
+				});
+				return;
+			default:
+				return;
+		}
+	}
+
+	private emitCommandExecutionToolEvent(
+		managedProcess: ManagedProcess,
+		item: Record<string, unknown>,
+		status: 'running' | 'completed' | 'error'
+	): void {
+		const itemId = asString(item.id);
+		const command = asString(item.command);
+		if (!itemId || !command) return;
+		const aggregatedOutput = asString(item.aggregatedOutput);
+		this.emitDemoCaptureOutput(managedProcess, aggregatedOutput);
+
+		this.emitToolExecution(managedProcess, 'shell_command', {
+			id: itemId,
+			status,
+			input: {
+				command,
+				cwd: asString(item.cwd),
+				commandActions: Array.isArray(item.commandActions) ? item.commandActions : undefined,
+			},
+			output: aggregatedOutput || undefined,
+			processId: asString(item.processId),
+			exitCode: asNumber(item.exitCode),
+			durationMs: asNumber(item.durationMs),
+		});
+	}
+
+	private emitGenericToolItemEvent(
+		managedProcess: ManagedProcess,
+		item: Record<string, unknown>,
+		status: 'running' | 'completed' | 'error',
+		toolName: string,
+		overrides: Record<string, unknown> = {}
+	): void {
+		const itemId = asString(item.id);
+		if (!itemId) return;
+
+		this.emitToolExecution(managedProcess, toolName, {
+			id: itemId,
+			status,
+			...overrides,
+		});
+	}
+
+	private emitToolExecution(
+		managedProcess: ManagedProcess,
+		toolName: string,
+		state: Record<string, unknown>
+	): void {
+		const itemId = asString(state.id);
+		if (itemId && managedProcess.codexAppServerState?.toolItemNames) {
+			managedProcess.codexAppServerState.toolItemNames.set(itemId, toolName);
+			if (state.status === 'completed' || state.status === 'error') {
+				managedProcess.codexAppServerState.toolItemNames.delete(itemId);
+			}
+		}
+
+		this.emitter.emit('tool-execution', managedProcess.sessionId, {
+			toolName,
+			state,
+			timestamp: Date.now(),
+		});
+	}
+
+	private emitDemoCaptureOutput(
+		managedProcess: ManagedProcess,
+		output: string | null | undefined
+	): void {
+		const demoEventOutput = extractDemoEventOutput(output);
+		if (!demoEventOutput) {
+			return;
+		}
+		this.emitter.emit('data', managedProcess.sessionId, `${demoEventOutput}\n`);
+	}
+
+	private getToolNameForItem(
+		managedProcess: ManagedProcess,
+		itemId: string,
+		fallback: string
+	): string {
+		return managedProcess.codexAppServerState?.toolItemNames.get(itemId) || fallback;
+	}
+
+	private getItemCompletionStatus(
+		item: Record<string, unknown>
+	): 'running' | 'completed' | 'error' {
+		const rawStatus = asString(item.status)?.toLowerCase();
+		if (!rawStatus) return 'completed';
+		if (rawStatus.includes('fail') || rawStatus.includes('error') || rawStatus.includes('reject')) {
+			return 'error';
+		}
+		if (
+			rawStatus.includes('complete') ||
+			rawStatus.includes('success') ||
+			rawStatus.includes('done') ||
+			rawStatus.includes('approved') ||
+			rawStatus.includes('applied')
+		) {
+			return 'completed';
+		}
+		return 'running';
 	}
 
 	private handlePendingRequestResponse(
@@ -912,57 +1289,6 @@ export class CodexAppServerBridge {
 		ws.send(JSON.stringify(payload));
 	}
 
-	private clearTurnActivityTimeout(state: CodexAppServerState): void {
-		if (!state.turnActivityTimeout) return;
-		clearTimeout(state.turnActivityTimeout);
-		state.turnActivityTimeout = undefined;
-	}
-
-	private recordTurnActivity(managedProcess: ManagedProcess, reason: string): void {
-		if (managedProcess.conversationRuntime !== 'live') {
-			return;
-		}
-
-		const state = managedProcess.codexAppServerState;
-		if (!state || state.turnCompleted || !state.currentTurnStartedAt) {
-			if (state) {
-				this.clearTurnActivityTimeout(state);
-			}
-			return;
-		}
-
-		state.lastActivityAt = Date.now();
-		this.clearTurnActivityTimeout(state);
-		state.turnActivityTimeout = setTimeout(() => {
-			const stuckState = managedProcess.codexAppServerState;
-			if (!stuckState?.currentTurnStartedAt || stuckState.turnCompleted) return;
-
-			logger.warn('[CodexAppServerBridge] Live turn inactivity timeout', LOG_CONTEXT, {
-				sessionId: managedProcess.sessionId,
-				threadId: stuckState.threadId,
-				turnId: stuckState.turnId,
-				lastActivityAt: stuckState.lastActivityAt,
-				currentTurnStartedAt: stuckState.currentTurnStartedAt,
-				reason,
-			});
-			this.emitAgentError(
-				managedProcess.sessionId,
-				'Codex live turn stalled after 20 minutes of inactivity. The stuck runtime was stopped automatically.'
-			);
-			this.emitConversationEvent(managedProcess, {
-				type: 'turn_failed',
-				sessionId: managedProcess.sessionId,
-				runtimeKind: managedProcess.conversationRuntime || 'batch',
-				timestamp: Date.now(),
-				threadId: stuckState.threadId,
-				turnId: stuckState.turnId || null,
-				message: 'Codex live turn stalled after 20 minutes of inactivity.',
-			});
-			this.killProcess(managedProcess);
-			this.finishProcess(managedProcess, 1);
-		}, LIVE_TURN_INACTIVITY_TIMEOUT_MS);
-	}
-
 	private startTurn(
 		managedProcess: ManagedProcess,
 		config: ProcessConfig,
@@ -975,14 +1301,16 @@ export class CodexAppServerBridge {
 		const ws = state?.ws;
 		if (!state || !ws || ws.readyState !== WebSocket.OPEN) return;
 
+		this.prepareDemoCaptureForTurn(
+			managedProcess,
+			config.demoCapture?.enabled === true,
+			config.demoCaptureContext
+		);
 		state.turnCompleted = false;
 		state.turnId = undefined;
-		state.currentTurnStartedAt = Date.now();
-		state.lastActivityAt = state.currentTurnStartedAt;
 		state.currentTurnHadUserInputRequest = false;
 		state.pendingCorrectionPrompt = undefined;
 		state.suppressedFinalAnswerText = undefined;
-		this.clearTurnActivityTimeout(state);
 
 		logger.info('[CodexAppServerBridge] Starting turn', LOG_CONTEXT, {
 			sessionId: managedProcess.sessionId,
@@ -1036,11 +1364,30 @@ export class CodexAppServerBridge {
 				}),
 			},
 		});
-		this.recordTurnActivity(managedProcess, 'turn-start');
 	}
 
 	private emitAgentError(sessionId: string, message: string, raw?: unknown): void {
 		this.emitter.emit('agent-error', sessionId, createAgentError(sessionId, message, raw));
+	}
+
+	private prepareDemoCaptureForTurn(
+		managedProcess: ManagedProcess,
+		demoCaptureEnabled: boolean,
+		demoCaptureContext?: ManagedProcess['demoCaptureContext']
+	): void {
+		managedProcess.demoCaptureEnabled = demoCaptureEnabled;
+		managedProcess.demoCaptureFinalized = false;
+		managedProcess.demoCaptureArtifactSeen = false;
+		managedProcess.demoCaptureFailed = false;
+		if (demoCaptureContext) {
+			managedProcess.demoCaptureContext = demoCaptureContext;
+			void writeDemoTurnContextFile(demoCaptureContext).catch((error) => {
+				logger.warn('[CodexAppServerBridge] Failed to write demo turn context file', LOG_CONTEXT, {
+					sessionId: managedProcess.sessionId,
+					error: String(error),
+				});
+			});
+		}
 	}
 
 	private killProcess(managedProcess: ManagedProcess): void {
@@ -1059,11 +1406,6 @@ export class CodexAppServerBridge {
 	private finishProcess(managedProcess: ManagedProcess, code: number): void {
 		const existing = this.processes.get(managedProcess.sessionId);
 		if (!existing) return;
-
-		if (existing.codexAppServerState?.turnActivityTimeout) {
-			clearTimeout(existing.codexAppServerState.turnActivityTimeout);
-			existing.codexAppServerState.turnActivityTimeout = undefined;
-		}
 
 		this.processes.delete(managedProcess.sessionId);
 		this.emitter.emit('query-complete', managedProcess.sessionId, {

@@ -1,8 +1,12 @@
 import type {
 	ArtifactKind,
 	ArtifactStorageBackend,
+	DemoCaptureSource,
 	DemoCaptureEvent,
+	DemoFailureReason,
+	DemoRequestedTarget,
 	DemoStatus,
+	DemoVerificationStatus,
 } from '../../shared/demo-artifacts';
 
 export interface CaptureRunRecord {
@@ -10,7 +14,21 @@ export interface CaptureRunRecord {
 	sessionId: string;
 	tabId: string | null;
 	externalRunId: string | null;
+	turnId: string | null;
+	turnToken: string | null;
 	status: DemoStatus;
+	verificationStatus: DemoVerificationStatus;
+	failureReason: DemoFailureReason | null;
+	blockedReason: string | null;
+	captureSource: DemoCaptureSource;
+	provider: string | null;
+	model: string | null;
+	requestedTarget: DemoRequestedTarget | null;
+	observedUrl: string | null;
+	observedTitle: string | null;
+	isSimulated: boolean;
+	authTargetReached: boolean | null;
+	requirementSatisfied: boolean;
 	title: string | null;
 	summary: string | null;
 	createdAt: number;
@@ -79,4 +97,19 @@ export interface DemoCaptureResult {
 export interface DemoCaptureEventInput {
 	context: DemoCaptureContext;
 	event: DemoCaptureEvent;
+}
+
+export interface DemoTurnContextRecord {
+	sessionId: string;
+	tabId: string | null;
+	captureRunId: string;
+	externalRunId: string;
+	turnId: string;
+	turnToken: string;
+	provider: string | null;
+	model: string | null;
+	requestedTarget: DemoRequestedTarget | null;
+	contextFilePath: string;
+	stateFilePath: string;
+	outputDir: string;
 }

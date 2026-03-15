@@ -8,6 +8,7 @@ import type {
 export interface ArtifactFileInfo {
 	id: string;
 	path: string;
+	url: string;
 	mimeType: string;
 	filename: string;
 }
@@ -22,6 +23,11 @@ export function createArtifactsApi() {
 			ipcRenderer.invoke('artifacts:loadArtifact', artifactId),
 		getArtifactFileInfo: (artifactId: string): Promise<ArtifactFileInfo | null> =>
 			ipcRenderer.invoke('artifacts:getArtifactFileInfo', artifactId),
+		exportArtifact: (
+			artifactId: string,
+			destinationPath: string
+		): Promise<{ success: boolean; error?: string }> =>
+			ipcRenderer.invoke('artifacts:exportArtifact', artifactId, destinationPath),
 		harvestFromLogText: (request: DemoArtifactHarvestRequest): Promise<DemoCard | null> =>
 			ipcRenderer.invoke('artifacts:harvestFromLogText', request),
 	};

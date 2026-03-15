@@ -13,9 +13,9 @@ import type { ProcessListenerDependencies } from './types';
  */
 export function setupErrorListener(
 	processManager: ProcessManager,
-	deps: Pick<ProcessListenerDependencies, 'safeSend' | 'logger'>
+	deps: Pick<ProcessListenerDependencies, 'safeSend' | 'logger' | 'getWebServer'>
 ): void {
-	const { safeSend, logger } = deps;
+	const { safeSend, logger, getWebServer } = deps;
 
 	// Handle agent errors (auth expired, token exhaustion, rate limits, etc.)
 	processManager.on('agent-error', (sessionId: string, agentError: AgentError) => {
@@ -27,5 +27,28 @@ export function setupErrorListener(
 			recoverable: agentError.recoverable,
 		});
 		safeSend('agent:error', sessionId, agentError);
+
+		const webServer = getWebServer();
+		if (!webServer) {
+			return;
+		}
+
+		const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+		const baseSessionId = aiTabMatch
+			? aiTabMatch[1]
+			: sessionId.replace(/-terminal$|-batch-\d+$|-synopsis-\d+$/, '');
+		const tabId = aiTabMatch ? aiTabMatch[2] : null;
+		const inputMode = aiTabMatch || !sessionId.endsWith('-terminal') ? 'ai' : 'terminal';
+
+		webServer.broadcastSessionLogEntry(baseSessionId, tabId, inputMode, {
+			id: `agent-error-${agentError.timestamp}-${agentError.type}`,
+			timestamp: agentError.timestamp,
+			source: agentError.type === 'session_not_found' ? 'system' : 'error',
+			text: agentError.message,
+		});
+
+		if (agentError.type !== 'session_not_found') {
+			webServer.broadcastSessionStateChange(baseSessionId, 'error');
+		}
 	});
 }

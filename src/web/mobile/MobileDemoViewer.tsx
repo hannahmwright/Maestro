@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, ChevronLeft, ChevronRight, Download, Expand, X } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { DemoDetail } from '../../shared/demo-artifacts';
 import { buildApiUrl } from '../utils/config';
@@ -6,6 +7,15 @@ import { buildApiUrl } from '../utils/config';
 interface MobileDemoViewerProps {
 	demoId: string;
 	onClose: () => void;
+}
+
+interface MobileDemoMediaItem {
+	id: string;
+	kind: 'image' | 'video';
+	src: string;
+	alt: string;
+	filename: string;
+	posterSrc?: string | null;
 }
 
 function formatDuration(durationMs?: number | null): string | null {
@@ -21,11 +31,293 @@ function artifactUrl(artifactId?: string | null): string | null {
 	return buildApiUrl(`/artifacts/${artifactId}/content`);
 }
 
+async function downloadMediaItem(item: MobileDemoMediaItem): Promise<void> {
+	const response = await fetch(item.src);
+	if (!response.ok) {
+		throw new Error(`Failed to download media (${response.status})`);
+	}
+
+	const blob = await response.blob();
+	const objectUrl = URL.createObjectURL(blob);
+	try {
+		const link = document.createElement('a');
+		link.href = objectUrl;
+		link.download = item.filename;
+		document.body.appendChild(link);
+		link.click();
+		document.body.removeChild(link);
+	} finally {
+		URL.revokeObjectURL(objectUrl);
+	}
+}
+
+function MobileMediaLightbox({
+	items,
+	activeIndex,
+	onNavigate,
+	onClose,
+}: {
+	items: MobileDemoMediaItem[];
+	activeIndex: number;
+	onNavigate: (nextIndex: number) => void;
+	onClose: () => void;
+}) {
+	const item = items[activeIndex];
+	const [downloadState, setDownloadState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+
+	useEffect(() => {
+		setDownloadState('idle');
+	}, [item?.id]);
+
+	const handleDownload = useCallback(async () => {
+		if (!item) return;
+		setDownloadState('saving');
+		try {
+			await downloadMediaItem(item);
+			setDownloadState('saved');
+			window.setTimeout(() => setDownloadState('idle'), 1800);
+		} catch {
+			setDownloadState('error');
+			window.setTimeout(() => setDownloadState('idle'), 2400);
+		}
+	}, [item]);
+
+	if (!item) {
+		return null;
+	}
+
+	const canNavigate = items.length > 1 && item.kind === 'image';
+
+	return (
+		<div
+			style={{
+				position: 'fixed',
+				inset: 0,
+				zIndex: 1260,
+				background: 'rgba(2, 6, 23, 0.94)',
+				backdropFilter: 'blur(18px)',
+				WebkitBackdropFilter: 'blur(18px)',
+				display: 'flex',
+				flexDirection: 'column',
+			}}
+		>
+			<div
+				style={{
+					position: 'relative',
+					zIndex: 2,
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'space-between',
+					gap: '12px',
+					padding: 'calc(14px + env(safe-area-inset-top, 0px)) 16px 12px',
+				}}
+			>
+				<button
+					type="button"
+					onClick={onClose}
+					style={{
+						display: 'inline-flex',
+						alignItems: 'center',
+						gap: '8px',
+						borderRadius: '999px',
+						border: '1px solid rgba(255, 255, 255, 0.16)',
+						background: 'rgba(15, 23, 42, 0.58)',
+						color: '#fff',
+						padding: '10px 14px',
+						fontSize: '13px',
+						fontWeight: 600,
+						cursor: 'pointer',
+					}}
+				>
+					<ArrowLeft size={16} />
+					Back
+				</button>
+				<div
+					style={{
+						minWidth: 0,
+						flex: 1,
+						textAlign: 'center',
+						color: '#fff',
+						fontSize: '13px',
+						fontWeight: 600,
+						whiteSpace: 'nowrap',
+						overflow: 'hidden',
+						textOverflow: 'ellipsis',
+					}}
+				>
+					{item.alt}
+				</div>
+				<button
+					type="button"
+					onClick={handleDownload}
+					style={{
+						display: 'inline-flex',
+						alignItems: 'center',
+						gap: '8px',
+						borderRadius: '999px',
+						border: '1px solid rgba(255, 255, 255, 0.16)',
+						background: 'rgba(15, 23, 42, 0.58)',
+						color: '#fff',
+						padding: '10px 14px',
+						fontSize: '13px',
+						fontWeight: 600,
+						cursor: 'pointer',
+					}}
+				>
+					<Download size={16} />
+					{downloadState === 'saving'
+						? 'Saving...'
+						: downloadState === 'saved'
+							? 'Saved'
+							: downloadState === 'error'
+								? 'Retry'
+								: 'Save'}
+				</button>
+			</div>
+
+			<div
+				style={{
+					flex: 1,
+					position: 'relative',
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+					padding: '12px 16px calc(24px + env(safe-area-inset-bottom, 0px))',
+				}}
+			>
+				<button
+					type="button"
+					onClick={onClose}
+					aria-label="Close media preview"
+					style={{ position: 'absolute', inset: 0, border: 'none', background: 'transparent' }}
+				/>
+				{canNavigate ? (
+					<button
+						type="button"
+						onClick={(event) => {
+							event.stopPropagation();
+							onNavigate(Math.max(0, activeIndex - 1));
+						}}
+						disabled={activeIndex === 0}
+						aria-label="Previous image"
+						style={{
+							position: 'absolute',
+							left: '10px',
+							top: '50%',
+							transform: 'translateY(-50%)',
+							width: '42px',
+							height: '42px',
+							borderRadius: '999px',
+							border: '1px solid rgba(255, 255, 255, 0.16)',
+							background: 'rgba(15, 23, 42, 0.58)',
+							color: '#fff',
+							cursor: activeIndex === 0 ? 'default' : 'pointer',
+							opacity: activeIndex === 0 ? 0.42 : 1,
+							zIndex: 1,
+						}}
+					>
+						<ChevronLeft size={18} />
+					</button>
+				) : null}
+				<div
+					onClick={(event) => event.stopPropagation()}
+					style={{
+						position: 'relative',
+						zIndex: 1,
+						width: '100%',
+						height: '100%',
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'center',
+						overflow: 'auto',
+						touchAction: 'pan-x pan-y pinch-zoom',
+					}}
+				>
+					{item.kind === 'video' ? (
+						<video
+							controls
+							autoPlay
+							preload="metadata"
+							poster={item.posterSrc || undefined}
+							src={item.src}
+							style={{
+								width: '100%',
+								maxHeight: '100%',
+								borderRadius: '24px',
+								background: '#020617',
+								boxShadow: '0 24px 64px rgba(0, 0, 0, 0.38)',
+							}}
+						/>
+					) : (
+						<img
+							src={item.src}
+							alt={item.alt}
+							style={{
+								maxWidth: '100%',
+								maxHeight: '100%',
+								borderRadius: '24px',
+								objectFit: 'contain',
+								boxShadow: '0 24px 64px rgba(0, 0, 0, 0.38)',
+							}}
+						/>
+					)}
+				</div>
+				{canNavigate ? (
+					<button
+						type="button"
+						onClick={(event) => {
+							event.stopPropagation();
+							onNavigate(Math.min(items.length - 1, activeIndex + 1));
+						}}
+						disabled={activeIndex >= items.length - 1}
+						aria-label="Next image"
+						style={{
+							position: 'absolute',
+							right: '10px',
+							top: '50%',
+							transform: 'translateY(-50%)',
+							width: '42px',
+							height: '42px',
+							borderRadius: '999px',
+							border: '1px solid rgba(255, 255, 255, 0.16)',
+							background: 'rgba(15, 23, 42, 0.58)',
+							color: '#fff',
+							cursor: activeIndex >= items.length - 1 ? 'default' : 'pointer',
+							opacity: activeIndex >= items.length - 1 ? 0.42 : 1,
+							zIndex: 1,
+						}}
+					>
+						<ChevronRight size={18} />
+					</button>
+				) : null}
+			</div>
+
+			<div
+				style={{
+					padding: '0 18px calc(16px + env(safe-area-inset-bottom, 0px))',
+					color: 'rgba(255, 255, 255, 0.72)',
+					fontSize: '12px',
+					textAlign: 'center',
+				}}
+			>
+				{item.kind === 'image'
+					? canNavigate
+						? `Image ${activeIndex + 1} of ${items.length}`
+						: 'Tap Save to keep a copy'
+					: 'Tap Save to keep a copy'}
+			</div>
+		</div>
+	);
+}
+
 export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 	const colors = useThemeColors();
 	const [demo, setDemo] = useState<DemoDetail | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
+	const [mediaViewer, setMediaViewer] = useState<{ items: MobileDemoMediaItem[]; index: number } | null>(
+		null
+	);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -66,12 +358,81 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 		[demo?.posterArtifact?.id]
 	);
 
+	const imageItems = useMemo(() => {
+		if (!demo) {
+			return [] as MobileDemoMediaItem[];
+		}
+
+		const items: MobileDemoMediaItem[] = [];
+		const seenArtifactIds = new Set<string>();
+		const pushImage = (artifactId: string, filename: string, alt: string, src: string | null) => {
+			if (!src || seenArtifactIds.has(artifactId)) {
+				return;
+			}
+			seenArtifactIds.add(artifactId);
+			items.push({
+				id: artifactId,
+				kind: 'image',
+				src,
+				alt,
+				filename,
+			});
+		};
+
+		if (demo.posterArtifact?.id) {
+			pushImage(demo.posterArtifact.id, demo.posterArtifact.filename, demo.title, posterUrl);
+		}
+
+		for (const step of demo.steps) {
+			if (step.screenshotArtifact?.id) {
+				pushImage(
+					step.screenshotArtifact.id,
+					step.screenshotArtifact.filename,
+					step.title,
+					artifactUrl(step.screenshotArtifact.id)
+				);
+			}
+		}
+
+		return items;
+	}, [demo, posterUrl]);
+
+	const videoItem = useMemo(() => {
+		if (!demo?.videoArtifact?.id || !videoUrl) {
+			return null;
+		}
+		return {
+			id: demo.videoArtifact.id,
+			kind: 'video' as const,
+			src: videoUrl,
+			alt: demo.title,
+			filename: demo.videoArtifact.filename,
+			posterSrc: posterUrl,
+		};
+	}, [demo, posterUrl, videoUrl]);
+
+	const openImageGallery = useCallback(
+		(artifactId: string) => {
+			const index = imageItems.findIndex((item) => item.id === artifactId);
+			if (index >= 0) {
+				setMediaViewer({ items: imageItems, index });
+			}
+		},
+		[imageItems]
+	);
+
+	const openVideoViewer = useCallback(() => {
+		if (videoItem) {
+			setMediaViewer({ items: [videoItem], index: 0 });
+		}
+	}, [videoItem]);
+
 	return (
 		<div
 			style={{
 				position: 'fixed',
 				inset: 0,
-				zIndex: 220,
+				zIndex: 1220,
 				background: 'rgba(2, 6, 23, 0.62)',
 				backdropFilter: 'blur(20px)',
 				WebkitBackdropFilter: 'blur(20px)',
@@ -104,11 +465,33 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 						display: 'flex',
 						alignItems: 'center',
 						justifyContent: 'space-between',
-						padding: '16px 18px 12px',
+						gap: '12px',
+						padding: 'calc(16px + env(safe-area-inset-top, 0px)) 18px 12px',
 						borderBottom: `1px solid ${colors.border}`,
 					}}
 				>
-					<div style={{ minWidth: 0 }}>
+					<button
+						type="button"
+						onClick={onClose}
+						style={{
+							display: 'inline-flex',
+							alignItems: 'center',
+							gap: '8px',
+							border: `1px solid ${colors.border}`,
+							background: `${colors.bgMain}cc`,
+							color: colors.textMain,
+							borderRadius: '999px',
+							padding: '9px 13px',
+							fontSize: '12px',
+							fontWeight: 700,
+							cursor: 'pointer',
+							flexShrink: 0,
+						}}
+					>
+						<ArrowLeft size={15} />
+						Back to thread
+					</button>
+					<div style={{ minWidth: 0, flex: 1 }}>
 						<div style={{ fontSize: '11px', letterSpacing: '0.08em', color: colors.textDim }}>
 							DEMO
 						</div>
@@ -127,18 +510,22 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 					<button
 						type="button"
 						onClick={onClose}
+						aria-label="Dismiss demo viewer"
 						style={{
+							width: '38px',
+							height: '38px',
 							border: `1px solid ${colors.border}`,
 							background: `${colors.bgMain}cc`,
 							color: colors.textMain,
 							borderRadius: '999px',
-							padding: '8px 12px',
-							fontSize: '12px',
-							fontWeight: 600,
+							display: 'inline-flex',
+							alignItems: 'center',
+							justifyContent: 'center',
 							cursor: 'pointer',
+							flexShrink: 0,
 						}}
 					>
-						Close
+						<X size={17} />
 					</button>
 				</div>
 
@@ -146,7 +533,7 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 					style={{
 						flex: 1,
 						overflowY: 'auto',
-						padding: '16px',
+						padding: '16px 16px calc(24px + env(safe-area-inset-bottom, 0px))',
 						display: 'flex',
 						flexDirection: 'column',
 						gap: '16px',
@@ -156,30 +543,86 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 					{error && <div style={{ color: colors.error }}>{error}</div>}
 					{demo && (
 						<>
-							{videoUrl ? (
-								<video
-									controls
-									preload="metadata"
-									poster={posterUrl || undefined}
-									src={videoUrl}
+								{videoItem ? (
+									<div style={{ position: 'relative' }}>
+										<video
+											controls
+											preload="metadata"
+										poster={posterUrl || undefined}
+										src={videoUrl || undefined}
+										style={{
+											width: '100%',
+											borderRadius: '20px',
+												background: '#020617',
+												border: `1px solid ${colors.border}`,
+											}}
+										/>
+										<button
+											type="button"
+											onClick={openVideoViewer}
+											style={{
+												position: 'absolute',
+												right: '14px',
+											bottom: '14px',
+											display: 'inline-flex',
+											alignItems: 'center',
+											gap: '6px',
+											padding: '7px 10px',
+											borderRadius: '999px',
+											background: 'rgba(15, 23, 42, 0.72)',
+												color: '#fff',
+												fontSize: '12px',
+												fontWeight: 700,
+												cursor: 'pointer',
+											}}
+										>
+											<Expand size={14} />
+											Open full screen
+										</button>
+									</div>
+								) : posterUrl && demo.posterArtifact?.id ? (
+								<button
+									type="button"
+									onClick={() => openImageGallery(demo.posterArtifact!.id)}
 									style={{
-										width: '100%',
-										borderRadius: '20px',
-										background: '#020617',
-										border: `1px solid ${colors.border}`,
+										position: 'relative',
+										border: 'none',
+										padding: 0,
+										background: 'transparent',
+										cursor: 'pointer',
 									}}
-								/>
-							) : posterUrl ? (
-								<img
-									src={posterUrl}
-									alt={demo.title}
-									style={{
-										width: '100%',
-										borderRadius: '20px',
-										border: `1px solid ${colors.border}`,
-										display: 'block',
-									}}
-								/>
+								>
+									<img
+										src={posterUrl}
+										alt={demo.title}
+										style={{
+											width: '100%',
+											borderRadius: '20px',
+											border: `1px solid ${colors.border}`,
+											display: 'block',
+										}}
+									/>
+									<div
+										style={{
+											position: 'absolute',
+											right: '14px',
+											bottom: '14px',
+											display: 'inline-flex',
+											alignItems: 'center',
+											gap: '6px',
+											padding: '7px 10px',
+											borderRadius: '999px',
+											background: 'rgba(15, 23, 42, 0.72)',
+											color: '#fff',
+											fontSize: '12px',
+											fontWeight: 700,
+											pointerEvents: 'none',
+										}}
+									>
+										<Expand size={14} />
+										Tap to zoom
+									</div>
+								</button>
 							) : null}
 
 							<div
@@ -202,7 +645,8 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 
 							<div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
 								{demo.steps.map((step, index) => {
-									const screenshotUrl = artifactUrl(step.screenshotArtifact?.id);
+									const screenshotArtifactId = step.screenshotArtifact?.id;
+									const screenshotUrl = artifactUrl(screenshotArtifactId);
 									return (
 										<div
 											key={step.id}
@@ -223,17 +667,49 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 											{step.description && (
 												<div style={{ fontSize: '13px', lineHeight: 1.5 }}>{step.description}</div>
 											)}
-											{screenshotUrl && (
-												<img
-													src={screenshotUrl}
-													alt={step.title}
+											{screenshotUrl && screenshotArtifactId && (
+												<button
+													type="button"
+													onClick={() => openImageGallery(screenshotArtifactId)}
 													style={{
-														width: '100%',
-														borderRadius: '16px',
-														border: `1px solid ${colors.border}`,
-														display: 'block',
+														position: 'relative',
+														border: 'none',
+														padding: 0,
+														background: 'transparent',
+														cursor: 'pointer',
 													}}
-												/>
+												>
+													<img
+														src={screenshotUrl}
+														alt={step.title}
+														style={{
+															width: '100%',
+															borderRadius: '16px',
+															border: `1px solid ${colors.border}`,
+															display: 'block',
+														}}
+													/>
+													<div
+														style={{
+															position: 'absolute',
+															right: '12px',
+															bottom: '12px',
+															display: 'inline-flex',
+															alignItems: 'center',
+															gap: '6px',
+															padding: '7px 10px',
+															borderRadius: '999px',
+															background: 'rgba(15, 23, 42, 0.72)',
+															color: '#fff',
+															fontSize: '12px',
+															fontWeight: 700,
+															pointerEvents: 'none',
+														}}
+													>
+														<Expand size={14} />
+														Tap to zoom
+													</div>
+												</button>
 											)}
 										</div>
 									);
@@ -243,6 +719,17 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 					)}
 				</div>
 			</div>
+
+			{mediaViewer ? (
+				<MobileMediaLightbox
+					items={mediaViewer.items}
+					activeIndex={mediaViewer.index}
+					onNavigate={(index) =>
+						setMediaViewer((current) => (current ? { ...current, index } : current))
+					}
+					onClose={() => setMediaViewer(null)}
+				/>
+			) : null}
 		</div>
 	);
 }

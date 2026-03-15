@@ -391,6 +391,7 @@ export class ChildProcessSpawner {
 				demoCaptureFinalized: false,
 				demoCaptureArtifactSeen: false,
 				demoCaptureFailed: false,
+				demoCaptureContext: config.demoCaptureContext,
 			};
 
 			this.processes.set(sessionId, managedProcess);

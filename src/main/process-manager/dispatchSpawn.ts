@@ -23,6 +23,14 @@ import { powerManager } from '../power-manager';
 import type { MaestroSettings } from '../ipc/handlers/persistence';
 import type { ProcessConfig, SpawnResult } from './types';
 import type { ProcessManager } from './ProcessManager';
+import { getDemoArtifactService } from '../artifacts';
+import {
+	buildDemoContextFilePath,
+	ensureMaestroDemoCommand,
+	extractRequestedTarget,
+	prependPathEntry,
+	writeDemoTurnContextFile,
+} from '../artifacts/maestroDemoRuntime';
 
 const LOG_CONTEXT = '[SpawnDispatcher]';
 
@@ -246,15 +254,52 @@ export async function prepareSpawnContext(
 	let sshRemoteUsed: SshRemoteConfig | null = null;
 	let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
 	let sshStdinScript: string | undefined;
+	const effectiveConversationRuntime = options?.spawnConfigOverrides?.conversationRuntime;
+	const shouldProvisionDemoRuntime =
+		request.toolType !== 'terminal' &&
+		request.sessionSshRemoteConfig?.enabled !== true &&
+		(request.demoCapture?.enabled === true ||
+			effectiveConversationRuntime === 'live' ||
+			request.toolType === 'claude-code' ||
+			request.toolType === 'codex');
+	let demoCaptureContext: ProcessConfig['demoCaptureContext'];
 
-	if (request.demoCapture?.enabled) {
-		const demoRunId = randomUUID();
+	if (shouldProvisionDemoRuntime) {
+		const outputDir = 'output/playwright';
+		const provisionalTurnId = randomUUID();
+		const turnToken = randomUUID();
+		const { binDir } = await ensureMaestroDemoCommand();
+		const { contextFilePath, stateFilePath } = buildDemoContextFilePath(
+			request.sessionId,
+			request.tabId || null
+		);
+		demoCaptureContext = await getDemoArtifactService().prepareDemoTurn({
+			sessionId: request.sessionId,
+			tabId: request.tabId || null,
+			turnId: provisionalTurnId,
+			turnToken,
+			provider: request.toolType,
+			model: resolvedModel || request.sessionCustomModel || null,
+			requestedTarget: extractRequestedTarget(request.prompt),
+			contextFilePath,
+			stateFilePath,
+			outputDir,
+		});
+		await writeDemoTurnContextFile(demoCaptureContext);
 		customEnvVarsToPass = {
 			...(customEnvVarsToPass || {}),
-			MAESTRO_DEMO_CAPTURE: '1',
+			MAESTRO_DEMO_CAPTURE: request.demoCapture?.enabled ? '1' : '0',
 			MAESTRO_DEMO_EVENT_PREFIX,
-			MAESTRO_DEMO_RUN_ID: demoRunId,
-			MAESTRO_DEMO_OUTPUT_DIR: 'output/playwright',
+			MAESTRO_DEMO_RUN_ID: demoCaptureContext.externalRunId,
+			MAESTRO_DEMO_OUTPUT_DIR: outputDir,
+			MAESTRO_DEMO_CONTEXT_FILE: demoCaptureContext.contextFilePath,
+			MAESTRO_DEMO_TURN_ID: demoCaptureContext.turnId,
+			MAESTRO_DEMO_TURN_TOKEN: demoCaptureContext.turnToken,
+			MAESTRO_DEMO_BIN: 'maestro-demo',
+			PATH: prependPathEntry(
+				customEnvVarsToPass?.PATH || process.env.PATH || '',
+				binDir
+			),
 		};
 	}
 
@@ -346,6 +391,7 @@ export async function prepareSpawnContext(
 		sshRemoteId: sshRemoteUsed?.id,
 		sshRemoteHost: sshRemoteUsed?.host,
 		sshStdinScript,
+		demoCaptureContext,
 	};
 
 	return {

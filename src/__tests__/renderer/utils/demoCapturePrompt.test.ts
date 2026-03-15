@@ -11,11 +11,12 @@ describe('appendDemoCaptureInstructions', () => {
 
 		expect(prompt).toContain('explicitly requested a demo or screenshots');
 		expect(prompt).toContain('hard requirement');
-		expect(prompt).toContain('MAESTRO_DEMO_RUN_ID');
+		expect(prompt).toContain('MAESTRO_DEMO_CONTEXT_FILE');
+		expect(prompt).toContain('maestro-demo');
 		expect(prompt).toContain('Do not silently skip demo capture');
 		expect(prompt).toContain('Maestro will treat the run as failed');
 		expect(prompt).toContain('require artifacts');
 		expect(prompt).toContain('at least one screenshot or video artifact');
-		expect(prompt).toContain('maestro_playwright_demo.sh');
+		expect(prompt).not.toContain('.codex/skills/playwright');
 	});
 });

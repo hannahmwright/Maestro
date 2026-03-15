@@ -18,9 +18,13 @@ import type {
 	ArtifactRef,
 	DemoCard,
 	DemoCaptureEvent,
+	DemoCaptureSource,
 	DemoDetail,
+	DemoFailureReason,
+	DemoRequestedTarget,
 	DemoStep,
 	DemoStatus,
+	DemoVerificationStatus,
 } from '../../shared/demo-artifacts';
 import { MAESTRO_DEMO_EVENT_PREFIX } from '../../shared/demo-artifacts';
 import { ArtifactsDB } from './ArtifactsDB';
@@ -31,6 +35,7 @@ import type {
 	DemoCaptureEventInput,
 	DemoRecord,
 	DemoStepRecord,
+	DemoTurnContextRecord,
 } from './types';
 
 const LOG_CONTEXT = '[DemoArtifactService]';
@@ -74,6 +79,9 @@ export interface DemoArtifactServiceOptions {
 		localPath: string,
 		sshRemote: SshRemoteConfig
 	) => Promise<RemoteFsResult<{ byteSize: number; mtime: number }>>;
+	probeVideoMetadata?: (
+		filePath: string
+	) => Promise<{ durationMs: number | null; width: number | null; height: number | null } | null>;
 }
 
 function guessMimeType(
@@ -188,6 +196,7 @@ export class DemoArtifactService {
 	private readonly retentionMs: number;
 	private readonly staleCaptureMs: number;
 	private readonly transcodeVideo?: DemoArtifactServiceOptions['transcodeVideo'];
+	private readonly probeVideoMetadata?: DemoArtifactServiceOptions['probeVideoMetadata'];
 	private readonly resolveSshRemote?: DemoArtifactServiceOptions['resolveSshRemote'];
 	private readonly statRemoteArtifact: NonNullable<
 		DemoArtifactServiceOptions['statRemoteArtifact']
@@ -196,6 +205,7 @@ export class DemoArtifactService {
 		DemoArtifactServiceOptions['downloadRemoteArtifact']
 	>;
 	private readonly sessionRunMap = new Map<string, string>();
+	private readonly turnRunMap = new Map<string, string>();
 	private readonly captureRunDemoMap = new Map<string, string>();
 	private readonly captureRunArtifacts = new Map<string, ArtifactRecord[]>();
 	private readonly captureRunSteps = new Map<string, DemoStepRecord[]>();
@@ -209,6 +219,7 @@ export class DemoArtifactService {
 		this.retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
 		this.staleCaptureMs = options.staleCaptureMs ?? DEFAULT_STALE_CAPTURE_MS;
 		this.transcodeVideo = options.transcodeVideo;
+		this.probeVideoMetadata = options.probeVideoMetadata;
 		this.resolveSshRemote = options.resolveSshRemote;
 		this.statRemoteArtifact = options.statRemoteArtifact ?? statRemote;
 		this.downloadRemoteArtifact = options.downloadRemoteArtifact ?? downloadFileRemote;
@@ -217,12 +228,24 @@ export class DemoArtifactService {
 	async initialize(): Promise<void> {
 		this.db.initialize();
 		await fs.mkdir(this.artifactsRoot, { recursive: true });
+		await this.backfillMissingVideoMetadata();
 		await this.recoverStaleCaptures();
 		await this.cleanupExpiredArtifacts();
 	}
 
 	private getSessionKey(context: DemoCaptureContext): string {
 		return `${context.sessionId}::${context.tabId || ''}`;
+	}
+
+	private getTurnKey(
+		sessionId: string,
+		tabId: string | null | undefined,
+		turnId: string | null | undefined
+	): string | null {
+		if (!turnId) {
+			return null;
+		}
+		return `${sessionId}::${tabId || ''}::${turnId}`;
 	}
 
 	private async logLifecycle(
@@ -239,7 +262,83 @@ export class DemoArtifactService {
 		}
 	}
 
+	private normalizeDomain(value: string | null | undefined): string | null {
+		if (!value || !value.trim()) {
+			return null;
+		}
+		try {
+			return new URL(value).hostname.toLowerCase();
+		} catch {
+			return value
+				.trim()
+				.toLowerCase()
+				.replace(/^https?:\/\//, '')
+				.replace(/\/.*$/, '')
+				.replace(/:\d+$/, '');
+		}
+	}
+
+	private inferCaptureSource(event: DemoCaptureEvent): DemoCaptureSource {
+		if (event.captureSource) {
+			return event.captureSource;
+		}
+		if (event.turnId || event.turnToken) {
+			return 'maestro_demo_cli';
+		}
+		return 'legacy_stdout';
+	}
+
+	private updateTurnRunCache(record: CaptureRunRecord): void {
+		const turnKey = this.getTurnKey(record.sessionId, record.tabId, record.turnId);
+		if (turnKey) {
+			this.turnRunMap.set(turnKey, record.id);
+		}
+	}
+
+	private listRunArtifacts(captureRunId: string): ArtifactRecord[] {
+		return (
+			this.captureRunArtifacts.get(captureRunId) || this.db.listArtifactsForCaptureRun(captureRunId)
+		);
+	}
+
+	private deriveFailureReason(
+		captureRun: CaptureRunRecord,
+		artifactCount: number
+	): DemoFailureReason | null {
+		if (captureRun.failureReason) {
+			return captureRun.failureReason;
+		}
+		if (captureRun.status === 'legacy_unverified') {
+			return 'legacy_unverified';
+		}
+		if (captureRun.status === 'blocked') {
+			return 'blocked';
+		}
+		if (!captureRun.requirementSatisfied && artifactCount === 0) {
+			return 'missing_artifacts';
+		}
+		return null;
+	}
+
+	private withRunUpdates(
+		captureRun: CaptureRunRecord,
+		updates: Partial<CaptureRunRecord>
+	): CaptureRunRecord {
+		const nextRun = {
+			...captureRun,
+			...updates,
+			updatedAt: this.now(),
+		};
+		this.db.upsertCaptureRun(nextRun);
+		this.updateTurnRunCache(nextRun);
+		return nextRun;
+	}
+
 	private hydrateCaptureRunCaches(captureRunId: string): void {
+		const captureRun = this.db.getCaptureRunById(captureRunId);
+		if (captureRun) {
+			this.updateTurnRunCache(captureRun);
+		}
 		if (!this.captureRunArtifacts.has(captureRunId)) {
 			this.captureRunArtifacts.set(captureRunId, this.db.listArtifactsForCaptureRun(captureRunId));
 		}
@@ -256,6 +355,11 @@ export class DemoArtifactService {
 		this.captureRunArtifacts.delete(captureRunId);
 		this.captureRunSteps.delete(captureRunId);
 		this.captureRunDemoMap.delete(captureRunId);
+		for (const [turnKey, runId] of this.turnRunMap.entries()) {
+			if (runId === captureRunId) {
+				this.turnRunMap.delete(turnKey);
+			}
+		}
 		if (sessionKey) {
 			this.sessionRunMap.delete(sessionKey);
 			return;
@@ -293,10 +397,207 @@ export class DemoArtifactService {
 		return artifacts.find((artifact) => artifact.kind === 'video') || null;
 	}
 
+	async prepareDemoTurn(input: {
+		sessionId: string;
+		tabId?: string | null;
+		turnId: string;
+		turnToken: string;
+		provider?: string | null;
+		model?: string | null;
+		requestedTarget?: DemoRequestedTarget | null;
+		contextFilePath: string;
+		stateFilePath: string;
+		outputDir: string;
+	}): Promise<DemoTurnContextRecord> {
+		this.db.initialize();
+		await fs.mkdir(this.artifactsRoot, { recursive: true });
+		const existing = this.db.getCaptureRunByTurnId(
+			input.sessionId,
+			input.tabId || null,
+			input.turnId
+		);
+		if (existing) {
+			this.updateTurnRunCache(existing);
+			return {
+				sessionId: existing.sessionId,
+				tabId: existing.tabId,
+				captureRunId: existing.id,
+				externalRunId: existing.externalRunId || existing.id,
+				turnId: existing.turnId || input.turnId,
+				turnToken: existing.turnToken || input.turnToken,
+				provider: existing.provider,
+				model: existing.model,
+				requestedTarget: existing.requestedTarget,
+				contextFilePath: input.contextFilePath,
+				stateFilePath: input.stateFilePath,
+				outputDir: input.outputDir,
+			};
+		}
+
+		const now = this.now();
+		const captureRun: CaptureRunRecord = {
+			id: randomUUID(),
+			sessionId: input.sessionId,
+			tabId: input.tabId || null,
+			externalRunId: `turn-${input.turnId}`,
+			turnId: input.turnId,
+			turnToken: input.turnToken,
+			status: 'requested',
+			verificationStatus: 'pending',
+			failureReason: null,
+			blockedReason: null,
+			captureSource: 'maestro_demo_cli',
+			provider: input.provider || null,
+			model: input.model || null,
+			requestedTarget: input.requestedTarget || null,
+			observedUrl: null,
+			observedTitle: null,
+			isSimulated: false,
+			authTargetReached: null,
+			requirementSatisfied: false,
+			title: input.requestedTarget?.description || 'Requested demo capture',
+			summary:
+				input.requestedTarget?.url ||
+				input.requestedTarget?.domain ||
+				'This turn requires a verified screenshot or screen recording.',
+			createdAt: now,
+			updatedAt: now,
+		};
+		this.db.upsertCaptureRun(captureRun);
+		this.updateTurnRunCache(captureRun);
+		this.captureRunArtifacts.set(captureRun.id, []);
+		this.captureRunSteps.set(captureRun.id, []);
+		this.ensureDemoRecord(captureRun, 'requested');
+		return {
+			sessionId: captureRun.sessionId,
+			tabId: captureRun.tabId,
+			captureRunId: captureRun.id,
+			externalRunId: captureRun.externalRunId || captureRun.id,
+			turnId: captureRun.turnId || input.turnId,
+			turnToken: captureRun.turnToken || input.turnToken,
+			provider: captureRun.provider,
+			model: captureRun.model,
+			requestedTarget: captureRun.requestedTarget,
+			contextFilePath: input.contextFilePath,
+			stateFilePath: input.stateFilePath,
+			outputDir: input.outputDir,
+		};
+	}
+
+	private buildFailureMessage(captureRun: CaptureRunRecord, artifactCount: number): string {
+		switch (captureRun.failureReason) {
+			case 'missing_artifacts':
+				return 'Demo capture was requested for this run, but no screenshot or video artifacts were produced.';
+			case 'invalid_turn':
+			case 'invalid_token':
+				return 'Demo capture used an invalid or expired Maestro turn token.';
+			case 'wrong_target':
+				return 'Demo capture completed, but the captured page did not match the requested target.';
+			case 'simulated_capture':
+				return 'Demo capture completed against a simulated or local reproduction instead of the requested app.';
+			case 'auth_blocked':
+				return 'Demo capture never reached the authenticated target content.';
+			case 'provider_claim_without_demo':
+				return 'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.';
+			case 'blocked':
+				return captureRun.blockedReason || 'Demo capture is blocked pending user input or approval.';
+			case 'legacy_unverified':
+				return 'Only legacy/unverified demo artifacts were recovered for this turn.';
+			default:
+				if (captureRun.status === 'requested' || captureRun.status === 'started') {
+					return 'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.';
+				}
+				if (!captureRun.requirementSatisfied && artifactCount === 0) {
+					return 'Demo capture was requested for this run, but no screenshot or video artifacts were produced.';
+				}
+				return 'Demo capture failed for this run.';
+		}
+	}
+
+	getTurnRequirementOutcome(context: {
+		sessionId: string;
+		tabId?: string | null;
+		turnId?: string | null;
+		captureRunId?: string | null;
+	}): { satisfied: boolean; message?: string; demoCard?: DemoCard | null } {
+		const captureRun =
+			(context.captureRunId ? this.db.getCaptureRunById(context.captureRunId) : null) ||
+			(context.turnId
+				? this.db.getCaptureRunByTurnId(context.sessionId, context.tabId || null, context.turnId)
+				: null);
+		if (!captureRun) {
+			return {
+				satisfied: false,
+				message:
+					'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.',
+			};
+		}
+		const demo = this.db.getDemoByCaptureRun(captureRun.id);
+		const demoCard = demo ? this.buildDemoCard(demo, captureRun) : null;
+		if (captureRun.requirementSatisfied) {
+			return {
+				satisfied: true,
+				demoCard,
+			};
+		}
+		return {
+			satisfied: false,
+			message: this.buildFailureMessage(captureRun, this.listRunArtifacts(captureRun.id).length),
+			demoCard,
+		};
+	}
+
 	private async ensureCaptureRun(
 		context: DemoCaptureContext,
 		event: DemoCaptureEvent
 	): Promise<CaptureRunRecord> {
+		if (event.turnToken) {
+			const turnRecord = this.db.getCaptureRunByTurnToken(event.turnToken);
+			if (!turnRecord) {
+				throw new Error(`Unknown Maestro demo turn token for session ${context.sessionId}`);
+			}
+			if (
+				turnRecord.sessionId !== context.sessionId ||
+				(turnRecord.tabId || null) !== (context.tabId || null)
+			) {
+				throw new Error(`Invalid Maestro demo turn token for session ${context.sessionId}`);
+			}
+			if (event.turnId && turnRecord.turnId && turnRecord.turnId !== event.turnId) {
+				const failedRun = this.withRunUpdates(turnRecord, {
+					status: 'failed',
+					verificationStatus: 'failed',
+					failureReason: 'invalid_turn',
+					requirementSatisfied: false,
+				});
+				return failedRun;
+			}
+			this.sessionRunMap.set(this.getSessionKey(context), turnRecord.id);
+			this.hydrateCaptureRunCaches(turnRecord.id);
+			return turnRecord;
+		}
+
+		if (event.turnId) {
+			const turnKey = this.getTurnKey(context.sessionId, context.tabId, event.turnId);
+			const cachedTurnRunId = turnKey ? this.turnRunMap.get(turnKey) : null;
+			if (cachedTurnRunId) {
+				const cachedTurnRun = this.db.getCaptureRunById(cachedTurnRunId);
+				if (cachedTurnRun) {
+					return cachedTurnRun;
+				}
+			}
+			const existingTurnRun = this.db.getCaptureRunByTurnId(
+				context.sessionId,
+				context.tabId || null,
+				event.turnId
+			);
+			if (existingTurnRun) {
+				this.updateTurnRunCache(existingTurnRun);
+				this.sessionRunMap.set(this.getSessionKey(context), existingTurnRun.id);
+				this.hydrateCaptureRunCaches(existingTurnRun.id);
+				return existingTurnRun;
+			}
+		}
+
 		const sessionKey = this.getSessionKey(context);
 		const externalRunId = event.runId?.trim() || null;
 		if (externalRunId) {
@@ -327,7 +628,24 @@ export class DemoArtifactService {
 			sessionId: context.sessionId,
 			tabId: context.tabId || null,
 			externalRunId,
-			status: 'capturing',
+			turnId: event.turnId || null,
+			turnToken: event.turnToken || null,
+			status: this.inferCaptureSource(event) === 'maestro_demo_cli' ? 'requested' : 'legacy_unverified',
+			verificationStatus:
+				this.inferCaptureSource(event) === 'maestro_demo_cli' ? 'pending' : 'legacy_unverified',
+			failureReason:
+				this.inferCaptureSource(event) === 'maestro_demo_cli' ? null : 'legacy_unverified',
+			blockedReason: event.blockedReason || null,
+			captureSource: this.inferCaptureSource(event),
+			provider: event.provider || null,
+			model: event.model || null,
+			requestedTarget: event.requestedTarget || null,
+			observedUrl: event.observedUrl || null,
+			observedTitle: event.observedTitle || null,
+			isSimulated: event.isSimulated === true,
+			authTargetReached:
+				typeof event.authTargetReached === 'boolean' ? event.authTargetReached : null,
+			requirementSatisfied: false,
 			title: event.title || null,
 			summary: event.summary || null,
 			createdAt: now,
@@ -335,6 +653,7 @@ export class DemoArtifactService {
 		};
 		this.db.upsertCaptureRun(record);
 		this.sessionRunMap.set(sessionKey, record.id);
+		this.updateTurnRunCache(record);
 		this.captureRunArtifacts.set(record.id, []);
 		this.captureRunSteps.set(record.id, []);
 		return record;
@@ -342,7 +661,7 @@ export class DemoArtifactService {
 
 	private ensureDemoRecord(
 		captureRun: CaptureRunRecord,
-		status: DemoStatus = 'capturing'
+		status: DemoStatus = 'requested'
 	): DemoRecord {
 		this.hydrateCaptureRunCaches(captureRun.id);
 		const existing = this.db.getDemoByCaptureRun(captureRun.id);
@@ -405,6 +724,125 @@ export class DemoArtifactService {
 			success: result.exitCode === 0,
 			stderr: result.stderr,
 		};
+	}
+
+	private async defaultProbeVideoMetadata(
+		filePath: string
+	): Promise<{ durationMs: number | null; width: number | null; height: number | null } | null> {
+		const result = await execFileNoThrow(
+			'ffprobe',
+			[
+				'-v',
+				'error',
+				'-select_streams',
+				'v:0',
+				'-show_entries',
+				'stream=width,height,duration:format=duration',
+				'-of',
+				'json',
+				filePath,
+			],
+			undefined,
+			{ timeout: 15_000 }
+		);
+
+		if (result.exitCode !== 0 || !result.stdout.trim()) {
+			return null;
+		}
+
+		try {
+			const parsed = JSON.parse(result.stdout) as {
+				streams?: Array<{
+					width?: number | string | null;
+					height?: number | string | null;
+					duration?: number | string | null;
+				}>;
+				format?: {
+					duration?: number | string | null;
+				};
+			};
+			const stream = parsed.streams?.[0];
+			const parseNullableNumber = (value: number | string | null | undefined): number | null => {
+				if (value === null || value === undefined || value === '') {
+					return null;
+				}
+				const numeric =
+					typeof value === 'number' ? value : Number.parseFloat(String(value).trim());
+				return Number.isFinite(numeric) ? numeric : null;
+			};
+			const width = parseNullableNumber(stream?.width);
+			const height = parseNullableNumber(stream?.height);
+			const durationSeconds =
+				parseNullableNumber(stream?.duration) ?? parseNullableNumber(parsed.format?.duration);
+			return {
+				width,
+				height,
+				durationMs:
+					durationSeconds !== null && durationSeconds > 0
+						? Math.round(durationSeconds * 1000)
+						: null,
+			};
+		} catch {
+			return null;
+		}
+	}
+
+	private async enrichVideoArtifactMetadata(record: ArtifactRecord): Promise<ArtifactRecord> {
+		if (record.kind !== 'video') {
+			return record;
+		}
+
+		const needsMetadata =
+			record.durationMs === null || record.width === null || record.height === null;
+		if (!needsMetadata) {
+			return record;
+		}
+
+		const probe = this.probeVideoMetadata ?? this.defaultProbeVideoMetadata.bind(this);
+		const metadata = await probe(record.storedPath);
+		if (!metadata) {
+			return record;
+		}
+
+		const nextRecord: ArtifactRecord = {
+			...record,
+			width: record.width ?? metadata.width,
+			height: record.height ?? metadata.height,
+			durationMs: record.durationMs ?? metadata.durationMs,
+			updatedAt: this.now(),
+		};
+
+		if (
+			nextRecord.width === record.width &&
+			nextRecord.height === record.height &&
+			nextRecord.durationMs === record.durationMs
+		) {
+			return record;
+		}
+
+		this.db.updateArtifactMetadata(nextRecord.id, {
+			width: nextRecord.width,
+			height: nextRecord.height,
+			durationMs: nextRecord.durationMs,
+			updatedAt: nextRecord.updatedAt,
+		});
+
+		const cachedArtifacts = this.captureRunArtifacts.get(nextRecord.captureRunId);
+		if (cachedArtifacts) {
+			this.captureRunArtifacts.set(
+				nextRecord.captureRunId,
+				cachedArtifacts.map((artifact) => (artifact.id === nextRecord.id ? nextRecord : artifact))
+			);
+		}
+
+		return nextRecord;
+	}
+
+	private async backfillMissingVideoMetadata(): Promise<void> {
+		const artifacts = this.db.listVideoArtifactsMissingMetadata();
+		for (const artifact of artifacts) {
+			await this.enrichVideoArtifactMetadata(artifact);
+		}
 	}
 
 	private async copyArtifact(
@@ -585,7 +1023,7 @@ export class DemoArtifactService {
 		const artifacts = this.captureRunArtifacts.get(source.captureRunId) || [];
 		artifacts.push(record);
 		this.captureRunArtifacts.set(source.captureRunId, artifacts);
-		return record;
+		return this.enrichVideoArtifactMetadata(record);
 	}
 
 	private async ingestArtifact(
@@ -704,7 +1142,7 @@ export class DemoArtifactService {
 				const artifacts = this.captureRunArtifacts.get(captureRunId) || [];
 				artifacts.push(record);
 				this.captureRunArtifacts.set(captureRunId, artifacts);
-				return record;
+				return this.enrichVideoArtifactMetadata(record);
 			} catch (error) {
 				await fs.rm(storedPath, { force: true });
 				await this.logLifecycle('error', 'Failed to finalize remote demo artifact ingest', {
@@ -769,7 +1207,7 @@ export class DemoArtifactService {
 			const artifacts = this.captureRunArtifacts.get(captureRunId) || [];
 			artifacts.push(record);
 			this.captureRunArtifacts.set(captureRunId, artifacts);
-			return record;
+			return this.enrichVideoArtifactMetadata(record);
 		} catch (error) {
 			await this.logLifecycle('error', 'Failed to ingest demo artifact', {
 				captureRunId,
@@ -798,19 +1236,34 @@ export class DemoArtifactService {
 		};
 	}
 
-	private buildDemoCard(demo: DemoRecord): DemoCard {
-		const artifacts =
-			this.captureRunArtifacts.get(demo.captureRunId) ||
-			this.db.listArtifactsForCaptureRun(demo.captureRunId);
+	private buildDemoCard(demo: DemoRecord, captureRun?: CaptureRunRecord | null): DemoCard {
+		const resolvedCaptureRun = captureRun || this.db.getCaptureRunById(demo.captureRunId);
+		const artifacts = this.listRunArtifacts(demo.captureRunId);
 		const poster = this.selectPosterArtifact(artifacts, demo.posterArtifactId);
 		const video = this.selectVideoArtifact(artifacts, demo.videoArtifactId);
 		const steps = this.db.listDemoSteps(demo.id);
+		const derivedFailureReason = resolvedCaptureRun
+			? this.deriveFailureReason(resolvedCaptureRun, artifacts.length)
+			: null;
 		return {
 			demoId: demo.id,
 			captureRunId: demo.captureRunId,
+			turnId: resolvedCaptureRun?.turnId || null,
+			provider: resolvedCaptureRun?.provider || null,
+			model: resolvedCaptureRun?.model || null,
 			title: demo.title,
 			summary: demo.summary,
-			status: demo.status,
+			status: resolvedCaptureRun?.status || demo.status,
+			verificationStatus: resolvedCaptureRun?.verificationStatus || 'pending',
+			failureReason: derivedFailureReason,
+			blockedReason: resolvedCaptureRun?.blockedReason || null,
+			captureSource: resolvedCaptureRun?.captureSource || 'legacy_stdout',
+			requestedTarget: resolvedCaptureRun?.requestedTarget || null,
+			observedUrl: resolvedCaptureRun?.observedUrl || null,
+			observedTitle: resolvedCaptureRun?.observedTitle || null,
+			isSimulated: resolvedCaptureRun?.isSimulated === true,
+			authTargetReached: resolvedCaptureRun?.authTargetReached ?? null,
+			requirementSatisfied: resolvedCaptureRun?.requirementSatisfied === true,
 			createdAt: demo.createdAt,
 			updatedAt: demo.updatedAt,
 			stepCount: steps.length,
@@ -829,15 +1282,20 @@ export class DemoArtifactService {
 		this.db.replaceDemoSteps(demoId, steps);
 	}
 
-	private async updateCapturingDemoArtifacts(
+	private async updateDemoArtifactsForProgress(
 		captureRun: CaptureRunRecord,
+		status: DemoStatus,
 		recentArtifact?: ArtifactRecord | null,
 		event?: DemoCaptureEvent
-	): Promise<void> {
-		const demo = this.ensureDemoRecord(captureRun, 'capturing');
-		const artifacts =
-			this.captureRunArtifacts.get(captureRun.id) ||
-			this.db.listArtifactsForCaptureRun(captureRun.id);
+	): Promise<DemoCard> {
+		const progressRun = this.withRunUpdates(captureRun, {
+			status,
+			verificationStatus: 'pending',
+			failureReason: null,
+			requirementSatisfied: false,
+		});
+		const demo = this.ensureDemoRecord(progressRun, status);
+		const artifacts = this.listRunArtifacts(progressRun.id);
 		const posterCandidate =
 			event?.role === 'poster' && recentArtifact?.kind === 'image'
 				? recentArtifact
@@ -846,32 +1304,129 @@ export class DemoArtifactService {
 			event?.role === 'video' && recentArtifact?.kind === 'video'
 				? recentArtifact
 				: this.selectVideoArtifact(artifacts, demo.videoArtifactId);
-		this.db.upsertDemo({
+		const updatedDemo: DemoRecord = {
 			...demo,
+			status,
 			title: captureRun.title || demo.title,
 			summary: captureRun.summary ?? demo.summary,
 			posterArtifactId: posterCandidate?.id || demo.posterArtifactId,
 			videoArtifactId: videoCandidate?.id || demo.videoArtifactId,
 			updatedAt: this.now(),
-		});
+		};
+		this.db.upsertDemo(updatedDemo);
+		return this.buildDemoCard(updatedDemo, progressRun);
+	}
+
+	private evaluateCompletion(
+		captureRun: CaptureRunRecord,
+		artifacts: ArtifactRecord[],
+		event: DemoCaptureEvent
+	): {
+		status: DemoStatus;
+		verificationStatus: DemoVerificationStatus;
+		failureReason: DemoFailureReason | null;
+		requirementSatisfied: boolean;
+		authTargetReached: boolean | null;
+	} {
+		if (captureRun.captureSource !== 'maestro_demo_cli') {
+			return {
+				status: 'legacy_unverified',
+				verificationStatus: 'legacy_unverified',
+				failureReason: 'legacy_unverified',
+				requirementSatisfied: false,
+				authTargetReached: captureRun.authTargetReached,
+			};
+		}
+
+		if (artifacts.length === 0) {
+			return {
+				status: 'failed',
+				verificationStatus: 'failed',
+				failureReason: 'missing_artifacts',
+				requirementSatisfied: false,
+				authTargetReached: captureRun.authTargetReached,
+			};
+		}
+
+		if (captureRun.isSimulated || event.isSimulated === true) {
+			return {
+				status: 'failed',
+				verificationStatus: 'failed',
+				failureReason: 'simulated_capture',
+				requirementSatisfied: false,
+				authTargetReached: captureRun.authTargetReached,
+			};
+		}
+
+		const requestedDomain = this.normalizeDomain(
+			captureRun.requestedTarget?.url || captureRun.requestedTarget?.domain || null
+		);
+		const observedDomain = this.normalizeDomain(captureRun.observedUrl);
+		const authTargetReached =
+			typeof event.authTargetReached === 'boolean'
+				? event.authTargetReached
+				: captureRun.authTargetReached;
+
+		if (requestedDomain && !observedDomain) {
+			return {
+				status: 'failed',
+				verificationStatus: 'failed',
+				failureReason: 'wrong_target',
+				requirementSatisfied: false,
+				authTargetReached,
+			};
+		}
+
+		if (requestedDomain && observedDomain && requestedDomain !== observedDomain) {
+			return {
+				status: 'failed',
+				verificationStatus: 'failed',
+				failureReason: 'wrong_target',
+				requirementSatisfied: false,
+				authTargetReached,
+			};
+		}
+
+		if (requestedDomain && authTargetReached === false) {
+			return {
+				status: 'failed',
+				verificationStatus: 'failed',
+				failureReason: 'auth_blocked',
+				requirementSatisfied: false,
+				authTargetReached: false,
+			};
+		}
+
+		return {
+			status: 'completed',
+			verificationStatus: 'verified',
+			failureReason: null,
+			requirementSatisfied: true,
+			authTargetReached,
+		};
 	}
 
 	private async finalizeDemo(
 		context: DemoCaptureContext,
 		captureRun: CaptureRunRecord,
-		status: DemoStatus,
 		event: DemoCaptureEvent
 	): Promise<DemoCard> {
 		this.hydrateCaptureRunCaches(captureRun.id);
 		const existingDemo = this.db.getDemoByCaptureRun(captureRun.id);
-		if (existingDemo && existingDemo.status !== 'capturing') {
+		if (
+			existingDemo &&
+			existingDemo.status !== 'requested' &&
+			existingDemo.status !== 'started' &&
+			existingDemo.status !== 'artifact_added' &&
+			existingDemo.status !== 'verifying'
+		) {
 			await this.logLifecycle('warn', 'Ignoring duplicate demo finalization event', {
 				captureRunId: captureRun.id,
 				demoId: existingDemo.id,
 				status: existingDemo.status,
 				eventType: event.type,
 			});
-			return this.buildDemoCard(existingDemo);
+			return this.buildDemoCard(existingDemo, captureRun);
 		}
 
 		const posterArtifact =
@@ -897,18 +1452,38 @@ export class DemoArtifactService {
 						: undefined
 			)) || null;
 
-		const artifacts =
-			this.captureRunArtifacts.get(captureRun.id) ||
-			this.db.listArtifactsForCaptureRun(captureRun.id);
+		const artifacts = this.listRunArtifacts(captureRun.id);
+		const completion: {
+			status: DemoStatus;
+			verificationStatus: DemoVerificationStatus;
+			failureReason: DemoFailureReason | null;
+			requirementSatisfied: boolean;
+			authTargetReached: boolean | null;
+		} =
+			event.type === 'capture_failed'
+				? {
+						status: event.captureSource === 'log_harvest' ? 'legacy_unverified' : 'failed',
+						verificationStatus:
+							event.captureSource === 'log_harvest' ? 'legacy_unverified' : 'failed',
+						failureReason:
+							event.failureReason ||
+							(event.captureSource === 'log_harvest' ? 'legacy_unverified' : 'unknown'),
+						requirementSatisfied: false,
+						authTargetReached:
+							typeof event.authTargetReached === 'boolean'
+								? event.authTargetReached
+								: captureRun.authTargetReached,
+				  }
+				: this.evaluateCompletion(captureRun, artifacts, event);
 		const demo = this.ensureDemoRecord(
 			{
 				...captureRun,
-				status,
+				status: completion.status,
 				title: event.title || captureRun.title,
 				summary: event.summary || captureRun.summary,
 				updatedAt: this.now(),
 			},
-			status
+			completion.status
 		);
 		let selectedVideo = videoArtifact || this.selectVideoArtifact(artifacts, demo.videoArtifactId);
 		const videoDerivative = selectedVideo ? await this.createMp4Derivative(selectedVideo) : null;
@@ -917,7 +1492,7 @@ export class DemoArtifactService {
 		}
 		const finalizedDemo: DemoRecord = {
 			...demo,
-			status,
+			status: completion.status,
 			title: event.title || captureRun.title || demo.title || 'Captured demo',
 			summary: event.summary || captureRun.summary || demo.summary || null,
 			posterArtifactId:
@@ -929,21 +1504,42 @@ export class DemoArtifactService {
 		};
 		this.db.upsertDemo(finalizedDemo);
 		this.persistSteps(captureRun.id, finalizedDemo.id);
-		this.db.upsertCaptureRun({
+		const finalizedRun: CaptureRunRecord = {
 			...captureRun,
-			status,
+			status: completion.status,
+			verificationStatus: completion.verificationStatus,
+			failureReason: completion.failureReason,
+			blockedReason: event.blockedReason || captureRun.blockedReason,
+			provider: event.provider || captureRun.provider,
+			model: event.model || captureRun.model,
+			requestedTarget: event.requestedTarget || captureRun.requestedTarget,
+			observedUrl: event.observedUrl || captureRun.observedUrl,
+			observedTitle: event.observedTitle || captureRun.observedTitle,
+			isSimulated: event.isSimulated === true || captureRun.isSimulated,
+			authTargetReached: completion.authTargetReached,
+			requirementSatisfied: completion.requirementSatisfied,
 			title: finalizedDemo.title,
 			summary: finalizedDemo.summary,
 			updatedAt: this.now(),
-		});
-		await this.logLifecycle(status === 'failed' ? 'warn' : 'info', 'Demo capture finalized', {
+		};
+		this.db.upsertCaptureRun(finalizedRun);
+		await this.logLifecycle(
+			completion.status === 'failed' || completion.status === 'legacy_unverified'
+				? 'warn'
+				: 'info',
+			'Demo capture finalized',
+			{
 			captureRunId: captureRun.id,
 			demoId: finalizedDemo.id,
-			status,
+			status: completion.status,
 			stepCount: this.db.listDemoSteps(finalizedDemo.id).length,
 			artifactCount: artifacts.length,
-		});
-		const card = this.buildDemoCard(finalizedDemo);
+			verificationStatus: completion.verificationStatus,
+			requirementSatisfied: completion.requirementSatisfied,
+			failureReason: completion.failureReason,
+		}
+		);
+		const card = this.buildDemoCard(finalizedDemo, finalizedRun);
 		this.cleanupRunCaches(captureRun.id, this.getSessionKey(context));
 		void this.cleanupExpiredArtifacts();
 		return card;
@@ -952,8 +1548,10 @@ export class DemoArtifactService {
 	private async recoverStaleCaptures(): Promise<void> {
 		const cutoff = this.now() - this.staleCaptureMs;
 		const staleRuns = this.db
-			.listCaptureRunsByStatus('capturing')
-			.filter((run) => run.updatedAt <= cutoff);
+			.listCaptureRunsOlderThan(cutoff)
+			.filter((run) =>
+				['requested', 'started', 'artifact_added', 'verifying', 'blocked'].includes(run.status)
+			);
 		for (const run of staleRuns) {
 			await this.logLifecycle('warn', 'Recovering stale demo capture as failed', {
 				captureRunId: run.id,
@@ -961,11 +1559,16 @@ export class DemoArtifactService {
 				tabId: run.tabId,
 				updatedAt: run.updatedAt,
 			});
-			await this.finalizeDemo({ sessionId: run.sessionId, tabId: run.tabId }, run, 'failed', {
+			await this.finalizeDemo({ sessionId: run.sessionId, tabId: run.tabId }, run, {
 				type: 'capture_failed',
 				runId: run.externalRunId || undefined,
 				title: run.title || 'Captured demo',
 				summary: run.summary || 'Capture did not complete before the session ended.',
+				turnId: run.turnId || undefined,
+				turnToken: run.turnToken || undefined,
+				failureReason: run.failureReason || 'agent_exited',
+				observedUrl: run.observedUrl || undefined,
+				observedTitle: run.observedTitle || undefined,
 			});
 		}
 	}
@@ -1001,7 +1604,7 @@ export class DemoArtifactService {
 			expiredRunIds.add(demo.captureRunId);
 		}
 		for (const run of this.db.listCaptureRunsOlderThan(cutoff)) {
-			if (run.status !== 'capturing') {
+			if (!['requested', 'started', 'artifact_added', 'verifying', 'blocked'].includes(run.status)) {
 				expiredRunIds.add(run.id);
 			}
 		}
@@ -1013,30 +1616,80 @@ export class DemoArtifactService {
 	async handleCaptureEvent(input: DemoCaptureEventInput): Promise<DemoCard | null> {
 		const { context, event } = input;
 		const captureRun = await this.ensureCaptureRun(context, event);
-		const updatedRun: CaptureRunRecord = {
-			...captureRun,
-			status: event.type === 'capture_failed' ? 'failed' : captureRun.status,
+		const updatedRun = this.withRunUpdates(captureRun, {
+			status:
+				event.type === 'capture_failed'
+					? event.captureSource === 'log_harvest'
+						? 'legacy_unverified'
+						: 'failed'
+					: event.type === 'capture_blocked'
+						? 'blocked'
+						: captureRun.status,
+			verificationStatus:
+				event.type === 'capture_failed'
+					? event.captureSource === 'log_harvest'
+						? 'legacy_unverified'
+						: 'failed'
+					: event.type === 'capture_blocked'
+						? 'blocked'
+						: captureRun.verificationStatus,
+			failureReason:
+				event.failureReason ||
+				(event.type === 'capture_blocked'
+					? 'blocked'
+					: event.captureSource === 'log_harvest'
+						? 'legacy_unverified'
+						: captureRun.failureReason),
+			blockedReason: event.blockedReason || captureRun.blockedReason,
+			captureSource: event.captureSource || captureRun.captureSource,
+			provider: event.provider || captureRun.provider,
+			model: event.model || captureRun.model,
+			requestedTarget: event.requestedTarget || captureRun.requestedTarget,
+			observedUrl: event.observedUrl || captureRun.observedUrl,
+			observedTitle: event.observedTitle || captureRun.observedTitle,
+			isSimulated: event.isSimulated === true || captureRun.isSimulated,
+			authTargetReached:
+				typeof event.authTargetReached === 'boolean'
+					? event.authTargetReached
+					: captureRun.authTargetReached,
 			title: event.title || captureRun.title,
 			summary: event.summary || captureRun.summary,
-			updatedAt: this.now(),
-		};
-		this.db.upsertCaptureRun(updatedRun);
+		});
 
 		if (event.type === 'capture_started') {
-			this.ensureDemoRecord(updatedRun, 'capturing');
+			const startedRun = this.withRunUpdates(updatedRun, {
+				status: 'started',
+				verificationStatus: 'pending',
+				failureReason: null,
+				requirementSatisfied: false,
+			});
+			const demo = this.ensureDemoRecord(
+				{
+					...startedRun,
+					status: 'started',
+				},
+				'started'
+			);
 			await this.logLifecycle('info', 'Demo capture started', {
 				captureRunId: updatedRun.id,
 				runId: event.runId,
 				sessionId: context.sessionId,
 				tabId: context.tabId,
 			});
-			return null;
+			return this.buildDemoCard(demo, startedRun);
 		}
 
 		if (event.type === 'artifact_created') {
 			const artifact = await this.ingestArtifact(context, updatedRun.id, event);
-			await this.updateCapturingDemoArtifacts(updatedRun, artifact, event);
-			return null;
+			return this.updateDemoArtifactsForProgress(
+				{
+					...updatedRun,
+					status: 'artifact_added',
+				},
+				'artifact_added',
+				artifact,
+				event
+			);
 		}
 
 		if (event.type === 'step_created') {
@@ -1044,7 +1697,13 @@ export class DemoArtifactService {
 				...event,
 				kind: event.kind || 'image',
 			});
-			const demo = this.ensureDemoRecord(updatedRun, 'capturing');
+			const demo = this.ensureDemoRecord(
+				{
+					...updatedRun,
+					status: 'artifact_added',
+				},
+				'artifact_added'
+			);
 			const currentSteps =
 				this.captureRunSteps.get(updatedRun.id) || this.db.listDemoSteps(demo.id);
 			const nextStep: DemoStepRecord = {
@@ -1062,20 +1721,42 @@ export class DemoArtifactService {
 			currentSteps.push(nextStep);
 			this.captureRunSteps.set(updatedRun.id, currentSteps);
 			this.persistSteps(updatedRun.id, demo.id);
-			await this.updateCapturingDemoArtifacts(updatedRun, screenshotArtifact, {
+			return this.updateDemoArtifactsForProgress(
+				{
+					...updatedRun,
+					status: 'artifact_added',
+				},
+				'artifact_added',
+				screenshotArtifact,
+				{
 				...event,
 				role: event.role || 'poster',
+				}
+			);
+		}
+
+		if (event.type === 'capture_blocked') {
+			const blockedRun = this.withRunUpdates(updatedRun, {
+				status: 'blocked',
+				verificationStatus: 'blocked',
+				failureReason: 'blocked',
+				requirementSatisfied: false,
 			});
-			return null;
+			const demo = this.ensureDemoRecord(
+				{
+					...blockedRun,
+					status: 'blocked',
+					verificationStatus: 'blocked',
+					failureReason: 'blocked',
+					requirementSatisfied: false,
+				},
+				'blocked'
+			);
+			return this.buildDemoCard(demo, blockedRun);
 		}
 
 		if (event.type === 'capture_completed' || event.type === 'capture_failed') {
-			return this.finalizeDemo(
-				context,
-				updatedRun,
-				event.type === 'capture_failed' ? 'failed' : 'completed',
-				event
-			);
+			return this.finalizeDemo(context, updatedRun, event);
 		}
 
 		return null;
@@ -1175,6 +1856,9 @@ export class DemoArtifactService {
 				runId,
 				title,
 				summary,
+				captureSource: 'log_harvest',
+				verificationStatus: 'legacy_unverified',
+				failureReason: 'legacy_unverified',
 			},
 		});
 
@@ -1189,6 +1873,7 @@ export class DemoArtifactService {
 					path: imagePath,
 					filename: path.basename(imagePath),
 					orderIndex: index,
+					captureSource: 'log_harvest',
 				},
 			});
 		}
@@ -1203,6 +1888,7 @@ export class DemoArtifactService {
 					role: index === 0 ? 'video' : 'supporting',
 					path: videoPath,
 					filename: path.basename(videoPath),
+					captureSource: 'log_harvest',
 				},
 			});
 		}
@@ -1214,12 +1900,17 @@ export class DemoArtifactService {
 				runId,
 				title,
 				summary,
+				captureSource: 'log_harvest',
+				verificationStatus: 'legacy_unverified',
+				failureReason: 'legacy_unverified',
 			},
 		});
 	}
 
 	listSessionDemos(sessionId: string, tabId?: string | null): DemoCard[] {
-		return this.db.listDemosForSession(sessionId, tabId).map((demo) => this.buildDemoCard(demo));
+		return this.db
+			.listDemosForSession(sessionId, tabId)
+			.map((demo) => this.buildDemoCard(demo, this.db.getCaptureRunById(demo.captureRunId)));
 	}
 
 	getDemo(demoId: string): DemoDetail | null {
@@ -1242,7 +1933,7 @@ export class DemoArtifactService {
 			),
 		}));
 		return {
-			...this.buildDemoCard(demo),
+			...this.buildDemoCard(demo, this.db.getCaptureRunById(demo.captureRunId)),
 			sessionId: demo.sessionId,
 			tabId: demo.tabId,
 			steps: detailSteps,

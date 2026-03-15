@@ -159,6 +159,8 @@ vi.mock('../../../web/hooks/useMobileViewState', () => ({
 vi.mock('../../../web/utils/config', () => ({
 	buildApiUrl: (endpoint: string) => `http://localhost:3000${endpoint}`,
 	getCurrentDemoId: vi.fn(() => null),
+	getCurrentSessionId: vi.fn(() => null),
+	getDashboardUrl: vi.fn(() => 'http://localhost:3000/app'),
 	getMaestroConfig: () => ({
 		basePath: '/app',
 		sessionId: null,
@@ -173,16 +175,22 @@ vi.mock('../../../web/utils/config', () => ({
 	updateUrlForSessionTab: vi.fn(),
 }));
 
-vi.mock('../../../web/mobile/constants', () => ({
-	triggerHaptic: (pattern: number[]) => mockTriggerHaptic(pattern),
-	HAPTIC_PATTERNS: {
-		tap: [10],
-		send: [15],
-		interrupt: [20],
-		success: [30],
-		error: [50],
-	},
-}));
+vi.mock('../../../web/mobile/constants', async () => {
+	const actual = await vi.importActual<typeof import('../../../web/mobile/constants')>(
+		'../../../web/mobile/constants'
+	);
+	return {
+		...actual,
+		triggerHaptic: (pattern: number[]) => mockTriggerHaptic(pattern),
+		HAPTIC_PATTERNS: {
+			tap: [10],
+			send: [15],
+			interrupt: [20],
+			success: [30],
+			error: [50],
+		},
+	};
+});
 
 vi.mock('../../../web/utils/logger', () => ({
 	webLogger: {
@@ -383,29 +391,19 @@ vi.mock('../../../web/mobile/AutoRunIndicator', () => ({
 
 vi.mock('../../../web/mobile/TabBar', () => ({
 	TabBar: ({
-		tabs,
-		activeTabId,
-		onSelectTab,
-		onNewTab,
-		onCloseTab,
+		sessionKey,
+		onNewThread,
+		modelLabel,
 	}: {
-		tabs: Array<{ id: string; name: string }>;
-		activeTabId: string;
-		onSelectTab: (tabId: string) => void;
-		onNewTab: () => void;
-		onCloseTab: (tabId: string) => void;
+		sessionKey?: string | null;
+		onNewThread: () => void;
+		modelLabel?: string;
 	}) => (
 		<div data-testid="tab-bar">
-			{tabs.map((tab) => (
-				<button key={tab.id} data-testid={`tab-${tab.id}`} onClick={() => onSelectTab(tab.id)}>
-					{tab.name}
-				</button>
-			))}
-			<button data-testid="new-tab" onClick={onNewTab}>
-				New
-			</button>
-			<button data-testid="close-tab" onClick={() => onCloseTab(activeTabId)}>
-				Close
+			<span data-testid="tab-bar-session">{sessionKey || 'none'}</span>
+			<span data-testid="tab-bar-model">{modelLabel || 'Model'}</span>
+			<button data-testid="new-thread" onClick={onNewThread}>
+				New Thread
 			</button>
 		</div>
 	),
@@ -550,7 +548,7 @@ describe('MobileApp', () => {
 
 		render(<MobileApp />);
 
-		expect(screen.getByText('Choose an agent')).toBeInTheDocument();
+		expect(screen.getByText('Choose a thread')).toBeInTheDocument();
 		expect(screen.getByText(/Open the navigation drawer/)).toBeInTheDocument();
 	});
 
@@ -673,8 +671,21 @@ describe('MobileApp', () => {
 					demoCard: {
 						demoId: 'demo-1',
 						captureRunId: 'capture-1',
+						turnId: 'turn-1',
+						provider: 'claude-code',
+						model: 'default',
 						title: 'Demo',
 						status: 'completed',
+						verificationStatus: 'verified',
+						failureReason: null,
+						blockedReason: null,
+						captureSource: 'maestro_demo_cli',
+						requestedTarget: { url: 'https://example.com', domain: 'example.com' },
+						observedUrl: 'https://example.com',
+						observedTitle: 'Example Domain',
+						isSimulated: false,
+						authTargetReached: true,
+						requirementSatisfied: true,
 						createdAt: Date.now(),
 						updatedAt: Date.now(),
 						stepCount: 1,
@@ -732,7 +743,7 @@ describe('MobileApp', () => {
 		});
 	});
 
-	it('renders the tab bar and forwards tab actions', async () => {
+	it('renders the thread controls and forwards new-thread actions', async () => {
 		render(<MobileApp />);
 		await pushSessions([
 			createMockSession({
@@ -747,23 +758,11 @@ describe('MobileApp', () => {
 		]);
 
 		mockSend.mockClear();
-		fireEvent.click(screen.getByTestId('tab-tab-2'));
-		fireEvent.click(screen.getByTestId('new-tab'));
-		fireEvent.click(screen.getByTestId('close-tab'));
+		expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
+		expect(screen.getByTestId('tab-bar-session')).toHaveTextContent('session-1');
+		fireEvent.click(screen.getByTestId('new-thread'));
 
-		expect(mockSend.mock.calls).toEqual(
-			expect.arrayContaining([
-				[{ type: 'select_tab', sessionId: 'session-1', tabId: 'tab-2' }],
-				[{ type: 'new_tab', sessionId: 'session-1' }],
-				[
-					expect.objectContaining({
-						type: 'close_tab',
-						sessionId: 'session-1',
-						tabId: expect.stringMatching(/^pending-tab-/),
-					}),
-				],
-			])
-		);
+		expect(mockSend).toHaveBeenCalledWith({ type: 'new_thread', sessionId: 'session-1' });
 	});
 
 	it('opens and closes the tab search modal from the drawer', async () => {
@@ -867,31 +866,17 @@ describe('MobileApp', () => {
 		expect(mockShowNotification).not.toHaveBeenCalled();
 	});
 
-	it('navigates tabs with keyboard shortcuts', async () => {
+	it('does not render thread controls for shell sessions', async () => {
 		render(<MobileApp />);
 		await pushSessions([
 			createMockSession({
 				id: 'session-1',
-				inputMode: 'ai',
-				aiTabs: [
-					{ id: 'tab-1', name: 'Tab 1', state: 'idle' },
-					{ id: 'tab-2', name: 'Tab 2', state: 'idle' },
-					{ id: 'tab-3', name: 'Tab 3', state: 'idle' },
-				],
-				activeTabId: 'tab-2',
+				inputMode: 'shell',
+				toolType: 'terminal',
 			}),
 		]);
 
-		mockSend.mockClear();
-		fireEvent.keyDown(document, { key: '[', metaKey: true });
-		fireEvent.keyDown(document, { key: ']', metaKey: true });
-
-		expect(mockSend.mock.calls).toEqual(
-			expect.arrayContaining([
-				[{ type: 'select_tab', sessionId: 'session-1', tabId: 'tab-1' }],
-				[{ type: 'select_tab', sessionId: 'session-1', tabId: 'tab-2' }],
-			])
-		);
+		expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
 	});
 
 	it('fetches logs for the active session and tab', async () => {

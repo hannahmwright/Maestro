@@ -58,7 +58,21 @@ export class ArtifactsDB {
 				session_id TEXT NOT NULL,
 				tab_id TEXT,
 				external_run_id TEXT,
+				turn_id TEXT,
+				turn_token TEXT,
 				status TEXT NOT NULL,
+				verification_status TEXT NOT NULL DEFAULT 'pending',
+				failure_reason TEXT,
+				blocked_reason TEXT,
+				capture_source TEXT NOT NULL DEFAULT 'legacy_stdout',
+				provider TEXT,
+				model TEXT,
+				requested_target_json TEXT,
+				observed_url TEXT,
+				observed_title TEXT,
+				is_simulated INTEGER NOT NULL DEFAULT 0,
+				auth_target_reached INTEGER,
+				requirement_satisfied INTEGER NOT NULL DEFAULT 0,
 				title TEXT,
 				summary TEXT,
 				created_at INTEGER NOT NULL,
@@ -129,18 +143,117 @@ export class ArtifactsDB {
 			);
 			CREATE INDEX IF NOT EXISTS idx_demo_steps_demo ON demo_steps(demo_id, order_index ASC);
 		`);
+		this.ensureColumn('capture_runs', 'turn_id', `ALTER TABLE capture_runs ADD COLUMN turn_id TEXT`);
+		this.ensureColumn(
+			'capture_runs',
+			'turn_token',
+			`ALTER TABLE capture_runs ADD COLUMN turn_token TEXT`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'verification_status',
+			`ALTER TABLE capture_runs ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'pending'`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'failure_reason',
+			`ALTER TABLE capture_runs ADD COLUMN failure_reason TEXT`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'blocked_reason',
+			`ALTER TABLE capture_runs ADD COLUMN blocked_reason TEXT`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'capture_source',
+			`ALTER TABLE capture_runs ADD COLUMN capture_source TEXT NOT NULL DEFAULT 'legacy_stdout'`
+		);
+		this.ensureColumn('capture_runs', 'provider', `ALTER TABLE capture_runs ADD COLUMN provider TEXT`);
+		this.ensureColumn('capture_runs', 'model', `ALTER TABLE capture_runs ADD COLUMN model TEXT`);
+		this.ensureColumn(
+			'capture_runs',
+			'requested_target_json',
+			`ALTER TABLE capture_runs ADD COLUMN requested_target_json TEXT`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'observed_url',
+			`ALTER TABLE capture_runs ADD COLUMN observed_url TEXT`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'observed_title',
+			`ALTER TABLE capture_runs ADD COLUMN observed_title TEXT`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'is_simulated',
+			`ALTER TABLE capture_runs ADD COLUMN is_simulated INTEGER NOT NULL DEFAULT 0`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'auth_target_reached',
+			`ALTER TABLE capture_runs ADD COLUMN auth_target_reached INTEGER`
+		);
+		this.ensureColumn(
+			'capture_runs',
+			'requirement_satisfied',
+			`ALTER TABLE capture_runs ADD COLUMN requirement_satisfied INTEGER NOT NULL DEFAULT 0`
+		);
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_capture_runs_turn
+				ON capture_runs(session_id, tab_id, turn_id)
+				WHERE turn_id IS NOT NULL`
+		);
+		db.exec(
+			`CREATE UNIQUE INDEX IF NOT EXISTS idx_capture_runs_turn_token
+				ON capture_runs(turn_token)
+				WHERE turn_token IS NOT NULL`
+		);
+	}
+
+	private ensureColumn(tableName: string, columnName: string, sql: string): void {
+		const columns = this.database
+			.prepare(`PRAGMA table_info(${tableName})`)
+			.all() as Array<{ name?: string }>;
+		if (columns.some((column) => column.name === columnName)) {
+			return;
+		}
+		this.database.exec(sql);
 	}
 
 	upsertCaptureRun(record: CaptureRunRecord): void {
 		this.database
 			.prepare(
 				`INSERT INTO capture_runs (
-					id, session_id, tab_id, external_run_id, status, title, summary, created_at, updated_at
+					id, session_id, tab_id, external_run_id, turn_id, turn_token, status,
+					verification_status, failure_reason, blocked_reason, capture_source, provider,
+					model, requested_target_json, observed_url, observed_title, is_simulated,
+					auth_target_reached, requirement_satisfied, title, summary, created_at, updated_at
 				) VALUES (
-					@id, @sessionId, @tabId, @externalRunId, @status, @title, @summary, @createdAt, @updatedAt
+					@id, @sessionId, @tabId, @externalRunId, @turnId, @turnToken, @status,
+					@verificationStatus, @failureReason, @blockedReason, @captureSource, @provider,
+					@model, @requestedTargetJson, @observedUrl, @observedTitle, @isSimulated,
+					@authTargetReached, @requirementSatisfied, @title, @summary, @createdAt, @updatedAt
 				)
 				ON CONFLICT(id) DO UPDATE SET
+					external_run_id = excluded.external_run_id,
+					turn_id = excluded.turn_id,
+					turn_token = excluded.turn_token,
 					status = excluded.status,
+					verification_status = excluded.verification_status,
+					failure_reason = excluded.failure_reason,
+					blocked_reason = excluded.blocked_reason,
+					capture_source = excluded.capture_source,
+					provider = excluded.provider,
+					model = excluded.model,
+					requested_target_json = excluded.requested_target_json,
+					observed_url = excluded.observed_url,
+					observed_title = excluded.observed_title,
+					is_simulated = excluded.is_simulated,
+					auth_target_reached = excluded.auth_target_reached,
+					requirement_satisfied = excluded.requirement_satisfied,
 					title = excluded.title,
 					summary = excluded.summary,
 					updated_at = excluded.updated_at`
@@ -150,7 +263,26 @@ export class ArtifactsDB {
 				sessionId: record.sessionId,
 				tabId: record.tabId,
 				externalRunId: record.externalRunId,
+				turnId: record.turnId,
+				turnToken: record.turnToken,
 				status: record.status,
+				verificationStatus: record.verificationStatus,
+				failureReason: record.failureReason,
+				blockedReason: record.blockedReason,
+				captureSource: record.captureSource,
+				provider: record.provider,
+				model: record.model,
+				requestedTargetJson: record.requestedTarget ? JSON.stringify(record.requestedTarget) : null,
+				observedUrl: record.observedUrl,
+				observedTitle: record.observedTitle,
+				isSimulated: record.isSimulated ? 1 : 0,
+				authTargetReached:
+					record.authTargetReached === null || record.authTargetReached === undefined
+						? null
+						: record.authTargetReached
+							? 1
+							: 0,
+				requirementSatisfied: record.requirementSatisfied ? 1 : 0,
 				title: record.title,
 				summary: record.summary,
 				createdAt: record.createdAt,
@@ -174,7 +306,21 @@ export class ArtifactsDB {
 					session_id: string;
 					tab_id: string | null;
 					external_run_id: string | null;
+					turn_id: string | null;
+					turn_token: string | null;
 					status: CaptureRunRecord['status'];
+					verification_status: CaptureRunRecord['verificationStatus'];
+					failure_reason: CaptureRunRecord['failureReason'];
+					blocked_reason: string | null;
+					capture_source: CaptureRunRecord['captureSource'];
+					provider: string | null;
+					model: string | null;
+					requested_target_json: string | null;
+					observed_url: string | null;
+					observed_title: string | null;
+					is_simulated: number;
+					auth_target_reached: number | null;
+					requirement_satisfied: number;
 					title: string | null;
 					summary: string | null;
 					created_at: number;
@@ -184,17 +330,7 @@ export class ArtifactsDB {
 		if (!row) {
 			return null;
 		}
-		return {
-			id: row.id,
-			sessionId: row.session_id,
-			tabId: row.tab_id,
-			externalRunId: row.external_run_id,
-			status: row.status,
-			title: row.title,
-			summary: row.summary,
-			createdAt: row.created_at,
-			updatedAt: row.updated_at,
-		};
+		return this.mapCaptureRun(row);
 	}
 
 	getCaptureRunById(id: string): CaptureRunRecord | null {
@@ -204,7 +340,21 @@ export class ArtifactsDB {
 					session_id: string;
 					tab_id: string | null;
 					external_run_id: string | null;
+					turn_id: string | null;
+					turn_token: string | null;
 					status: CaptureRunRecord['status'];
+					verification_status: CaptureRunRecord['verificationStatus'];
+					failure_reason: CaptureRunRecord['failureReason'];
+					blocked_reason: string | null;
+					capture_source: CaptureRunRecord['captureSource'];
+					provider: string | null;
+					model: string | null;
+					requested_target_json: string | null;
+					observed_url: string | null;
+					observed_title: string | null;
+					is_simulated: number;
+					auth_target_reached: number | null;
+					requirement_satisfied: number;
 					title: string | null;
 					summary: string | null;
 					created_at: number;
@@ -214,51 +364,42 @@ export class ArtifactsDB {
 		if (!row) {
 			return null;
 		}
-		return {
-			id: row.id,
-			sessionId: row.session_id,
-			tabId: row.tab_id,
-			externalRunId: row.external_run_id,
-			status: row.status,
-			title: row.title,
-			summary: row.summary,
-			createdAt: row.created_at,
-			updatedAt: row.updated_at,
-		};
+		return this.mapCaptureRun(row);
+	}
+
+	getCaptureRunByTurnId(
+		sessionId: string,
+		tabId: string | null,
+		turnId: string
+	): CaptureRunRecord | null {
+		const row = this.database
+			.prepare(
+				`SELECT * FROM capture_runs
+				WHERE session_id = ? AND COALESCE(tab_id, '') = COALESCE(?, '') AND turn_id = ?`
+			)
+			.get(sessionId, tabId, turnId) as any;
+		return row ? this.mapCaptureRun(row) : null;
+	}
+
+	getCaptureRunByTurnToken(turnToken: string): CaptureRunRecord | null {
+		const row = this.database
+			.prepare(`SELECT * FROM capture_runs WHERE turn_token = ?`)
+			.get(turnToken) as any;
+		return row ? this.mapCaptureRun(row) : null;
 	}
 
 	listCaptureRunsByStatus(status: CaptureRunRecord['status']): CaptureRunRecord[] {
 		const rows = this.database
 			.prepare(`SELECT * FROM capture_runs WHERE status = ? ORDER BY created_at ASC`)
 			.all(status) as any[];
-		return rows.map((row) => ({
-			id: row.id,
-			sessionId: row.session_id,
-			tabId: row.tab_id,
-			externalRunId: row.external_run_id,
-			status: row.status,
-			title: row.title,
-			summary: row.summary,
-			createdAt: row.created_at,
-			updatedAt: row.updated_at,
-		}));
+		return rows.map((row) => this.mapCaptureRun(row));
 	}
 
 	listCaptureRunsOlderThan(cutoffMs: number): CaptureRunRecord[] {
 		const rows = this.database
 			.prepare(`SELECT * FROM capture_runs WHERE updated_at < ? ORDER BY updated_at ASC`)
 			.all(cutoffMs) as any[];
-		return rows.map((row) => ({
-			id: row.id,
-			sessionId: row.session_id,
-			tabId: row.tab_id,
-			externalRunId: row.external_run_id,
-			status: row.status,
-			title: row.title,
-			summary: row.summary,
-			createdAt: row.created_at,
-			updatedAt: row.updated_at,
-		}));
+		return rows.map((row) => this.mapCaptureRun(row));
 	}
 
 	insertArtifact(record: ArtifactRecord): void {
@@ -296,10 +437,49 @@ export class ArtifactsDB {
 			});
 	}
 
+	updateArtifactMetadata(
+		artifactId: string,
+		updates: {
+			width: number | null;
+			height: number | null;
+			durationMs: number | null;
+			updatedAt: number;
+		}
+	): void {
+		this.database
+			.prepare(
+				`UPDATE artifacts
+				SET width = @width,
+					height = @height,
+					duration_ms = @durationMs,
+					updated_at = @updatedAt
+				WHERE id = @artifactId`
+			)
+			.run({
+				artifactId,
+				width: updates.width,
+				height: updates.height,
+				durationMs: updates.durationMs,
+				updatedAt: updates.updatedAt,
+			});
+	}
+
 	listArtifactsForCaptureRun(captureRunId: string): ArtifactRecord[] {
 		const rows = this.database
 			.prepare(`SELECT * FROM artifacts WHERE capture_run_id = ? ORDER BY created_at ASC`)
 			.all(captureRunId) as any[];
+		return rows.map((row) => this.mapArtifact(row));
+	}
+
+	listVideoArtifactsMissingMetadata(): ArtifactRecord[] {
+		const rows = this.database
+			.prepare(
+				`SELECT * FROM artifacts
+				WHERE kind = 'video'
+					AND (duration_ms IS NULL OR width IS NULL OR height IS NULL)
+				ORDER BY created_at DESC`
+			)
+			.all() as any[];
 		return rows.map((row) => this.mapArtifact(row));
 	}
 
@@ -441,6 +621,49 @@ export class ArtifactsDB {
 
 	deleteCaptureRun(captureRunId: string): void {
 		this.database.prepare(`DELETE FROM capture_runs WHERE id = ?`).run(captureRunId);
+	}
+
+	private parseRequestedTarget(rawValue: string | null): CaptureRunRecord['requestedTarget'] {
+		if (!rawValue) {
+			return null;
+		}
+		try {
+			const parsed = JSON.parse(rawValue) as CaptureRunRecord['requestedTarget'];
+			return parsed && typeof parsed === 'object' ? parsed : null;
+		} catch {
+			return null;
+		}
+	}
+
+	private mapCaptureRun(row: any): CaptureRunRecord {
+		return {
+			id: row.id,
+			sessionId: row.session_id,
+			tabId: row.tab_id,
+			externalRunId: row.external_run_id,
+			turnId: row.turn_id ?? null,
+			turnToken: row.turn_token ?? null,
+			status: row.status,
+			verificationStatus: row.verification_status ?? 'pending',
+			failureReason: row.failure_reason ?? null,
+			blockedReason: row.blocked_reason ?? null,
+			captureSource: row.capture_source ?? 'legacy_stdout',
+			provider: row.provider ?? null,
+			model: row.model ?? null,
+			requestedTarget: this.parseRequestedTarget(row.requested_target_json ?? null),
+			observedUrl: row.observed_url ?? null,
+			observedTitle: row.observed_title ?? null,
+			isSimulated: row.is_simulated === 1,
+			authTargetReached:
+				row.auth_target_reached === null || row.auth_target_reached === undefined
+					? null
+					: row.auth_target_reached === 1,
+			requirementSatisfied: row.requirement_satisfied === 1,
+			title: row.title,
+			summary: row.summary,
+			createdAt: row.created_at,
+			updatedAt: row.updated_at,
+		};
 	}
 
 	private mapArtifact(row: any): ArtifactRecord {

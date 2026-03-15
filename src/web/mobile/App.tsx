@@ -33,6 +33,8 @@ import { showLocalServiceWorkerNotification } from '../utils/serviceWorker';
 import {
 	buildApiUrl,
 	getCurrentDemoId,
+	getCurrentSessionId,
+	getDashboardUrl,
 	updateUrlForDemo,
 	updateUrlForSessionTab,
 } from '../utils/config';
@@ -2492,19 +2494,27 @@ export default function MobileApp() {
 
 	const handleOpenDemo = useCallback(
 		(demoId: string) => {
-			if (!activeSessionId) {
+			const resolvedSessionId = activeSessionId || getCurrentSessionId();
+			if (!resolvedSessionId) {
 				return;
 			}
 			setActiveDemoId(demoId);
-			updateUrlForDemo(activeSessionId, demoId);
+			updateUrlForDemo(resolvedSessionId, demoId);
 		},
 		[activeSessionId]
 	);
 
 	const handleCloseDemo = useCallback(() => {
 		setActiveDemoId(null);
-		if (activeSessionId) {
-			updateUrlForSessionTab(activeSessionId, activeTabId);
+		const resolvedSessionId = activeSessionId || getCurrentSessionId();
+		if (resolvedSessionId) {
+			updateUrlForSessionTab(resolvedSessionId, activeTabId);
+			return;
+		}
+
+		const dashboardUrl = getDashboardUrl();
+		if (window.location.href !== dashboardUrl) {
+			window.history.replaceState({}, '', dashboardUrl);
 		}
 	}, [activeSessionId, activeTabId]);
 

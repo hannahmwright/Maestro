@@ -175,9 +175,46 @@ type DemoStep = {
 type DemoCard = {
 	demoId: string;
 	captureRunId: string;
+	turnId?: string | null;
+	provider?: string | null;
+	model?: string | null;
 	title: string;
 	summary?: string | null;
-	status: 'capturing' | 'completed' | 'failed';
+	status:
+		| 'requested'
+		| 'started'
+		| 'artifact_added'
+		| 'verifying'
+		| 'completed'
+		| 'failed'
+		| 'blocked'
+		| 'legacy_unverified';
+	verificationStatus: 'pending' | 'verified' | 'failed' | 'blocked' | 'legacy_unverified';
+	failureReason?:
+		| 'missing_artifacts'
+		| 'invalid_turn'
+		| 'invalid_token'
+		| 'wrong_target'
+		| 'simulated_capture'
+		| 'auth_blocked'
+		| 'agent_exited'
+		| 'provider_claim_without_demo'
+		| 'blocked'
+		| 'legacy_unverified'
+		| 'unknown'
+		| null;
+	blockedReason?: string | null;
+	captureSource: 'maestro_demo_cli' | 'legacy_stdout' | 'log_harvest';
+	requestedTarget?: {
+		url?: string | null;
+		domain?: string | null;
+		description?: string | null;
+	} | null;
+	observedUrl?: string | null;
+	observedTitle?: string | null;
+	isSimulated: boolean;
+	authTargetReached?: boolean | null;
+	requirementSatisfied: boolean;
 	createdAt: number;
 	updatedAt: number;
 	stepCount: number;
@@ -2262,17 +2299,21 @@ interface MaestroAPI {
 		list: (sessionId: string) => Promise<{ success: boolean; files: string[]; error?: string }>;
 		getPath: (sessionId: string) => Promise<{ success: boolean; path: string }>;
 	};
-	artifacts: {
-		listSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]>;
-		getDemo: (demoId: string) => Promise<DemoDetail | null>;
-		loadArtifact: (artifactId: string) => Promise<string | null>;
-		getArtifactFileInfo: (
-			artifactId: string
-		) => Promise<{ id: string; path: string; mimeType: string; filename: string } | null>;
-		harvestFromLogText: (
-			request: import('../shared/demo-artifacts').DemoArtifactHarvestRequest
-		) => Promise<DemoCard | null>;
-	};
+		artifacts: {
+			listSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]>;
+			getDemo: (demoId: string) => Promise<DemoDetail | null>;
+			loadArtifact: (artifactId: string) => Promise<string | null>;
+			getArtifactFileInfo: (
+				artifactId: string
+			) => Promise<{ id: string; path: string; url: string; mimeType: string; filename: string } | null>;
+			exportArtifact: (
+				artifactId: string,
+				destinationPath: string
+			) => Promise<{ success: boolean; error?: string }>;
+			harvestFromLogText: (
+				request: import('../shared/demo-artifacts').DemoArtifactHarvestRequest
+			) => Promise<DemoCard | null>;
+		};
 	// Auto Run file operations
 	// SSH remote support: Core operations accept optional sshRemoteId for remote file operations
 	autorun: {

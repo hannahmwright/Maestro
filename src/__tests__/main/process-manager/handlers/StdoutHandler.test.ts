@@ -169,6 +169,37 @@ describe('StdoutHandler', () => {
 			expect(proc.jsonBuffer).toBe('{"incomplete":');
 		});
 
+		it('emits demo sentinel lines from Claude tool_result JSON messages', () => {
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+			});
+			const dataSpy = vi.fn();
+			emitter.on('data', dataSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'user',
+				tool_use_result: {
+					stdout:
+						'prefix\n__MAESTRO_DEMO_EVENT__ {"type":"capture_started","runId":"run-1"}\nother',
+				},
+				message: {
+					content: [
+						{
+							type: 'tool_result',
+							content:
+								'__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1"}',
+						},
+					],
+				},
+			});
+
+			expect(dataSpy).toHaveBeenCalledWith(
+				sessionId,
+				'__MAESTRO_DEMO_EVENT__ {"type":"capture_started","runId":"run-1"}\n__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1"}\n'
+			);
+		});
+
 		it('should skip empty lines in stream JSON mode', () => {
 			const { handler, bufferManager, sessionId } = createTestContext({
 				isStreamJsonMode: true,

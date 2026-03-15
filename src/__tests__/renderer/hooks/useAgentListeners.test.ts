@@ -240,6 +240,13 @@ beforeEach(() => {
 		},
 		web: {
 			broadcastSessionLogEntry: vi.fn().mockResolvedValue(undefined),
+			broadcastSessionState: vi.fn().mockResolvedValue(undefined),
+		},
+		conversation: {
+			onEvent: vi.fn(() => vi.fn()),
+		},
+		artifacts: {
+			harvestFromLogText: vi.fn().mockResolvedValue(null),
 		},
 		logger: {
 			log: vi.fn(),

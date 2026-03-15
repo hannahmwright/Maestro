@@ -96,6 +96,28 @@ class InMemoryArtifactsDb {
 		this.artifacts.set(record.id, { ...record });
 	}
 
+	updateArtifactMetadata(
+		artifactId: string,
+		updates: {
+			width: number | null;
+			height: number | null;
+			durationMs: number | null;
+			updatedAt: number;
+		}
+	): void {
+		const existing = this.artifacts.get(artifactId);
+		if (!existing) {
+			return;
+		}
+		this.artifacts.set(artifactId, {
+			...existing,
+			width: updates.width,
+			height: updates.height,
+			durationMs: updates.durationMs,
+			updatedAt: updates.updatedAt,
+		});
+	}
+
 	listArtifactsForCaptureRun(captureRunId: string): ArtifactRecord[] {
 		return [...this.artifacts.values()]
 			.filter((artifact) => artifact.captureRunId === captureRunId)
@@ -106,6 +128,16 @@ class InMemoryArtifactsDb {
 	getArtifactById(id: string): ArtifactRecord | null {
 		const record = this.artifacts.get(id);
 		return record ? { ...record } : null;
+	}
+
+	listVideoArtifactsMissingMetadata(): ArtifactRecord[] {
+		return [...this.artifacts.values()]
+			.filter(
+				(artifact) =>
+					artifact.kind === 'video' &&
+					(artifact.durationMs === null || artifact.width === null || artifact.height === null)
+			)
+			.map((artifact) => ({ ...artifact }));
 	}
 
 	deleteArtifactsForCaptureRun(captureRunId: string): void {
@@ -206,6 +238,7 @@ describe('DemoArtifactService', () => {
 				await fs.writeFile(outputPath, Buffer.from('mp4-derivative'));
 				return { success: true };
 			},
+			probeVideoMetadata: async () => null,
 			...overrides,
 		});
 		return { db, service };
@@ -224,6 +257,7 @@ describe('DemoArtifactService', () => {
 				runId: 'run-1',
 				title: 'Checkout demo',
 				summary: 'Walk through checkout',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
@@ -237,6 +271,7 @@ describe('DemoArtifactService', () => {
 				path: screenshotPath,
 				filename: 'cart.png',
 				orderIndex: 0,
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
@@ -249,12 +284,13 @@ describe('DemoArtifactService', () => {
 				path: videoPath,
 				filename: 'demo.webm',
 				role: 'video',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
 		const capturing = service.listSessionDemos('session-1', 'tab-1');
 		expect(capturing).toHaveLength(1);
-		expect(capturing[0].status).toBe('capturing');
+		expect(capturing[0].status).toBe('artifact_added');
 
 		nowMs += 5_000;
 		const finalCard = await service.handleCaptureEvent({
@@ -264,6 +300,7 @@ describe('DemoArtifactService', () => {
 				runId: 'run-1',
 				title: 'Checkout demo',
 				summary: 'Walk through checkout',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
@@ -279,6 +316,143 @@ describe('DemoArtifactService', () => {
 		expect(detail?.videoArtifact?.mimeType).toBe('video/mp4');
 	});
 
+	it('persists probed duration metadata for video artifacts', async () => {
+		const screenshotPath = await writeArtifactFile('source/step-duration.png', createPngBuffer());
+		const videoPath = await writeArtifactFile('source/demo-duration.webm', createWebmBuffer());
+		const { service } = createService({
+			probeVideoMetadata: async () => ({
+				durationMs: 10_760,
+				width: 800,
+				height: 450,
+			}),
+		});
+		await service.initialize();
+
+		await service.handleCaptureEvent({
+			context: { sessionId: 'session-duration', tabId: 'tab-duration' },
+			event: {
+				type: 'capture_started',
+				runId: 'run-duration',
+				title: 'Duration demo',
+				summary: 'Video duration demo',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+		await service.handleCaptureEvent({
+			context: { sessionId: 'session-duration', tabId: 'tab-duration' },
+			event: {
+				type: 'step_created',
+				runId: 'run-duration',
+				title: 'Loaded',
+				path: screenshotPath,
+				filename: 'duration-step.png',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+		await service.handleCaptureEvent({
+			context: { sessionId: 'session-duration', tabId: 'tab-duration' },
+			event: {
+				type: 'artifact_created',
+				runId: 'run-duration',
+				kind: 'video',
+				path: videoPath,
+				filename: 'duration-demo.webm',
+				role: 'video',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+
+		const finalCard = await service.handleCaptureEvent({
+			context: { sessionId: 'session-duration', tabId: 'tab-duration' },
+			event: {
+				type: 'capture_completed',
+				runId: 'run-duration',
+				title: 'Duration demo',
+				summary: 'Video duration demo',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+
+		expect(finalCard?.durationMs).toBe(10_760);
+		expect(finalCard?.videoArtifact?.durationMs).toBe(10_760);
+		expect(finalCard?.videoArtifact?.width).toBe(800);
+		expect(finalCard?.videoArtifact?.height).toBe(450);
+	});
+
+	it('backfills missing video metadata during initialize', async () => {
+		const screenshotPath = await writeArtifactFile('source/backfill-step.png', createPngBuffer());
+		const videoPath = await writeArtifactFile('source/backfill-demo.webm', createWebmBuffer());
+		const db = new InMemoryArtifactsDb();
+		const initial = createService(
+			{
+				probeVideoMetadata: async () => null,
+			},
+			db
+		);
+		await initial.service.initialize();
+
+		await initial.service.handleCaptureEvent({
+			context: { sessionId: 'session-backfill', tabId: 'tab-backfill' },
+			event: {
+				type: 'capture_started',
+				runId: 'run-backfill',
+				title: 'Backfill demo',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+		await initial.service.handleCaptureEvent({
+			context: { sessionId: 'session-backfill', tabId: 'tab-backfill' },
+			event: {
+				type: 'step_created',
+				runId: 'run-backfill',
+				title: 'Backfill step',
+				path: screenshotPath,
+				filename: 'backfill-step.png',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+		const incompleteVideo = await initial.service.handleCaptureEvent({
+			context: { sessionId: 'session-backfill', tabId: 'tab-backfill' },
+			event: {
+				type: 'artifact_created',
+				runId: 'run-backfill',
+				kind: 'video',
+				path: videoPath,
+				filename: 'backfill-demo.webm',
+				role: 'video',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+		expect(incompleteVideo?.durationMs).toBeNull();
+
+		await initial.service.handleCaptureEvent({
+			context: { sessionId: 'session-backfill', tabId: 'tab-backfill' },
+			event: {
+				type: 'capture_completed',
+				runId: 'run-backfill',
+				title: 'Backfill demo',
+				captureSource: 'maestro_demo_cli',
+			},
+		});
+
+		const restarted = createService(
+			{
+				probeVideoMetadata: async () => ({
+					durationMs: 10_760,
+					width: 800,
+					height: 450,
+				}),
+			},
+			db
+		);
+		await restarted.service.initialize();
+
+		const demos = restarted.service.listSessionDemos('session-backfill', 'tab-backfill');
+		expect(demos).toHaveLength(1);
+		expect(demos[0].durationMs).toBe(10_760);
+		expect(demos[0].videoArtifact?.durationMs).toBe(10_760);
+	});
+
 	it('recovers stale capturing runs as failed demos on initialize', async () => {
 		const screenshotPath = await writeArtifactFile('source/stale-step.png', createPngBuffer());
 		const db = new InMemoryArtifactsDb();
@@ -291,6 +465,7 @@ describe('DemoArtifactService', () => {
 				type: 'capture_started',
 				runId: 'stale-run',
 				title: 'Stale capture',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 		await first.service.handleCaptureEvent({
@@ -301,6 +476,7 @@ describe('DemoArtifactService', () => {
 				title: 'Before crash',
 				path: screenshotPath,
 				filename: 'stale-step.png',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
@@ -381,6 +557,7 @@ describe('DemoArtifactService', () => {
 				type: 'capture_started',
 				runId: 'remote-run',
 				title: 'Remote demo',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 		await service.handleCaptureEvent({
@@ -396,6 +573,7 @@ describe('DemoArtifactService', () => {
 				title: 'Remote screenshot',
 				path: '/remote/output/step.png',
 				filename: 'step.png',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 		await service.handleCaptureEvent({
@@ -412,6 +590,7 @@ describe('DemoArtifactService', () => {
 				path: '/remote/output/demo.webm',
 				filename: 'demo.webm',
 				role: 'video',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
@@ -426,10 +605,12 @@ describe('DemoArtifactService', () => {
 				type: 'capture_completed',
 				runId: 'remote-run',
 				title: 'Remote demo',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
 		expect(card?.status).toBe('completed');
+		expect(card?.requirementSatisfied).toBe(true);
 		const detail = service.getDemo(card!.demoId);
 		expect(detail?.posterArtifact?.filename).toBe('step.png');
 		expect(detail?.videoArtifact?.filename).toBe('demo.mp4');
@@ -452,7 +633,8 @@ describe('DemoArtifactService', () => {
 			demoCaptureRequested: true,
 		});
 
-		expect(card?.status).toBe('completed');
+		expect(card?.status).toBe('legacy_unverified');
+		expect(card?.requirementSatisfied).toBe(false);
 		expect(card?.posterArtifact?.filename).toBe('path-demo.png');
 		const detail = service.getDemo(card!.demoId);
 		expect(detail?.stepCount).toBe(1);
@@ -478,7 +660,8 @@ describe('DemoArtifactService', () => {
 			demoCaptureRequested: true,
 		});
 
-		expect(card?.status).toBe('completed');
+		expect(card?.status).toBe('legacy_unverified');
+		expect(card?.requirementSatisfied).toBe(false);
 		expect(card?.posterArtifact?.filename).toBe('event-demo.png');
 		const detail = service.getDemo(card!.demoId);
 		const posterRecord = service.getArtifactRecord(detail!.posterArtifact!.id);
@@ -493,7 +676,12 @@ describe('DemoArtifactService', () => {
 
 		await service.handleCaptureEvent({
 			context: { sessionId: 'session-clean', tabId: 'tab-clean' },
-			event: { type: 'capture_started', runId: 'clean-run', title: 'Cleanup demo' },
+			event: {
+				type: 'capture_started',
+				runId: 'clean-run',
+				title: 'Cleanup demo',
+				captureSource: 'maestro_demo_cli',
+			},
 		});
 		await service.handleCaptureEvent({
 			context: { sessionId: 'session-clean', tabId: 'tab-clean' },
@@ -503,6 +691,7 @@ describe('DemoArtifactService', () => {
 				title: 'Step',
 				path: screenshotPath,
 				filename: 'cleanup-step.png',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 		await service.handleCaptureEvent({
@@ -514,11 +703,17 @@ describe('DemoArtifactService', () => {
 				path: videoPath,
 				filename: 'cleanup-video.webm',
 				role: 'video',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 		const finalCard = await service.handleCaptureEvent({
 			context: { sessionId: 'session-clean', tabId: 'tab-clean' },
-			event: { type: 'capture_completed', runId: 'clean-run', title: 'Cleanup demo' },
+			event: {
+				type: 'capture_completed',
+				runId: 'clean-run',
+				title: 'Cleanup demo',
+				captureSource: 'maestro_demo_cli',
+			},
 		});
 		expect(finalCard).not.toBeNull();
 
@@ -538,7 +733,12 @@ describe('DemoArtifactService', () => {
 
 		await service.handleCaptureEvent({
 			context: { sessionId: 'session-limit', tabId: 'tab-limit' },
-			event: { type: 'capture_started', runId: 'limit-run', title: 'Limit demo' },
+			event: {
+				type: 'capture_started',
+				runId: 'limit-run',
+				title: 'Limit demo',
+				captureSource: 'maestro_demo_cli',
+			},
 		});
 		await service.handleCaptureEvent({
 			context: { sessionId: 'session-limit', tabId: 'tab-limit' },
@@ -548,6 +748,7 @@ describe('DemoArtifactService', () => {
 				kind: 'image',
 				path: emptyPath,
 				filename: 'empty.png',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 		await service.handleCaptureEvent({
@@ -558,12 +759,18 @@ describe('DemoArtifactService', () => {
 				kind: 'image',
 				path: largePath,
 				filename: 'large.png',
+				captureSource: 'maestro_demo_cli',
 			},
 		});
 
 		const card = await service.handleCaptureEvent({
 			context: { sessionId: 'session-limit', tabId: 'tab-limit' },
-			event: { type: 'capture_failed', runId: 'limit-run', summary: 'No valid artifacts' },
+			event: {
+				type: 'capture_failed',
+				runId: 'limit-run',
+				summary: 'No valid artifacts',
+				captureSource: 'maestro_demo_cli',
+			},
 		});
 
 		expect(card?.status).toBe('failed');

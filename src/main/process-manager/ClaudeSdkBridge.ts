@@ -2,9 +2,12 @@ import { spawn, type ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
+import { getDemoArtifactService } from '../artifacts';
+import { writeDemoTurnContextFile } from '../artifacts/maestroDemoRuntime';
 import { buildChildProcessEnv } from './utils/envBuilder';
 import { parseDataUrl } from './utils/imageUtils';
 import { aggregateModelUsage } from '../parsers/usage-aggregator';
+import { extractDemoEventOutput } from '../../shared/demo-artifacts';
 import type {
 	ConversationEvent,
 } from '../../shared/conversation';
@@ -187,6 +190,32 @@ function extractAssistantText(message: unknown): string {
 		})
 		.filter(Boolean)
 		.join('');
+}
+
+function extractToolResultOutput(message: Extract<SDKMessage, { type: 'user' }>): string {
+	const outputs: string[] = [];
+	const toolUseResult = asRecord(message.tool_use_result);
+	const stdout = asString(toolUseResult?.stdout);
+	const stderr = asString(toolUseResult?.stderr);
+	if (stdout) {
+		outputs.push(stdout);
+	}
+	if (stderr) {
+		outputs.push(stderr);
+	}
+
+	const record = asRecord(message.message);
+	const content = Array.isArray(record?.content) ? record.content : [];
+	for (const item of content) {
+		const block = asRecord(item);
+		if (!block || block.type !== 'tool_result') continue;
+		const blockContent = asString(block.content);
+		if (blockContent) {
+			outputs.push(blockContent);
+		}
+	}
+
+	return outputs.join('\n');
 }
 
 function emitToolBlocks(
@@ -377,6 +406,11 @@ export class ClaudeSdkBridge {
 			existingProcess.projectPath = config.projectPath;
 			existingProcess.contextWindow = config.contextWindow;
 			existingProcess.conversationRuntime = config.conversationRuntime || 'live';
+			this.prepareDemoCaptureForTurn(
+				existingProcess,
+				config.demoCapture?.enabled === true,
+				config.demoCaptureContext
+			);
 			this.startTurn(existingProcess, 'turn');
 			existingProcess.claudeSdkState.inputQueue?.push(userMessage);
 			return { pid: existingProcess.pid, success: true };
@@ -414,6 +448,11 @@ export class ClaudeSdkBridge {
 			args: config.args,
 			conversationRuntime: config.conversationRuntime || 'live',
 			claudeSdkState: state,
+			demoCaptureEnabled: config.demoCapture?.enabled === true,
+			demoCaptureFinalized: false,
+			demoCaptureArtifactSeen: false,
+			demoCaptureFailed: false,
+			demoCaptureContext: config.demoCaptureContext,
 		};
 		this.processes.set(config.sessionId, managedProcess);
 		this.startTurn(managedProcess, 'turn');
@@ -609,6 +648,9 @@ export class ClaudeSdkBridge {
 			case 'assistant':
 				this.handleAssistantMessage(managedProcess, message);
 				return;
+			case 'user':
+				this.handleUserMessage(managedProcess, message);
+				return;
 			case 'result':
 				this.handleResultMessage(managedProcess, message);
 				return;
@@ -796,6 +838,16 @@ export class ClaudeSdkBridge {
 		}
 	}
 
+	private handleUserMessage(
+		managedProcess: ManagedProcess,
+		message: Extract<SDKMessage, { type: 'user' }>
+	): void {
+		const demoEventOutput = extractDemoEventOutput(extractToolResultOutput(message));
+		if (demoEventOutput) {
+			this.emitter.emit('data', managedProcess.sessionId, `${demoEventOutput}\n`);
+		}
+	}
+
 	private handleResultMessage(
 		managedProcess: ManagedProcess,
 		message: Extract<SDKMessage, { type: 'result' }>
@@ -813,7 +865,7 @@ export class ClaudeSdkBridge {
 		const turnId = state.activeTurnId || null;
 		const threadId = state.sdkSessionId;
 		const startTime = state.currentTurnStartedAt || managedProcess.startTime;
-		const status =
+		let status: 'completed' | 'failed' | 'interrupted' =
 			state.pendingInterrupt === true
 				? 'interrupted'
 				: message.subtype === 'success'
@@ -836,6 +888,41 @@ export class ClaudeSdkBridge {
 				turnId,
 				message: errorMessage,
 			});
+		}
+
+		if (
+			message.subtype === 'success' &&
+			status === 'completed' &&
+			managedProcess.demoCaptureEnabled === true &&
+			managedProcess.demoCaptureContext
+		) {
+			const outcome = getDemoArtifactService().getTurnRequirementOutcome({
+				sessionId: managedProcess.demoCaptureContext.sessionId,
+				tabId: managedProcess.demoCaptureContext.tabId,
+				turnId: managedProcess.demoCaptureContext.turnId,
+				captureRunId: managedProcess.demoCaptureContext.captureRunId,
+			});
+			if (!outcome.satisfied) {
+				status = 'failed';
+				this.emitter.emit(
+					'agent-error',
+					managedProcess.sessionId,
+					createAgentError(
+						managedProcess.sessionId,
+						'agent_crashed',
+						outcome.message || 'Demo capture failed for this turn.'
+					)
+				);
+				this.emitConversationEvent(managedProcess, {
+					type: 'turn_failed',
+					sessionId: managedProcess.sessionId,
+					runtimeKind: managedProcess.conversationRuntime || 'live',
+					timestamp: Date.now(),
+					threadId,
+					turnId,
+					message: outcome.message || 'Demo capture failed for this turn.',
+				});
+			}
 		}
 
 		this.emitConversationEvent(managedProcess, {
@@ -869,6 +956,11 @@ export class ClaudeSdkBridge {
 		if (!state) return;
 
 		if (inputMode === 'turn') {
+			this.prepareDemoCaptureForTurn(
+				managedProcess,
+				managedProcess.demoCaptureEnabled === true,
+				managedProcess.demoCaptureContext
+			);
 			state.activeTurnId = `claude-turn-${state.nextTurnSequence++}`;
 			state.turnStartedEmitted = false;
 			state.currentTurnStartedAt = Date.now();
@@ -896,6 +988,26 @@ export class ClaudeSdkBridge {
 
 	private emitConversationEvent(managedProcess: ManagedProcess, event: ConversationEvent): void {
 		this.emitter.emit('conversation-event', managedProcess.sessionId, event);
+	}
+
+	private prepareDemoCaptureForTurn(
+		managedProcess: ManagedProcess,
+		demoCaptureEnabled: boolean,
+		demoCaptureContext?: ManagedProcess['demoCaptureContext']
+	): void {
+		managedProcess.demoCaptureEnabled = demoCaptureEnabled;
+		managedProcess.demoCaptureFinalized = false;
+		managedProcess.demoCaptureArtifactSeen = false;
+		managedProcess.demoCaptureFailed = false;
+		if (demoCaptureContext) {
+			managedProcess.demoCaptureContext = demoCaptureContext;
+			void writeDemoTurnContextFile(demoCaptureContext).catch((error) => {
+				logger.warn('[ClaudeSdkBridge] Failed to write demo turn context file', LOG_CONTEXT, {
+					sessionId: managedProcess.sessionId,
+					error: String(error),
+				});
+			});
+		}
 	}
 
 	private finishProcess(managedProcess: ManagedProcess, code: number): void {
