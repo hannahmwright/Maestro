@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GitBranch, LayoutGrid, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, LayoutGrid, Plus } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import type { Session } from '../hooks/useSessions';
@@ -75,6 +75,10 @@ function getThreadDisplayName(session: Session): string {
 	return session.threadTitle?.trim() || session.name;
 }
 
+function getWorkspaceGitFileCount(sessions: Session[]): number {
+	return sessions.find((session) => session.isGitRepo)?.gitFileCount || 0;
+}
+
 function SwipeableThreadRow({
 	session,
 	isActive,
@@ -89,8 +93,6 @@ function SwipeableThreadRow({
 	const colors = useThemeColors();
 	const tabCount = session.aiTabs?.length || 0;
 	const showTabCount = tabCount > 1;
-	const gitFileCount = session.gitFileCount || 0;
-	const showGitIndicator = session.isGitRepo && gitFileCount > 0;
 	const {
 		handlers: swipeHandlers,
 		offsetX,
@@ -271,8 +273,8 @@ function SwipeableThreadRow({
 								whiteSpace: 'nowrap',
 							}}
 						>
-								{getThreadDisplayName(session)}
-							</span>
+							{getThreadDisplayName(session)}
+						</span>
 						{subtitle && (
 							<span
 								style={{
@@ -321,28 +323,6 @@ function SwipeableThreadRow({
 								{trailingWorkspaceEmoji}
 							</span>
 						)}
-						{showGitIndicator && (
-							<span
-								title={`${gitFileCount} changed file${gitFileCount === 1 ? '' : 's'}`}
-								style={{
-									display: 'inline-flex',
-									alignItems: 'center',
-									justifyContent: 'center',
-									gap: '4px',
-									minWidth: '38px',
-									fontSize: '10px',
-									fontWeight: 600,
-									color: colors.warning,
-									padding: '4px 7px',
-									borderRadius: '999px',
-									background: `${colors.warning}${isActive ? '14' : '12'}`,
-									boxShadow: isActive ? activeBadgeShadow : 'none',
-								}}
-							>
-								<GitBranch size={12} />
-								<span>{gitFileCount}</span>
-							</span>
-						)}
 						{showTabCount && (
 							<span
 								title={`${tabCount} tabs`}
@@ -389,6 +369,7 @@ export function MobileNavigationDrawer({
 	const colors = useThemeColors();
 	const [searchQuery, setSearchQuery] = useState('');
 	const [deleteActionSessionId, setDeleteActionSessionId] = useState<string | null>(null);
+	const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(new Set());
 	const searchInputRef = useRef<HTMLInputElement | null>(null);
 	const glassSurface = {
 		border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -419,7 +400,7 @@ export function MobileNavigationDrawer({
 		(session: Session) => {
 			if (!onDeleteSession) return;
 			setDeleteActionSessionId(null);
-				const shouldDelete = window.confirm(`Delete thread "${getThreadDisplayName(session)}"?`);
+			const shouldDelete = window.confirm(`Delete thread "${getThreadDisplayName(session)}"?`);
 			if (!shouldDelete) return;
 			searchInputRef.current?.blur();
 			setSearchQuery('');
@@ -437,6 +418,17 @@ export function MobileNavigationDrawer({
 		},
 		[onNewThreadInWorkspace]
 	);
+	const toggleWorkspaceExpanded = useCallback((workspaceId: string) => {
+		setExpandedWorkspaceIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(workspaceId)) {
+				next.delete(workspaceId);
+			} else {
+				next.add(workspaceId);
+			}
+			return next;
+		});
+	}, []);
 	const workspaceSections = useMemo((): WorkspaceSection[] => {
 		const grouped = new Map<string, WorkspaceSection>();
 
@@ -469,9 +461,9 @@ export function MobileNavigationDrawer({
 				sessions: [...workspace.sessions].sort((a, b) => {
 					const activityDiff = getSessionActivityTimestamp(b) - getSessionActivityTimestamp(a);
 					if (activityDiff !== 0) return activityDiff;
-						return getThreadDisplayName(a).localeCompare(getThreadDisplayName(b));
-					}),
-				}));
+					return getThreadDisplayName(a).localeCompare(getThreadDisplayName(b));
+				}),
+			}));
 	}, [sessions]);
 	const normalizedSearchQuery = normalizeSearchText(searchQuery);
 	const filteredWorkspaces = useMemo(() => {
@@ -483,9 +475,10 @@ export function MobileNavigationDrawer({
 			.map((workspace) => ({
 				...workspace,
 				sessions: workspace.sessions.filter((session) => {
-						const haystack = `${workspace.name} ${getThreadDisplayName(session)} ${session.toolType} ${session.groupName || ''}`.toLowerCase();
-						return haystack.includes(normalizedSearchQuery);
-					}),
+					const haystack =
+						`${workspace.name} ${getThreadDisplayName(session)} ${session.toolType} ${session.groupName || ''}`.toLowerCase();
+					return haystack.includes(normalizedSearchQuery);
+				}),
 			}))
 			.filter((workspace) => workspace.sessions.length > 0);
 	}, [normalizedSearchQuery, workspaceSections]);
@@ -519,6 +512,7 @@ export function MobileNavigationDrawer({
 		const previousOverflow = document.body.style.overflow;
 		document.body.style.overflow = 'hidden';
 		setSearchQuery('');
+		setExpandedWorkspaceIds(new Set());
 
 		return () => {
 			searchInputRef.current?.blur();
@@ -981,162 +975,229 @@ export function MobileNavigationDrawer({
 									</div>
 								</div>
 							)}
-							{filteredWorkspaces.map((group) => (
-								<div
-									key={group.id}
-									style={{
-										display: 'flex',
-										flexDirection: 'column',
-										gap: '10px',
-									}}
-								>
+							{filteredWorkspaces.map((group) => {
+								const workspaceGitFileCount = getWorkspaceGitFileCount(group.sessions);
+								const isWorkspaceExpanded =
+									normalizedSearchQuery.length > 0 || expandedWorkspaceIds.has(group.id);
+
+								return (
 									<div
+										key={group.id}
 										style={{
 											display: 'flex',
-											alignItems: 'center',
-											gap: '8px',
-											padding: '0 4px',
+											flexDirection: 'column',
+											gap: '10px',
 										}}
 									>
-										<span
-											style={{
-												display: 'inline-flex',
-												alignItems: 'center',
-												justifyContent: 'center',
-												width: '24px',
-												height: '24px',
-												borderRadius: '999px',
-												background: 'rgba(255, 255, 255, 0.06)',
-												fontSize: '14px',
-												lineHeight: 1,
-												flexShrink: 0,
-											}}
-										>
-											{group.emoji}
-										</span>
 										<div
 											style={{
-													fontSize: '12px',
-													fontWeight: 600,
-													color: colors.textMain,
-												minWidth: 0,
-												overflow: 'hidden',
-												textOverflow: 'ellipsis',
-												whiteSpace: 'nowrap',
-											}}
-										>
-											{group.name}
-										</div>
-										<div
-											style={{
-												marginLeft: 'auto',
 												display: 'flex',
 												alignItems: 'center',
 												gap: '8px',
+												padding: '0 4px',
 											}}
 										>
-											{onOpenWorkspaceKanban && (
-												<button
-													type="button"
-													onClick={() => onOpenWorkspaceKanban?.(group.id)}
-													aria-label={`Open ${group.name} kanban`}
-													title={`Open ${group.name} kanban`}
+											<button
+												type="button"
+												onClick={() => toggleWorkspaceExpanded(group.id)}
+												aria-expanded={isWorkspaceExpanded}
+												aria-label={`${isWorkspaceExpanded ? 'Collapse' : 'Expand'} ${group.name}`}
+												style={{
+													display: 'flex',
+													alignItems: 'center',
+													gap: '8px',
+													flex: 1,
+													minWidth: 0,
+													padding: 0,
+													border: 'none',
+													background: 'transparent',
+													cursor: 'pointer',
+													textAlign: 'left',
+												}}
+											>
+												<span
 													style={{
+														display: 'inline-flex',
+														alignItems: 'center',
+														justifyContent: 'center',
+														width: '18px',
+														height: '18px',
+														borderRadius: '999px',
+														color: colors.textDim,
+														flexShrink: 0,
+													}}
+												>
+													{isWorkspaceExpanded ? (
+														<ChevronDown size={14} />
+													) : (
+														<ChevronRight size={14} />
+													)}
+												</span>
+												<span
+													style={{
+														display: 'inline-flex',
+														alignItems: 'center',
+														justifyContent: 'center',
 														width: '24px',
 														height: '24px',
 														borderRadius: '999px',
-														border: '1px solid rgba(255, 255, 255, 0.08)',
 														background: 'rgba(255, 255, 255, 0.06)',
+														fontSize: '14px',
+														lineHeight: 1,
+														flexShrink: 0,
+													}}
+												>
+													{group.emoji}
+												</span>
+												<div
+													style={{
+														fontSize: '12px',
+														fontWeight: 600,
 														color: colors.textMain,
-														display: 'inline-flex',
-														alignItems: 'center',
-														justifyContent: 'center',
-														cursor: 'pointer',
-														flexShrink: 0,
+														minWidth: 0,
+														overflow: 'hidden',
+														textOverflow: 'ellipsis',
+														whiteSpace: 'nowrap',
 													}}
 												>
-													<LayoutGrid size={14} />
-												</button>
-											)}
-											{onNewThreadInWorkspace && (
-												<button
-													type="button"
-													onClick={() => handleCreateThreadInWorkspace(group.sessions[0].id)}
-													aria-label={`New thread in ${group.name}`}
-													title={`New thread in ${group.name}`}
-													style={{
-														width: '24px',
-														height: '24px',
-														borderRadius: '999px',
-														border: '1px solid rgba(255, 255, 255, 0.08)',
-														background: 'rgba(255, 255, 255, 0.06)',
-														color: colors.accent,
-														display: 'inline-flex',
-														alignItems: 'center',
-														justifyContent: 'center',
-														cursor: 'pointer',
-														flexShrink: 0,
-													}}
-												>
-													<Plus size={14} />
-												</button>
-											)}
+													{group.name}
+												</div>
+											</button>
 											<div
 												style={{
-												display: 'inline-flex',
-												alignItems: 'center',
-												justifyContent: 'center',
-												minWidth: '20px',
-												height: '20px',
-												padding: '0 7px',
-												borderRadius: '999px',
-												fontSize: '10px',
-												fontWeight: 600,
-												color: colors.textDim,
-												opacity: 0.82,
-												background: 'rgba(255, 255, 255, 0.06)',
-											}}
-										>
-											{group.sessions.length}
+													display: 'flex',
+													alignItems: 'center',
+													gap: '8px',
+													flexShrink: 0,
+												}}
+											>
+												{workspaceGitFileCount > 0 && (
+													<span
+														title={`${workspaceGitFileCount} changed file${workspaceGitFileCount === 1 ? '' : 's'}`}
+														style={{
+															display: 'inline-flex',
+															alignItems: 'center',
+															justifyContent: 'center',
+															gap: '4px',
+															minWidth: '38px',
+															fontSize: '10px',
+															fontWeight: 600,
+															color: colors.warning,
+															padding: '4px 7px',
+															borderRadius: '999px',
+															background: `${colors.warning}12`,
+															flexShrink: 0,
+														}}
+													>
+														<GitBranch size={12} />
+														<span>{workspaceGitFileCount}</span>
+													</span>
+												)}
+												{onOpenWorkspaceKanban && (
+													<button
+														type="button"
+														onClick={() => onOpenWorkspaceKanban?.(group.id)}
+														aria-label={`Open ${group.name} kanban`}
+														title={`Open ${group.name} kanban`}
+														style={{
+															width: '24px',
+															height: '24px',
+															borderRadius: '999px',
+															border: '1px solid rgba(255, 255, 255, 0.08)',
+															background: 'rgba(255, 255, 255, 0.06)',
+															color: colors.textMain,
+															display: 'inline-flex',
+															alignItems: 'center',
+															justifyContent: 'center',
+															cursor: 'pointer',
+															flexShrink: 0,
+														}}
+													>
+														<LayoutGrid size={14} />
+													</button>
+												)}
+												{onNewThreadInWorkspace && (
+													<button
+														type="button"
+														onClick={() => handleCreateThreadInWorkspace(group.sessions[0].id)}
+														aria-label={`New thread in ${group.name}`}
+														title={`New thread in ${group.name}`}
+														style={{
+															width: '24px',
+															height: '24px',
+															borderRadius: '999px',
+															border: '1px solid rgba(255, 255, 255, 0.08)',
+															background: 'rgba(255, 255, 255, 0.06)',
+															color: colors.accent,
+															display: 'inline-flex',
+															alignItems: 'center',
+															justifyContent: 'center',
+															cursor: 'pointer',
+															flexShrink: 0,
+														}}
+													>
+														<Plus size={14} />
+													</button>
+												)}
+												<div
+													style={{
+														display: 'inline-flex',
+														alignItems: 'center',
+														justifyContent: 'center',
+														minWidth: '20px',
+														height: '20px',
+														padding: '0 7px',
+														borderRadius: '999px',
+														fontSize: '10px',
+														fontWeight: 600,
+														color: colors.textDim,
+														opacity: 0.82,
+														background: 'rgba(255, 255, 255, 0.06)',
+													}}
+												>
+													{group.sessions.length}
+												</div>
 											</div>
 										</div>
-									</div>
 
-									<div
-										style={{
-											...softSurface,
-											display: 'flex',
-											flexDirection: 'column',
-											borderRadius: '18px',
-											overflow: 'hidden',
-											padding: '4px',
-											background:
-												'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)',
-										}}
-									>
-										{group.sessions.map((session) => {
-											const isActive = session.id === activeSessionId;
-											return (
-												<SwipeableThreadRow
-													key={session.id}
-													session={session}
-													isActive={isActive}
-													activeBadgeShadow={activeBadgeShadow}
-													onSelect={(sessionId) => {
-														searchInputRef.current?.blur();
-														setSearchQuery('');
-														setDeleteActionSessionId(null);
-														onSelectSession(sessionId);
-													}}
-													onDelete={onDeleteSession ? confirmDeleteSession : undefined}
-													isDeleteActionVisible={deleteActionSessionId === session.id}
-													onToggleDeleteAction={setDeleteActionSessionId}
-												/>
-											);
-										})}
+										{isWorkspaceExpanded && (
+											<div
+												style={{
+													...softSurface,
+													display: 'flex',
+													flexDirection: 'column',
+													borderRadius: '18px',
+													overflow: 'hidden',
+													padding: '4px',
+													background:
+														'linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.04) 100%)',
+												}}
+											>
+												{group.sessions.map((session) => {
+													const isActive = session.id === activeSessionId;
+													return (
+														<SwipeableThreadRow
+															key={session.id}
+															session={session}
+															isActive={isActive}
+															activeBadgeShadow={activeBadgeShadow}
+															onSelect={(sessionId) => {
+																searchInputRef.current?.blur();
+																setSearchQuery('');
+																setDeleteActionSessionId(null);
+																onSelectSession(sessionId);
+															}}
+															onDelete={onDeleteSession ? confirmDeleteSession : undefined}
+															isDeleteActionVisible={deleteActionSessionId === session.id}
+															onToggleDeleteAction={setDeleteActionSessionId}
+														/>
+													);
+												})}
+											</div>
+										)}
 									</div>
-								</div>
-							))}
+								);
+							})}
 							{filteredWorkspaces.length === 0 && (
 								<div
 									style={{

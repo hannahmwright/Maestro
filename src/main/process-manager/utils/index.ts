@@ -1,4 +1,9 @@
 export { appendToBuffer } from './bufferUtils';
+export {
+	buildCodexApprovalResponse,
+	getCodexApprovalPolicy,
+	type CodexApprovalResponse,
+} from './codexApproval';
 export { parseDataUrl, saveImageToTempFile, cleanupTempFiles } from './imageUtils';
 export { buildStreamJsonMessage } from './streamJsonBuilder';
 export { buildUnixBasePath, buildPtyTerminalEnv, buildChildProcessEnv } from './envBuilder';

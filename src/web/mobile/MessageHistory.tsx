@@ -953,8 +953,6 @@ export const MessageHistory = memo(function MessageHistory({
 										) : isThinking ? (
 											<div
 												style={{
-													paddingLeft: '12px',
-													borderLeft: `2px solid ${colors.accent}`,
 													fontSize: '13px',
 													lineHeight: 1.65,
 													color: colors.textMain,

@@ -71,6 +71,8 @@ export interface CodexAppServerState {
 	nextClientRequestId: number;
 	threadId?: string;
 	turnId?: string;
+	activeCwd?: string;
+	activeReadOnlyMode?: boolean;
 	pendingUserInputRequest?: UserInputRequest;
 	pendingUserInputResponse?: UserInputResponse;
 	agentMessagePhases: Map<string, string>;

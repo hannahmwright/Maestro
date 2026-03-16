@@ -24,6 +24,8 @@ function createManagedProcess(overrides: Partial<ManagedProcess> = {}): ManagedP
 		startTime: Date.now(),
 		codexAppServerState: {
 			nextClientRequestId: 1,
+			activeCwd: '/tmp',
+			activeReadOnlyMode: false,
 			agentMessagePhases: new Map(),
 			toolItemNames: new Map(),
 			currentTurnCorrectionCount: 0,
@@ -360,6 +362,273 @@ describe('CodexAppServerBridge', () => {
 			},
 			timestamp: expect.any(Number),
 		});
+	});
+
+	it('uses on-request approvals for live writable turns', () => {
+		const send = vi.fn();
+		const managedProcess = createManagedProcess({
+			conversationRuntime: 'live',
+			codexAppServerState: {
+				nextClientRequestId: 1,
+				activeCwd: '/tmp/project',
+				activeReadOnlyMode: false,
+				agentMessagePhases: new Map(),
+				toolItemNames: new Map(),
+				currentTurnCorrectionCount: 0,
+				ws: {
+					readyState: 1,
+					send,
+				},
+			} as any,
+		});
+
+		(bridge as any).startTurn(
+			managedProcess,
+			{
+				cwd: '/tmp/project',
+				readOnlyMode: false,
+			},
+			'thread-1',
+			[{ type: 'text', text: 'Patch the file', text_elements: [] }],
+			'gpt-5.4',
+			null
+		);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(send.mock.calls[0][0])).toMatchObject({
+			method: 'turn/start',
+			params: {
+				threadId: 'thread-1',
+				approvalPolicy: 'on-request',
+				sandboxPolicy: {
+					type: 'workspaceWrite',
+					writableRoots: ['/tmp/project'],
+					networkAccess: true,
+				},
+			},
+		});
+	});
+
+	it('approves in-workspace file changes instead of leaving them hanging', () => {
+		const send = vi.fn();
+		const managedProcess = createManagedProcess({
+			conversationRuntime: 'live',
+			codexAppServerState: {
+				nextClientRequestId: 1,
+				activeCwd: '/tmp/project',
+				activeReadOnlyMode: false,
+				agentMessagePhases: new Map(),
+				toolItemNames: new Map(),
+				currentTurnCorrectionCount: 0,
+				ws: {
+					readyState: 1,
+					send,
+				},
+			} as any,
+		});
+
+		(bridge as any).handleWebSocketMessage(
+			managedProcess,
+			{} as never,
+			JSON.stringify({
+				id: 'approval-1',
+				method: 'item/fileChange/requestApproval',
+				params: {
+					threadId: 'thread-1',
+					turnId: 'turn-1',
+					itemId: 'patch-1',
+					reason: 'Needs to update a file in the workspace.',
+					grantRoot: '/tmp/project',
+				},
+			})
+		);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(send.mock.calls[0][0])).toEqual({
+			id: 'approval-1',
+			result: {
+				decision: 'accept',
+			},
+		});
+	});
+
+	it('declines extra permission requests so they fail instead of stalling', () => {
+		const send = vi.fn();
+		const managedProcess = createManagedProcess({
+			conversationRuntime: 'live',
+			codexAppServerState: {
+				nextClientRequestId: 1,
+				activeCwd: '/tmp/project',
+				activeReadOnlyMode: false,
+				agentMessagePhases: new Map(),
+				toolItemNames: new Map(),
+				currentTurnCorrectionCount: 0,
+				ws: {
+					readyState: 1,
+					send,
+				},
+			} as any,
+		});
+
+		(bridge as any).handleWebSocketMessage(
+			managedProcess,
+			{} as never,
+			JSON.stringify({
+				id: 'approval-2',
+				method: 'item/permissions/requestApproval',
+				params: {
+					threadId: 'thread-1',
+					turnId: 'turn-1',
+					itemId: 'permissions-1',
+					reason: 'Needs access outside the workspace.',
+					permissions: {
+						network: null,
+						fileSystem: {
+							read: ['/etc'],
+							write: ['/etc'],
+						},
+						macos: null,
+					},
+				},
+			})
+		);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(send.mock.calls[0][0])).toEqual({
+			id: 'approval-2',
+			result: {
+				permissions: {},
+				scope: 'turn',
+			},
+		});
+	});
+
+	it('answers legacy applyPatch approvals for writable live sessions', () => {
+		const send = vi.fn();
+		const managedProcess = createManagedProcess({
+			conversationRuntime: 'live',
+			codexAppServerState: {
+				nextClientRequestId: 1,
+				activeCwd: '/tmp/project',
+				activeReadOnlyMode: false,
+				agentMessagePhases: new Map(),
+				toolItemNames: new Map(),
+				currentTurnCorrectionCount: 0,
+				ws: {
+					readyState: 1,
+					send,
+				},
+			} as any,
+		});
+
+		(bridge as any).handleWebSocketMessage(
+			managedProcess,
+			{} as never,
+			JSON.stringify({
+				id: 'approval-legacy',
+				method: 'applyPatchApproval',
+				params: {
+					conversationId: 'thread-1',
+					callId: 'call-1',
+					fileChanges: {
+						'/tmp/project/file.ts': {
+							type: 'modify',
+						},
+					},
+					reason: null,
+					grantRoot: '/tmp/project',
+				},
+			})
+		);
+
+		expect(send).toHaveBeenCalledTimes(1);
+		expect(JSON.parse(send.mock.calls[0][0])).toEqual({
+			id: 'approval-legacy',
+			result: {
+				decision: 'approved',
+			},
+		});
+	});
+
+	it('emits query-complete only once for live turns', () => {
+		const processes = new Map<string, ManagedProcess>();
+		bridge = new CodexAppServerBridge(processes, emitter);
+		const queryCompleteSpy = vi.fn();
+		emitter.on('query-complete', queryCompleteSpy);
+		const managedProcess = createManagedProcess({
+			conversationRuntime: 'live',
+			querySource: 'user',
+			projectPath: '/tmp/project',
+			tabId: 'tab-1',
+			codexAppServerState: {
+				nextClientRequestId: 1,
+				activeCwd: '/tmp/project',
+				activeReadOnlyMode: false,
+				agentMessagePhases: new Map(),
+				toolItemNames: new Map(),
+				currentTurnCorrectionCount: 0,
+				threadId: 'thread-1',
+				turnId: 'turn-1',
+			} as any,
+		});
+		processes.set(managedProcess.sessionId, managedProcess);
+
+		(bridge as any).handleWebSocketMessage(
+			managedProcess,
+			{} as never,
+			JSON.stringify({
+				method: 'turn/completed',
+				params: {
+					turn: {
+						id: 'turn-1',
+						status: 'completed',
+					},
+				},
+			})
+		);
+
+		(bridge as any).finishProcess(managedProcess, 0);
+
+		expect(queryCompleteSpy).toHaveBeenCalledTimes(1);
+		expect(queryCompleteSpy).toHaveBeenCalledWith(managedProcess.sessionId, {
+			sessionId: managedProcess.sessionId,
+			agentType: managedProcess.toolType,
+			source: 'user',
+			startTime: managedProcess.startTime,
+			duration: expect.any(Number),
+			projectPath: '/tmp/project',
+			tabId: 'tab-1',
+		});
+	});
+
+	it('emits query-complete on batch process finish', () => {
+		const processes = new Map<string, ManagedProcess>();
+		bridge = new CodexAppServerBridge(processes, emitter);
+		const queryCompleteSpy = vi.fn();
+		const exitSpy = vi.fn();
+		emitter.on('query-complete', queryCompleteSpy);
+		emitter.on('exit', exitSpy);
+		const managedProcess = createManagedProcess({
+			conversationRuntime: 'batch',
+			querySource: 'auto',
+			projectPath: '/tmp/project',
+			tabId: 'tab-2',
+		});
+		processes.set(managedProcess.sessionId, managedProcess);
+
+		(bridge as any).finishProcess(managedProcess, 0);
+
+		expect(queryCompleteSpy).toHaveBeenCalledTimes(1);
+		expect(queryCompleteSpy).toHaveBeenCalledWith(managedProcess.sessionId, {
+			sessionId: managedProcess.sessionId,
+			agentType: managedProcess.toolType,
+			source: 'auto',
+			startTime: managedProcess.startTime,
+			duration: expect.any(Number),
+			projectPath: '/tmp/project',
+			tabId: 'tab-2',
+		});
+		expect(exitSpy).toHaveBeenCalledWith(managedProcess.sessionId, 0);
 	});
 
 	it('resets demo capture state for each live turn', () => {

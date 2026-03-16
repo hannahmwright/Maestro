@@ -200,11 +200,6 @@ export const SessionItem = memo(function SessionItem({
 								/>
 							</div>
 						)}
-						{workspaceEmoji && variant !== 'group' && variant !== 'worktree' && (
-							<span className="text-xs shrink-0" title="Workspace">
-								{workspaceEmoji}
-							</span>
-						)}
 						<span
 							className={`font-medium truncate ${variant === 'worktree' ? 'text-xs' : 'text-sm'}`}
 							style={getThreadTitleStyle(theme, isActive)}
@@ -243,6 +238,11 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
+				{workspaceEmoji && variant !== 'group' && variant !== 'worktree' && (
+					<span className="text-xs shrink-0" title="Workspace">
+						{workspaceEmoji}
+					</span>
+				)}
 				{/* AUTO Mode Indicator */}
 				{isInBatch && (
 					<div

@@ -587,7 +587,11 @@ const LogItemComponent = memo(
 			log.source !== 'error' &&
 			log.source !== 'stderr';
 		const hideBubbleBorder =
-			isToolLog || isModelResponseMessage || isUserAiMessage || isPreservedReasoningLog;
+			isToolLog ||
+			isThinkingLog ||
+			isModelResponseMessage ||
+			isUserAiMessage ||
+			isPreservedReasoningLog;
 		const useStackedTimestampLayout = isAIMode && !isToolLog;
 		const showActionButtons = !isToolLog && !isThinkingLog && !isPreservedReasoningLog;
 		const showDeliveredAtTimestamp = isUserAiMessage && !!log.delivered;
@@ -975,10 +979,9 @@ const LogItemComponent = memo(
 							{/* Special rendering for thinking/streaming content (AI reasoning in real-time) */}
 							{log.source === 'thinking' && (
 								<div
-									className="px-4 py-2 text-sm font-mono border-l-2"
+									className="text-sm font-mono"
 									style={{
 										color: theme.colors.textMain,
-										borderColor: theme.colors.accent,
 									}}
 								>
 									<div className="flex items-center gap-2 mb-1">

@@ -5,6 +5,7 @@ import { logger } from '../utils/logger';
 import { getDemoArtifactService } from '../artifacts';
 import { writeDemoTurnContextFile } from '../artifacts/maestroDemoRuntime';
 import { buildChildProcessEnv } from './utils/envBuilder';
+import { buildCodexApprovalResponse, getCodexApprovalPolicy } from './utils/codexApproval';
 import { extractDemoEventOutput } from '../../shared/demo-artifacts';
 import type { CodexAppServerState, ManagedProcess, ProcessConfig, SpawnResult } from './types';
 import type {
@@ -477,6 +478,13 @@ export class CodexAppServerBridge {
 			case 'turn/started':
 				this.handleTurnStarted(managedProcess, asRecord(message.params)?.turn);
 				return;
+			case 'item/commandExecution/requestApproval':
+			case 'item/fileChange/requestApproval':
+			case 'item/permissions/requestApproval':
+			case 'applyPatchApproval':
+			case 'execCommandApproval':
+				this.handleApprovalRequest(managedProcess, message);
+				return;
 			case 'item/tool/requestUserInput':
 				this.handleUserInputRequest(managedProcess, message);
 				return;
@@ -597,15 +605,7 @@ export class CodexAppServerBridge {
 						status: completionStatus,
 					});
 					if (managedProcess.conversationRuntime === 'live') {
-						this.emitter.emit('query-complete', managedProcess.sessionId, {
-							sessionId: managedProcess.sessionId,
-							agentType: managedProcess.toolType,
-							source: managedProcess.querySource || 'user',
-							startTime: managedProcess.startTime,
-							duration: Date.now() - managedProcess.startTime,
-							projectPath: managedProcess.projectPath,
-							tabId: managedProcess.tabId,
-						});
+						this.emitQueryComplete(managedProcess);
 					}
 				}
 				if (managedProcess.conversationRuntime !== 'live') {
@@ -638,7 +638,10 @@ export class CodexAppServerBridge {
 		const ws = state?.ws;
 		if (!state || !ws || ws.readyState !== WebSocket.OPEN) return;
 		const isReadOnly = config.readOnlyMode === true;
-		const approvalPolicy = isReadOnly ? 'never' : 'untrusted';
+		const approvalPolicy = getCodexApprovalPolicy(
+			managedProcess.conversationRuntime === 'live',
+			isReadOnly
+		);
 		const sandbox =
 			managedProcess.conversationRuntime === 'live'
 				? isReadOnly
@@ -838,6 +841,40 @@ export class CodexAppServerBridge {
 			questionIds: request.questions.map((question) => question.id),
 		});
 		this.emitter.emit('user-input-request', managedProcess.sessionId, request);
+	}
+
+	private handleApprovalRequest(managedProcess: ManagedProcess, message: JsonRpcMessage): void {
+		const state = managedProcess.codexAppServerState;
+		const ws = state?.ws;
+		const requestId = asRequestId(message.id);
+		const method = asString(message.method);
+		const params = asRecord(message.params);
+		if (!state || !ws || ws.readyState !== WebSocket.OPEN || requestId === undefined || !method) {
+			return;
+		}
+
+		const approval = buildCodexApprovalResponse(
+			method,
+			params,
+			managedProcess.conversationRuntime === 'live' && state.activeReadOnlyMode !== true,
+			state.activeCwd || managedProcess.cwd
+		);
+		if (!approval) {
+			return;
+		}
+
+		logger.info('[CodexAppServerBridge] Responding to approval request', LOG_CONTEXT, {
+			sessionId: managedProcess.sessionId,
+			method,
+			requestId,
+			approved: approval.approved,
+			itemId: asString(params?.itemId),
+			reason: asString(params?.reason),
+		});
+		this.sendJson(ws, {
+			id: requestId,
+			result: approval.result,
+		});
 	}
 
 	private handleItemStarted(managedProcess: ManagedProcess, rawParams: unknown): void {
@@ -1285,6 +1322,18 @@ export class CodexAppServerBridge {
 		this.emitter.emit('conversation-event', managedProcess.sessionId, event);
 	}
 
+	private emitQueryComplete(managedProcess: ManagedProcess): void {
+		this.emitter.emit('query-complete', managedProcess.sessionId, {
+			sessionId: managedProcess.sessionId,
+			agentType: managedProcess.toolType,
+			source: managedProcess.querySource || 'user',
+			startTime: managedProcess.startTime,
+			duration: Date.now() - managedProcess.startTime,
+			projectPath: managedProcess.projectPath,
+			tabId: managedProcess.tabId,
+		});
+	}
+
 	private sendJson(ws: WebSocket, payload: JsonRpcMessage): void {
 		ws.send(JSON.stringify(payload));
 	}
@@ -1318,6 +1367,8 @@ export class CodexAppServerBridge {
 			inputCount: input.length,
 			correctionCount: state.currentTurnCorrectionCount || 0,
 		});
+		state.activeCwd = config.cwd;
+		state.activeReadOnlyMode = config.readOnlyMode === true;
 		const isReadOnly = config.readOnlyMode === true;
 		const sandboxPolicy =
 			managedProcess.conversationRuntime === 'live'
@@ -1335,12 +1386,10 @@ export class CodexAppServerBridge {
 						type: 'readOnly',
 						networkAccess: false,
 					};
-		const approvalPolicy =
-			managedProcess.conversationRuntime === 'live'
-				? isReadOnly
-					? 'never'
-					: 'untrusted'
-				: 'never';
+		const approvalPolicy = getCodexApprovalPolicy(
+			managedProcess.conversationRuntime === 'live',
+			isReadOnly
+		);
 		this.sendJson(ws, {
 			id: 'turn',
 			method: 'turn/start',
@@ -1408,15 +1457,9 @@ export class CodexAppServerBridge {
 		if (!existing) return;
 
 		this.processes.delete(managedProcess.sessionId);
-		this.emitter.emit('query-complete', managedProcess.sessionId, {
-			sessionId: managedProcess.sessionId,
-			agentType: managedProcess.toolType,
-			source: managedProcess.querySource || 'user',
-			startTime: managedProcess.startTime,
-			duration: Date.now() - managedProcess.startTime,
-			projectPath: managedProcess.projectPath,
-			tabId: managedProcess.tabId,
-		});
+		if (managedProcess.conversationRuntime !== 'live') {
+			this.emitQueryComplete(managedProcess);
+		}
 		this.emitter.emit('exit', managedProcess.sessionId, code);
 	}
 }
