@@ -24,6 +24,7 @@ import type { MaestroSettings } from '../ipc/handlers/persistence';
 import type { ProcessConfig, SpawnResult } from './types';
 import type { ProcessManager } from './ProcessManager';
 import { getDemoArtifactService } from '../artifacts';
+import { getDemoBrowserBroker } from '../artifacts/DemoBrowserBroker';
 import {
 	buildDemoContextFilePath,
 	ensureMaestroDemoCommand,
@@ -67,9 +68,8 @@ export interface SpawnDispatchRequest {
 	};
 	querySource?: 'user' | 'auto';
 	tabId?: string;
-	demoCapture?: {
-		enabled: boolean;
-	};
+	projectPath?: string;
+	demoCapture?: ProcessConfig['demoCapture'];
 }
 
 export interface SpawnDispatchDependencies {
@@ -104,7 +104,11 @@ function getSshRemoteById(
 	return sshRemotes.find((remote) => remote.id === sshRemoteId);
 }
 
-function defaultSpawnStrategy({ processManager, spawnConfig, sshRemoteUsed }: PreparedSpawnContext) {
+function defaultSpawnStrategy({
+	processManager,
+	spawnConfig,
+	sshRemoteUsed,
+}: PreparedSpawnContext) {
 	const useCodexAppServerBridge =
 		spawnConfig.toolType === 'codex' &&
 		spawnConfig.readOnlyMode === true &&
@@ -177,7 +181,9 @@ export async function prepareSpawnContext(
 
 	let resolvedModel =
 		configResolution.effectiveModel ||
-		(typeof request.modelId === 'string' && request.modelId.trim() ? request.modelId.trim() : undefined);
+		(typeof request.modelId === 'string' && request.modelId.trim()
+			? request.modelId.trim()
+			: undefined);
 
 	if (!resolvedModel && request.toolType === 'codex') {
 		const sshRemoteId =
@@ -268,10 +274,28 @@ export async function prepareSpawnContext(
 		const outputDir = 'output/playwright';
 		const provisionalTurnId = randomUUID();
 		const turnToken = randomUUID();
-		const { binDir } = await ensureMaestroDemoCommand();
+		const demoProjectRoot = request.projectPath || request.cwd || null;
+		const preferredDemoBrowser =
+			request.demoCapture?.browserMode ||
+			((deps.settingsStore.get('demoBrowserMode', 'standard') as string) === 'chrome'
+				? 'chrome'
+				: 'standard');
+		const {
+			binDir,
+			playwrightCommandName,
+			playwrightConfigPath,
+			playwrightSessionName,
+			projectProfileId,
+			projectProfileDir,
+		} = await ensureMaestroDemoCommand({
+			browserMode: preferredDemoBrowser,
+			projectRoot: demoProjectRoot,
+		});
+		const browserBroker = await getDemoBrowserBroker().ensureStarted();
 		const { contextFilePath, stateFilePath } = buildDemoContextFilePath(
 			request.sessionId,
-			request.tabId || null
+			request.tabId || null,
+			demoProjectRoot
 		);
 		demoCaptureContext = await getDemoArtifactService().prepareDemoTurn({
 			sessionId: request.sessionId,
@@ -289,6 +313,7 @@ export async function prepareSpawnContext(
 		customEnvVarsToPass = {
 			...(customEnvVarsToPass || {}),
 			MAESTRO_DEMO_CAPTURE: request.demoCapture?.enabled ? '1' : '0',
+			MAESTRO_DEMO_BROWSER: preferredDemoBrowser,
 			MAESTRO_DEMO_EVENT_PREFIX,
 			MAESTRO_DEMO_RUN_ID: demoCaptureContext.externalRunId,
 			MAESTRO_DEMO_OUTPUT_DIR: outputDir,
@@ -296,10 +321,16 @@ export async function prepareSpawnContext(
 			MAESTRO_DEMO_TURN_ID: demoCaptureContext.turnId,
 			MAESTRO_DEMO_TURN_TOKEN: demoCaptureContext.turnToken,
 			MAESTRO_DEMO_BIN: 'maestro-demo',
-			PATH: prependPathEntry(
-				customEnvVarsToPass?.PATH || process.env.PATH || '',
-				binDir
-			),
+			MAESTRO_PLAYWRIGHT_CONFIG_FILE: playwrightConfigPath,
+			MAESTRO_PLAYWRIGHT_SESSION: playwrightSessionName,
+			MAESTRO_DEMO_PROJECT_PROFILE: projectProfileId,
+			MAESTRO_DEMO_PROJECT_PROFILE_DIR: projectProfileDir,
+			MAESTRO_DEMO_PROJECT_ROOT: demoProjectRoot || '',
+			MAESTRO_BROWSER_BROKER_URL: browserBroker.url,
+			MAESTRO_BROWSER_BROKER_TOKEN: browserBroker.token,
+			PLAYWRIGHT_CLI_SESSION: playwrightSessionName,
+			PWCLI: playwrightCommandName,
+			PATH: prependPathEntry(customEnvVarsToPass?.PATH || process.env.PATH || '', binDir),
 		};
 	}
 

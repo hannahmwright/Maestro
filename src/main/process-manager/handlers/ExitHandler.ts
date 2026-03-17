@@ -231,18 +231,17 @@ export class ExitHandler {
 					})
 				: {
 						satisfied: !managedProcess.demoCaptureFailed && managedProcess.demoCaptureArtifactSeen,
-						message:
-							managedProcess.demoCaptureFailed
-								? 'Demo capture failed for this run.'
-								: !managedProcess.demoCaptureFinalized
-									? 'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.'
-									: 'Demo capture was requested for this run, but no screenshot or video artifacts were produced.',
+						message: managedProcess.demoCaptureFailed
+							? 'Demo capture failed for this run.'
+							: !managedProcess.demoCaptureFinalized
+								? 'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.'
+								: 'Demo capture was requested for this run, but no screenshot or video artifacts were produced.',
 					};
 
 			if (!outcome.satisfied) {
 				managedProcess.errorEmitted = true;
 				const agentError: AgentError = {
-					type: 'unknown',
+					type: 'demo_capture_failed',
 					message: outcome.message || 'Demo capture failed for this run.',
 					recoverable: false,
 					agentId: toolType,
@@ -254,13 +253,17 @@ export class ExitHandler {
 						stdout: managedProcess.stdoutBuffer || managedProcess.streamedText || '',
 					},
 				};
-				logger.warn('[ProcessManager] Demo capture requirement was not satisfied', 'ProcessManager', {
-					sessionId,
-					toolType,
-					captureRunId: managedProcess.demoCaptureContext?.captureRunId,
-					turnId: managedProcess.demoCaptureContext?.turnId,
-					message: outcome.message,
-				});
+				logger.warn(
+					'[ProcessManager] Demo capture requirement was not satisfied',
+					'ProcessManager',
+					{
+						sessionId,
+						toolType,
+						captureRunId: managedProcess.demoCaptureContext?.captureRunId,
+						turnId: managedProcess.demoCaptureContext?.turnId,
+						message: outcome.message,
+					}
+				);
 				this.emitter.emit('agent-error', sessionId, agentError);
 			}
 		}

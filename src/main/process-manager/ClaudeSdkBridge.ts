@@ -8,9 +8,7 @@ import { buildChildProcessEnv } from './utils/envBuilder';
 import { parseDataUrl } from './utils/imageUtils';
 import { aggregateModelUsage } from '../parsers/usage-aggregator';
 import { extractDemoEventOutput } from '../../shared/demo-artifacts';
-import type {
-	ConversationEvent,
-} from '../../shared/conversation';
+import type { ConversationEvent } from '../../shared/conversation';
 import type { AgentError } from '../../shared/types';
 import type {
 	UserInputRequest,
@@ -113,9 +111,7 @@ function createAgentError(
 	};
 }
 
-function mapReasoningEffort(
-	effort: ProcessConfig['sessionReasoningEffort']
-): {
+function mapReasoningEffort(effort: ProcessConfig['sessionReasoningEffort']): {
 	effort?: 'low' | 'medium' | 'high' | 'max';
 	thinking?: { type: 'disabled' };
 } {
@@ -218,11 +214,7 @@ function extractToolResultOutput(message: Extract<SDKMessage, { type: 'user' }>)
 	return outputs.join('\n');
 }
 
-function emitToolBlocks(
-	emitter: EventEmitter,
-	sessionId: string,
-	message: unknown
-): void {
+function emitToolBlocks(emitter: EventEmitter, sessionId: string, message: unknown): void {
 	const record = asRecord(message);
 	const content = Array.isArray(record?.content) ? record.content : [];
 	for (const item of content) {
@@ -279,9 +271,7 @@ function buildFormRequest(
 		return {
 			id: propertyName,
 			header: title,
-			question:
-				description ||
-				`${title}${requiredFields.has(propertyName) ? ' (required)' : ''}`,
+			question: description || `${title}${requiredFields.has(propertyName) ? ' (required)' : ''}`,
 			options,
 			isOther: !options || options.length === 0,
 			isSecret: property?.writeOnly === true || property?.format === 'password',
@@ -631,7 +621,10 @@ export class ClaudeSdkBridge {
 				message: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
-			if (this.processes.has(managedProcess.sessionId) && !managedProcess.claudeSdkState?.queryClosed) {
+			if (
+				this.processes.has(managedProcess.sessionId) &&
+				!managedProcess.claudeSdkState?.queryClosed
+			) {
 				this.finishProcess(managedProcess, 0);
 			}
 		}
@@ -855,63 +848,30 @@ export class ClaudeSdkBridge {
 		const state = managedProcess.claudeSdkState;
 		if (!state) return;
 
-		const usageStats = aggregateModelUsage(
-			message.modelUsage as Record<string, any>,
-			message.usage as Record<string, unknown>,
-			message.total_cost_usd || 0
-		);
-		this.emitter.emit('usage', managedProcess.sessionId, usageStats);
-
-		const turnId = state.activeTurnId || null;
-		const threadId = state.sdkSessionId;
-		const startTime = state.currentTurnStartedAt || managedProcess.startTime;
-		let status: 'completed' | 'failed' | 'interrupted' =
-			state.pendingInterrupt === true
-				? 'interrupted'
-				: message.subtype === 'success'
-					? 'completed'
-					: 'failed';
-
-		if (message.subtype !== 'success') {
-			const errorMessage = message.errors.join('\n') || 'Claude live turn failed.';
-			this.emitter.emit(
-				'agent-error',
-				managedProcess.sessionId,
-				createAgentError(managedProcess.sessionId, 'agent_crashed', errorMessage, message)
+		const finalizeTurn = () => {
+			const usageStats = aggregateModelUsage(
+				message.modelUsage as Record<string, any>,
+				message.usage as Record<string, unknown>,
+				message.total_cost_usd || 0
 			);
-			this.emitConversationEvent(managedProcess, {
-				type: 'turn_failed',
-				sessionId: managedProcess.sessionId,
-				runtimeKind: managedProcess.conversationRuntime || 'live',
-				timestamp: Date.now(),
-				threadId,
-				turnId,
-				message: errorMessage,
-			});
-		}
+			this.emitter.emit('usage', managedProcess.sessionId, usageStats);
 
-		if (
-			message.subtype === 'success' &&
-			status === 'completed' &&
-			managedProcess.demoCaptureEnabled === true &&
-			managedProcess.demoCaptureContext
-		) {
-			const outcome = getDemoArtifactService().getTurnRequirementOutcome({
-				sessionId: managedProcess.demoCaptureContext.sessionId,
-				tabId: managedProcess.demoCaptureContext.tabId,
-				turnId: managedProcess.demoCaptureContext.turnId,
-				captureRunId: managedProcess.demoCaptureContext.captureRunId,
-			});
-			if (!outcome.satisfied) {
-				status = 'failed';
+			const turnId = state.activeTurnId || null;
+			const threadId = state.sdkSessionId;
+			const startTime = state.currentTurnStartedAt || managedProcess.startTime;
+			let status: 'completed' | 'failed' | 'interrupted' =
+				state.pendingInterrupt === true
+					? 'interrupted'
+					: message.subtype === 'success'
+						? 'completed'
+						: 'failed';
+
+			if (message.subtype !== 'success') {
+				const errorMessage = message.errors.join('\n') || 'Claude live turn failed.';
 				this.emitter.emit(
 					'agent-error',
 					managedProcess.sessionId,
-					createAgentError(
-						managedProcess.sessionId,
-						'agent_crashed',
-						outcome.message || 'Demo capture failed for this turn.'
-					)
+					createAgentError(managedProcess.sessionId, 'agent_crashed', errorMessage, message)
 				);
 				this.emitConversationEvent(managedProcess, {
 					type: 'turn_failed',
@@ -920,35 +880,82 @@ export class ClaudeSdkBridge {
 					timestamp: Date.now(),
 					threadId,
 					turnId,
-					message: outcome.message || 'Demo capture failed for this turn.',
+					message: errorMessage,
 				});
 			}
+
+			if (
+				message.subtype === 'success' &&
+				status === 'completed' &&
+				managedProcess.demoCaptureEnabled === true &&
+				managedProcess.demoCaptureContext
+			) {
+				const outcome = getDemoArtifactService().getTurnRequirementOutcome({
+					sessionId: managedProcess.demoCaptureContext.sessionId,
+					tabId: managedProcess.demoCaptureContext.tabId,
+					turnId: managedProcess.demoCaptureContext.turnId,
+					captureRunId: managedProcess.demoCaptureContext.captureRunId,
+				});
+				if (!outcome.satisfied) {
+					status = 'failed';
+					this.emitter.emit(
+						'agent-error',
+						managedProcess.sessionId,
+						createAgentError(
+							managedProcess.sessionId,
+							'demo_capture_failed',
+							outcome.message || 'Demo capture failed for this turn.'
+						)
+					);
+					this.emitConversationEvent(managedProcess, {
+						type: 'turn_failed',
+						sessionId: managedProcess.sessionId,
+						runtimeKind: managedProcess.conversationRuntime || 'live',
+						timestamp: Date.now(),
+						threadId,
+						turnId,
+						message: outcome.message || 'Demo capture failed for this turn.',
+					});
+				}
+			}
+
+			this.emitConversationEvent(managedProcess, {
+				type: 'turn_completed',
+				sessionId: managedProcess.sessionId,
+				runtimeKind: managedProcess.conversationRuntime || 'live',
+				timestamp: Date.now(),
+				threadId,
+				turnId,
+				status,
+			});
+
+			this.emitter.emit('query-complete', managedProcess.sessionId, {
+				sessionId: managedProcess.sessionId,
+				agentType: managedProcess.toolType,
+				source: managedProcess.querySource || 'user',
+				startTime,
+				duration: Date.now() - startTime,
+				projectPath: managedProcess.projectPath,
+				tabId: managedProcess.tabId,
+			});
+
+			state.activeTurnId = undefined;
+			state.turnStartedEmitted = false;
+			state.pendingInterrupt = false;
+			state.currentTurnStartedAt = undefined;
+		};
+
+		if (
+			message.subtype === 'success' &&
+			managedProcess.demoCaptureEnabled === true &&
+			managedProcess.demoCaptureContext &&
+			managedProcess.demoCapturePending
+		) {
+			void managedProcess.demoCapturePending.catch(() => undefined).then(finalizeTurn);
+			return;
 		}
 
-		this.emitConversationEvent(managedProcess, {
-			type: 'turn_completed',
-			sessionId: managedProcess.sessionId,
-			runtimeKind: managedProcess.conversationRuntime || 'live',
-			timestamp: Date.now(),
-			threadId,
-			turnId,
-			status,
-		});
-
-		this.emitter.emit('query-complete', managedProcess.sessionId, {
-			sessionId: managedProcess.sessionId,
-			agentType: managedProcess.toolType,
-			source: managedProcess.querySource || 'user',
-			startTime,
-			duration: Date.now() - startTime,
-			projectPath: managedProcess.projectPath,
-			tabId: managedProcess.tabId,
-		});
-
-		state.activeTurnId = undefined;
-		state.turnStartedEmitted = false;
-		state.pendingInterrupt = false;
-		state.currentTurnStartedAt = undefined;
+		finalizeTurn();
 	}
 
 	private startTurn(managedProcess: ManagedProcess, inputMode: 'turn' | 'steer'): void {

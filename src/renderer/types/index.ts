@@ -909,6 +909,7 @@ export interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomContextWindow?: number;
 	sessionReasoningEffort?: ReasoningEffort;
+	demoCapture?: DemoCaptureRequest;
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

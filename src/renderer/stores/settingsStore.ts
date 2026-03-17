@@ -33,6 +33,7 @@ import type {
 	WorkspaceSortMode,
 	ToolType,
 } from '../types';
+import type { DemoBrowserMode } from '../../shared/demo-artifacts';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { getLevelIndex } from '../constants/keyboardMastery';
@@ -200,6 +201,7 @@ export interface SettingsStoreState {
 	defaultSaveToHistory: boolean;
 	defaultShowThinking: ThinkingMode;
 	defaultThreadProvider: ToolType;
+	demoBrowserMode: DemoBrowserMode;
 	leftSidebarWidth: number;
 	workspaceSortMode: WorkspaceSortMode;
 	rightPanelWidth: number;
@@ -283,6 +285,7 @@ export interface SettingsStoreActions {
 	setDefaultSaveToHistory: (value: boolean) => void;
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	setDefaultThreadProvider: (value: ToolType) => void;
+	setDemoBrowserMode: (value: DemoBrowserMode) => void;
 	setLeftSidebarWidth: (value: number) => void;
 	setWorkspaceSortMode: (value: WorkspaceSortMode) => void;
 	setRightPanelWidth: (value: number) => void;
@@ -424,6 +427,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	defaultSaveToHistory: true,
 	defaultShowThinking: 'sticky',
 	defaultThreadProvider: 'codex',
+	demoBrowserMode: 'standard',
 	leftSidebarWidth: 256,
 	workspaceSortMode: 'recent',
 	rightPanelWidth: 384,
@@ -583,6 +587,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	setDefaultThreadProvider: (value) => {
 		set({ defaultThreadProvider: value });
 		window.maestro.settings.set('defaultThreadProvider', value);
+	},
+
+	setDemoBrowserMode: (value) => {
+		set({ demoBrowserMode: value });
+		window.maestro.settings.set('demoBrowserMode', value);
 	},
 
 	setLeftSidebarWidth: (value) => {
@@ -1429,6 +1438,13 @@ export async function loadAllSettings(): Promise<void> {
 				provider === 'factory-droid'
 			) {
 				patch.defaultThreadProvider = provider;
+			}
+		}
+
+		if (allSettings['demoBrowserMode'] !== undefined) {
+			const browserMode = allSettings['demoBrowserMode'] as string;
+			if (browserMode === 'standard' || browserMode === 'chrome') {
+				patch.demoBrowserMode = browserMode;
 			}
 		}
 

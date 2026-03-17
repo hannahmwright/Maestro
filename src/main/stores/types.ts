@@ -63,6 +63,7 @@ export interface MaestroSettings {
 	customFonts: string[];
 	logLevel: 'debug' | 'info' | 'warn' | 'error';
 	defaultShell: string;
+	demoBrowserMode?: 'standard' | 'chrome';
 	// Web interface authentication
 	webAuthEnabled: boolean;
 	webAuthToken: string | null;

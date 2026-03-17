@@ -61,6 +61,7 @@ export function registerArtifactsHandlers(): void {
 	ipcMain.handle(
 		'artifacts:harvestFromLogText',
 		async (_event, request: DemoArtifactHarvestRequest) => {
+			// Debug-only compatibility import for recovered legacy artifacts.
 			return getDemoArtifactService().harvestFromLogText(request);
 		}
 	);

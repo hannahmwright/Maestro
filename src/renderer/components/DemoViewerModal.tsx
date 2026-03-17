@@ -30,7 +30,9 @@ function formatDuration(durationMs?: number | null): string | null {
 	return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function buildArtifactFilters(filename: string): Array<{ name: string; extensions: string[] }> | undefined {
+function buildArtifactFilters(
+	filename: string
+): Array<{ name: string; extensions: string[] }> | undefined {
 	const extension = filename.split('.').pop()?.trim().toLowerCase();
 	if (!extension) {
 		return undefined;
@@ -95,7 +97,7 @@ function DemoMediaLightbox({
 						onNavigate(Math.max(0, activeIndex - 1));
 					}}
 					disabled={activeIndex === 0}
-					className="absolute left-5 top-1/2 -translate-y-1/2 rounded-full p-3 transition-colors"
+					className="absolute left-5 top-1/2 z-[2] -translate-y-1/2 rounded-full p-3 transition-colors"
 					style={{
 						border: '1px solid rgba(255, 255, 255, 0.16)',
 						background: 'rgba(15, 23, 42, 0.58)',
@@ -110,7 +112,7 @@ function DemoMediaLightbox({
 			) : null}
 
 			<div
-				className="absolute top-5 left-5 right-5 flex items-center justify-between gap-3"
+				className="absolute top-5 left-5 right-5 z-[2] flex items-center justify-between gap-3"
 				onClick={(event) => event.stopPropagation()}
 			>
 				<div className="min-w-0">
@@ -201,7 +203,7 @@ function DemoMediaLightbox({
 						onNavigate(Math.min(items.length - 1, activeIndex + 1));
 					}}
 					disabled={activeIndex >= items.length - 1}
-					className="absolute right-5 top-1/2 -translate-y-1/2 rounded-full p-3 transition-colors"
+					className="absolute right-5 top-1/2 z-[2] -translate-y-1/2 rounded-full p-3 transition-colors"
 					style={{
 						border: '1px solid rgba(255, 255, 255, 0.16)',
 						background: 'rgba(15, 23, 42, 0.58)',
@@ -588,11 +590,13 @@ export function DemoViewerModal({ theme, demoId, onClose }: DemoViewerModalProps
 				</div>
 			</div>
 
-				{lightbox ? (
-					<DemoMediaLightbox
-						items={lightbox.items}
-						activeIndex={lightbox.index}
-						onNavigate={(index) => setLightbox((current) => (current ? { ...current, index } : current))}
+			{lightbox ? (
+				<DemoMediaLightbox
+					items={lightbox.items}
+					activeIndex={lightbox.index}
+					onNavigate={(index) =>
+						setLightbox((current) => (current ? { ...current, index } : current))
+					}
 					onClose={() => setLightbox(null)}
 				/>
 			) : null}

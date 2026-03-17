@@ -23,6 +23,7 @@ export type DemoFailureReason =
 	| 'missing_artifacts'
 	| 'invalid_turn'
 	| 'invalid_token'
+	| 'legacy_protocol_rejected'
 	| 'wrong_target'
 	| 'simulated_capture'
 	| 'auth_blocked'
@@ -33,6 +34,8 @@ export type DemoFailureReason =
 	| 'unknown';
 
 export type DemoCaptureSource = 'maestro_demo_cli' | 'legacy_stdout' | 'log_harvest';
+
+export type DemoBrowserMode = 'standard' | 'chrome';
 
 export const MAESTRO_DEMO_EVENT_PREFIX = '__MAESTRO_DEMO_EVENT__';
 
@@ -115,6 +118,7 @@ export interface DemoDetail extends DemoCard {
 
 export interface DemoCaptureRequest {
 	enabled: boolean;
+	browserMode?: DemoBrowserMode;
 }
 
 export interface DemoArtifactHarvestRequest {

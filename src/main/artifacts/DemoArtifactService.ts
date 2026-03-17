@@ -58,6 +58,9 @@ const PROJECT_RELATIVE_ARTIFACT_PATTERN =
 	/^(?:\.{1,2}\/)?(?:output\/playwright\/|screenshots\/|artifacts\/).+\.[a-z0-9]+$/i;
 const LOCAL_ARTIFACT_TEXT_PATTERN =
 	/(?:file:\/\/[^\s)]+|\/(?:Users|home)\/[^\n]+?\.(?:png|jpe?g|webp|gif|svg|mp4|webm)|[a-zA-Z]:[\\/][^\n]+?\.(?:png|jpe?g|webp|gif|svg|mp4|webm)|(?:\.{1,2}\/)?(?:output\/playwright|screenshots|artifacts)\/[^\s)]+)/g;
+const VIDEO_TRIM_IDLE_GAP_THRESHOLD_MS = 5_000;
+const VIDEO_TRIM_KEEP_BEFORE_STEP_MS = 2_200;
+const VIDEO_TRIM_KEEP_AFTER_STEP_MS = 1_200;
 
 export interface DemoArtifactServiceOptions {
 	artifactsRoot?: string;
@@ -67,7 +70,8 @@ export interface DemoArtifactServiceOptions {
 	staleCaptureMs?: number;
 	transcodeVideo?: (
 		sourcePath: string,
-		outputPath: string
+		outputPath: string,
+		trimWindows?: Array<{ startMs: number; endMs: number }>
 	) => Promise<{ success: boolean; stderr?: string }>;
 	resolveSshRemote?: (sshRemoteId: string) => SshRemoteConfig | null;
 	statRemoteArtifact?: (
@@ -248,6 +252,39 @@ export class DemoArtifactService {
 		return `${sessionId}::${tabId || ''}::${turnId}`;
 	}
 
+	private findAiScopedCaptureRun(
+		context: DemoCaptureContext,
+		event: DemoCaptureEvent
+	): CaptureRunRecord | null {
+		if (!context.tabId || context.sessionId.includes('-ai-')) {
+			return null;
+		}
+
+		const aiSessionId = `${context.sessionId}-ai-${context.tabId}`;
+		const externalRunId = event.runId?.trim() || null;
+		const derivedTurnId =
+			event.turnId ||
+			(externalRunId && externalRunId.startsWith('turn-')
+				? externalRunId.slice('turn-'.length)
+				: null);
+
+		if (derivedTurnId) {
+			const byTurnId = this.db.getCaptureRunByTurnId(aiSessionId, null, derivedTurnId);
+			if (byTurnId) {
+				return byTurnId;
+			}
+		}
+
+		if (externalRunId) {
+			const byExternalId = this.db.getCaptureRunByExternalId(aiSessionId, null, externalRunId);
+			if (byExternalId) {
+				return byExternalId;
+			}
+		}
+
+		return null;
+	}
+
 	private async logLifecycle(
 		level: 'info' | 'warn' | 'error',
 		message: string,
@@ -276,6 +313,14 @@ export class DemoArtifactService {
 				.replace(/\/.*$/, '')
 				.replace(/:\d+$/, '');
 		}
+	}
+
+	private normalizeComparableDomain(value: string | null | undefined): string | null {
+		const normalized = this.normalizeDomain(value);
+		if (!normalized) {
+			return null;
+		}
+		return normalized.replace(/^www\./, '');
 	}
 
 	private inferCaptureSource(event: DemoCaptureEvent): DemoCaptureSource {
@@ -369,6 +414,10 @@ export class DemoArtifactService {
 				this.sessionRunMap.delete(key);
 			}
 		}
+	}
+
+	private isTerminalRunStatus(status: DemoStatus): boolean {
+		return status === 'completed' || status === 'failed';
 	}
 
 	private selectPosterArtifact(
@@ -491,6 +540,8 @@ export class DemoArtifactService {
 			case 'invalid_turn':
 			case 'invalid_token':
 				return 'Demo capture used an invalid or expired Maestro turn token.';
+			case 'legacy_protocol_rejected':
+				return 'Demo capture used a legacy helper/output protocol instead of the official Maestro runtime for this turn.';
 			case 'wrong_target':
 				return 'Demo capture completed, but the captured page did not match the requested target.';
 			case 'simulated_capture':
@@ -500,7 +551,9 @@ export class DemoArtifactService {
 			case 'provider_claim_without_demo':
 				return 'Demo capture was requested for this run, but the agent exited without finalizing any demo artifacts.';
 			case 'blocked':
-				return captureRun.blockedReason || 'Demo capture is blocked pending user input or approval.';
+				return (
+					captureRun.blockedReason || 'Demo capture is blocked pending user input or approval.'
+				);
 			case 'legacy_unverified':
 				return 'Only legacy/unverified demo artifacts were recovered for this turn.';
 			default:
@@ -545,6 +598,20 @@ export class DemoArtifactService {
 			message: this.buildFailureMessage(captureRun, this.listRunArtifacts(captureRun.id).length),
 			demoCard,
 		};
+	}
+
+	private isOfficialRequiredRun(captureRun: CaptureRunRecord): boolean {
+		return (
+			captureRun.captureSource === 'maestro_demo_cli' &&
+			typeof captureRun.turnId === 'string' &&
+			captureRun.turnId.length > 0 &&
+			typeof captureRun.turnToken === 'string' &&
+			captureRun.turnToken.length > 0
+		);
+	}
+
+	private isLegacyProtocolEvent(event: DemoCaptureEvent): boolean {
+		return this.inferCaptureSource(event) !== 'maestro_demo_cli';
 	}
 
 	private async ensureCaptureRun(
@@ -598,6 +665,14 @@ export class DemoArtifactService {
 			}
 		}
 
+		const aiScopedRun = this.findAiScopedCaptureRun(context, event);
+		if (aiScopedRun) {
+			this.updateTurnRunCache(aiScopedRun);
+			this.sessionRunMap.set(this.getSessionKey(context), aiScopedRun.id);
+			this.hydrateCaptureRunCaches(aiScopedRun.id);
+			return aiScopedRun;
+		}
+
 		const sessionKey = this.getSessionKey(context);
 		const externalRunId = event.runId?.trim() || null;
 		if (externalRunId) {
@@ -630,7 +705,8 @@ export class DemoArtifactService {
 			externalRunId,
 			turnId: event.turnId || null,
 			turnToken: event.turnToken || null,
-			status: this.inferCaptureSource(event) === 'maestro_demo_cli' ? 'requested' : 'legacy_unverified',
+			status:
+				this.inferCaptureSource(event) === 'maestro_demo_cli' ? 'requested' : 'legacy_unverified',
 			verificationStatus:
 				this.inferCaptureSource(event) === 'maestro_demo_cli' ? 'pending' : 'legacy_unverified',
 			failureReason:
@@ -699,8 +775,45 @@ export class DemoArtifactService {
 
 	private async defaultTranscodeVideo(
 		sourcePath: string,
-		outputPath: string
+		outputPath: string,
+		trimWindows?: Array<{ startMs: number; endMs: number }>
 	): Promise<{ success: boolean; stderr?: string }> {
+		if (Array.isArray(trimWindows) && trimWindows.length > 0) {
+			const filterChains = trimWindows.map((window, index) => {
+				const startSeconds = Math.max(window.startMs, 0) / 1000;
+				const endSeconds = Math.max(window.endMs, window.startMs + 1) / 1000;
+				return `[0:v]trim=start=${startSeconds.toFixed(3)}:end=${endSeconds.toFixed(3)},setpts=PTS-STARTPTS[v${index}]`;
+			});
+			const concatInputs = trimWindows.map((_window, index) => `[v${index}]`).join('');
+			const filterGraph = `${filterChains.join(';')};${concatInputs}concat=n=${trimWindows.length}:v=1:a=0[outv]`;
+			const trimmedResult = await execFileNoThrow(
+				'ffmpeg',
+				[
+					'-y',
+					'-i',
+					sourcePath,
+					'-filter_complex',
+					filterGraph,
+					'-map',
+					'[outv]',
+					'-c:v',
+					'libx264',
+					'-pix_fmt',
+					'yuv420p',
+					'-movflags',
+					'+faststart',
+					'-an',
+					outputPath,
+				],
+				undefined,
+				{ timeout: 60_000 }
+			);
+			return {
+				success: trimmedResult.exitCode === 0,
+				stderr: trimmedResult.stderr,
+			};
+		}
+
 		const result = await execFileNoThrow(
 			'ffmpeg',
 			[
@@ -724,6 +837,108 @@ export class DemoArtifactService {
 			success: result.exitCode === 0,
 			stderr: result.stderr,
 		};
+	}
+
+	private buildIdleTrimWindows(
+		steps: DemoStepRecord[],
+		durationMs: number | null | undefined,
+		recordingStartedAtMs?: number | null
+	): Array<{ startMs: number; endMs: number }> | null {
+		if (!durationMs || durationMs <= 0) {
+			return null;
+		}
+
+		const timedSteps = steps
+			.filter((step) => typeof step.timestampMs === 'number' && Number.isFinite(step.timestampMs))
+			.sort((left, right) => left.orderIndex - right.orderIndex);
+		if (timedSteps.length < 2) {
+			return null;
+		}
+
+		const relativeStepTimes = this.resolveTrimStepTimes(
+			timedSteps,
+			durationMs,
+			recordingStartedAtMs
+		);
+		const windows: Array<{ startMs: number; endMs: number }> = [];
+		let currentStartMs = Math.max(0, relativeStepTimes[0] - VIDEO_TRIM_KEEP_BEFORE_STEP_MS);
+
+		for (let index = 0; index < relativeStepTimes.length - 1; index += 1) {
+			const currentTimeMs = relativeStepTimes[index];
+			const nextTimeMs = relativeStepTimes[index + 1];
+			const gapMs = nextTimeMs - currentTimeMs;
+			if (gapMs <= VIDEO_TRIM_IDLE_GAP_THRESHOLD_MS) {
+				continue;
+			}
+
+			const segmentEndMs = Math.min(durationMs, currentTimeMs + VIDEO_TRIM_KEEP_AFTER_STEP_MS);
+			if (segmentEndMs > currentStartMs) {
+				windows.push({
+					startMs: currentStartMs,
+					endMs: segmentEndMs,
+				});
+			}
+			currentStartMs = Math.max(0, nextTimeMs - VIDEO_TRIM_KEEP_BEFORE_STEP_MS);
+		}
+
+		const finalStepTimeMs = relativeStepTimes[relativeStepTimes.length - 1];
+		const finalEndMs = Math.min(durationMs, finalStepTimeMs + VIDEO_TRIM_KEEP_AFTER_STEP_MS);
+		if (finalEndMs > currentStartMs) {
+			windows.push({
+				startMs: currentStartMs,
+				endMs: finalEndMs,
+			});
+		}
+
+		if (windows.length === 0) {
+			return null;
+		}
+
+		const mergedWindows: Array<{ startMs: number; endMs: number }> = [];
+		for (const window of windows) {
+			const previousWindow = mergedWindows[mergedWindows.length - 1];
+			if (!previousWindow || window.startMs > previousWindow.endMs) {
+				mergedWindows.push({ ...window });
+				continue;
+			}
+			previousWindow.endMs = Math.max(previousWindow.endMs, window.endMs);
+		}
+
+		if (
+			mergedWindows.length === 1 &&
+			mergedWindows[0].startMs <= 0 &&
+			mergedWindows[0].endMs >= durationMs - 250
+		) {
+			return null;
+		}
+
+		return mergedWindows;
+	}
+
+	private resolveTrimStepTimes(
+		steps: DemoStepRecord[],
+		durationMs: number,
+		recordingStartedAtMs?: number | null
+	): number[] {
+		const fallbackFirstTimestampMs = steps[0].timestampMs as number;
+		const fallbackRelativeStepTimes = steps.map((step) =>
+			Math.max(0, (step.timestampMs as number) - fallbackFirstTimestampMs)
+		);
+
+		if (!recordingStartedAtMs || !Number.isFinite(recordingStartedAtMs)) {
+			return fallbackRelativeStepTimes;
+		}
+
+		const anchoredStepOffsets = steps.map(
+			(step) => (step.timestampMs as number) - recordingStartedAtMs
+		);
+		const firstAnchoredStepOffset = anchoredStepOffsets[0] ?? 0;
+		const finalAnchoredStepOffset = anchoredStepOffsets[anchoredStepOffsets.length - 1] ?? 0;
+		if (firstAnchoredStepOffset < -1_000 || finalAnchoredStepOffset > durationMs + 1_000) {
+			return fallbackRelativeStepTimes;
+		}
+
+		return anchoredStepOffsets.map((offset) => Math.max(0, offset));
 	}
 
 	private async defaultProbeVideoMetadata(
@@ -766,8 +981,7 @@ export class DemoArtifactService {
 				if (value === null || value === undefined || value === '') {
 					return null;
 				}
-				const numeric =
-					typeof value === 'number' ? value : Number.parseFloat(String(value).trim());
+				const numeric = typeof value === 'number' ? value : Number.parseFloat(String(value).trim());
 				return Number.isFinite(numeric) ? numeric : null;
 			};
 			const width = parseNullableNumber(stream?.width);
@@ -966,15 +1180,21 @@ export class DemoArtifactService {
 		return events;
 	}
 
-	private async createMp4Derivative(source: ArtifactRecord): Promise<ArtifactRecord | null> {
+	private async createMp4Derivative(
+		source: ArtifactRecord,
+		steps: DemoStepRecord[] = []
+	): Promise<ArtifactRecord | null> {
 		if (!source.mimeType.startsWith('video/') || source.mimeType === 'video/mp4') {
 			return null;
 		}
 
 		const derivativeId = randomUUID();
 		const outputPath = path.join(this.artifactsRoot, `${derivativeId}.mp4`);
+		const recordingStartedAtMs =
+			source.durationMs && source.createdAt ? source.createdAt - source.durationMs : null;
+		const trimWindows = this.buildIdleTrimWindows(steps, source.durationMs, recordingStartedAtMs);
 		const transcode = this.transcodeVideo ?? this.defaultTranscodeVideo.bind(this);
-		const result = await transcode(source.storedPath, outputPath);
+		const result = await transcode(source.storedPath, outputPath, trimWindows || undefined);
 		if (!result.success) {
 			await this.logLifecycle(
 				'warn',
@@ -1014,7 +1234,7 @@ export class DemoArtifactService {
 			updatedAt: this.now(),
 			width: source.width,
 			height: source.height,
-			durationMs: source.durationMs,
+			durationMs: null,
 			originalPath: source.storedPath,
 			storedPath: outputPath,
 			derivedFromArtifactId: source.id,
@@ -1362,6 +1582,10 @@ export class DemoArtifactService {
 			captureRun.requestedTarget?.url || captureRun.requestedTarget?.domain || null
 		);
 		const observedDomain = this.normalizeDomain(captureRun.observedUrl);
+		const comparableRequestedDomain = this.normalizeComparableDomain(
+			captureRun.requestedTarget?.url || captureRun.requestedTarget?.domain || null
+		);
+		const comparableObservedDomain = this.normalizeComparableDomain(captureRun.observedUrl);
 		const authTargetReached =
 			typeof event.authTargetReached === 'boolean'
 				? event.authTargetReached
@@ -1377,7 +1601,11 @@ export class DemoArtifactService {
 			};
 		}
 
-		if (requestedDomain && observedDomain && requestedDomain !== observedDomain) {
+		if (
+			comparableRequestedDomain &&
+			comparableObservedDomain &&
+			comparableRequestedDomain !== comparableObservedDomain
+		) {
 			return {
 				status: 'failed',
 				verificationStatus: 'failed',
@@ -1473,7 +1701,7 @@ export class DemoArtifactService {
 							typeof event.authTargetReached === 'boolean'
 								? event.authTargetReached
 								: captureRun.authTargetReached,
-				  }
+					}
 				: this.evaluateCompletion(captureRun, artifacts, event);
 		const demo = this.ensureDemoRecord(
 			{
@@ -1485,8 +1713,11 @@ export class DemoArtifactService {
 			},
 			completion.status
 		);
+		const currentSteps = this.captureRunSteps.get(captureRun.id) || this.db.listDemoSteps(demo.id);
 		let selectedVideo = videoArtifact || this.selectVideoArtifact(artifacts, demo.videoArtifactId);
-		const videoDerivative = selectedVideo ? await this.createMp4Derivative(selectedVideo) : null;
+		const videoDerivative = selectedVideo
+			? await this.createMp4Derivative(selectedVideo, currentSteps)
+			: null;
 		if (videoDerivative) {
 			selectedVideo = videoDerivative;
 		}
@@ -1524,20 +1755,18 @@ export class DemoArtifactService {
 		};
 		this.db.upsertCaptureRun(finalizedRun);
 		await this.logLifecycle(
-			completion.status === 'failed' || completion.status === 'legacy_unverified'
-				? 'warn'
-				: 'info',
+			completion.status === 'failed' || completion.status === 'legacy_unverified' ? 'warn' : 'info',
 			'Demo capture finalized',
 			{
-			captureRunId: captureRun.id,
-			demoId: finalizedDemo.id,
-			status: completion.status,
-			stepCount: this.db.listDemoSteps(finalizedDemo.id).length,
-			artifactCount: artifacts.length,
-			verificationStatus: completion.verificationStatus,
-			requirementSatisfied: completion.requirementSatisfied,
-			failureReason: completion.failureReason,
-		}
+				captureRunId: captureRun.id,
+				demoId: finalizedDemo.id,
+				status: completion.status,
+				stepCount: this.db.listDemoSteps(finalizedDemo.id).length,
+				artifactCount: artifacts.length,
+				verificationStatus: completion.verificationStatus,
+				requirementSatisfied: completion.requirementSatisfied,
+				failureReason: completion.failureReason,
+			}
 		);
 		const card = this.buildDemoCard(finalizedDemo, finalizedRun);
 		this.cleanupRunCaches(captureRun.id, this.getSessionKey(context));
@@ -1604,7 +1833,9 @@ export class DemoArtifactService {
 			expiredRunIds.add(demo.captureRunId);
 		}
 		for (const run of this.db.listCaptureRunsOlderThan(cutoff)) {
-			if (!['requested', 'started', 'artifact_added', 'verifying', 'blocked'].includes(run.status)) {
+			if (
+				!['requested', 'started', 'artifact_added', 'verifying', 'blocked'].includes(run.status)
+			) {
 				expiredRunIds.add(run.id);
 			}
 		}
@@ -1616,6 +1847,47 @@ export class DemoArtifactService {
 	async handleCaptureEvent(input: DemoCaptureEventInput): Promise<DemoCard | null> {
 		const { context, event } = input;
 		const captureRun = await this.ensureCaptureRun(context, event);
+		if (
+			captureRun.captureSource === 'maestro_demo_cli' &&
+			this.isTerminalRunStatus(captureRun.status)
+		) {
+			const existingDemo = this.db.getDemoByCaptureRun(captureRun.id);
+			await this.logLifecycle('warn', 'Ignoring demo event for terminal capture run', {
+				captureRunId: captureRun.id,
+				sessionId: captureRun.sessionId,
+				tabId: captureRun.tabId,
+				status: captureRun.status,
+				eventType: event.type,
+				runId: event.runId,
+			});
+			if (existingDemo) {
+				return this.buildDemoCard(existingDemo, captureRun);
+			}
+			const terminalDemo = this.ensureDemoRecord(captureRun, captureRun.status);
+			return this.buildDemoCard(terminalDemo, captureRun);
+		}
+		if (this.isOfficialRequiredRun(captureRun) && this.isLegacyProtocolEvent(event)) {
+			const rejectedRun = this.withRunUpdates(captureRun, {
+				status: 'failed',
+				verificationStatus: 'failed',
+				failureReason: 'legacy_protocol_rejected',
+				requirementSatisfied: false,
+				title: event.title || captureRun.title,
+				summary:
+					event.summary ||
+					'Legacy helper output was rejected because this turn requires the official Maestro demo runtime.',
+			});
+			const rejectedDemo = this.ensureDemoRecord(rejectedRun, 'failed');
+			await this.logLifecycle('warn', 'Rejected legacy demo protocol for required turn', {
+				captureRunId: captureRun.id,
+				sessionId: captureRun.sessionId,
+				tabId: captureRun.tabId,
+				eventType: event.type,
+				runId: event.runId,
+			});
+			return this.buildDemoCard(rejectedDemo, rejectedRun);
+		}
+
 		const updatedRun = this.withRunUpdates(captureRun, {
 			status:
 				event.type === 'capture_failed'
@@ -1729,8 +2001,8 @@ export class DemoArtifactService {
 				'artifact_added',
 				screenshotArtifact,
 				{
-				...event,
-				role: event.role || 'poster',
+					...event,
+					role: event.role || 'poster',
 				}
 			);
 		}
@@ -1768,6 +2040,10 @@ export class DemoArtifactService {
 			return null;
 		}
 
+		if (request.demoCaptureRequested) {
+			return null;
+		}
+
 		const context = {
 			sessionId: request.sessionId,
 			tabId: request.tabId || null,
@@ -1787,7 +2063,7 @@ export class DemoArtifactService {
 			return finalCard;
 		}
 
-		if (!request.demoCaptureRequested || context.sshRemoteId) {
+		if (context.sshRemoteId) {
 			return null;
 		}
 
@@ -1842,7 +2118,9 @@ export class DemoArtifactService {
 			);
 		}
 		if (videoPaths.length > 0) {
-			summaryParts.push(`${videoPaths.length} video${videoPaths.length === 1 ? '' : 's'} recovered`);
+			summaryParts.push(
+				`${videoPaths.length} video${videoPaths.length === 1 ? '' : 's'} recovered`
+			);
 		}
 		const summary =
 			summaryParts.length > 0

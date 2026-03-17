@@ -1,9 +1,5 @@
 import { ipcRenderer } from 'electron';
-import type {
-	DemoArtifactHarvestRequest,
-	DemoCard,
-	DemoDetail,
-} from '../../shared/demo-artifacts';
+import type { DemoArtifactHarvestRequest, DemoCard, DemoDetail } from '../../shared/demo-artifacts';
 
 export interface ArtifactFileInfo {
 	id: string;
@@ -28,6 +24,8 @@ export function createArtifactsApi() {
 			destinationPath: string
 		): Promise<{ success: boolean; error?: string }> =>
 			ipcRenderer.invoke('artifacts:exportArtifact', artifactId, destinationPath),
+		// Debug-only compatibility import for legacy demo artifacts. Normal desktop/PWA demo
+		// rendering must come from the official turn-scoped demo runtime instead.
 		harvestFromLogText: (request: DemoArtifactHarvestRequest): Promise<DemoCard | null> =>
 			ipcRenderer.invoke('artifacts:harvestFromLogText', request),
 	};

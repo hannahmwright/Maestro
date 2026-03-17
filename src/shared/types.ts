@@ -190,11 +190,7 @@ export interface ConductorProviderRouting {
 	pauseNearLimit: boolean;
 	nearLimitPercent: number;
 }
-export type ConductorTaskSource =
-	| 'manual'
-	| 'planner'
-	| 'worker_followup'
-	| 'reviewer_followup';
+export type ConductorTaskSource = 'manual' | 'planner' | 'worker_followup' | 'reviewer_followup';
 
 export interface ConductorSessionMetadata {
 	isConductorSession: true;
@@ -351,6 +347,7 @@ export type AgentErrorType =
 	| 'network_error' // Connection failed, timeout
 	| 'agent_crashed' // Process exited unexpectedly
 	| 'permission_denied' // Agent lacks required permissions
+	| 'demo_capture_failed' // Demo capture could not produce verified artifacts for the run
 	| 'session_not_found' // Session was deleted or doesn't exist
 	| 'unknown'; // Unrecognized error
 

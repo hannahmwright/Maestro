@@ -1,3 +1,5 @@
+import type { DemoCaptureRequest } from './demo-artifacts';
+
 export type ConversationRuntimeKind = 'batch' | 'live';
 
 export type ConversationSteerMode = 'true-steer' | 'interrupt-fallback' | 'none';
@@ -66,9 +68,7 @@ export interface ConversationTurnRequest {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
-	demoCapture?: {
-		enabled: boolean;
-	};
+	demoCapture?: DemoCaptureRequest;
 }
 
 export interface ConversationSteerRequest {

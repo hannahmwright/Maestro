@@ -65,6 +65,8 @@ export interface SessionItemProps {
 	providerAgentId?: Session['toolType'];
 	workspaceEmoji?: string;
 	bookmarkState?: boolean;
+	hasUnread?: boolean;
+	isWorking?: boolean;
 
 	// State
 	isActive: boolean;
@@ -112,6 +114,8 @@ export const SessionItem = memo(function SessionItem({
 	providerAgentId,
 	workspaceEmoji,
 	bookmarkState,
+	hasUnread,
+	isWorking,
 	isActive,
 	isKeyboardSelected,
 	isDragging,
@@ -130,8 +134,8 @@ export const SessionItem = memo(function SessionItem({
 	onStartRename,
 	onToggleBookmark,
 }: SessionItemProps) {
-	const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
-	const isWorking = session.state === 'busy' || isInBatch;
+	const hasUnreadTabs = hasUnread ?? session.aiTabs?.some((tab) => tab.hasUnread) ?? false;
+	const isSessionWorking = isWorking ?? (session.state === 'busy' || isInBatch);
 	const resolvedDisplayName = displayName || session.name;
 	const resolvedProviderAgentId = providerAgentId || session.toolType;
 	const resolvedBookmarked = bookmarkState ?? session.bookmarked;
@@ -302,9 +306,9 @@ export const SessionItem = memo(function SessionItem({
 					))}
 
 				{/* Session activity indicator: spinner while working, dot when awaiting user input */}
-				{(isWorking || hasUnreadTabs) && (
+				{(isSessionWorking || hasUnreadTabs) && (
 					<div className="ml-auto flex items-center">
-						{isWorking ? (
+						{isSessionWorking ? (
 							<span
 								title={
 									session.cliActivity

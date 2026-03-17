@@ -98,9 +98,14 @@ function looksLikeBlockingChatQuestion(text: string): boolean {
 	return false;
 }
 
-function createAgentError(sessionId: string, message: string, raw?: unknown): AgentError {
+function createAgentError(
+	sessionId: string,
+	message: string,
+	raw?: unknown,
+	type: AgentError['type'] = 'agent_crashed'
+): AgentError {
 	return {
-		type: 'agent_crashed',
+		type,
 		message,
 		recoverable: false,
 		agentId: 'codex',
@@ -557,59 +562,84 @@ export class CodexAppServerBridge {
 						return;
 					}
 					const completedTurnId = managedProcess.codexAppServerState.turnId || null;
+					const completedThreadId = managedProcess.codexAppServerState.threadId;
 					managedProcess.codexAppServerState.turnId = undefined;
-					let completionStatus:
-						| 'interrupted'
-						| 'failed'
-						| 'completed' =
-						turnStatus === 'interrupted'
-							? 'interrupted'
-							: turnStatus === 'failed'
-								? 'failed'
-								: 'completed';
 					if (
-						completionStatus === 'completed' &&
 						managedProcess.demoCaptureEnabled === true &&
-						managedProcess.demoCaptureContext
-					) {
-						const outcome = getDemoArtifactService().getTurnRequirementOutcome({
+						managedProcess.demoCaptureContext &&
+						!getDemoArtifactService().getTurnRequirementOutcome({
 							sessionId: managedProcess.demoCaptureContext.sessionId,
 							tabId: managedProcess.demoCaptureContext.tabId,
 							turnId: managedProcess.demoCaptureContext.turnId,
 							captureRunId: managedProcess.demoCaptureContext.captureRunId,
-						});
-						if (!outcome.satisfied) {
-							completionStatus = 'failed';
-							this.emitAgentError(
-								managedProcess.sessionId,
-								outcome.message || 'Demo capture failed for this turn.'
-							);
-							this.emitConversationEvent(managedProcess, {
-								type: 'turn_failed',
-								sessionId: managedProcess.sessionId,
-								runtimeKind: managedProcess.conversationRuntime || 'batch',
-								timestamp: Date.now(),
-								threadId: managedProcess.codexAppServerState.threadId,
-								turnId: completedTurnId,
-								message: outcome.message || 'Demo capture failed for this turn.',
+						}).satisfied
+					) {
+						this.emitDemoCaptureOutputFromStructuredPayload(managedProcess, message.params);
+					}
+					const finalizeTurnCompletion = () => {
+						let completionStatus: 'interrupted' | 'failed' | 'completed' =
+							turnStatus === 'interrupted'
+								? 'interrupted'
+								: turnStatus === 'failed'
+									? 'failed'
+									: 'completed';
+						if (
+							completionStatus === 'completed' &&
+							managedProcess.demoCaptureEnabled === true &&
+							managedProcess.demoCaptureContext
+						) {
+							const outcome = getDemoArtifactService().getTurnRequirementOutcome({
+								sessionId: managedProcess.demoCaptureContext.sessionId,
+								tabId: managedProcess.demoCaptureContext.tabId,
+								turnId: managedProcess.demoCaptureContext.turnId,
+								captureRunId: managedProcess.demoCaptureContext.captureRunId,
 							});
+							if (!outcome.satisfied) {
+								completionStatus = 'failed';
+								this.emitAgentError(
+									managedProcess.sessionId,
+									outcome.message || 'Demo capture failed for this turn.',
+									undefined,
+									'demo_capture_failed'
+								);
+								this.emitConversationEvent(managedProcess, {
+									type: 'turn_failed',
+									sessionId: managedProcess.sessionId,
+									runtimeKind: managedProcess.conversationRuntime || 'batch',
+									timestamp: Date.now(),
+									threadId: completedThreadId,
+									turnId: completedTurnId,
+									message: outcome.message || 'Demo capture failed for this turn.',
+								});
+							}
 						}
+						this.emitConversationEvent(managedProcess, {
+							type: 'turn_completed',
+							sessionId: managedProcess.sessionId,
+							runtimeKind: managedProcess.conversationRuntime || 'batch',
+							timestamp: Date.now(),
+							threadId: completedThreadId,
+							turnId: completedTurnId,
+							status: completionStatus,
+						});
+						if (managedProcess.conversationRuntime === 'live') {
+							this.emitQueryComplete(managedProcess);
+						}
+						if (managedProcess.conversationRuntime !== 'live') {
+							this.killProcess(managedProcess);
+						}
+					};
+					if (
+						managedProcess.demoCaptureEnabled === true &&
+						managedProcess.demoCaptureContext &&
+						managedProcess.demoCapturePending
+					) {
+						void managedProcess.demoCapturePending
+							.catch(() => undefined)
+							.then(finalizeTurnCompletion);
+						return;
 					}
-					this.emitConversationEvent(managedProcess, {
-						type: 'turn_completed',
-						sessionId: managedProcess.sessionId,
-						runtimeKind: managedProcess.conversationRuntime || 'batch',
-						timestamp: Date.now(),
-						threadId: managedProcess.codexAppServerState.threadId,
-						turnId: completedTurnId,
-						status: completionStatus,
-					});
-					if (managedProcess.conversationRuntime === 'live') {
-						this.emitQueryComplete(managedProcess);
-					}
-				}
-				if (managedProcess.conversationRuntime !== 'live') {
-					this.killProcess(managedProcess);
+					finalizeTurnCompletion();
 				}
 				return;
 			case 'error':
@@ -1033,6 +1063,8 @@ export class CodexAppServerBridge {
 		const delta = asString(params?.delta);
 		if (!itemId || !delta) return;
 
+		this.emitDemoCaptureOutput(managedProcess, delta);
+
 		this.emitter.emit('tool-execution', managedProcess.sessionId, {
 			toolName: 'shell_command',
 			state: {
@@ -1063,11 +1095,15 @@ export class CodexAppServerBridge {
 		const message = asString(params?.message);
 		if (!itemId || !message) return;
 
-		this.emitToolExecution(managedProcess, this.getToolNameForItem(managedProcess, itemId, 'mcp_tool'), {
-			id: itemId,
-			status: 'running',
-			output: message,
-		});
+		this.emitToolExecution(
+			managedProcess,
+			this.getToolNameForItem(managedProcess, itemId, 'mcp_tool'),
+			{
+				id: itemId,
+				status: 'running',
+				output: message,
+			}
+		);
 	}
 
 	private handleCommandExecutionTerminalInteraction(
@@ -1249,6 +1285,52 @@ export class CodexAppServerBridge {
 		this.emitter.emit('data', managedProcess.sessionId, `${demoEventOutput}\n`);
 	}
 
+	private emitDemoCaptureOutputFromStructuredPayload(
+		managedProcess: ManagedProcess,
+		payload: unknown
+	): boolean {
+		const outputs = new Set<string>();
+		const visited = new Set<unknown>();
+
+		const visit = (value: unknown): void => {
+			if (typeof value === 'string') {
+				const demoEventOutput = extractDemoEventOutput(value);
+				if (demoEventOutput) {
+					outputs.add(demoEventOutput);
+				}
+				return;
+			}
+
+			if (!value || typeof value !== 'object') {
+				return;
+			}
+
+			if (visited.has(value)) {
+				return;
+			}
+			visited.add(value);
+
+			if (Array.isArray(value)) {
+				for (const entry of value) {
+					visit(entry);
+				}
+				return;
+			}
+
+			for (const nestedValue of Object.values(value as Record<string, unknown>)) {
+				visit(nestedValue);
+			}
+		};
+
+		visit(payload);
+
+		for (const output of outputs) {
+			this.emitter.emit('data', managedProcess.sessionId, `${output}\n`);
+		}
+
+		return outputs.size > 0;
+	}
+
 	private getToolNameForItem(
 		managedProcess: ManagedProcess,
 		itemId: string,
@@ -1415,8 +1497,13 @@ export class CodexAppServerBridge {
 		});
 	}
 
-	private emitAgentError(sessionId: string, message: string, raw?: unknown): void {
-		this.emitter.emit('agent-error', sessionId, createAgentError(sessionId, message, raw));
+	private emitAgentError(
+		sessionId: string,
+		message: string,
+		raw?: unknown,
+		type: AgentError['type'] = 'agent_crashed'
+	): void {
+		this.emitter.emit('agent-error', sessionId, createAgentError(sessionId, message, raw, type));
 	}
 
 	private prepareDemoCaptureForTurn(

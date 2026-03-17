@@ -145,6 +145,7 @@ type UserInputResponse = {
 
 type DemoCaptureRequest = {
 	enabled: boolean;
+	browserMode?: 'standard' | 'chrome';
 };
 
 type ArtifactRef = {
@@ -194,6 +195,7 @@ type DemoCard = {
 		| 'missing_artifacts'
 		| 'invalid_turn'
 		| 'invalid_token'
+		| 'legacy_protocol_rejected'
 		| 'wrong_target'
 		| 'simulated_capture'
 		| 'auth_blocked'
@@ -2299,21 +2301,27 @@ interface MaestroAPI {
 		list: (sessionId: string) => Promise<{ success: boolean; files: string[]; error?: string }>;
 		getPath: (sessionId: string) => Promise<{ success: boolean; path: string }>;
 	};
-		artifacts: {
-			listSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]>;
-			getDemo: (demoId: string) => Promise<DemoDetail | null>;
-			loadArtifact: (artifactId: string) => Promise<string | null>;
-			getArtifactFileInfo: (
-				artifactId: string
-			) => Promise<{ id: string; path: string; url: string; mimeType: string; filename: string } | null>;
-			exportArtifact: (
-				artifactId: string,
-				destinationPath: string
-			) => Promise<{ success: boolean; error?: string }>;
-			harvestFromLogText: (
-				request: import('../shared/demo-artifacts').DemoArtifactHarvestRequest
-			) => Promise<DemoCard | null>;
-		};
+	artifacts: {
+		listSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]>;
+		getDemo: (demoId: string) => Promise<DemoDetail | null>;
+		loadArtifact: (artifactId: string) => Promise<string | null>;
+		getArtifactFileInfo: (
+			artifactId: string
+		) => Promise<{
+			id: string;
+			path: string;
+			url: string;
+			mimeType: string;
+			filename: string;
+		} | null>;
+		exportArtifact: (
+			artifactId: string,
+			destinationPath: string
+		) => Promise<{ success: boolean; error?: string }>;
+		harvestFromLogText: (
+			request: import('../shared/demo-artifacts').DemoArtifactHarvestRequest
+		) => Promise<DemoCard | null>;
+	};
 	// Auto Run file operations
 	// SSH remote support: Core operations accept optional sshRemoteId for remote file operations
 	autorun: {

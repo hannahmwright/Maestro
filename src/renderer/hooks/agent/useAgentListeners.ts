@@ -18,7 +18,6 @@
 import { useEffect, useRef } from 'react';
 import type {
 	ToolType,
-	Session,
 	SessionState,
 	LogEntry,
 	QueuedItem,
@@ -156,10 +155,57 @@ export function getErrorTitleForType(type: AgentError['type']): string {
 			return 'Agent Error';
 		case 'permission_denied':
 			return 'Permission Denied';
+		case 'demo_capture_failed':
+			return 'Demo Capture Failed';
 		case 'session_not_found':
 			return 'Session Not Found';
 		default:
 			return 'Error';
+	}
+}
+
+function getDemoCaptureFailureMessage(demoCard: DemoCard): string {
+	return (
+		demoCard.summary ||
+		(demoCard.failureReason === 'wrong_target'
+			? 'Demo capture completed against the wrong target.'
+			: demoCard.failureReason === 'simulated_capture'
+				? 'Demo capture used a simulated or local reproduction instead of the requested app.'
+				: demoCard.failureReason === 'legacy_protocol_rejected'
+					? 'Demo capture used a legacy helper path instead of the official Maestro demo runtime.'
+					: demoCard.failureReason === 'auth_blocked'
+						? 'Demo capture never reached the authenticated target content.'
+						: demoCard.failureReason === 'blocked'
+							? demoCard.blockedReason || 'Demo capture is waiting on access or approval.'
+							: 'Demo capture failed for this turn.')
+	);
+}
+
+function getDemoCardLogText(demoCard: DemoCard): string {
+	switch (demoCard.status) {
+		case 'requested':
+		case 'started':
+			return demoCard.title
+				? `Starting demo capture for ${demoCard.title}`
+				: 'Starting demo capture';
+		case 'artifact_added':
+			return demoCard.videoArtifact
+				? 'Recorded demo video'
+				: demoCard.posterArtifact || demoCard.stepCount > 0
+					? 'Captured demo proof'
+					: 'Updating demo capture';
+		case 'verifying':
+			return 'Verifying demo capture';
+		case 'completed':
+			return demoCard.title ? `Demo ready: ${demoCard.title}` : 'Demo ready';
+		case 'blocked':
+			return `Demo capture blocked: ${getDemoCaptureFailureMessage(demoCard)}`;
+		case 'failed':
+			return `Demo capture failed: ${getDemoCaptureFailureMessage(demoCard)}`;
+		case 'legacy_unverified':
+			return demoCard.title ? `Imported legacy demo: ${demoCard.title}` : 'Imported legacy demo';
+		default:
+			return 'Demo capture update';
 	}
 }
 
@@ -666,14 +712,12 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 	>(new Map());
 	const assistantStreamRafIdRef = useRef<number | null>(null);
 	const activeAssistantLogIdRef = useRef<Map<string, string>>(new Map());
-	const harvestedDemoLogIdsRef = useRef<Set<string>>(new Set());
 
 	useEffect(() => {
 		// Copy ref value to local variable for cleanup (React ESLint rule)
 		const thinkingChunkBuffer = thinkingChunkBufferRef.current;
 		const assistantStreamBuffer = assistantStreamBufferRef.current;
 		const activeAssistantLogIds = activeAssistantLogIdRef.current;
-		const harvestedDemoLogIds = harvestedDemoLogIdsRef.current;
 
 		// Stable references from stores (Zustand actions are referentially stable)
 		const setSessions = useSessionStore.getState().setSessions;
@@ -756,115 +800,13 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				});
 		};
 
-		const broadcastSessionState = (session: Session) => {
-			if (!window.maestro.web.broadcastSessionState) {
-				return;
-			}
-
-			void window.maestro.web
-				.broadcastSessionState(session.id, 'error', {
-					name: session.name,
-					toolType: session.toolType,
-					inputMode: session.inputMode,
-					cwd: session.cwd,
-					contextUsage: session.contextUsage,
-					effectiveContextWindow:
-						typeof session.customContextWindow === 'number' && session.customContextWindow > 0
-							? session.customContextWindow
-							: null,
-				})
-				.catch((error) => {
-					console.error('[Web] Failed to broadcast session state', error);
-				});
-		};
-
-		const markDemoCaptureFailure = (
-			actualSessionId: string,
-			targetTabId: string,
-			turnStartedAt: number,
-			message: string
-		) => {
-			const session = getSessions().find((candidate) => candidate.id === actualSessionId);
-			if (!session) {
-				return;
-			}
-
-			const targetTab = session.aiTabs.find((candidate) => candidate.id === targetTabId);
-			if (!targetTab) {
-				return;
-			}
-
-			const existingFailureLog = targetTab.logs.some(
-				(log) =>
-					log.timestamp >= turnStartedAt &&
-					((log.source === 'error' && log.text === message) ||
-						log.metadata?.demoCard?.status === 'failed')
-			);
-			const agentError: AgentError = {
-				type: 'unknown',
-				message,
-				recoverable: false,
-				agentId: session.toolType,
-				sessionId: actualSessionId,
-				timestamp: Date.now(),
-			};
-			const errorLogEntry: LogEntry = {
-				id: generateId(),
-				timestamp: agentError.timestamp,
-				source: 'error',
-				text: message,
-				agentError,
-			};
-
-			setSessions((prev) =>
-				prev.map((candidate) => {
-					if (candidate.id !== actualSessionId) return candidate;
-
-					return {
-						...candidate,
-						agentError,
-						agentErrorTabId: targetTabId,
-						agentErrorPaused: true,
-						state: 'error' as SessionState,
-						aiTabs: candidate.aiTabs.map((tab) =>
-							tab.id === targetTabId
-								? {
-										...tab,
-										logs: existingFailureLog
-											? tab.logs
-											: preserveTrailingReasoningAndAppend(tab.logs, 'failed', errorLogEntry),
-										agentError,
-									}
-								: tab
-						),
-					};
-				})
-			);
-
-			if (!existingFailureLog) {
-				broadcastSessionLogEntry(actualSessionId, targetTabId, 'ai', errorLogEntry);
-			}
-			broadcastSessionState(session);
-			notifyToast({
-				type: 'error',
-				title: 'Demo capture failed',
-				message,
-				sessionId: actualSessionId,
-			});
-		};
-
 		const appendDemoCardLog = (sessionId: string, tabId: string | null, demoCard: DemoCard) => {
 			const logEntryId = `demo-card-${demoCard.demoId}`;
 			const logEntry: LogEntry = {
 				id: logEntryId,
 				timestamp: demoCard.updatedAt || Date.now(),
 				source: 'system',
-				text:
-					demoCard.status === 'completed'
-						? 'Demo ready'
-						: demoCard.status === 'failed' || demoCard.status === 'blocked'
-							? 'Demo capture failed'
-							: 'Demo capture update',
+				text: getDemoCardLogText(demoCard),
 				metadata: {
 					demoCard,
 				},
@@ -889,7 +831,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 											),
 											logEntry,
 										],
-										...(isCompletedDemoCapture(demoCard) ? { demoCaptureRequested: false } : {}),
+										...(isCompletedDemoCapture(demoCard) ||
+										demoCard.status === 'failed' ||
+										demoCard.status === 'blocked'
+											? { demoCaptureRequested: false }
+											: {}),
 									}
 								: tab
 						),
@@ -898,94 +844,6 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			);
 
 			broadcastSessionLogEntry(sessionId, tabId, 'ai', logEntry);
-
-			if (
-				(demoCard.status === 'failed' || demoCard.status === 'blocked') &&
-				tabId
-			) {
-				const message =
-					demoCard.summary ||
-					(demoCard.failureReason === 'wrong_target'
-						? 'Demo capture completed against the wrong target.'
-						: demoCard.failureReason === 'simulated_capture'
-							? 'Demo capture used a simulated or local reproduction instead of the requested app.'
-							: demoCard.failureReason === 'auth_blocked'
-								? 'Demo capture never reached the authenticated target content.'
-								: 'Demo capture failed for this turn.');
-				markDemoCaptureFailure(sessionId, tabId, demoCard.updatedAt || Date.now(), message);
-			}
-		};
-
-		const extractHarvestTextFromLog = (logEntry: LogEntry): string => {
-			const textParts: string[] = [];
-			if (logEntry.text?.trim()) {
-				textParts.push(logEntry.text);
-			}
-
-			const toolOutput = logEntry.metadata?.toolState?.output;
-			if (typeof toolOutput === 'string' && toolOutput.trim()) {
-				textParts.push(toolOutput);
-			} else if (toolOutput !== undefined && toolOutput !== null) {
-				try {
-					const serializedOutput = JSON.stringify(toolOutput);
-					if (serializedOutput.trim()) {
-						textParts.push(serializedOutput);
-					}
-				} catch {
-					// Ignore non-serializable tool output.
-				}
-			}
-
-			return textParts.join('\n');
-		};
-
-		const maybeHarvestDemoFromLog = (
-			sessionId: string,
-			tabId: string | null,
-			logEntry: LogEntry
-		) => {
-			if (harvestedDemoLogIds.has(logEntry.id)) {
-				return;
-			}
-
-			const session = getSessions().find((candidate) => candidate.id === sessionId);
-			if (!session) {
-				return;
-			}
-
-			const targetTab =
-				(tabId ? session.aiTabs.find((candidate) => candidate.id === tabId) : null) ||
-				getActiveTab(session);
-			if (!targetTab) {
-				return;
-			}
-
-			const harvestText = extractHarvestTextFromLog(logEntry);
-			if (!harvestText.trim()) {
-				return;
-			}
-
-			harvestedDemoLogIds.add(logEntry.id);
-			void window.maestro.artifacts
-				.harvestFromLogText({
-					sessionId,
-					tabId: targetTab.id,
-					text: harvestText,
-					sourceLogId: logEntry.id,
-					projectRoots: Array.from(new Set([session.projectRoot, session.cwd].filter(Boolean))),
-					demoCaptureRequested: targetTab.demoCaptureRequested === true,
-					sshRemoteId: session.sshRemoteId ?? null,
-					sshRemoteHost: session.sshRemote?.host ?? null,
-				})
-				.then((demoCard) => {
-					if (demoCard) {
-						appendDemoCardLog(sessionId, targetTab.id, demoCard);
-					}
-				})
-				.catch((error) => {
-					harvestedDemoLogIds.delete(logEntry.id);
-					console.error('[Artifacts] Failed to harvest demo from log text', error);
-				});
 		};
 
 		const unsubscribeDemoGenerated =
@@ -2221,13 +2079,15 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				});
 
 				const isSessionNotFound = agentError.type === 'session_not_found';
+				const isDemoCaptureFailure = agentError.type === 'demo_capture_failed';
+				const isInformationalError = isSessionNotFound || isDemoCaptureFailure;
 
 				const errorLogEntry: LogEntry = {
 					id: generateId(),
 					timestamp: agentError.timestamp,
-					source: isSessionNotFound ? 'system' : 'error',
+					source: isInformationalError ? 'system' : 'error',
 					text: agentError.message,
-					agentError: isSessionNotFound ? undefined : agentError,
+					agentError: isInformationalError ? undefined : agentError,
 				};
 
 				setSessions((prev) =>
@@ -2243,13 +2103,13 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 										? {
 												...tab,
 												logs: preserveTrailingReasoningAndAppend(tab.logs, 'failed', errorLogEntry),
-												agentError: isSessionNotFound ? undefined : agentError,
+												agentError: isInformationalError ? undefined : agentError,
 											}
 										: tab
 								)
 							: s.aiTabs;
 
-						if (isSessionNotFound) {
+						if (isInformationalError) {
 							return {
 								...s,
 								aiTabs: updatedAiTabs,
@@ -2268,7 +2128,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				);
 
 				// Check if there's an active batch run and pause it
-				if (deps.getBatchStateRef.current && deps.pauseBatchOnErrorRef.current) {
+				if (
+					!isInformationalError &&
+					deps.getBatchStateRef.current &&
+					deps.pauseBatchOnErrorRef.current
+				) {
 					const batchState = deps.getBatchStateRef.current(actualSessionId);
 					if (batchState.isRunning && !batchState.errorPaused) {
 						console.log('[onAgentError] Pausing active batch run due to error:', actualSessionId);
@@ -2328,7 +2192,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				}
 
 				// Show the error modal (skip for informational session_not_found)
-				if (!isSessionNotFound) {
+				if (!isInformationalError) {
 					openModal('agentError', { sessionId: actualSessionId });
 				}
 			}
@@ -2753,10 +2617,6 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				const finalizedToolLog = toolLogToBroadcast as LogEntry | null;
 				if (finalizedToolLog) {
 					broadcastSessionLogEntry(actualSessionId, tabId, 'ai', finalizedToolLog);
-					const toolStatus = finalizedToolLog.metadata?.toolState?.status;
-					if (toolStatus === 'completed' || toolStatus === 'error') {
-						maybeHarvestDemoFromLog(actualSessionId, tabId, finalizedToolLog);
-					}
 				}
 			}
 		);
@@ -2988,17 +2848,6 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 						};
 					})
 				);
-
-				const finishedSession = getSessions().find((candidate) => candidate.id === actualSessionId);
-				const finishedTab = finishedSession?.aiTabs.find((candidate) => candidate.id === tabId);
-				const latestResponseLog =
-					finishedTab?.logs
-						.slice()
-						.reverse()
-						.find((log) => log.source === 'ai' || log.source === 'stdout') || null;
-				if (latestResponseLog) {
-					maybeHarvestDemoFromLog(actualSessionId, tabId, latestResponseLog);
-				}
 
 				if (queuedItemToProcess) {
 					setTimeout(() => {

@@ -78,6 +78,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setDefaultShowThinking,
 		defaultThreadProvider,
 		setDefaultThreadProvider,
+		demoBrowserMode,
+		setDemoBrowserMode,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
 		autoCollapseRightPanel,
@@ -148,12 +150,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	} | null>(null);
 	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
 	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
-	const threadProviderOptions: ToolType[] = [
-		'codex',
-		'claude-code',
-		'opencode',
-		'factory-droid',
-	];
+	const threadProviderOptions: ToolType[] = ['codex', 'claude-code', 'opencode', 'factory-droid'];
 	const handleWakatimeApiKeyChange = useCallback(
 		(value: string) => {
 			setWakatimeApiKey(value);
@@ -646,6 +643,33 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					<Keyboard className="w-3 h-3" />
 					Input Send Behavior
 				</div>
+
+				<div>
+					<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
+						<Monitor className="w-3 h-3" />
+						Demo Browser
+					</div>
+					<div
+						className="p-3 rounded border"
+						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
+					>
+						<ToggleButtonGroup
+							options={[
+								{ value: 'standard', label: 'Standard', activeColor: '#64748b' },
+								{ value: 'chrome', label: 'Chrome', activeColor: '#0f766e' },
+							]}
+							value={demoBrowserMode}
+							onChange={(value) => setDemoBrowserMode(value as 'standard' | 'chrome')}
+							theme={theme}
+						/>
+						<p className="text-xs opacity-50 mt-2">
+							Choose which browser family Maestro should prefer for demo capture. Chrome mode uses
+							your installed Google Chrome channel with the shared project profile when browser
+							automation supports it. Demo runs stay headless/background by default, which is better
+							for authenticated flows than the default Playwright browser without stealing focus.
+						</p>
+					</div>
+				</div>
 				<p className="text-xs opacity-50 mb-3">
 					Configure how to send messages in each mode. Choose between Enter or {formatMetaKey()}
 					+Enter for each input type.
@@ -767,8 +791,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 							Default provider
 						</div>
 						<div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
-							New workspace threads start instantly with this provider. You can still switch it
-							from the composer before sending the first message.
+							New workspace threads start instantly with this provider. You can still switch it from
+							the composer before sending the first message.
 						</div>
 					</div>
 					<div className="grid grid-cols-2 gap-2">
@@ -791,7 +815,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 										className="flex h-8 w-8 items-center justify-center rounded-md"
 										style={{ backgroundColor: `${theme.colors.bgSidebar}80` }}
 									>
-										<ProviderModelIcon toolType={provider} color={theme.colors.textMain} size={16} />
+										<ProviderModelIcon
+											toolType={provider}
+											color={theme.colors.textMain}
+											size={16}
+										/>
 									</span>
 									<span className="text-sm font-medium">{getProviderDisplayName(provider)}</span>
 								</button>

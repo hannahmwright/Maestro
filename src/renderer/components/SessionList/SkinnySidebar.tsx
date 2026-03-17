@@ -1,10 +1,12 @@
 import { memo } from 'react';
 import { Loader2 } from 'lucide-react';
-import type { Session, Theme, SidebarThreadTarget } from '../../types';
+import type { Session, Theme, SidebarThreadTarget, Thread } from '../../types';
 import { SessionTooltipContent } from './SessionTooltipContent';
+import { hasUnreadForThread, isThreadBusyForSession } from '../../utils/workspaceThreads';
 
 export interface SkinnySidebarThreadItem {
 	target: SidebarThreadTarget;
+	thread: Thread;
 	session: Session;
 	displayName: string;
 	groupName?: string;
@@ -35,10 +37,11 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 }: SkinnySidebarProps) {
 	return (
 		<div className="flex-1 flex flex-col items-center py-4 gap-2 overflow-y-auto overflow-x-visible no-scrollbar">
-			{threadItems.map(({ target, session, displayName, groupName }) => {
+			{threadItems.map(({ target, thread, session, displayName, groupName }) => {
 				const isInBatch = activeBatchSessionIds.includes(session.id);
-				const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
-				const isWorking = session.state === 'busy' || isInBatch;
+				const hasUnreadTabs = hasUnreadForThread(thread, session);
+				const isWorking =
+					isThreadBusyForSession(thread, session) || isInBatch || Boolean(session.cliActivity);
 				const isActive = activeThreadTargetId === target.id;
 
 				return (

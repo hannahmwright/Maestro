@@ -28,6 +28,7 @@ import type {
 	EncoreFeatureFlags,
 	ToolType,
 } from '../../types';
+import type { DemoBrowserMode } from '../../../shared/demo-artifacts';
 import {
 	useSettingsStore,
 	loadAllSettings,
@@ -90,6 +91,8 @@ export interface UseSettingsReturn {
 	setDefaultShowThinking: (value: ThinkingMode) => void;
 	defaultThreadProvider: ToolType;
 	setDefaultThreadProvider: (value: ToolType) => void;
+	demoBrowserMode: DemoBrowserMode;
+	setDemoBrowserMode: (value: DemoBrowserMode) => void;
 	leftSidebarWidth: number;
 	rightPanelWidth: number;
 	markdownEditMode: boolean;

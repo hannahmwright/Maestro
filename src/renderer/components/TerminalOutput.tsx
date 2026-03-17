@@ -2171,7 +2171,7 @@ export const TerminalOutput = memo(
 					// Flush any accumulated response group before user message
 					flushResponseGroup();
 					result.push(log);
-				} else if (log.source === 'tool' || log.source === 'thinking') {
+				} else if (log.source === 'tool' || log.source === 'thinking' || log.source === 'system') {
 					// Flush response group before tool/thinking, then add tool/thinking separately
 					flushResponseGroup();
 					result.push(log);

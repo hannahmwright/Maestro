@@ -122,6 +122,51 @@ function getThreadDisplayName(session: Session | null | undefined): string {
 	return session?.threadTitle?.trim() || session?.name || 'Select a thread';
 }
 
+function resolveWorkspaceBadge(
+	session: Session | null | undefined,
+	sessions: Session[]
+): { name: string; emoji: string } | null {
+	if (!session) {
+		return null;
+	}
+
+	const normalizedGroupName = session.groupName?.trim();
+	const normalizedGroupEmoji = session.groupEmoji?.trim();
+	const groupId = session.groupId?.trim();
+
+	if (normalizedGroupName && normalizedGroupEmoji) {
+		return {
+			name: normalizedGroupName,
+			emoji: normalizedGroupEmoji,
+		};
+	}
+
+	if (groupId) {
+		const matchingWorkspaceSession = sessions.find((candidate) => {
+			if (candidate.id === session.id) {
+				return false;
+			}
+
+			return (
+				candidate.groupId?.trim() === groupId &&
+				(candidate.groupName?.trim() || candidate.groupEmoji?.trim())
+			);
+		});
+
+		if (matchingWorkspaceSession) {
+			return {
+				name: normalizedGroupName || matchingWorkspaceSession.groupName?.trim() || 'Workspace',
+				emoji: normalizedGroupEmoji || matchingWorkspaceSession.groupEmoji?.trim() || '📂',
+			};
+		}
+	}
+
+	return {
+		name: normalizedGroupName || 'Workspace',
+		emoji: normalizedGroupEmoji || '📂',
+	};
+}
+
 function summarizeTurnLabel(text: string | null | undefined): string {
 	const normalized = (text || '').replace(/\s+/g, ' ').trim();
 	if (!normalized) return 'Untitled turn';
@@ -145,6 +190,7 @@ type MobileKanbanScope =
 
 interface MobileHeaderProps {
 	activeSession?: Session | null;
+	activeWorkspaceBadge?: { name: string; emoji: string } | null;
 	drawerOpen: boolean;
 	onToggleDrawer: () => void;
 	canOpenTabSearch: boolean;
@@ -190,6 +236,7 @@ function formatUsageResetTime(timestamp: number | null): string {
 
 function MobileHeader({
 	activeSession,
+	activeWorkspaceBadge = null,
 	drawerOpen,
 	onToggleDrawer,
 	canOpenTabSearch,
@@ -231,6 +278,11 @@ function MobileHeader({
 			setUsageMenuOpen(false);
 		}
 	}, [activeSession]);
+
+	const workspaceBadge = activeWorkspaceBadge || {
+		name: 'Workspace',
+		emoji: '📂',
+	};
 
 	const glassControlStyle: React.CSSProperties = {
 		display: 'flex',
@@ -361,8 +413,8 @@ function MobileHeader({
 									flexShrink: 1,
 								}}
 							>
-									{getThreadDisplayName(activeSession)}
-								</span>
+								{getThreadDisplayName(activeSession)}
+							</span>
 							{activeSession && (
 								<span
 									style={{
@@ -385,8 +437,8 @@ function MobileHeader({
 											'0 12px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 									}}
 								>
-									<span style={{ lineHeight: 1 }}>{activeSession.groupEmoji || '📂'}</span>
-									<span>{activeSession.groupName || 'Workspace'}</span>
+									<span style={{ lineHeight: 1 }}>{workspaceBadge.emoji}</span>
+									<span>{workspaceBadge.name}</span>
 								</span>
 							)}
 						</div>
@@ -1076,9 +1128,7 @@ function AppControlsPanel({
 									border: isSelected
 										? `1px solid ${colors.accent}`
 										: '1px solid rgba(255, 255, 255, 0.08)',
-									background: isSelected
-										? `${colors.accent}20`
-										: 'rgba(255, 255, 255, 0.04)',
+									background: isSelected ? `${colors.accent}20` : 'rgba(255, 255, 255, 0.04)',
 									color: isSelected ? colors.accent : colors.textDim,
 									cursor: 'pointer',
 									display: 'flex',
@@ -1609,6 +1659,10 @@ export default function MobileApp() {
 		onLiveSessionLogEntry: handleLiveSessionLogEntry,
 	});
 	const activeTab = getActiveTabFromSession(activeSession);
+	const activeWorkspaceBadge = useMemo(
+		() => resolveWorkspaceBadge(activeSession, sessions),
+		[activeSession, sessions]
+	);
 	const activeDemoCaptureTargetKey = getDemoCaptureTargetKey(activeSessionId, activeTabId);
 	const demoCaptureRequested = activeDemoCaptureTargetKey
 		? demoCaptureRequiredByTarget[activeDemoCaptureTargetKey] === true
@@ -1621,8 +1675,7 @@ export default function MobileApp() {
 
 			setDemoCaptureRequiredByTarget((previous) => {
 				const currentValue = previous[activeDemoCaptureTargetKey] === true;
-				const resolvedValue =
-					typeof nextValue === 'function' ? nextValue(currentValue) : nextValue;
+				const resolvedValue = typeof nextValue === 'function' ? nextValue(currentValue) : nextValue;
 
 				if (resolvedValue === currentValue) {
 					return previous;
@@ -3026,6 +3079,7 @@ export default function MobileApp() {
 		<div style={containerStyle}>
 			<MobileHeader
 				activeSession={activeSession}
+				activeWorkspaceBadge={activeWorkspaceBadge}
 				drawerOpen={showNavigationDrawer}
 				onToggleDrawer={handleToggleNavigationDrawer}
 				canOpenTabSearch={!!canOpenTabSearch}

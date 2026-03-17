@@ -286,6 +286,147 @@ const splitShellSegments = (command: string): string[] =>
 		.map((segment) => segment.trim())
 		.filter(Boolean);
 
+const isPlaywrightCommandSegment = (segment: string): boolean =>
+	/(?:^|[\s"'])((?:\$PWCLI)|(?:maestro-pwcli)|(?:playwright_cli\.sh)|(?:playwright-cli)|(?:pwcli))\b/i.test(
+		segment
+	);
+
+const describeBrowserWorkflow = (
+	segments: string[],
+	unwrappedCommand: string
+): ToolActivityCopy | null => {
+	const browserSegment = segments.find((segment) => isPlaywrightCommandSegment(segment));
+	if (!browserSegment) return null;
+
+	const tokens = tokenizeShellCommand(browserSegment);
+	const normalizedTokens = tokens.map((token) => token.toLowerCase());
+	const action = normalizedTokens.find((token, index) => {
+		if (index === 0) return false;
+		return !token.startsWith('-') && !token.includes('=');
+	});
+
+	switch (action) {
+		case 'open':
+		case 'tab-new':
+			return {
+				title: 'Opening the browser',
+				subtitle: 'Launching a browser page to work through the requested flow',
+				rawCommand: unwrappedCommand,
+			};
+		case 'snapshot':
+			return {
+				title: 'Inspecting the current page',
+				subtitle: 'Reading the live browser state before taking the next step',
+				rawCommand: unwrappedCommand,
+			};
+		case 'click':
+		case 'fill':
+		case 'type':
+		case 'press':
+		case 'select':
+		case 'check':
+		case 'uncheck':
+		case 'hover':
+		case 'drag':
+			return {
+				title: 'Interacting with the app',
+				subtitle: 'Using the browser to move through the live UI step by step',
+				rawCommand: unwrappedCommand,
+			};
+		case 'screenshot':
+			return {
+				title: 'Capturing a screenshot',
+				subtitle: 'Saving visual proof from the live browser session',
+				rawCommand: unwrappedCommand,
+			};
+		case 'video-start':
+			return {
+				title: 'Recording a demo video',
+				subtitle: 'Starting a screen recording for the browser walkthrough',
+				rawCommand: unwrappedCommand,
+			};
+		case 'video-stop':
+			return {
+				title: 'Finishing the demo video',
+				subtitle: 'Stopping the browser recording and preparing the artifact',
+				rawCommand: unwrappedCommand,
+			};
+		case 'eval':
+			return {
+				title: 'Inspecting app state',
+				subtitle: 'Evaluating the live page to verify the current UI state',
+				rawCommand: unwrappedCommand,
+			};
+		default:
+			return {
+				title: 'Running a browser workflow',
+				subtitle: 'Opening the app in a browser and collecting interactive diagnostics',
+				rawCommand: unwrappedCommand,
+			};
+	}
+};
+
+const describeDemoRuntimeCommand = (
+	segments: string[],
+	unwrappedCommand: string
+): ToolActivityCopy | null => {
+	const demoSegment = segments.find((segment) => /\bmaestro-demo\b/i.test(segment));
+	if (!demoSegment) return null;
+
+	const tokens = tokenizeShellCommand(demoSegment);
+	const normalizedTokens = tokens.map((token) => token.toLowerCase());
+	const action = normalizedTokens.find((token, index) => {
+		if (index === 0) return false;
+		return !token.startsWith('-') && !token.includes('=');
+	});
+
+	switch (action) {
+		case 'start':
+		case 'begin':
+			return {
+				title: 'Starting demo capture',
+				subtitle: 'Creating a new verified demo run for this turn',
+				rawCommand: unwrappedCommand,
+			};
+		case 'step':
+			return {
+				title: 'Capturing a demo step',
+				subtitle: 'Recording the next verified step and screenshot in the walkthrough',
+				rawCommand: unwrappedCommand,
+			};
+		case 'blocked':
+			return {
+				title: 'Waiting on access to continue',
+				subtitle: 'The demo run is blocked on authentication, approval, or another requirement',
+				rawCommand: unwrappedCommand,
+			};
+		case 'complete':
+			return {
+				title: 'Finalizing demo capture',
+				subtitle: 'Verifying the collected artifacts and finishing the demo run',
+				rawCommand: unwrappedCommand,
+			};
+		case 'fail':
+			return {
+				title: 'Marking the demo as failed',
+				subtitle: 'Stopping the demo run because the required proof could not be captured',
+				rawCommand: unwrappedCommand,
+			};
+		case 'status':
+			return {
+				title: 'Checking demo capture status',
+				subtitle: 'Inspecting the current state of the verified demo run',
+				rawCommand: unwrappedCommand,
+			};
+		default:
+			return {
+				title: 'Updating demo capture',
+				subtitle: 'Syncing verified demo state back into Maestro',
+				rawCommand: unwrappedCommand,
+			};
+	}
+};
+
 const describeShellCommand = (command: string): ToolActivityCopy => {
 	const unwrappedCommand = unwrapShellWrapper(command);
 	const segments = splitShellSegments(unwrappedCommand);
@@ -323,6 +464,16 @@ const describeShellCommand = (command: string): ToolActivityCopy => {
 						return nameIndex >= 0 ? tokens[nameIndex + 1] || null : null;
 					})()
 				: null;
+
+	const demoRuntimeCopy = describeDemoRuntimeCommand(segments, unwrappedCommand);
+	if (demoRuntimeCopy) {
+		return demoRuntimeCopy;
+	}
+
+	const browserWorkflowCopy = describeBrowserWorkflow(segments, unwrappedCommand);
+	if (browserWorkflowCopy) {
+		return browserWorkflowCopy;
+	}
 
 	if (
 		unwrappedCommand !== compactCommand &&

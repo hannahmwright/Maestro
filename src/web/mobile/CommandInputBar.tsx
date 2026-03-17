@@ -355,8 +355,10 @@ export function CommandInputBar({
 	const inlineSendButtonRef = useRef<HTMLButtonElement>(null);
 	const expandedSendButtonRef = useRef<HTMLButtonElement>(null);
 	const busyDraftMenuRef = useRef<HTMLDivElement>(null);
-	const { scrollGuardProps: modelMenuScrollGuardProps, shouldIgnoreClick: shouldIgnoreModelMenuClick } =
-		useScrollTapGuard();
+	const {
+		scrollGuardProps: modelMenuScrollGuardProps,
+		shouldIgnoreClick: shouldIgnoreModelMenuClick,
+	} = useScrollTapGuard();
 	const setTextareaElementRef = useCallback((node: HTMLTextAreaElement | null) => {
 		textareaRef.current = node;
 	}, []);
@@ -626,6 +628,16 @@ export function CommandInputBar({
 		return Date.now() - lastComposerInteractionAtRef.current < 400;
 	}, []);
 
+	const getDefaultSubmitOptions = useCallback(() => {
+		const shouldDismissMobileKeyboard = isMobilePhone && inputMode === 'ai';
+		return {
+			keepComposerOpen: inputMode === 'ai' && !shouldDismissMobileKeyboard,
+			keepFocus: inputMode === 'ai' && !shouldDismissMobileKeyboard,
+			collapseAiComposer: shouldDismissMobileKeyboard,
+			blurAfterSubmit: shouldDismissMobileKeyboard,
+		};
+	}, [inputMode, isMobilePhone]);
+
 	/**
 	 * Handle form submission
 	 */
@@ -636,6 +648,7 @@ export function CommandInputBar({
 				collapseAiComposer?: boolean;
 				keepFocus?: boolean;
 				keepComposerOpen?: boolean;
+				blurAfterSubmit?: boolean;
 			}
 		) => {
 			if ((!value.trim() && !hasStagedAttachments) || isDisabled) return;
@@ -658,6 +671,12 @@ export function CommandInputBar({
 
 			if (options?.collapseAiComposer && isMobilePhone && inputMode === 'ai') {
 				setIsExpanded(false);
+			}
+
+			if (options?.blurAfterSubmit) {
+				window.requestAnimationFrame(() => {
+					textareaRef.current?.blur();
+				});
 			}
 
 			if (options?.keepFocus) {
@@ -684,12 +703,9 @@ export function CommandInputBar({
 			if (showBusyControls) {
 				return;
 			}
-			submitDraft('default', {
-				keepComposerOpen: inputMode === 'ai',
-				keepFocus: inputMode === 'ai',
-			});
+			submitDraft('default', getDefaultSubmitOptions());
 		},
-		[inputMode, showBusyControls, submitDraft]
+		[getDefaultSubmitOptions, showBusyControls, submitDraft]
 	);
 
 	/**
@@ -735,19 +751,13 @@ export function CommandInputBar({
 
 	const handleQueueNext = useCallback(() => {
 		setBusyDraftMenuOpen(false);
-		submitDraft('queue', {
-			keepComposerOpen: true,
-			keepFocus: true,
-		});
-	}, [submitDraft]);
+		submitDraft('queue', getDefaultSubmitOptions());
+	}, [getDefaultSubmitOptions, submitDraft]);
 
 	const handleSteer = useCallback(() => {
 		setBusyDraftMenuOpen(false);
-		submitDraft('default', {
-			keepComposerOpen: true,
-			keepFocus: true,
-		});
-	}, [submitDraft]);
+		submitDraft('default', getDefaultSubmitOptions());
+	}, [getDefaultSubmitOptions, submitDraft]);
 
 	/**
 	 * Handle click outside to collapse expanded input on mobile
@@ -881,12 +891,9 @@ export function CommandInputBar({
 		(e: React.FormEvent) => {
 			e.preventDefault();
 			if (isSendBlocked || showBusyControls) return;
-			submitDraft('default', {
-				keepComposerOpen: inputMode === 'ai',
-				keepFocus: inputMode === 'ai' || !isMobilePhone,
-			});
+			submitDraft('default', getDefaultSubmitOptions());
 		},
-		[inputMode, isMobilePhone, isSendBlocked, showBusyControls, submitDraft]
+		[getDefaultSubmitOptions, isSendBlocked, showBusyControls, submitDraft]
 	);
 
 	// Calculate textarea height for mobile expanded mode
@@ -901,10 +908,7 @@ export function CommandInputBar({
 		!isSendBlocked &&
 		!hasDraft &&
 		voiceSupported;
-	const showInlineSendAction =
-		inputMode === 'ai' &&
-		!hasActiveVoiceControls &&
-		hasDraft;
+	const showInlineSendAction = inputMode === 'ai' && !hasActiveVoiceControls && hasDraft;
 	const showBusyInlineStopButton =
 		inputMode === 'ai' &&
 		showBusyControls &&
@@ -919,8 +923,10 @@ export function CommandInputBar({
 		supportsModelSelection &&
 		(isActivelyComposing || modelMenuOpen) &&
 		!showVoiceReviewAction;
+	const showExpandedInlineActionButtons =
+		isMobilePhone && inputMode === 'ai' && isExpanded && hasComposerActions;
 	const demoCaptureNotice =
-		inputMode === 'ai' && demoCaptureEnabled ? (
+		inputMode === 'ai' && demoCaptureEnabled && !showExpandedInlineActionButtons ? (
 			<div
 				style={{
 					display: 'inline-flex',
@@ -941,6 +947,28 @@ export function CommandInputBar({
 				<span>Demo/screenshots required</span>
 			</div>
 		) : null;
+
+	const expandedActionButtonStyle = (isActive = false): React.CSSProperties => ({
+		display: 'inline-flex',
+		alignItems: 'center',
+		gap: '8px',
+		padding: '10px 14px',
+		borderRadius: '999px',
+		border: `1px solid ${isActive ? `${colors.accent}66` : colors.border}`,
+		background: isActive ? `${colors.accent}14` : `${colors.bgMain}d6`,
+		color: isActive ? colors.accent : colors.textMain,
+		fontSize: '13px',
+		fontWeight: 600,
+		cursor: isDisabled ? 'default' : 'pointer',
+		opacity: isDisabled ? 0.55 : 1,
+		boxShadow: '0 8px 18px rgba(15, 23, 42, 0.08)',
+	});
+
+	useEffect(() => {
+		if (showExpandedInlineActionButtons) {
+			setActionsMenuOpen(false);
+		}
+	}, [showExpandedInlineActionButtons]);
 
 	useEffect(() => {
 		if (!attachmentError) {
@@ -1541,9 +1569,7 @@ export function CommandInputBar({
 	}, [stagedImages.length]);
 
 	const stagedPreviewOverlay =
-		stagedPreviewIndex !== null &&
-		stagedImages[stagedPreviewIndex] &&
-		mobilePortalRoot
+		stagedPreviewIndex !== null && stagedImages[stagedPreviewIndex] && mobilePortalRoot
 			? createPortal(
 					<div
 						style={{
@@ -1990,33 +2016,39 @@ export function CommandInputBar({
 					)}
 					{demoCaptureNotice}
 
-					{hasComposerActions && (
+					{showExpandedInlineActionButtons && (
 						<div
-							style={{ position: 'relative', alignSelf: 'flex-start' }}
-							ref={actionsMenuAnchorRef}
+							style={{
+								display: 'flex',
+								flexWrap: 'wrap',
+								gap: '8px',
+								alignItems: 'center',
+							}}
 						>
-							<button
-								type="button"
-								onClick={handleComposerActionsToggle}
-								disabled={isDisabled}
-								style={{
-									alignSelf: 'flex-start',
-									display: 'inline-flex',
-									alignItems: 'center',
-									gap: '8px',
-									padding: '10px 14px',
-									borderRadius: '999px',
-									border: `1px solid ${demoCaptureEnabled ? `${colors.accent}66` : colors.border}`,
-									background: demoCaptureEnabled ? `${colors.accent}14` : `${colors.bgMain}d6`,
-									color: demoCaptureEnabled ? colors.accent : colors.textMain,
-									cursor: isDisabled ? 'default' : 'pointer',
-									opacity: isDisabled ? 0.55 : 1,
-								}}
-							>
-								<Plus size={14} strokeWidth={2.3} />
-								<span style={{ fontSize: '13px', fontWeight: 600 }}>Actions</span>
-							</button>
-							{actionsMenu}
+							{canStageAttachments && (
+								<button
+									type="button"
+									onClick={handleAttachmentPickerOpen}
+									disabled={isDisabled}
+									style={expandedActionButtonStyle(
+										stagedImages.length > 0 || stagedTextAttachments.length > 0
+									)}
+								>
+									<Paperclip size={14} />
+									<span>Add files</span>
+								</button>
+							)}
+							{onToggleDemoCapture && (
+								<button
+									type="button"
+									onClick={onToggleDemoCapture}
+									disabled={isDisabled}
+									style={expandedActionButtonStyle(demoCaptureEnabled)}
+								>
+									<FileText size={14} />
+									<span>{demoCaptureEnabled ? 'Demo required' : 'Require demo'}</span>
+								</button>
+							)}
 						</div>
 					)}
 
@@ -2080,27 +2112,49 @@ export function CommandInputBar({
 						aria-multiline="true"
 					/>
 
-					{/* Full-width send button below textarea */}
-					{hasDraft && (
-						<ExpandedModeSendInterruptButton
-							isInterruptMode={false}
-							isSendDisabled={isDisabled || !hasDraft}
-							onInterrupt={handleInterrupt}
-							sendButtonRef={expandedSendButtonRef}
-							onSend={() => {
-								if (showBusyControls) {
-									handleBusyDraftSendAction('expanded');
-									return;
-								}
-								submitDraft('default', {
-									keepComposerOpen: inputMode === 'ai',
-									keepFocus: inputMode === 'ai' || !isMobilePhone,
-								});
+					{(voiceSupported || hasDraft) && (
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '10px',
+								width: '100%',
 							}}
-							sendAriaLabel={
-								showBusyControls ? 'Choose how to send while the agent is busy' : 'Send message'
-							}
-						/>
+						>
+							{voiceSupported && (
+								<VoiceInputButton
+									isListening={isListening}
+									isRequesting={voiceState === 'requesting'}
+									isTranscribing={isTranscribing}
+									statusText={voiceStatusText}
+									onToggle={handleVoiceToggle}
+									disabled={isDisabled || isTranscribing}
+									variant="inline"
+								/>
+							)}
+							{hasDraft && (
+								<div style={{ flex: 1, minWidth: 0 }}>
+									<ExpandedModeSendInterruptButton
+										isInterruptMode={false}
+										isSendDisabled={isDisabled || !hasDraft}
+										onInterrupt={handleInterrupt}
+										sendButtonRef={expandedSendButtonRef}
+										onSend={() => {
+											if (showBusyControls) {
+												handleBusyDraftSendAction('expanded');
+												return;
+											}
+											submitDraft('default', getDefaultSubmitOptions());
+										}}
+										sendAriaLabel={
+											showBusyControls
+												? 'Choose how to send while the agent is busy'
+												: 'Send message'
+										}
+									/>
+								</div>
+							)}
+						</div>
 					)}
 				</form>
 			) : (
@@ -2189,10 +2243,7 @@ export function CommandInputBar({
 						}}
 					>
 						{hasComposerActions && (
-							<div
-								style={{ position: 'relative', flexShrink: 0 }}
-								ref={actionsMenuAnchorRef}
-							>
+							<div style={{ position: 'relative', flexShrink: 0 }} ref={actionsMenuAnchorRef}>
 								<button
 									type="button"
 									onClick={handleComposerActionsToggle}
@@ -2460,10 +2511,7 @@ export function CommandInputBar({
 														handleBusyDraftSendAction('inline');
 														return;
 													}
-													submitDraft('default', {
-														keepComposerOpen: inputMode === 'ai',
-														keepFocus: inputMode === 'ai',
-													});
+													submitDraft('default', getDefaultSubmitOptions());
 												}}
 												variant="inline"
 												sendAriaLabel={

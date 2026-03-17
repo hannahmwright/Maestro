@@ -1,27 +1,44 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import type { DemoRequestedTarget } from '../../shared/demo-artifacts';
+import { createHash } from 'crypto';
+import type { DemoBrowserMode, DemoRequestedTarget } from '../../shared/demo-artifacts';
 import type { DemoTurnContextRecord } from './types';
 
 const DEMO_RUNTIME_DIRNAME = 'demo-runtime';
 const DEMO_RUNTIME_BIN_DIRNAME = 'bin';
+const DEMO_RUNTIME_CONFIG_DIRNAME = 'configs';
 const DEMO_CONTEXT_DIRNAME = 'contexts';
 const DEMO_STATE_DIRNAME = 'states';
+const DEMO_PROFILE_DIRNAME = 'profiles';
+export const DEFAULT_DEMO_VIEWPORT = {
+	width: 1280,
+	height: 720,
+} as const;
 
 interface DemoRuntimePaths {
 	runtimeDir: string;
 	binDir: string;
+	configDir: string;
 	contextDir: string;
 	stateDir: string;
+	profilesDir: string;
 }
 
-function getElectronApp():
-	| {
-			getPath?: (name: string) => string;
-			getAppPath?: () => string;
-			isPackaged?: boolean;
-	  }
-	| null {
+export interface DemoProjectProfile {
+	id: string;
+	displayName: string;
+	projectRoot: string | null;
+	sessionName: string;
+	profileDir: string;
+	metadataPath: string;
+	configPath: string;
+}
+
+function getElectronApp(): {
+	getPath?: (name: string) => string;
+	getAppPath?: () => string;
+	isPackaged?: boolean;
+} | null {
 	try {
 		const electron = require('electron') as {
 			app?: {
@@ -42,18 +59,25 @@ function sanitizePathSegment(value: string | null | undefined): string {
 	return safe || 'default';
 }
 
-function getRuntimePaths(): DemoRuntimePaths {
+function resolveRuntimeBaseDir(projectRoot?: string | null): string {
+	if (typeof projectRoot === 'string' && projectRoot.trim()) {
+		return path.join(path.resolve(projectRoot), '.maestro');
+	}
 	const electronApp = getElectronApp();
-	const userDataPath =
-		typeof electronApp?.getPath === 'function'
-			? electronApp.getPath('userData')
-			: path.join(process.cwd(), '.maestro-test-userdata');
-	const runtimeDir = path.join(userDataPath, DEMO_RUNTIME_DIRNAME);
+	return typeof electronApp?.getPath === 'function'
+		? electronApp.getPath('userData')
+		: path.join(process.cwd(), '.maestro-test-userdata');
+}
+
+function getRuntimePaths(projectRoot?: string | null): DemoRuntimePaths {
+	const runtimeDir = path.join(resolveRuntimeBaseDir(projectRoot), DEMO_RUNTIME_DIRNAME);
 	return {
 		runtimeDir,
 		binDir: path.join(runtimeDir, DEMO_RUNTIME_BIN_DIRNAME),
+		configDir: path.join(runtimeDir, DEMO_RUNTIME_CONFIG_DIRNAME),
 		contextDir: path.join(runtimeDir, DEMO_CONTEXT_DIRNAME),
 		stateDir: path.join(runtimeDir, DEMO_STATE_DIRNAME),
+		profilesDir: path.join(runtimeDir, DEMO_PROFILE_DIRNAME),
 	};
 }
 
@@ -67,37 +91,179 @@ function resolveBundledDemoScriptPath(): string {
 	return path.join(appPath, 'dist', 'main', 'artifacts', 'maestro-demo.js');
 }
 
-function buildUnixWrapper(scriptPath: string): string {
+function resolveBundledPlaywrightClientPath(): string {
+	const electronApp = getElectronApp();
+	if (electronApp?.isPackaged) {
+		return path.join(process.resourcesPath, 'maestro-pwcli.js');
+	}
+	const appPath =
+		typeof electronApp?.getAppPath === 'function' ? electronApp.getAppPath() : process.cwd();
+	return path.join(appPath, 'dist', 'main', 'artifacts', 'maestro-pwcli.js');
+}
+
+function buildUnixNodeWrapper(scriptPath: string): string {
+	const runtimePath = process.execPath.replace(/"/g, '\\"');
 	return `#!/bin/sh
-exec node "${scriptPath.replace(/"/g, '\\"')}" "$@"
+export ELECTRON_RUN_AS_NODE=1
+exec "${runtimePath}" "${scriptPath.replace(/"/g, '\\"')}" "$@"
 `;
 }
 
-function buildWindowsWrapper(scriptPath: string): string {
+function buildWindowsNodeWrapper(scriptPath: string): string {
+	const runtimePath = process.execPath.replace(/"/g, '""');
 	return `@echo off
-node "${scriptPath.replace(/"/g, '""')}" %*
+set ELECTRON_RUN_AS_NODE=1
+"${runtimePath}" "${scriptPath.replace(/"/g, '""')}" %*
 `;
 }
 
-export async function ensureMaestroDemoCommand(): Promise<{
+function resolvePreferredDemoBrowser(browserMode?: DemoBrowserMode): DemoBrowserMode {
+	if (browserMode === 'chrome' || browserMode === 'standard') {
+		return browserMode;
+	}
+	return process.env.MAESTRO_DEMO_BROWSER === 'chrome' ? 'chrome' : 'standard';
+}
+
+export function deriveDemoProjectProfileId(projectRoot: string | null | undefined): string {
+	const normalizedProjectRoot =
+		typeof projectRoot === 'string' && projectRoot.trim()
+			? path.resolve(projectRoot)
+			: 'default-project';
+	const projectName =
+		normalizedProjectRoot === 'default-project'
+			? 'default-project'
+			: sanitizePathSegment(path.basename(normalizedProjectRoot));
+	const projectHash = createHash('sha1').update(normalizedProjectRoot).digest('hex').slice(0, 12);
+	return `${projectName}-${projectHash}`;
+}
+
+export function buildDemoProjectProfile(
+	projectRoot: string | null | undefined
+): DemoProjectProfile {
+	const normalizedProjectRoot =
+		typeof projectRoot === 'string' && projectRoot.trim() ? path.resolve(projectRoot) : null;
+	const profileId = deriveDemoProjectProfileId(normalizedProjectRoot);
+	const runtimePaths = getRuntimePaths(normalizedProjectRoot);
+	const profileDir = path.join(runtimePaths.profilesDir, profileId);
+	return {
+		id: profileId,
+		displayName:
+			normalizedProjectRoot === null
+				? 'Default Project Profile'
+				: path.basename(normalizedProjectRoot),
+		projectRoot: normalizedProjectRoot,
+		sessionName: profileId,
+		profileDir,
+		metadataPath: path.join(profileDir, 'profile.json'),
+		configPath: path.join(profileDir, 'playwright-cli.json'),
+	};
+}
+
+export function buildPlaywrightConfig(
+	browserMode: DemoBrowserMode,
+	_projectProfile?: Pick<DemoProjectProfile, 'sessionName' | 'displayName' | 'projectRoot'>
+): string {
+	const config: {
+		browser: {
+			launchOptions: Record<string, unknown>;
+			contextOptions: Record<string, unknown>;
+		};
+	} = {
+		browser: {
+			launchOptions: {
+				headless: true,
+			},
+			contextOptions: {
+				viewport: DEFAULT_DEMO_VIEWPORT,
+			},
+		},
+	};
+
+	if (browserMode === 'chrome') {
+		config.browser.launchOptions.channel = 'chrome';
+	}
+
+	return JSON.stringify(config, null, 2);
+}
+
+async function writeProjectProfileMetadata(
+	projectProfile: DemoProjectProfile,
+	browserMode: DemoBrowserMode
+): Promise<void> {
+	await fs.mkdir(projectProfile.profileDir, { recursive: true });
+	await fs.writeFile(
+		projectProfile.metadataPath,
+		JSON.stringify(
+			{
+				version: 1,
+				id: projectProfile.id,
+				sessionName: projectProfile.sessionName,
+				displayName: projectProfile.displayName,
+				projectRoot: projectProfile.projectRoot,
+				browserMode,
+				lastUsedAt: Date.now(),
+			},
+			null,
+			2
+		),
+		'utf8'
+	);
+}
+
+export async function ensureMaestroDemoCommand(options?: {
+	browserMode?: DemoBrowserMode;
+	projectRoot?: string | null;
+}): Promise<{
 	binDir: string;
 	commandName: string;
+	playwrightCommandName: string;
+	playwrightConfigPath: string;
+	playwrightSessionName: string;
+	projectProfileId: string;
+	projectProfileDir: string;
 	contextDir: string;
 	stateDir: string;
 	contextFilePath: string;
 }> {
-	const paths = getRuntimePaths();
+	const normalizedProjectRoot =
+		typeof options?.projectRoot === 'string' && options.projectRoot.trim()
+			? path.resolve(options.projectRoot)
+			: null;
+	const browserMode = resolvePreferredDemoBrowser(options?.browserMode);
+	const projectProfile = buildDemoProjectProfile(normalizedProjectRoot);
+	const paths = getRuntimePaths(normalizedProjectRoot);
 	await fs.mkdir(paths.binDir, { recursive: true });
+	await fs.mkdir(paths.configDir, { recursive: true });
 	await fs.mkdir(paths.contextDir, { recursive: true });
 	await fs.mkdir(paths.stateDir, { recursive: true });
+	await fs.mkdir(paths.profilesDir, { recursive: true });
 
 	const scriptPath = resolveBundledDemoScriptPath();
+	const playwrightClientPath = resolveBundledPlaywrightClientPath();
+	const playwrightConfigPath = projectProfile.configPath;
+	await writeProjectProfileMetadata(projectProfile, browserMode);
+	await fs.writeFile(
+		playwrightConfigPath,
+		buildPlaywrightConfig(browserMode, projectProfile),
+		'utf8'
+	);
 	if (process.platform === 'win32') {
 		const wrapperPath = path.join(paths.binDir, 'maestro-demo.cmd');
-		await fs.writeFile(wrapperPath, buildWindowsWrapper(scriptPath), 'utf8');
+		await fs.writeFile(wrapperPath, buildWindowsNodeWrapper(scriptPath), 'utf8');
+		const playwrightWrapperPath = path.join(paths.binDir, 'maestro-pwcli.cmd');
+		await fs.writeFile(
+			playwrightWrapperPath,
+			buildWindowsNodeWrapper(playwrightClientPath),
+			'utf8'
+		);
 		return {
 			binDir: paths.binDir,
 			commandName: 'maestro-demo',
+			playwrightCommandName: 'maestro-pwcli',
+			playwrightConfigPath,
+			playwrightSessionName: projectProfile.sessionName,
+			projectProfileId: projectProfile.id,
+			projectProfileDir: projectProfile.profileDir,
 			contextDir: paths.contextDir,
 			stateDir: paths.stateDir,
 			contextFilePath: '',
@@ -105,22 +271,34 @@ export async function ensureMaestroDemoCommand(): Promise<{
 	}
 
 	const wrapperPath = path.join(paths.binDir, 'maestro-demo');
-	await fs.writeFile(wrapperPath, buildUnixWrapper(scriptPath), 'utf8');
+	await fs.writeFile(wrapperPath, buildUnixNodeWrapper(scriptPath), 'utf8');
 	await fs.chmod(wrapperPath, 0o755);
+	const playwrightWrapperPath = path.join(paths.binDir, 'maestro-pwcli');
+	await fs.writeFile(playwrightWrapperPath, buildUnixNodeWrapper(playwrightClientPath), 'utf8');
+	await fs.chmod(playwrightWrapperPath, 0o755);
 	return {
 		binDir: paths.binDir,
 		commandName: 'maestro-demo',
+		playwrightCommandName: 'maestro-pwcli',
+		playwrightConfigPath,
+		playwrightSessionName: projectProfile.sessionName,
+		projectProfileId: projectProfile.id,
+		projectProfileDir: projectProfile.profileDir,
 		contextDir: paths.contextDir,
 		stateDir: paths.stateDir,
 		contextFilePath: '',
 	};
 }
 
-export function buildDemoContextFilePath(sessionId: string, tabId?: string | null): {
+export function buildDemoContextFilePath(
+	sessionId: string,
+	tabId?: string | null,
+	projectRoot?: string | null
+): {
 	contextFilePath: string;
 	stateFilePath: string;
 } {
-	const paths = getRuntimePaths();
+	const paths = getRuntimePaths(projectRoot);
 	const key = `${sanitizePathSegment(sessionId)}__${sanitizePathSegment(tabId)}`;
 	return {
 		contextFilePath: path.join(paths.contextDir, `${key}.json`),

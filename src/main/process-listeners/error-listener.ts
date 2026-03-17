@@ -40,14 +40,17 @@ export function setupErrorListener(
 		const tabId = aiTabMatch ? aiTabMatch[2] : null;
 		const inputMode = aiTabMatch || !sessionId.endsWith('-terminal') ? 'ai' : 'terminal';
 
+		const isInformationalError =
+			agentError.type === 'session_not_found' || agentError.type === 'demo_capture_failed';
+
 		webServer.broadcastSessionLogEntry(baseSessionId, tabId, inputMode, {
 			id: `agent-error-${agentError.timestamp}-${agentError.type}`,
 			timestamp: agentError.timestamp,
-			source: agentError.type === 'session_not_found' ? 'system' : 'error',
+			source: isInformationalError ? 'system' : 'error',
 			text: agentError.message,
 		});
 
-		if (agentError.type !== 'session_not_found') {
+		if (!isInformationalError) {
 			webServer.broadcastSessionStateChange(baseSessionId, 'error');
 		}
 	});

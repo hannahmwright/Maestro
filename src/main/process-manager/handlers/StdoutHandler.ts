@@ -6,6 +6,7 @@ import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { extractStructuredDemoEventOutput } from '../utils/demoEventOutput';
+import { extractDemoEventOutput } from '../../../shared/demo-artifacts';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -13,6 +14,44 @@ interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
 	emitter: EventEmitter;
 	bufferManager: DataBufferManager;
+}
+
+function extractDemoEventOutputFromUnknown(value: unknown): string {
+	const outputs = new Set<string>();
+	const visited = new Set<unknown>();
+
+	const visit = (candidate: unknown): void => {
+		if (typeof candidate === 'string') {
+			const extracted = extractDemoEventOutput(candidate);
+			if (extracted) {
+				outputs.add(extracted);
+			}
+			return;
+		}
+
+		if (!candidate || typeof candidate !== 'object') {
+			return;
+		}
+
+		if (visited.has(candidate)) {
+			return;
+		}
+		visited.add(candidate);
+
+		if (Array.isArray(candidate)) {
+			for (const entry of candidate) {
+				visit(entry);
+			}
+			return;
+		}
+
+		for (const nestedValue of Object.values(candidate as Record<string, unknown>)) {
+			visit(nestedValue);
+		}
+	};
+
+	visit(value);
+	return Array.from(outputs).join('\n');
 }
 
 /**
@@ -323,6 +362,10 @@ export class StdoutHandler {
 
 		// Handle tool execution events (OpenCode, Codex)
 		if (event.type === 'tool_use' && event.toolName) {
+			const demoEventOutput = extractDemoEventOutputFromUnknown(event.toolState);
+			if (demoEventOutput) {
+				this.emitter.emit('data', sessionId, `${demoEventOutput}\n`);
+			}
 			this.emitter.emit('tool-execution', sessionId, {
 				toolName: event.toolName,
 				state: event.toolState,
