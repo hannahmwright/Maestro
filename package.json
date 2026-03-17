@@ -1,6 +1,6 @@
 {
 	"name": "maestro",
-	"version": "0.15.5",
+	"version": "0.15.15",
 	"description": "Maestro hones fractured attention into focused intent.",
 	"main": "dist/main/index.js",
 	"author": {
@@ -46,7 +46,8 @@
 		"dev:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/start-dev.ps1",
 		"build": "npm run build:prompts && npm run build:main && npm run build:preload && npm run build:renderer && npm run build:web && npm run build:cli",
 		"build:prompts": "node scripts/generate-prompts.mjs",
-		"build:main": "tsc -p tsconfig.main.json",
+		"build:main": "tsc -p tsconfig.main.json && npm run build:maestro-demo",
+		"build:maestro-demo": "node scripts/build-maestro-demo.mjs",
 		"build:preload": "node scripts/build-preload.mjs",
 		"build:cli": "node scripts/build-cli.mjs",
 		"build:renderer": "vite build",
@@ -133,7 +134,7 @@
 				}
 			],
 			"artifactName": "${name}-${version}-${arch}-mac.${ext}",
-			"icon": "build/new-icon/icon.icns",
+			"icon": "build/icon.icns",
 			"extraResources": [
 				{
 					"from": "dist/cli/maestro-cli.js",
@@ -142,6 +143,10 @@
 				{
 					"from": "dist/main/artifacts/maestro-demo.js",
 					"to": "maestro-demo.js"
+				},
+				{
+					"from": "dist/main/artifacts/maestro-pwcli.js",
+					"to": "maestro-pwcli.js"
 				},
 				{
 					"from": "src/prompts/speckit",
@@ -169,7 +174,7 @@
 					]
 				}
 			],
-			"icon": "build/new-icon/icon.ico",
+			"icon": "build/icon.ico",
 			"extraResources": [
 				{
 					"from": "dist/cli/maestro-cli.js",
@@ -178,6 +183,10 @@
 				{
 					"from": "dist/main/artifacts/maestro-demo.js",
 					"to": "maestro-demo.js"
+				},
+				{
+					"from": "dist/main/artifacts/maestro-pwcli.js",
+					"to": "maestro-pwcli.js"
 				},
 				{
 					"from": "src/prompts/speckit",
@@ -197,7 +206,7 @@
 			],
 			"artifactName": "${name}-${version}-${arch}.${ext}",
 			"category": "Development",
-			"icon": "build/new-icon/icon.png",
+			"icon": "build/icon.png",
 			"extraResources": [
 				{
 					"from": "dist/cli/maestro-cli.js",
@@ -206,6 +215,10 @@
 				{
 					"from": "dist/main/artifacts/maestro-demo.js",
 					"to": "maestro-demo.js"
+				},
+				{
+					"from": "dist/main/artifacts/maestro-pwcli.js",
+					"to": "maestro-pwcli.js"
 				},
 				{
 					"from": "src/prompts/speckit",
@@ -287,6 +300,7 @@
 		"marked": "^17.0.1",
 		"mermaid": "^11.12.1",
 		"node-pty": "^1.1.0",
+		"playwright": "^1.57.0",
 		"qrcode": "^1.5.4",
 		"qrcode.react": "^4.2.0",
 		"react-diff-view": "^3.3.2",
@@ -344,7 +358,6 @@
 		"husky": "^9.1.7",
 		"jsdom": "^27.2.0",
 		"lucide-react": "^0.303.0",
-		"playwright": "^1.57.0",
 		"postcss": "^8.4.33",
 		"prettier": "^3.8.0",
 		"react": "^18.2.0",

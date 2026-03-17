@@ -48,9 +48,11 @@ import { generateId } from '../../utils/ids';
 import {
 	getRuntimeIdForSession,
 	getRuntimeIdForThread,
+	hasUnreadForThread,
 	getSessionLastActivity,
 	getThreadTabId,
 	getThreadDisplayTitle,
+	isThreadBusyForSession,
 	isThreadActiveForSession,
 } from '../../utils/workspaceThreads';
 import { buildDefaultThreadName } from '../../utils/sessionValidation';
@@ -385,9 +387,7 @@ function SessionListInner(props: SessionListProps) {
 			);
 			setSessions((prev) =>
 				prev.map((s) =>
-					getRuntimeIdForSession(s) === runtimeId
-						? { ...s, bookmarked: shouldBookmarkSession }
-						: s
+					getRuntimeIdForSession(s) === runtimeId ? { ...s, bookmarked: shouldBookmarkSession } : s
 				)
 			);
 		},
@@ -395,12 +395,15 @@ function SessionListInner(props: SessionListProps) {
 	);
 
 	// Context menu handlers - memoized to prevent SessionItem re-renders
-	const handleContextMenu = useCallback((e: React.MouseEvent, sessionId: string, threadId?: string) => {
-		e.preventDefault();
-		e.stopPropagation();
-		setGroupContextMenu(null);
-		setContextMenu({ x: e.clientX, y: e.clientY, sessionId, threadId });
-	}, []);
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent, sessionId: string, threadId?: string) => {
+			e.preventDefault();
+			e.stopPropagation();
+			setGroupContextMenu(null);
+			setContextMenu({ x: e.clientX, y: e.clientY, sessionId, threadId });
+		},
+		[]
+	);
 
 	const handleGroupContextMenu = useCallback((e: React.MouseEvent, groupId: string) => {
 		e.preventDefault();
@@ -411,9 +414,7 @@ function SessionListInner(props: SessionListProps) {
 
 	const handleDeleteSession = useCallback(
 		(sessionId: string) => {
-			setThreads((prev) =>
-				prev.filter((thread) => getRuntimeIdForThread(thread) !== sessionId)
-			);
+			setThreads((prev) => prev.filter((thread) => getRuntimeIdForThread(thread) !== sessionId));
 			setContextMenu(null);
 			// Use the parent's delete handler if provided (includes proper cleanup)
 			if (onDeleteSession) {
@@ -435,8 +436,9 @@ function SessionListInner(props: SessionListProps) {
 	const handleDeleteThread = useCallback(
 		(thread: Thread) => {
 			const owningSession =
-				sessions.find((session) => getRuntimeIdForSession(session) === getRuntimeIdForThread(thread)) ||
-				null;
+				sessions.find(
+					(session) => getRuntimeIdForSession(session) === getRuntimeIdForThread(thread)
+				) || null;
 			if (!owningSession) {
 				setThreads((prev) => prev.filter((candidate) => candidate.id !== thread.id));
 				setContextMenu(null);
@@ -537,15 +539,14 @@ function SessionListInner(props: SessionListProps) {
 
 			setThreads((prev) =>
 				prev.map((candidate) =>
-					candidate.id === threadId
-						? { ...candidate, title: trimmedName }
-						: candidate
+					candidate.id === threadId ? { ...candidate, title: trimmedName } : candidate
 				)
 			);
 
 			const owningSession =
-				sessions.find((candidate) => getRuntimeIdForSession(candidate) === getRuntimeIdForThread(thread)) ||
-				null;
+				sessions.find(
+					(candidate) => getRuntimeIdForSession(candidate) === getRuntimeIdForThread(thread)
+				) || null;
 			const resolvedTabId = owningSession ? getThreadTabId(thread, owningSession) : null;
 			if (owningSession && resolvedTabId) {
 				setSessions((prev) =>
@@ -625,9 +626,13 @@ function SessionListInner(props: SessionListProps) {
 							)
 							.sort((left, right) => {
 								const leftPathMatch =
-									normalizeWorkspacePath(left.projectRoot || left.cwd) === normalizedWorkingDir ? 1 : 0;
+									normalizeWorkspacePath(left.projectRoot || left.cwd) === normalizedWorkingDir
+										? 1
+										: 0;
 								const rightPathMatch =
-									normalizeWorkspacePath(right.projectRoot || right.cwd) === normalizedWorkingDir ? 1 : 0;
+									normalizeWorkspacePath(right.projectRoot || right.cwd) === normalizedWorkingDir
+										? 1
+										: 0;
 								if (rightPathMatch !== leftPathMatch) {
 									return rightPathMatch - leftPathMatch;
 								}
@@ -637,15 +642,33 @@ function SessionListInner(props: SessionListProps) {
 
 			if (reusableSession) {
 				const result = createTab(reusableSession, {
-					name,
+					name: null,
 					saveToHistory: defaultSaveToHistory,
 					showThinking: defaultShowThinking,
 				});
 				if (result) {
-					const newThreadId = `thread-${generateId()}`;
-					setSessions((prev) =>
-						prev.map((session) => (session.id === reusableSession.id ? result.session : session))
-					);
+					const newThread: Thread = {
+						id: `thread-${generateId()}`,
+						workspaceId: workspace.id,
+						sessionId: reusableSession.id,
+						runtimeId: getRuntimeIdForSession(reusableSession),
+						tabId: result.tab.id,
+						title: name,
+						agentId: provider,
+						projectRoot: workingDir,
+						pinned: false,
+						archived: false,
+						isOpen: true,
+						createdAt: Date.now(),
+						lastUsedAt: Date.now(),
+					};
+					useSessionStore.setState((state) => ({
+						activeSessionId: reusableSession.id,
+						cyclePosition: -1,
+						sessions: state.sessions.map((session) =>
+							session.id === reusableSession.id ? result.session : session
+						),
+					}));
 					setThreads((prev) => [
 						...prev.map((thread) =>
 							thread.sessionId === reusableSession.id
@@ -657,23 +680,10 @@ function SessionListInner(props: SessionListProps) {
 									}
 								: thread
 						),
-						{
-							id: newThreadId,
-							workspaceId: workspace.id,
-							sessionId: reusableSession.id,
-							runtimeId: getRuntimeIdForSession(reusableSession),
-							tabId: result.tab.id,
-							title: name,
-							agentId: provider,
-							projectRoot: workingDir,
-							pinned: false,
-							archived: false,
-							isOpen: true,
-							createdAt: Date.now(),
-							lastUsedAt: Date.now(),
-						},
+						newThread,
 					]);
-					setActiveSessionId(reusableSession.id);
+					setActiveGroupChatId(null);
+					useConductorStore.getState().setActiveConductorView(null);
 					setActiveFocus('main');
 					return;
 				}
@@ -700,8 +710,7 @@ function SessionListInner(props: SessionListProps) {
 			defaultThreadProvider,
 			onCreateSession,
 			setActiveFocus,
-			setActiveSessionId,
-			setSessions,
+			setActiveGroupChatId,
 			setThreads,
 		]
 	);
@@ -789,25 +798,6 @@ function SessionListInner(props: SessionListProps) {
 		[topLevelSessions]
 	);
 
-	const worktreeChildrenByParentId = useMemo(() => {
-		const map = new Map<string, Session[]>();
-		sessions.forEach((session) => {
-			if (!session.parentSessionId) return;
-			const siblings = map.get(session.parentSessionId);
-			if (siblings) {
-				siblings.push(session);
-			} else {
-				map.set(session.parentSessionId, [session]);
-			}
-		});
-		return map;
-	}, [sessions]);
-
-	const getWorktreeChildren = useCallback(
-		(parentId: string): Session[] => worktreeChildrenByParentId.get(parentId) || [],
-		[worktreeChildrenByParentId]
-	);
-
 	const getThreadRecentTimestamp = useCallback(
 		(thread: Thread) =>
 			Math.max(
@@ -840,7 +830,10 @@ function SessionListInner(props: SessionListProps) {
 		[nonArchivedThreads]
 	);
 
-	const pinnedThreadIds = useMemo(() => new Set(pinnedThreads.map((thread) => thread.id)), [pinnedThreads]);
+	const pinnedThreadIds = useMemo(
+		() => new Set(pinnedThreads.map((thread) => thread.id)),
+		[pinnedThreads]
+	);
 
 	const recentThreads = useMemo(
 		() => nonArchivedThreads.filter((thread) => !pinnedThreadIds.has(thread.id)).slice(0, 5),
@@ -854,70 +847,67 @@ function SessionListInner(props: SessionListProps) {
 			group.name.toLowerCase().includes(query) ||
 			(group.projectRoot || '').toLowerCase().includes(query);
 
-		const withStats = groups
-			.filter(matchesWorkspace)
-			.map((workspace) => {
-				const workspaceThreads = threads
-					.filter(
-						(thread) =>
-							thread.workspaceId === workspace.id &&
-							topLevelSessionsByRuntimeId.has(getRuntimeIdForThread(thread))
-					)
-					.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a));
-				const workspaceSessionIds = new Set(
-					workspaceThreads.map((thread) => getRuntimeIdForThread(thread))
-				);
-				const workspaceSessions = topLevelSessions.filter((session) =>
-					workspaceSessionIds.has(getRuntimeIdForSession(session))
-				);
-				const statusSession = workspaceSessions[0] || null;
-				const unreadCount = workspaceSessions.reduce(
-					(count, session) =>
-						count + (session.aiTabs?.some((tab) => tab.hasUnread) ? 1 : 0),
-					0
-				);
-				const hasBusy = workspaceSessions.some(
-					(session) => session.state === 'busy' || activeBatchSessionIds.includes(session.id)
-				);
-				const openThreads = workspaceThreads.filter((thread) => !thread.archived && thread.isOpen);
-				const recentCandidateThreads = workspaceThreads
-					.filter((thread) => !thread.archived)
-					.slice(0, 5);
-				const excludedIds = new Set([
-					...openThreads.map((thread) => thread.id),
-					...workspaceThreads.filter((thread) => thread.pinned).map((thread) => thread.id),
-				]);
-				const recentVisibleThreads = recentCandidateThreads.filter(
-					(thread) => !excludedIds.has(thread.id)
-				);
-				const recentCandidateIds = new Set(recentCandidateThreads.map((thread) => thread.id));
-				const recentVisibleIds = new Set(recentVisibleThreads.map((thread) => thread.id));
-				const olderThreads = workspaceThreads.filter(
+		const withStats = groups.filter(matchesWorkspace).map((workspace) => {
+			const workspaceThreads = threads
+				.filter(
 					(thread) =>
-						!thread.archived &&
-						!excludedIds.has(thread.id) &&
-						!recentVisibleIds.has(thread.id) &&
-						!recentCandidateIds.has(thread.id)
-				);
-				const archivedThreads = workspaceThreads.filter((thread) => thread.archived);
-				return {
-					workspace,
-					threads: workspaceThreads,
-					openThreads,
-					recentThreads: recentVisibleThreads,
-					olderThreads,
-					archivedThreads,
-					statusSession,
-					unreadCount,
-					hasBusy,
-					defaultAgentId: workspaceThreads[0]?.agentId,
-					sortKey: Math.max(
-						workspace.lastUsedAt || 0,
-						workspaceThreads[0] ? getThreadRecentTimestamp(workspaceThreads[0]) : 0
-					),
-					hasPinned: workspaceThreads.some((thread) => thread.pinned),
-				};
-			});
+						thread.workspaceId === workspace.id &&
+						topLevelSessionsByRuntimeId.has(getRuntimeIdForThread(thread))
+				)
+				.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a));
+			const workspaceSessionIds = new Set(
+				workspaceThreads.map((thread) => getRuntimeIdForThread(thread))
+			);
+			const workspaceSessions = topLevelSessions.filter((session) =>
+				workspaceSessionIds.has(getRuntimeIdForSession(session))
+			);
+			const statusSession = workspaceSessions[0] || null;
+			const unreadCount = workspaceSessions.reduce(
+				(count, session) => count + (session.aiTabs?.some((tab) => tab.hasUnread) ? 1 : 0),
+				0
+			);
+			const hasBusy = workspaceSessions.some(
+				(session) => session.state === 'busy' || activeBatchSessionIds.includes(session.id)
+			);
+			const openThreads = workspaceThreads.filter((thread) => !thread.archived && thread.isOpen);
+			const recentCandidateThreads = workspaceThreads
+				.filter((thread) => !thread.archived)
+				.slice(0, 5);
+			const excludedIds = new Set([
+				...openThreads.map((thread) => thread.id),
+				...workspaceThreads.filter((thread) => thread.pinned).map((thread) => thread.id),
+			]);
+			const recentVisibleThreads = recentCandidateThreads.filter(
+				(thread) => !excludedIds.has(thread.id)
+			);
+			const recentCandidateIds = new Set(recentCandidateThreads.map((thread) => thread.id));
+			const recentVisibleIds = new Set(recentVisibleThreads.map((thread) => thread.id));
+			const olderThreads = workspaceThreads.filter(
+				(thread) =>
+					!thread.archived &&
+					!excludedIds.has(thread.id) &&
+					!recentVisibleIds.has(thread.id) &&
+					!recentCandidateIds.has(thread.id)
+			);
+			const archivedThreads = workspaceThreads.filter((thread) => thread.archived);
+			return {
+				workspace,
+				threads: workspaceThreads,
+				openThreads,
+				recentThreads: recentVisibleThreads,
+				olderThreads,
+				archivedThreads,
+				statusSession,
+				unreadCount,
+				hasBusy,
+				defaultAgentId: workspaceThreads[0]?.agentId,
+				sortKey: Math.max(
+					workspace.lastUsedAt || 0,
+					workspaceThreads[0] ? getThreadRecentTimestamp(workspaceThreads[0]) : 0
+				),
+				hasPinned: workspaceThreads.some((thread) => thread.pinned),
+			};
+		});
 
 		return withStats.sort((a, b) => {
 			if (a.hasPinned !== b.hasPinned) return a.hasPinned ? -1 : 1;
@@ -926,15 +916,15 @@ function SessionListInner(props: SessionListProps) {
 			}
 			return b.sortKey - a.sortKey || compareNames(a.workspace.name, b.workspace.name);
 		});
-		}, [
-			groups,
-			threads,
-			topLevelSessions,
-			topLevelSessionsByRuntimeId,
-			sessionFilter,
-			activeBatchSessionIds,
-			workspaceSortMode,
-			getThreadRecentTimestamp,
+	}, [
+		groups,
+		threads,
+		topLevelSessions,
+		topLevelSessionsByRuntimeId,
+		sessionFilter,
+		activeBatchSessionIds,
+		workspaceSortMode,
+		getThreadRecentTimestamp,
 	]);
 
 	const activeWorkspaceEntries = useMemo(
@@ -1121,10 +1111,7 @@ function SessionListInner(props: SessionListProps) {
 						type: 'thread',
 						id: buildSidebarThreadTargetId(`workspace-archived-${workspaceId}`, thread.id),
 						thread: {
-							id: buildSidebarThreadTargetId(
-								`workspace-archived-${workspaceId}`,
-								thread.id
-							),
+							id: buildSidebarThreadTargetId(`workspace-archived-${workspaceId}`, thread.id),
 							threadId: thread.id,
 							sessionId: thread.sessionId,
 							runtimeId: getRuntimeIdForThread(thread),
@@ -1173,7 +1160,9 @@ function SessionListInner(props: SessionListProps) {
 
 		const activeThread =
 			threads.find((thread) => isThreadActiveForSession(thread, activeSession)) ||
-			threads.find((thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(activeSession)) ||
+			threads.find(
+				(thread) => getRuntimeIdForThread(thread) === getRuntimeIdForSession(activeSession)
+			) ||
 			null;
 		if (!activeThread) return null;
 
@@ -1200,6 +1189,7 @@ function SessionListInner(props: SessionListProps) {
 
 				return {
 					target,
+					thread,
 					session,
 					displayName: getThreadDisplayTitle(thread, session),
 					groupName: groups.find((group) => group.id === thread.workspaceId)?.name,
@@ -1230,10 +1220,10 @@ function SessionListInner(props: SessionListProps) {
 				keyPrefix: string;
 				group?: Group;
 			}
-			) => {
-				const runtimeId = getRuntimeIdForThread(thread);
-				const session = topLevelSessionsByRuntimeId.get(runtimeId);
-				if (!session) return null;
+		) => {
+			const runtimeId = getRuntimeIdForThread(thread);
+			const session = topLevelSessionsByRuntimeId.get(runtimeId);
+			if (!session) return null;
 			const targetId = buildSidebarThreadTargetId(options.keyPrefix, thread.id);
 			const displayName = getThreadDisplayTitle(thread, session);
 			const targetIndex = sidebarNavTargetIndexById.get(targetId) ?? -1;
@@ -1248,11 +1238,17 @@ function SessionListInner(props: SessionListProps) {
 						providerAgentId={thread.agentId}
 						workspaceEmoji={options.group?.emoji}
 						bookmarkState={thread.pinned}
+						hasUnread={hasUnreadForThread(thread, session)}
 						isActive={activeSessionId === session.id && isThreadActiveForSession(thread, session)}
 						isKeyboardSelected={isKeyboardSelected}
 						isDragging={draggingSessionId === session.id}
 						isEditing={editingSessionId === `thread-${thread.id}`}
 						leftSidebarOpen={leftSidebarOpen}
+						isWorking={
+							isThreadBusyForSession(thread, session) ||
+							activeBatchSessionIds.includes(session.id) ||
+							Boolean(session.cliActivity)
+						}
 						isInBatch={activeBatchSessionIds.includes(session.id)}
 						jumpNumber={getThreadJumpNumber(targetId)}
 						group={options.group}
@@ -1283,9 +1279,9 @@ function SessionListInner(props: SessionListProps) {
 			startRenamingSession,
 			theme,
 			toggleThreadPinned,
-				topLevelSessionsByRuntimeId,
-			]
-		);
+			topLevelSessionsByRuntimeId,
+		]
+	);
 
 	const openSkinnySidebarThread = useCallback(
 		(target: SidebarThreadTarget) => {
@@ -1306,12 +1302,22 @@ function SessionListInner(props: SessionListProps) {
 			const workspaceTargetIndex = sidebarNavTargetIndexById.get(workspaceTargetId) ?? -1;
 			const isWorkspaceKeyboardSelected =
 				activeFocus === 'sidebar' && workspaceTargetIndex === selectedSidebarIndex;
-				const workspaceGitFileCount = workspaceEntry.statusSession
-					? getFileCount(workspaceEntry.statusSession.id)
-					: undefined;
-				const collapsedPaletteThreads = workspaceEntry.threads
-					.map((thread) => topLevelSessionsByRuntimeId.get(getRuntimeIdForThread(thread)))
-					.filter((session): session is Session => !!session);
+			const workspaceGitFileCount = workspaceEntry.statusSession
+				? getFileCount(workspaceEntry.statusSession.id)
+				: undefined;
+			const collapsedPaletteThreads = workspaceEntry.threads
+				.map((thread) => {
+					const session = topLevelSessionsByRuntimeId.get(getRuntimeIdForThread(thread));
+					if (!session) return null;
+					return {
+						thread,
+						session,
+						displayName: getThreadDisplayTitle(thread, session),
+					};
+				})
+				.filter(
+					(item): item is { thread: Thread; session: Session; displayName: string } => !!item
+				);
 
 			return (
 				<div key={workspace.id} className="mb-2">
@@ -1568,9 +1574,7 @@ function SessionListInner(props: SessionListProps) {
 									className="mx-3 my-1 px-2 py-1 rounded text-[11px] text-left hover:bg-white/5 transition-colors"
 									style={{ color: theme.colors.textDim }}
 								>
-									{expandedArchived
-										? 'Hide archived'
-										: `Show archived (${archivedThreads.length})`}
+									{expandedArchived ? 'Hide archived' : `Show archived (${archivedThreads.length})`}
 								</button>
 							)}
 						</div>
@@ -1579,9 +1583,10 @@ function SessionListInner(props: SessionListProps) {
 							className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
 							onClick={() => toggleGroup(workspace.id)}
 						>
-							{collapsedPaletteThreads.map((session) => (
+							{collapsedPaletteThreads.map(({ thread, session, displayName }) => (
 								<CollapsedSessionPill
-									key={`workspace-collapsed-${workspace.id}-${session.id}`}
+									key={`workspace-collapsed-${workspace.id}-${thread.id}`}
+									thread={thread}
 									session={session}
 									keyPrefix={`workspace-collapsed-${workspace.id}`}
 									theme={theme}
@@ -1590,8 +1595,8 @@ function SessionListInner(props: SessionListProps) {
 									contextWarningYellowThreshold={contextWarningYellowThreshold}
 									contextWarningRedThreshold={contextWarningRedThreshold}
 									getFileCount={getFileCount}
-									getWorktreeChildren={getWorktreeChildren}
-									setActiveSessionId={setActiveSessionId}
+									displayName={displayName}
+									onSelect={() => handleSelectThread(thread)}
 								/>
 							))}
 						</div>
@@ -1611,18 +1616,16 @@ function SessionListInner(props: SessionListProps) {
 			expandedOlderByWorkspace,
 			finishRenamingGroup,
 			getFileCount,
-			getWorktreeChildren,
 			leftSidebarWidthState,
 			renderThread,
 			selectedSidebarIndex,
 			sidebarNavTargetIndexById,
-				setActiveSessionId,
-				startRenamingGroup,
-				theme,
-				toggleGroup,
-				topLevelSessionsByRuntimeId,
-			]
-		);
+			startRenamingGroup,
+			theme,
+			toggleGroup,
+			topLevelSessionsByRuntimeId,
+		]
+	);
 
 	if (leftSidebarHidden) {
 		return (
@@ -1701,7 +1704,7 @@ function SessionListInner(props: SessionListProps) {
 					<>
 						<div className="flex items-center gap-2">
 							<img
-								src="/icon.png"
+								src="./icon.png"
 								alt=""
 								aria-hidden="true"
 								className={`w-5 h-5 rounded-sm object-cover${isAnyBusy ? ' animate-pulse' : ''}`}
@@ -1822,7 +1825,7 @@ function SessionListInner(props: SessionListProps) {
 							title="Menu"
 						>
 							<img
-								src="/icon.png"
+								src="./icon.png"
 								alt=""
 								aria-hidden="true"
 								className={`w-6 h-6 rounded-md object-cover${isAnyBusy ? ' animate-pulse' : ''}`}
@@ -1889,7 +1892,9 @@ function SessionListInner(props: SessionListProps) {
 							<div className="flex items-center gap-1">
 								<button
 									type="button"
-									onClick={() => setWorkspaceSortMode(workspaceSortMode === 'recent' ? 'alpha' : 'recent')}
+									onClick={() =>
+										setWorkspaceSortMode(workspaceSortMode === 'recent' ? 'alpha' : 'recent')
+									}
 									className="p-1.5 rounded hover:bg-white/10 transition-colors"
 									style={{ color: theme.colors.textDim }}
 									title={
@@ -2012,7 +2017,9 @@ function SessionListInner(props: SessionListProps) {
 								</span>
 							</button>
 
-							{archiveExpanded && <div className="mt-2">{archivedWorkspaceEntries.map(renderWorkspaceEntry)}</div>}
+							{archiveExpanded && (
+								<div className="mt-2">{archivedWorkspaceEntries.map(renderWorkspaceEntry)}</div>
+							)}
 						</div>
 					)}
 
@@ -2090,7 +2097,9 @@ function SessionListInner(props: SessionListProps) {
 					hasWorktreeChildren={sessions.some((s) => s.parentSessionId === contextMenuSession.id)}
 					onRename={() => {
 						setRenameInstanceValue(
-							contextMenuThread ? getThreadDisplayTitle(contextMenuThread, contextMenuSession) : contextMenuSession.name
+							contextMenuThread
+								? getThreadDisplayTitle(contextMenuThread, contextMenuSession)
+								: contextMenuSession.name
 						);
 						if (contextMenuThread) {
 							startRenamingSession(`thread-${contextMenuThread.id}`);
@@ -2103,7 +2112,9 @@ function SessionListInner(props: SessionListProps) {
 					onDuplicate={() => {
 						setNewInstanceModalOpen(true);
 						setNewInstanceMode('thread');
-						setNewInstanceWorkspaceId(contextMenuThread?.workspaceId || contextMenuSession.workspaceId || null);
+						setNewInstanceWorkspaceId(
+							contextMenuThread?.workspaceId || contextMenuSession.workspaceId || null
+						);
 						setNewInstanceFixedWorkingDir(contextMenuSession.projectRoot || contextMenuSession.cwd);
 						setNewInstanceDefaultAgentId(contextMenuSession.toolType);
 						setDuplicatingSessionId(contextMenuSession.id);
@@ -2113,7 +2124,9 @@ function SessionListInner(props: SessionListProps) {
 					onCloseThread={() => contextMenuThread && handleCloseThread(contextMenuThread.id)}
 					onToggleArchived={() => contextMenuThread && handleToggleArchived(contextMenuThread)}
 					onDelete={() =>
-						contextMenuThread ? handleDeleteThread(contextMenuThread) : handleDeleteSession(contextMenuSession.id)
+						contextMenuThread
+							? handleDeleteThread(contextMenuThread)
+							: handleDeleteSession(contextMenuSession.id)
 					}
 					onDismiss={() => setContextMenu(null)}
 					onCreatePR={
