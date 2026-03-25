@@ -1,4 +1,12 @@
 import type { ConductorTaskPriority, Session } from '../types';
+import {
+	CONDUCTOR_MAX_PLAN_SUBTASKS_PER_PARENT,
+	CONDUCTOR_MAX_PLAN_TASKS,
+} from '../../shared/conductorLimits';
+import {
+	buildConductorNativeSubmissionInstruction,
+	type ConductorPlanToolInput,
+} from '../../shared/conductorNativeTools';
 
 export interface ConductorPlannerInput {
 	groupName: string;
@@ -109,7 +117,9 @@ ${taskLines}
 Operator notes:
 ${operatorNotes}
 
-Return ONLY valid JSON with this exact shape:
+${buildConductorNativeSubmissionInstruction('planner')}
+
+If you need the JSON fallback, return ONLY valid JSON with this exact shape:
 {
   "summary": "short paragraph",
   "tasks": [
@@ -135,8 +145,9 @@ Return ONLY valid JSON with this exact shape:
 }
 
 Rules:
-- Break work into 2-8 concrete tasks when possible.
-- Use subtasks when a parent item naturally breaks into 1-4 child items that should move through the same workflow.
+- Break work into 2-8 concrete tasks when possible, but never return more than ${CONDUCTOR_MAX_PLAN_TASKS} total tasks including subtasks.
+- Use subtasks only when a parent item naturally breaks into 1-${CONDUCTOR_MAX_PLAN_SUBTASKS_PER_PARENT} child items that should move through the same workflow.
+- Plan only the work required to finish the operator request. Do not create speculative future tasks or “nice to have” follow-ups.
 - Use task titles in dependsOn, not numeric IDs.
 - Keep scopePaths narrow and file/system oriented when you can infer them.
 - If a task has unknown scope, return an empty scopePaths array.
@@ -164,7 +175,9 @@ function collectPlannerTasks(
 			scopePaths: normalizeStringArray(task.scopePaths),
 			parentTitle,
 		};
-		const subtasks = Array.isArray(task.subtasks) ? collectPlannerTasks(task.subtasks, title) : [];
+		const subtasks = Array.isArray(task.subtasks)
+			? collectPlannerTasks(task.subtasks.slice(0, CONDUCTOR_MAX_PLAN_SUBTASKS_PER_PARENT), title)
+			: [];
 
 		return [normalizedTask, ...subtasks];
 	});
@@ -173,7 +186,7 @@ function collectPlannerTasks(
 export function parseConductorPlannerResponse(text: string): ConductorPlanDraft {
 	const parsed = JSON.parse(extractJsonBlock(text)) as RawPlannerResponse;
 	const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-	const tasks = collectPlannerTasks(rawTasks);
+	const tasks = collectPlannerTasks(rawTasks).slice(0, CONDUCTOR_MAX_PLAN_TASKS);
 
 	if (tasks.length === 0) {
 		throw new Error('Planner returned no usable tasks.');
@@ -184,6 +197,20 @@ export function parseConductorPlannerResponse(text: string): ConductorPlanDraft 
 			typeof parsed.summary === 'string' && parsed.summary.trim()
 				? parsed.summary.trim()
 				: 'Execution-ready plan generated from the current backlog.',
+		tasks,
+	};
+}
+
+export function parseConductorPlannerSubmission(
+	submission: ConductorPlanToolInput
+): ConductorPlanDraft {
+	const tasks = collectPlannerTasks(submission.tasks).slice(0, CONDUCTOR_MAX_PLAN_TASKS);
+	if (tasks.length === 0) {
+		throw new Error('Planner returned no usable tasks.');
+	}
+
+	return {
+		summary: submission.summary.trim() || 'Execution-ready plan generated from the current backlog.',
 		tasks,
 	};
 }

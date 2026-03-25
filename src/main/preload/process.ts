@@ -28,6 +28,7 @@ import type {
 	UserInputResponse,
 } from '../../shared/user-input-requests';
 import type { DemoCard, DemoCaptureRequest } from '../../shared/demo-artifacts';
+import type { QueryCompleteData } from '../process-manager/types';
 
 /**
  * Helper to log via the main process logger.
@@ -258,6 +259,15 @@ export function createProcessApi() {
 			const handler = (_: unknown, sessionId: string, code: number) => callback(sessionId, code);
 			ipcRenderer.on('process:exit', handler);
 			return () => ipcRenderer.removeListener('process:exit', handler);
+		},
+
+		onQueryComplete: (
+			callback: (sessionId: string, queryData: QueryCompleteData) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, queryData: QueryCompleteData) =>
+				callback(sessionId, queryData);
+			ipcRenderer.on('process:query-complete', handler);
+			return () => ipcRenderer.removeListener('process:query-complete', handler);
 		},
 
 		/**

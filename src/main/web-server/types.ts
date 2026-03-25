@@ -22,6 +22,7 @@ import type {
 	ConductorRun,
 	ConductorTaskPriority,
 	ConductorTaskStatus,
+	ConductorTaskAttentionRequest,
 } from '../../shared/types';
 import type {
 	PushStatusResponse,
@@ -210,6 +211,10 @@ export interface UpdateConductorTaskInput {
 	description?: string;
 	priority?: ConductorTaskPriority;
 	status?: ConductorTaskStatus;
+	acceptanceCriteria?: string[];
+	attentionRequest?: ConductorTaskAttentionRequest | null;
+	completionProofRequirement?: ConductorTask['completionProofRequirement'];
+	completionProof?: ConductorTask['completionProof'];
 }
 
 /**

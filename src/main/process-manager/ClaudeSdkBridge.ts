@@ -23,6 +23,15 @@ import type {
 	SDKMessage,
 	SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import {
+	CONDUCTOR_CLAUDE_MCP_SERVER_NAME,
+	CONDUCTOR_PLAN_RESULT_TOOL_NAME,
+	CONDUCTOR_REVIEW_RESULT_TOOL_NAME,
+	CONDUCTOR_WORK_RESULT_TOOL_NAME,
+	conductorPlanToolInputShape,
+	conductorReviewToolInputShape,
+	conductorWorkToolInputShape,
+} from '../../shared/conductorNativeTools';
 
 const LOG_CONTEXT = 'ClaudeSdkBridge';
 
@@ -230,6 +239,39 @@ function emitToolBlocks(emitter: EventEmitter, sessionId: string, message: unkno
 	}
 }
 
+function createConductorClaudeMcpServer(sdk: ClaudeSdkModule) {
+	return sdk.createSdkMcpServer({
+		name: CONDUCTOR_CLAUDE_MCP_SERVER_NAME,
+		version: '1.0.0',
+		tools: [
+			sdk.tool(
+				CONDUCTOR_PLAN_RESULT_TOOL_NAME,
+				'Submit the final structured planning result for a Conductor planning turn.',
+				conductorPlanToolInputShape,
+				async () => ({
+					content: [{ type: 'text', text: 'Conductor plan submission captured.' }],
+				})
+			),
+			sdk.tool(
+				CONDUCTOR_WORK_RESULT_TOOL_NAME,
+				'Submit the final structured execution result for a Conductor worker turn.',
+				conductorWorkToolInputShape,
+				async () => ({
+					content: [{ type: 'text', text: 'Conductor work submission captured.' }],
+				})
+			),
+			sdk.tool(
+				CONDUCTOR_REVIEW_RESULT_TOOL_NAME,
+				'Submit the final structured review result for a Conductor QA turn.',
+				conductorReviewToolInputShape,
+				async () => ({
+					content: [{ type: 'text', text: 'Conductor review submission captured.' }],
+				})
+			),
+		],
+	});
+}
+
 function buildFormRequest(
 	request: ElicitationRequest,
 	threadId: string,
@@ -339,7 +381,7 @@ function buildElicitationResultFromResponse(
 
 	const schema = asRecord(pendingRequest.requestedSchema);
 	const properties = asRecord(schema?.properties) || {};
-	const content: Record<string, unknown> = {};
+	const content: Record<string, string | number | boolean | string[]> = {};
 
 	for (const [questionId, answer] of Object.entries(response.answers)) {
 		const firstAnswer = answer.answers.find((value) => value.trim());
@@ -559,6 +601,9 @@ export class ClaudeSdkBridge {
 				config.shellEnvVars
 			);
 			const reasoning = mapReasoningEffort(config.sessionReasoningEffort);
+			const conductorMcpServer = config.conductorNativeResultTools
+				? createConductorClaudeMcpServer(sdk)
+				: null;
 			const query = sdk.query({
 				prompt: state.inputQueue as unknown as AsyncIterable<SDKUserMessage>,
 				options: {
@@ -569,6 +614,13 @@ export class ClaudeSdkBridge {
 					includePartialMessages: true,
 					persistSession: true,
 					settingSources: ['user', 'project', 'local'],
+					...(conductorMcpServer
+						? {
+								mcpServers: {
+									[CONDUCTOR_CLAUDE_MCP_SERVER_NAME]: conductorMcpServer,
+								},
+							}
+						: {}),
 					permissionMode: config.readOnlyMode ? 'plan' : 'bypassPermissions',
 					allowDangerouslySkipPermissions: config.readOnlyMode ? undefined : true,
 					resume: config.agentSessionId,
@@ -709,7 +761,7 @@ export class ClaudeSdkBridge {
 
 			state.pendingUserInput = {
 				requestId: userInputRequest.requestId,
-				resolve,
+				resolve: resolve as (result: unknown) => void,
 				cleanup,
 				mode: request.mode === 'url' ? 'url' : 'form',
 				requestedSchema: request.requestedSchema,

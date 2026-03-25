@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildConductorWorkerPrompt,
+	parseConductorWorkerSubmission,
 	parseConductorWorkerResponse,
 } from '../../../renderer/services/conductorWorker';
 import type { ConductorTask, Session } from '../../../renderer/types';
@@ -67,6 +68,7 @@ describe('conductorWorker', () => {
 		expect(prompt).toContain('Implement execution lane');
 		expect(prompt).toContain('Approve planning run');
 		expect(prompt).toContain('src/renderer/components/ConductorPanel.tsx');
+		expect(prompt).toContain('submit_conductor_work');
 	});
 
 	it('parses completed worker output with follow-up tasks', () => {
@@ -95,7 +97,7 @@ describe('conductorWorker', () => {
 
 	it('parses blocked worker output', () => {
 		const parsed = parseConductorWorkerResponse(`
-{
+	{
 	"outcome": "blocked",
 	"summary": "Need npm credentials.",
 	"changedPaths": [],
@@ -106,5 +108,35 @@ describe('conductorWorker', () => {
 
 		expect(parsed.outcome).toBe('blocked');
 		expect(parsed.blockedReason).toBe('Missing auth token.');
+	});
+
+	it('caps worker follow-up tasks to keep execution from snowballing', () => {
+		const parsed = parseConductorWorkerResponse(`
+	{
+		"outcome": "completed",
+		"summary": "Execution lane added.",
+		"changedPaths": [],
+		"followUpTasks": [
+			{ "title": "Follow-up 1", "description": "One", "priority": "medium" },
+			{ "title": "Follow-up 2", "description": "Two", "priority": "medium" },
+			{ "title": "Follow-up 3", "description": "Three", "priority": "medium" }
+		]
+	}
+	`);
+
+		expect(parsed.followUpTasks).toHaveLength(2);
+		expect(parsed.followUpTasks.map((task) => task.title)).toEqual(['Follow-up 1', 'Follow-up 2']);
+	});
+
+	it('parses structured worker submissions from native tool calls', () => {
+		const parsed = parseConductorWorkerSubmission({
+			outcome: 'completed',
+			summary: 'Structured worker result.',
+			changedPaths: ['src/renderer/services/conductorWorker.ts'],
+			followUpTasks: [],
+		});
+
+		expect(parsed.outcome).toBe('completed');
+		expect(parsed.changedPaths).toEqual(['src/renderer/services/conductorWorker.ts']);
 	});
 });

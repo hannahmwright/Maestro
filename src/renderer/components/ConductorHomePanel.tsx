@@ -1,5 +1,4 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
 import {
 	FolderKanban,
 	Search,
@@ -13,6 +12,17 @@ import type {
 } from '../types';
 import { useConductorStore } from '../stores/conductorStore';
 import { useSessionStore } from '../stores/sessionStore';
+import {
+	buildConductorChildTaskMap,
+	getConductorTaskRollupStatus,
+} from '../../shared/conductorTasks';
+import { KANBAN_LANES } from './conductor/conductorConstants';
+import {
+	getTaskStatusTone,
+	getTaskPriorityTone,
+	getHomePanelStyle,
+	getHomeInputStyle,
+} from './conductor/conductorStyles';
 
 interface ConductorHomePanelProps {
 	theme: Theme;
@@ -27,9 +37,11 @@ const BOARD_COLUMNS: ConductorTaskStatus[] = [
 	'planning',
 	'ready',
 	'running',
+	'needs_review',
+	'needs_proof',
+	'needs_revision',
 	'needs_input',
 	'blocked',
-	'needs_review',
 	'cancelled',
 	'done',
 ];
@@ -39,9 +51,11 @@ const STATUS_LABELS: Record<ConductorTaskStatus, string> = {
 	planning: 'Planning',
 	ready: 'Ready',
 	running: 'In progress',
-	needs_input: 'Needs input',
+	needs_revision: 'Agents revising',
+	needs_input: 'Waiting on you',
+	needs_proof: 'Needs proof',
 	blocked: 'Blocked',
-	needs_review: 'Check me',
+	needs_review: 'In QA',
 	cancelled: 'Stopped',
 	done: 'Done',
 };
@@ -65,64 +79,6 @@ function formatRelativeTime(timestamp: number): string {
 	return `${Math.round(elapsedMs / day)}d ago`;
 }
 
-function getPanelStyle(theme: Theme, tint = 'rgba(255,255,255,0.06)', border = 'rgba(255,255,255,0.08)') {
-	return {
-		background: `linear-gradient(180deg, ${tint} 0%, rgba(255,255,255,0.02) 100%)`,
-		backgroundColor: theme.colors.bgSidebar,
-		border: `1px solid ${border}`,
-		boxShadow:
-			'0 20px 44px rgba(15, 23, 42, 0.10), 0 8px 18px rgba(15, 23, 42, 0.06), 0 1px 0 rgba(255,255,255,0.10) inset',
-		backdropFilter: 'blur(18px) saturate(125%)',
-		WebkitBackdropFilter: 'blur(18px) saturate(125%)',
-	} as CSSProperties;
-}
-
-function getInputStyle(theme: Theme) {
-	return {
-		backgroundColor: `${theme.colors.bgSidebar}cc`,
-		borderColor: theme.colors.border,
-		color: theme.colors.textMain,
-	} as CSSProperties;
-}
-
-// Spring pastel palette - each status gets a distinct soft color
-const PASTEL_TONES: Record<ConductorTaskStatus, { fg: string; bg: string; border: string }> = {
-	draft:        { fg: '#b0b8c4', bg: '#b0b8c412', border: '#b0b8c428' },     // soft gray
-	planning:     { fg: '#a78bfa', bg: '#a78bfa12', border: '#a78bfa28' },     // lavender
-	ready:        { fg: '#60a5fa', bg: '#60a5fa12', border: '#60a5fa28' },     // sky blue
-	running:      { fg: '#818cf8', bg: '#818cf812', border: '#818cf828' },     // periwinkle
-	needs_input:  { fg: '#fbbf24', bg: '#fbbf2412', border: '#fbbf2428' },     // buttercup
-	blocked:      { fg: '#fb923c', bg: '#fb923c12', border: '#fb923c28' },     // peach
-	needs_review: { fg: '#f9a8d4', bg: '#f9a8d412', border: '#f9a8d428' },    // rose pink
-	cancelled:    { fg: '#94a3b8', bg: '#94a3b812', border: '#94a3b828' },     // slate
-	done:         { fg: '#86efac', bg: '#86efac12', border: '#86efac28' },     // mint green
-};
-
-function getStatusTone(_theme: Theme, status: ConductorTaskStatus) {
-	return PASTEL_TONES[status] ?? PASTEL_TONES.draft;
-}
-
-function getPriorityTone(theme: Theme, priority: ConductorTaskPriority) {
-	switch (priority) {
-		case 'critical':
-			return { bg: `${theme.colors.error}14`, border: `${theme.colors.error}38`, fg: theme.colors.error };
-		case 'high':
-			return {
-				bg: `${theme.colors.warning}14`,
-				border: `${theme.colors.warning}38`,
-				fg: theme.colors.warning,
-			};
-		case 'medium':
-			return { bg: `${theme.colors.accent}14`, border: `${theme.colors.accent}38`, fg: theme.colors.accent };
-		case 'low':
-		default:
-			return {
-				bg: `${theme.colors.textDim}16`,
-				border: `${theme.colors.textDim}30`,
-				fg: theme.colors.textDim,
-			};
-	}
-}
 
 function getWorkspaceName(groupsById: Map<string, Group>, groupId: string): string {
 	return groupsById.get(groupId)?.name || 'Unknown workspace';
@@ -140,7 +96,7 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 	const [sortMode, setSortMode] = useState<BacklogSort>('priority');
 	const boardScrollRef = useRef<HTMLDivElement>(null);
 
-	const scrollToColumn = useCallback((status: ConductorTaskStatus) => {
+	const scrollToColumn = useCallback((status: string) => {
 		const container = boardScrollRef.current;
 		if (!container) return;
 		const column = container.querySelector(`[data-column-status="${status}"]`);
@@ -150,6 +106,14 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 	}, []);
 
 	const groupsById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
+	const childTasksByParentId = useMemo(() => buildConductorChildTaskMap(tasks), [tasks]);
+	const presentationStatusByTaskId = useMemo(() => {
+		const entries = tasks.map((task) => [
+			task.id,
+			getConductorTaskRollupStatus(task, childTasksByParentId, runs),
+		] as const);
+		return new Map(entries);
+	}, [childTasksByParentId, runs, tasks]);
 	const workspaceOptions = useMemo(
 		() =>
 			groups
@@ -186,7 +150,11 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 		};
 
 		return tasks
-			.filter((task) => (statusFilter === 'all' ? true : task.status === statusFilter))
+			.filter((task) =>
+				statusFilter === 'all'
+					? true
+					: (presentationStatusByTaskId.get(task.id) || task.status) === statusFilter
+			)
 			.filter((task) => (sourceFilter === 'all' ? true : task.source === sourceFilter))
 			.filter((task) => (workspaceFilter === 'all' ? true : task.groupId === workspaceFilter))
 			.filter(matchesSearch)
@@ -213,22 +181,34 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 					}
 				}
 			});
-	}, [groupsById, sortMode, sourceFilter, statusFilter, taskSearch, tasks, workspaceFilter]);
+	}, [groupsById, presentationStatusByTaskId, sortMode, sourceFilter, statusFilter, taskSearch, tasks, workspaceFilter]);
 
 	const taskCounts = useMemo(
 		() => ({
 			total: tasks.length,
-			open: tasks.filter((task) => task.status !== 'done' && task.status !== 'cancelled').length,
-			running: tasks.filter((task) => task.status === 'running' || task.status === 'planning').length,
+			open: tasks.filter((task) => {
+				const status = presentationStatusByTaskId.get(task.id) || task.status;
+				return status !== 'done' && status !== 'cancelled';
+			}).length,
+			running: tasks.filter((task) => {
+				const status = presentationStatusByTaskId.get(task.id) || task.status;
+				return status === 'running' || status === 'planning';
+			}).length,
 			attention: tasks.filter(
-				(task) =>
-					task.status === 'needs_input' ||
-					task.status === 'blocked' ||
-					task.status === 'needs_review'
+				(task) => {
+					const status = presentationStatusByTaskId.get(task.id) || task.status;
+					return (
+						status === 'needs_input' ||
+						status === 'needs_proof' ||
+						status === 'needs_revision' ||
+						status === 'blocked' ||
+						status === 'needs_review'
+					);
+				}
 			).length,
-			done: tasks.filter((task) => task.status === 'done').length,
+			done: tasks.filter((task) => (presentationStatusByTaskId.get(task.id) || task.status) === 'done').length,
 		}),
-		[tasks]
+		[presentationStatusByTaskId, tasks]
 	);
 
 	const latestEvents = useMemo(
@@ -248,10 +228,12 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 	const taskCountsByStatus = useMemo(() => {
 		const counts: Record<string, number> = {};
 		for (const status of BOARD_COLUMNS) {
-			counts[status] = tasks.filter((t) => t.status === status).length;
+			counts[status] = tasks.filter(
+				(task) => (presentationStatusByTaskId.get(task.id) || task.status) === status
+			).length;
 		}
 		return counts;
-	}, [tasks]);
+	}, [presentationStatusByTaskId, tasks]);
 
 	return (
 		<div
@@ -320,14 +302,14 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 										onChange={(e) => setTaskSearch(e.target.value)}
 										placeholder="Search tasks..."
 										className="w-full rounded-lg border pl-8 pr-3 py-1.5 text-sm"
-										style={getInputStyle(theme)}
+										style={getHomeInputStyle(theme)}
 									/>
 								</div>
 								<select
 									value={workspaceFilter}
 									onChange={(e) => setWorkspaceFilter(e.target.value)}
 									className="rounded-lg border px-2 py-1.5 text-sm"
-									style={getInputStyle(theme)}
+									style={getHomeInputStyle(theme)}
 								>
 									<option value="all">All workspaces</option>
 									{workspaceOptions.map((workspace) => (
@@ -340,7 +322,7 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 									value={sortMode}
 									onChange={(e) => setSortMode(e.target.value as BacklogSort)}
 									className="rounded-lg border px-2 py-1.5 text-sm"
-									style={getInputStyle(theme)}
+									style={getHomeInputStyle(theme)}
 								>
 									<option value="priority">Priority</option>
 									<option value="updated_desc">Newest</option>
@@ -349,27 +331,29 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 									<option value="title">Title</option>
 								</select>
 							</div>
-							{/* Clickable status nav - scrolls to column */}
+							{/* Clickable lane nav - scrolls to column */}
 							<div className="flex items-center gap-1 overflow-x-auto scrollbar-thin">
-								{BOARD_COLUMNS.map((status) => {
-									const tone = getStatusTone(theme, status);
-									const count = taskCountsByStatus[status] ?? 0;
+								{KANBAN_LANES.map((lane) => {
+									const laneCount = lane.statuses.reduce(
+										(sum, s) => sum + (taskCountsByStatus[s] ?? 0),
+										0
+									);
 									return (
 										<button
-											key={status}
+											key={lane.key}
 											type="button"
-											onClick={() => scrollToColumn(status)}
+											onClick={() => scrollToColumn(lane.key)}
 											className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors hover:bg-white/5 shrink-0"
 										>
 											<span
 												className="w-2.5 h-2.5 rounded-full shrink-0"
-												style={{ backgroundColor: tone.fg }}
+												style={{ backgroundColor: lane.color }}
 											/>
 											<span style={{ color: theme.colors.textMain }}>
-												{STATUS_LABELS[status]}
+												{lane.label}
 											</span>
-											<span className="font-semibold" style={{ color: count > 0 ? tone.fg : theme.colors.textDim }}>
-												{count}
+											<span className="font-semibold" style={{ color: laneCount > 0 ? lane.color : theme.colors.textDim }}>
+												{laneCount}
 											</span>
 										</button>
 									);
@@ -378,7 +362,7 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 						</div>
 
 						{filteredTasks.length === 0 ? (
-							<div className="rounded-2xl border p-12 text-center" style={getPanelStyle(theme)}>
+							<div className="rounded-2xl border p-12 text-center" style={getHomePanelStyle(theme)}>
 								<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
 									No tasks match these filters
 								</h2>
@@ -388,51 +372,66 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 							</div>
 						) : (
 							<div ref={boardScrollRef} className="overflow-x-auto pb-2 scrollbar-thin">
-								<div className="flex gap-3 min-w-[1180px]">
-									{BOARD_COLUMNS.map((status) => {
-										const columnTasks = filteredTasks.filter((task) => task.status === status);
-										if (columnTasks.length === 0 && ['cancelled', 'planning', 'draft'].includes(status)) {
-											return null;
-										}
-										const tone = getStatusTone(theme, status);
+								<div className="flex gap-3">
+									{KANBAN_LANES.map((lane) => {
+										const laneTasks = filteredTasks.filter(
+											(task) => lane.statuses.includes(presentationStatusByTaskId.get(task.id) || task.status)
+										);
+										const subCounts = lane.statuses
+											.map((s) => {
+												const count = laneTasks.filter(
+													(t) => (presentationStatusByTaskId.get(t.id) || t.status) === s
+												).length;
+												return count > 0 ? `${count} ${STATUS_LABELS[s].toLowerCase()}` : null;
+											})
+											.filter(Boolean);
 										return (
 											<div
-												key={status}
-												data-column-status={status}
-												className="rounded-xl flex-1 min-w-[200px] min-h-[200px] flex flex-col overflow-hidden"
+												key={lane.key}
+												data-column-status={lane.key}
+												className="rounded-xl flex-1 min-w-[180px] min-h-[200px] flex flex-col overflow-hidden"
 												style={{
 													backgroundColor: `${theme.colors.bgSidebar}`,
-													border: `1px solid ${tone.border}`,
+													border: `1px solid ${lane.color}3d`,
 													boxShadow: `0 2px 8px rgba(0,0,0,0.08)`,
 												}}
 											>
 												{/* Colored top bar */}
 												<div
 													className="h-1 w-full shrink-0"
-													style={{ backgroundColor: tone.fg }}
+													style={{ backgroundColor: lane.color }}
 												/>
-												{/* Column header */}
-												<div className="flex items-center gap-2 px-3 py-2.5" style={{
-													backgroundColor: `${tone.fg}08`,
-													borderBottom: `1px solid ${tone.border}`,
+												{/* Lane header */}
+												<div className="flex flex-col gap-1 px-3 py-2.5" style={{
+													backgroundColor: `${lane.color}0d`,
+													borderBottom: `1px solid ${lane.color}3d`,
 												}}>
-													<span className="text-sm font-semibold" style={{ color: tone.fg }}>
-														{STATUS_LABELS[status]}
-													</span>
-													<span
-														className="ml-auto text-[11px] font-medium px-1.5 py-0.5 rounded-full"
-														style={{
-															backgroundColor: `${tone.fg}18`,
-															color: tone.fg,
-														}}
-													>
-														{columnTasks.length}
-													</span>
+													<div className="flex items-center gap-2">
+														<span className="text-sm font-semibold" style={{ color: lane.color }}>
+															{lane.label}
+														</span>
+														<span
+															className="ml-auto text-[11px] font-medium px-1.5 py-0.5 rounded-full"
+															style={{
+																backgroundColor: `${lane.color}1a`,
+																color: lane.color,
+															}}
+														>
+															{laneTasks.length}
+														</span>
+													</div>
+													{subCounts.length > 1 && (
+														<div className="text-[11px]" style={{ color: theme.colors.textDim }}>
+															{subCounts.join(' · ')}
+														</div>
+													)}
 												</div>
 												{/* Cards */}
 												<div className="flex-1 p-2 space-y-2 overflow-y-auto scrollbar-thin">
-													{columnTasks.map((task) => {
-														const priorityTone = getPriorityTone(theme, task.priority);
+													{laneTasks.map((task) => {
+														const taskStatus = presentationStatusByTaskId.get(task.id) || task.status;
+														const priorityTone = getTaskPriorityTone(theme, task.priority);
+														const statusTone = getTaskStatusTone(theme, taskStatus);
 														return (
 															<button
 																type="button"
@@ -448,6 +447,7 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 																	backgroundColor: theme.colors.bgMain,
 																	border: `1px solid rgba(255,255,255,0.08)`,
 																	boxShadow: '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+																	borderLeft: lane.statuses.length > 1 ? `3px solid ${statusTone.fg}` : undefined,
 																}}
 															>
 																{/* Priority accent - top bar */}
@@ -462,6 +462,14 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 																	>
 																		{task.title}
 																	</div>
+																	{lane.statuses.length > 1 && (
+																		<span
+																			className="inline-block text-[11px] mt-1 px-1.5 py-0.5 rounded"
+																			style={{ backgroundColor: statusTone.bg, color: statusTone.fg }}
+																		>
+																			{STATUS_LABELS[taskStatus]}
+																		</span>
+																	)}
 																	{task.description && (
 																		<p
 																			className="text-xs mt-1.5 line-clamp-2 leading-relaxed"
@@ -523,10 +531,16 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 									workspaceOptions.map((workspace) => {
 										const workspaceTasks = tasks.filter((task) => task.groupId === workspace.id);
 										const runningCount = workspaceTasks.filter(
-											(task) => task.status === 'running' || task.status === 'planning'
+											(task) => {
+												const status = presentationStatusByTaskId.get(task.id) || task.status;
+												return status === 'running' || status === 'planning';
+											}
 										).length;
 										const openCount = workspaceTasks.filter(
-											(task) => task.status !== 'done' && task.status !== 'cancelled'
+											(task) => {
+												const status = presentationStatusByTaskId.get(task.id) || task.status;
+												return status !== 'done' && status !== 'cancelled';
+											}
 										).length;
 										return (
 											<button

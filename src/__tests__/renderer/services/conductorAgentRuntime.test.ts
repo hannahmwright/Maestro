@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	buildConductorCallsign,
 	detectConductorProviderRoute,
 	extractConductorAgentResponse,
 } from '../../../renderer/services/conductorAgentRuntime';
@@ -57,5 +58,17 @@ describe('conductorAgentRuntime', () => {
 				taskDescription: 'Update the server route and database schema for token validation',
 			})
 		).toBe('backend');
+	});
+
+	it('uses approved single-name Claude conductor names', () => {
+		expect(buildConductorCallsign('claude-code', 'mind-loom:worker:claude:brace')).toMatch(
+			/^(Vera|Mira|Evie|Lina|Selah|Talia|Ines|Kaia|Noemi|Leona|Eliza|Celine|Nadia|Clara|Maeve)$/
+		);
+	});
+
+	it('uses approved single-name Codex conductor names', () => {
+		expect(buildConductorCallsign('codex', 'mind-loom:worker:codex:backend')).toMatch(
+			/^(Jupiter|Kairo|Eli|Dorian|Cillian|Arden|Niko|Jonas|Theo|Lucian|Rowan|Ivo|Matteo|Adrian|Luca)$/
+		);
 	});
 });

@@ -130,6 +130,11 @@ interface SessionListProps {
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
 }
 
+function isHiddenConductorWorkspace(group: Group): boolean {
+	const projectRoot = group.projectRoot || '';
+	return /-conductor(?:-integrate)?-[^\\/]+$/i.test(projectRoot);
+}
+
 function getSidebarHeaderButtonStyle(
 	theme: Theme,
 	options?: {
@@ -775,7 +780,10 @@ function SessionListInner(props: SessionListProps) {
 	const { getFileCount } = useGitFileStatus();
 
 	const topLevelSessions = useMemo(
-		() => sessions.filter((session) => !session.parentSessionId),
+		() =>
+			sessions.filter(
+				(session) => !session.parentSessionId && !session.conductorMetadata?.isConductorSession
+			),
 		[sessions]
 	);
 
@@ -847,7 +855,10 @@ function SessionListInner(props: SessionListProps) {
 			group.name.toLowerCase().includes(query) ||
 			(group.projectRoot || '').toLowerCase().includes(query);
 
-		const withStats = groups.filter(matchesWorkspace).map((workspace) => {
+		const withStats = groups
+			.filter((workspace) => !isHiddenConductorWorkspace(workspace))
+			.filter(matchesWorkspace)
+			.map((workspace) => {
 			const workspaceThreads = threads
 				.filter(
 					(thread) =>
@@ -907,7 +918,7 @@ function SessionListInner(props: SessionListProps) {
 				),
 				hasPinned: workspaceThreads.some((thread) => thread.pinned),
 			};
-		});
+			});
 
 		return withStats.sort((a, b) => {
 			if (a.hasPinned !== b.hasPinned) return a.hasPinned ? -1 : 1;

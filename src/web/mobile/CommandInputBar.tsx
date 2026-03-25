@@ -280,8 +280,6 @@ export interface CommandInputBarProps {
 	onInputBlur?: () => void;
 	/** Whether to show recent command chips (defaults to true) */
 	showRecentCommands?: boolean;
-	/** Reports the rendered composer height so the layout can reserve space */
-	onHeightChange?: (height: number) => void;
 	/** Staged image attachments for the pending message */
 	stagedImages?: string[];
 	/** Staged text/code attachments for the pending message */
@@ -299,6 +297,8 @@ export interface CommandInputBarProps {
 	demoCaptureEnabled?: boolean;
 	/** Toggle required demo capture for the active target */
 	onToggleDemoCapture?: () => void;
+	/** Whether the mobile composer should overlay the viewport or sit in normal layout flow */
+	layoutMode?: 'fixed' | 'in-flow';
 }
 
 /**
@@ -332,7 +332,6 @@ export function CommandInputBar({
 	onInputFocus,
 	onInputBlur,
 	showRecentCommands = true,
-	onHeightChange,
 	stagedImages = [],
 	stagedTextAttachments = [],
 	onAddAttachments,
@@ -340,6 +339,7 @@ export function CommandInputBar({
 	onRemoveTextAttachment,
 	demoCaptureEnabled = false,
 	onToggleDemoCapture,
+	layoutMode = 'fixed',
 }: CommandInputBarProps) {
 	const colors = useThemeColors();
 	const textareaRef = useRef<HTMLTextAreaElement | HTMLInputElement | null>(
@@ -487,13 +487,32 @@ export function CommandInputBar({
 		inputMode === 'ai' &&
 		(voiceState === 'recording' || voiceState === 'requesting' || voiceState === 'transcribing');
 	const hasActiveStagedPreview = stagedPreviewIndex !== null;
+	const isFixedLayout = layoutMode === 'fixed';
 	const isActivelyComposing =
 		inputMode === 'ai' && (isInputFocused || hasActiveVoiceControls || hasActiveStagedPreview);
-	const isIdleCompactAiComposer = inputMode === 'ai' && isMobilePhone && !isActivelyComposing;
+	const isIdleCompactAiComposer =
+		isFixedLayout && inputMode === 'ai' && isMobilePhone && !isActivelyComposing;
+	const supportsExpandedAiComposer = isFixedLayout && isMobilePhone && inputMode === 'ai';
+	const usesStableInFlowAiComposer = !isFixedLayout && isMobilePhone && inputMode === 'ai';
+	const inFlowLargeComposerActive =
+		usesStableInFlowAiComposer && (isInputFocused || hasDraft || hasActiveVoiceControls);
+	const showsIdleCompactInput = isFixedLayout && isIdleCompactAiComposer;
 	const compactComposerMinHeight =
-		inputMode === 'ai' ? (isActivelyComposing ? 96 : isMobilePhone ? 40 : 40) : MIN_INPUT_HEIGHT;
+		inputMode === 'ai'
+			? usesStableInFlowAiComposer
+				? inFlowLargeComposerActive
+					? EXPANDED_MOBILE_TEXTAREA_MIN_HEIGHT
+					: 40
+				: isActivelyComposing
+					? 96
+					: isMobilePhone
+						? 40
+						: 40
+			: MIN_INPUT_HEIGHT;
 	const compactMaxTextareaHeight =
-		isMobilePhone && inputMode === 'ai' && !isExpanded
+		usesStableInFlowAiComposer
+			? MAX_TEXTAREA_HEIGHT
+			: isMobilePhone && inputMode === 'ai' && !isExpanded
 			? COMPACT_MOBILE_MAX_TEXTAREA_HEIGHT
 			: MAX_TEXTAREA_HEIGHT;
 	const composerSurfaceStyle: React.CSSProperties = {
@@ -503,6 +522,16 @@ export function CommandInputBar({
 		border: `1px solid ${colors.border}`,
 		boxShadow: '0 -10px 28px rgba(15, 23, 42, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 	};
+	const inFlowComposerSurfaceStyle: React.CSSProperties = {
+		background: colors.bgMain,
+		backdropFilter: 'none',
+		WebkitBackdropFilter: 'none',
+		border: 'none',
+		boxShadow: 'none',
+	};
+	const activeComposerSurfaceStyle = isFixedLayout
+		? composerSurfaceStyle
+		: inFlowComposerSurfaceStyle;
 	const canStageAttachments = inputMode === 'ai' && !!onAddAttachments;
 	const hasComposerActions = canStageAttachments || (inputMode === 'ai' && !!onToggleDemoCapture);
 
@@ -866,23 +895,23 @@ export function CommandInputBar({
 	 * Handle focus to expand input on mobile in AI mode
 	 */
 	const handleMobileAIFocus = useCallback(() => {
-		if (isMobilePhone && inputMode === 'ai') {
+		if (supportsExpandedAiComposer) {
 			setIsExpanded(true);
 		}
 		onInputFocus?.();
-	}, [isMobilePhone, inputMode, onInputFocus]);
+	}, [onInputFocus, supportsExpandedAiComposer]);
 
 	/**
 	 * Auto-focus the textarea when expanded mode is activated
 	 */
 	useEffect(() => {
-		if (isExpanded && isMobilePhone && inputMode === 'ai' && textareaRef.current) {
+		if (isExpanded && supportsExpandedAiComposer && textareaRef.current) {
 			const frameId = window.requestAnimationFrame(() => {
 				focusTextarea(true);
 			});
 			return () => window.cancelAnimationFrame(frameId);
 		}
-	}, [focusTextarea, inputMode, isExpanded, isMobilePhone]);
+	}, [focusTextarea, isExpanded, supportsExpandedAiComposer]);
 
 	/**
 	 * Collapse input when submitting on mobile
@@ -898,9 +927,7 @@ export function CommandInputBar({
 
 	// Calculate textarea height for mobile expanded mode
 	const mobileExpandedHeight =
-		isMobilePhone && inputMode === 'ai' && isExpanded
-			? `${MOBILE_EXPANDED_HEIGHT_VH}vh`
-			: undefined;
+		supportsExpandedAiComposer && isExpanded ? `${MOBILE_EXPANDED_HEIGHT_VH}vh` : undefined;
 	const showInlineVoiceAction =
 		inputMode === 'ai' &&
 		!showBusyControls &&
@@ -924,9 +951,20 @@ export function CommandInputBar({
 		(isActivelyComposing || modelMenuOpen) &&
 		!showVoiceReviewAction;
 	const showExpandedInlineActionButtons =
-		isMobilePhone && inputMode === 'ai' && isExpanded && hasComposerActions;
+		isMobilePhone && inputMode === 'ai' && hasComposerActions && isExpanded;
+	const showInFlowDualInlineActions =
+		inFlowLargeComposerActive &&
+		inputMode === 'ai' &&
+		!showBusyControls &&
+		!showVoiceReviewAction &&
+		!showVoiceSendAction;
+	const showInFlowActionBadges =
+		usesStableInFlowAiComposer && inFlowLargeComposerActive && hasComposerActions;
 	const demoCaptureNotice =
-		inputMode === 'ai' && demoCaptureEnabled && !showExpandedInlineActionButtons ? (
+		inputMode === 'ai' &&
+		demoCaptureEnabled &&
+		!showExpandedInlineActionButtons &&
+		!showInFlowActionBadges ? (
 			<div
 				style={{
 					display: 'inline-flex',
@@ -1705,45 +1743,13 @@ export function CommandInputBar({
 				)
 			: null;
 
-	useEffect(() => {
-		if (!onHeightChange || !containerRef.current || typeof ResizeObserver === 'undefined') {
-			return;
-		}
-
-		const element = containerRef.current;
-		const publishHeight = () => {
-			const containerRect = element.getBoundingClientRect();
-			const surfaceRect = composerSurfaceRef.current?.getBoundingClientRect();
-			if (!surfaceRect) {
-				onHeightChange(Math.ceil(containerRect.height));
-				return;
-			}
-
-			const bottomInset = Math.max(0, containerRect.bottom - surfaceRect.bottom);
-			onHeightChange(Math.ceil(surfaceRect.height + bottomInset));
-		};
-
-		publishHeight();
-
-		const observer = new ResizeObserver(() => {
-			publishHeight();
-		});
-		observer.observe(element);
-		if (composerSurfaceRef.current) {
-			observer.observe(composerSurfaceRef.current);
-		}
-
-		return () => {
-			observer.disconnect();
-		};
-	}, [
-		onHeightChange,
-		mobileExpandedHeight,
-		voiceStatusText,
-		modelMenuOpen,
-		slashCommandOpen,
-		textareaHeight,
-	]);
+	const compactComposerBottomInset = isKeyboardVisible ? '0px' : 'env(safe-area-inset-bottom)';
+	const effectiveDockBottomInset = '0px';
+	const effectiveCompactComposerBottomInset = compactComposerBottomInset;
+	const compactComposerPaddingTop = showsIdleCompactInput ? '7px' : '8px';
+	const compactComposerPaddingBottom = showsIdleCompactInput
+		? `calc(10px + ${effectiveCompactComposerBottomInset})`
+		: `calc(12px + ${effectiveCompactComposerBottomInset})`;
 
 	return (
 		<div
@@ -1752,24 +1758,33 @@ export function CommandInputBar({
 			onMouseDownCapture={markComposerInteraction}
 			onTouchStartCapture={markComposerInteraction}
 			style={{
-				position: 'fixed',
-				left: 0,
-				right: 0,
-				bottom: keyboardOffset,
-				zIndex: 100,
-				// Safe area padding for notched devices
-				paddingBottom: isKeyboardVisible
-					? '0'
-					: 'max(6px, calc(env(safe-area-inset-bottom) - 10px))',
+				position: isFixedLayout ? 'fixed' : 'relative',
+				left: isFixedLayout ? 0 : 'auto',
+				right: isFixedLayout ? 0 : 'auto',
+				bottom: isFixedLayout ? keyboardOffset : 'auto',
+				zIndex: isFixedLayout ? 100 : 40,
+				paddingBottom: effectiveDockBottomInset,
 				paddingLeft: 'env(safe-area-inset-left)',
 				paddingRight: 'env(safe-area-inset-right)',
 				paddingTop: onHistoryOpen ? '4px' : '12px', // Reduced top padding when swipe handle is shown
-				background: 'transparent',
+				background: isFixedLayout
+					? isKeyboardVisible
+						? 'transparent'
+						: `linear-gradient(180deg, ${colors.bgMain}00 0%, ${colors.bgMain}d4 24%, ${colors.bgSidebar}f0 100%)`
+					: colors.bgMain,
+				backdropFilter: isKeyboardVisible || !isFixedLayout ? 'none' : 'blur(18px)',
+				WebkitBackdropFilter: isKeyboardVisible || !isFixedLayout ? 'none' : 'blur(18px)',
+				borderTop:
+					isKeyboardVisible && isFixedLayout ? 'none' : `1px solid ${colors.border}22`,
 				// Smooth transition when keyboard appears/disappears
-				transition: isKeyboardVisible ? 'none' : 'bottom 0.15s ease-out, height 200ms ease-out',
+				transition:
+					isKeyboardVisible || !isFixedLayout
+						? 'height 200ms ease-out'
+						: 'bottom 0.15s ease-out, height 200ms ease-out',
 				overscrollBehavior: 'none',
-				willChange: 'bottom',
-				transform: 'translateZ(0)',
+				willChange: isFixedLayout ? 'bottom' : 'auto',
+				transform: isFixedLayout ? 'translateZ(0)' : 'none',
+				flexShrink: 0,
 				// On mobile when expanded, use flexbox for proper layout
 				...(mobileExpandedHeight && {
 					display: 'flex',
@@ -1984,7 +1999,7 @@ export function CommandInputBar({
 				onChange={handleAttachmentInputChange}
 			/>
 
-			{/* EXPANDED MOBILE AI MODE - Full width textarea with send button below */}
+			{/* LARGE MOBILE AI MODE - Full width textarea with send button below */}
 			{mobileExpandedHeight ? (
 				<form
 					ref={composerSurfaceRef}
@@ -1993,12 +2008,14 @@ export function CommandInputBar({
 						display: 'flex',
 						flexDirection: 'column',
 						gap: '6px',
-						padding: '12px 12px 10px',
-						flex: 1,
+						padding: usesStableInFlowAiComposer
+							? `10px 12px calc(10px + ${compactComposerBottomInset})`
+							: '12px 12px 10px',
+						flex: mobileExpandedHeight ? 1 : '0 0 auto',
 						maxWidth: '100%',
 						overflow: 'visible',
-						borderRadius: '26px 26px 0 0',
-						...composerSurfaceStyle,
+						borderRadius: usesStableInFlowAiComposer ? '0' : '26px 26px 0 0',
+						...activeComposerSurfaceStyle,
 					}}
 				>
 					{attachmentPreview}
@@ -2015,6 +2032,42 @@ export function CommandInputBar({
 						</div>
 					)}
 					{demoCaptureNotice}
+
+					{showInFlowActionBadges && (
+						<div
+							style={{
+								display: 'flex',
+								flexWrap: 'wrap',
+								gap: '8px',
+								alignItems: 'center',
+							}}
+						>
+							{canStageAttachments && (
+								<button
+									type="button"
+									onClick={handleAttachmentPickerOpen}
+									disabled={isDisabled}
+									style={expandedActionButtonStyle(
+										stagedImages.length > 0 || stagedTextAttachments.length > 0
+									)}
+								>
+									<Paperclip size={14} />
+									<span>Add files</span>
+								</button>
+							)}
+							{onToggleDemoCapture && (
+								<button
+									type="button"
+									onClick={onToggleDemoCapture}
+									disabled={isDisabled}
+									style={expandedActionButtonStyle(demoCaptureEnabled)}
+								>
+									<FileText size={14} />
+									<span>{demoCaptureEnabled ? 'Demo required' : 'Require demo'}</span>
+								</button>
+							)}
+						</div>
+					)}
 
 					{showExpandedInlineActionButtons && (
 						<div
@@ -2080,7 +2133,9 @@ export function CommandInputBar({
 							fontFamily: 'inherit',
 							lineHeight: `${LINE_HEIGHT}px`,
 							outline: 'none',
+							height: `${textareaHeight}px`,
 							minHeight: `${EXPANDED_MOBILE_TEXTAREA_MIN_HEIGHT}px`,
+							maxHeight: `${compactMaxTextareaHeight}px`,
 							WebkitAppearance: 'none',
 							appearance: 'none',
 							resize: 'none',
@@ -2090,7 +2145,7 @@ export function CommandInputBar({
 							WebkitUserSelect: 'text',
 							userSelect: 'text',
 							caretColor: colors.accent,
-							overflowY: 'auto',
+							overflowY: textareaHeight >= compactMaxTextareaHeight ? 'auto' : 'hidden',
 							overflowX: 'hidden',
 							wordWrap: 'break-word',
 						}}
@@ -2099,13 +2154,15 @@ export function CommandInputBar({
 						}}
 						onBlur={(e) => {
 							setIsInputFocused(false);
-							// Delay collapse to allow click on send button
-							setTimeout(() => {
-								if (shouldKeepExpandedComposerOpen(e.relatedTarget)) {
-									return;
-								}
-								setIsExpanded(false);
-							}, 150);
+							if (supportsExpandedAiComposer) {
+								// Delay collapse to allow click on send button
+								setTimeout(() => {
+									if (shouldKeepExpandedComposerOpen(e.relatedTarget)) {
+										return;
+									}
+									setIsExpanded(false);
+								}, 150);
+							}
 							onInputBlur?.();
 						}}
 						aria-label="AI message input. Press the send button to submit."
@@ -2167,18 +2224,29 @@ export function CommandInputBar({
 						flexDirection: 'column',
 						gap: '6px',
 						alignItems: 'stretch',
-						padding: isIdleCompactAiComposer ? '7px 10px 9px' : '8px 10px 10px',
+						paddingTop: compactComposerPaddingTop,
+						paddingRight: '10px',
+						paddingBottom: compactComposerPaddingBottom,
+						paddingLeft: '10px',
 						// Ensure form doesn't overflow screen width
 						maxWidth: '100%',
 						overflow: 'visible',
-						margin: '0 12px',
-						borderRadius: isIdleCompactAiComposer ? '26px' : '22px',
+						margin: isFixedLayout ? '0 12px' : '0',
+						borderRadius: isFixedLayout
+							? isIdleCompactAiComposer
+								? '26px'
+								: '22px'
+							: '0',
 						background:
-							'linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.78) 100%)',
-						border: '1px solid rgba(148, 163, 184, 0.26)',
+							isFixedLayout
+								? 'linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.78) 100%)'
+								: colors.bgMain,
+						border: isFixedLayout ? '1px solid rgba(148, 163, 184, 0.26)' : 'none',
 						boxShadow:
-							'0 -12px 28px rgba(15, 23, 42, 0.16), 0 8px 20px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.42)',
-						...composerSurfaceStyle,
+							isFixedLayout
+								? '0 -12px 28px rgba(15, 23, 42, 0.16), 0 8px 20px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.42)'
+								: 'none',
+						...activeComposerSurfaceStyle,
 					}}
 				>
 					{attachmentPreview}
@@ -2195,6 +2263,42 @@ export function CommandInputBar({
 						</div>
 					)}
 					{demoCaptureNotice}
+
+					{showInFlowActionBadges && (
+						<div
+							style={{
+								display: 'flex',
+								flexWrap: 'wrap',
+								gap: '8px',
+								alignItems: 'center',
+							}}
+						>
+							{canStageAttachments && (
+								<button
+									type="button"
+									onClick={handleAttachmentPickerOpen}
+									disabled={isDisabled}
+									style={expandedActionButtonStyle(
+										stagedImages.length > 0 || stagedTextAttachments.length > 0
+									)}
+								>
+									<Paperclip size={14} />
+									<span>Add files</span>
+								</button>
+							)}
+							{onToggleDemoCapture && (
+								<button
+									type="button"
+									onClick={onToggleDemoCapture}
+									disabled={isDisabled}
+									style={expandedActionButtonStyle(demoCaptureEnabled)}
+								>
+									<FileText size={14} />
+									<span>{demoCaptureEnabled ? 'Demo required' : 'Require demo'}</span>
+								</button>
+							)}
+						</div>
+					)}
 
 					{voiceStatusText && (
 						<div
@@ -2307,7 +2411,7 @@ export function CommandInputBar({
 										: `${colors.textDim}b8`,
 									transition:
 										'border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease',
-									padding: isIdleCompactAiComposer ? '0' : '3px',
+									padding: showsIdleCompactInput || usesStableInFlowAiComposer ? '0' : '3px',
 									borderRadius: '20px',
 									border: `1px solid ${isInputFocused ? `${colors.accent}66` : `${colors.border}cc`}`,
 									background: isInputFocused
@@ -2319,7 +2423,7 @@ export function CommandInputBar({
 								} as React.CSSProperties & Record<'--maestro-placeholder-color', string>
 							}
 						>
-							{isIdleCompactAiComposer ? (
+							{showsIdleCompactInput ? (
 								<input
 									className="maestro-mobile-message-input"
 									ref={setInputElementRef}
@@ -2392,9 +2496,13 @@ export function CommandInputBar({
 										padding:
 											inputMode === 'ai'
 												? isMobilePhone
-													? isActivelyComposing
-														? '16px 64px 16px 14px'
-														: '0 46px 0 4px'
+													? usesStableInFlowAiComposer
+														? inFlowLargeComposerActive
+															? '14px 92px 14px 12px'
+															: '8px 44px 8px 12px'
+														: isActivelyComposing
+															? '16px 64px 16px 14px'
+															: '0 46px 0 4px'
 													: isActivelyComposing
 														? canStageAttachments
 															? '16px 66px 16px 52px'
@@ -2444,31 +2552,67 @@ export function CommandInputBar({
 								/>
 							)}
 
-							{inputMode === 'ai' &&
-								(showInlineModelSelector ||
-									showBusyInlineStopButton ||
-									showInlineVoiceAction ||
-									showInlineSendAction ||
-									showVoiceReviewAction ||
-									showVoiceSendAction) && (
-									<div
-										style={{
-											position: 'absolute',
-											right: '8px',
-											top: '50%',
-											transform: 'translateY(-50%)',
-											display: 'flex',
-											flexDirection: 'column',
-											alignItems: 'center',
-											justifyContent: 'center',
-											width: showInlineModelSelector ? '34px' : '34px',
-											gap: showInlineModelSelector || showVoiceReviewAction ? '6px' : '0',
-										}}
-									>
-										{showVoiceReviewAction ? (
-											<SendInterruptButton
-												isInterruptMode
-												isSendDisabled={false}
+									{inputMode === 'ai' &&
+										(showInlineModelSelector ||
+											showBusyInlineStopButton ||
+											showInlineVoiceAction ||
+											showInlineSendAction ||
+											showVoiceReviewAction ||
+											showVoiceSendAction ||
+											showInFlowDualInlineActions) && (
+											<div
+												style={{
+													position: 'absolute',
+													right: showInFlowDualInlineActions ? '10px' : '8px',
+													top: showInFlowDualInlineActions ? 'auto' : '50%',
+													bottom: showInFlowDualInlineActions ? '10px' : 'auto',
+													transform: showInFlowDualInlineActions ? 'none' : 'translateY(-50%)',
+													display: 'flex',
+													flexDirection: showInFlowDualInlineActions ? 'row' : 'column',
+													alignItems: 'center',
+													justifyContent: 'center',
+													width: showInFlowDualInlineActions ? 'auto' : '34px',
+													gap:
+														showInFlowDualInlineActions
+															? '8px'
+															: showInlineModelSelector || showVoiceReviewAction
+																? '6px'
+																: '0',
+												}}
+											>
+												{showInFlowDualInlineActions ? (
+													<>
+														{voiceSupported && (
+															<VoiceInputButton
+																isListening={isListening}
+																isRequesting={voiceState === 'requesting'}
+																isTranscribing={isTranscribing}
+																statusText={voiceStatusText}
+																onToggle={handleVoiceToggle}
+																disabled={isDisabled || isTranscribing}
+																variant="inline"
+															/>
+														)}
+														<SendInterruptButton
+															sendButtonRef={inlineSendButtonRef}
+															isInterruptMode={false}
+															isSendDisabled={isDisabled || isTranscribing || !hasDraft}
+															onInterrupt={handleInterrupt}
+															onSend={() => {
+																if (showBusyControls) {
+																	handleBusyDraftSendAction('inline');
+																	return;
+																}
+																submitDraft('default', getDefaultSubmitOptions());
+															}}
+															variant="inline"
+															sendAriaLabel="Send message"
+														/>
+													</>
+												) : showVoiceReviewAction ? (
+													<SendInterruptButton
+														isInterruptMode
+														isSendDisabled={false}
 												onInterrupt={stopVoiceInput}
 												variant="inline"
 												interruptAriaLabel="Stop recording and review transcript"
@@ -2491,7 +2635,7 @@ export function CommandInputBar({
 												interruptAriaLabel="Stop the current response"
 											/>
 										) : null}
-										{showVoiceSendAction ? (
+										{showInFlowDualInlineActions ? null : showVoiceSendAction ? (
 											<SendInterruptButton
 												isInterruptMode={false}
 												isSendDisabled={false}

@@ -1,4 +1,5 @@
 import type {
+	AgentError,
 	ConductorAgentRole,
 	ConductorProviderAgent,
 	ConductorProviderRouteKey,
@@ -9,6 +10,8 @@ import type {
 	ToolType,
 	UsageStats,
 } from '../types';
+import type { ConversationRuntimeKind } from '../../shared/conversation';
+import type { DemoCard, DemoCaptureRequest } from '../../shared/demo-artifacts';
 import { useSessionStore } from '../stores/sessionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useConductorStore } from '../stores/conductorStore';
@@ -20,7 +23,16 @@ import { getAgentSystemPromptTemplate } from '../utils/agentSystemPrompt';
 import { substituteTemplateVariables } from '../utils/templateVariables';
 import { getStdinFlags } from '../utils/spawnHelpers';
 import { getProviderDisplayName } from '../utils/sessionValidation';
+import { appendDemoCaptureInstructions } from '../utils/demoCapturePrompt';
 import type { ProviderUsageSnapshot } from '../../shared/provider-usage';
+import { conversationService } from './conversation';
+import {
+	parseConductorStructuredSubmissionFromToolExecution,
+	supportsNativeConductorToolSubmission,
+	type ConductorStructuredSubmission,
+	type ConductorStructuredSubmissionKind,
+} from '../../shared/conductorNativeTools';
+import { getConductorNamePool } from '../../shared/conductorRoster';
 
 export interface ConductorAgentRunOptions {
 	parentSession: Session;
@@ -35,7 +47,9 @@ export interface ConductorAgentRunOptions {
 	runId?: string;
 	taskId?: string;
 	readOnlyMode?: boolean;
+	expectedSubmissionKind?: ConductorStructuredSubmissionKind;
 	onSessionReady?: (session: Session) => void;
+	demoCapture?: DemoCaptureRequest;
 }
 
 export interface ConductorAgentRunResult {
@@ -45,22 +59,20 @@ export interface ConductorAgentRunResult {
 	agentSessionId?: string;
 	response: string;
 	usageStats?: UsageStats;
+	runtimeKind?: ConversationRuntimeKind;
+	structuredSubmission?: ConductorStructuredSubmission;
+	demoCard?: DemoCard;
 }
 
-const CALLSIGN_ADJECTIVES = [
-	'Banana',
-	'Cinder',
-	'Juniper',
-	'Mango',
-	'Nimbus',
-	'Pixel',
-	'Quartz',
-	'Rocket',
-	'Saffron',
-	'Topaz',
-];
+export class ConductorAgentRunError extends Error {
+	demoCard?: DemoCard;
 
-const CALLSIGN_NOUNS = ['Atlas', 'Beacon', 'Circuit', 'Drift', 'Ember', 'Harbor', 'Marble', 'Orbit'];
+	constructor(message: string, options?: { demoCard?: DemoCard }) {
+		super(message);
+		this.name = 'ConductorAgentRunError';
+		this.demoCard = options?.demoCard;
+	}
+}
 
 const UI_ROUTE_KEYWORDS = [
 	'ui',
@@ -146,11 +158,10 @@ function hashSeed(value: string): number {
 	return hash;
 }
 
-function buildConductorCallsign(seed: string): string {
+export function buildConductorCallsign(toolType: ConductorProviderAgent, seed: string): string {
 	const hash = hashSeed(seed || 'conductor');
-	const adjective = CALLSIGN_ADJECTIVES[hash % CALLSIGN_ADJECTIVES.length];
-	const noun = CALLSIGN_NOUNS[Math.floor(hash / CALLSIGN_ADJECTIVES.length) % CALLSIGN_NOUNS.length];
-	return `${adjective} ${noun}`;
+	const pool = getConductorNamePool(toolType);
+	return pool[hash % pool.length];
 }
 
 function getRoleLabel(role: ConductorAgentRole): string {
@@ -290,6 +301,7 @@ async function chooseConductorProvider(
 		return {
 			toolType: candidate,
 			callsign: buildConductorCallsign(
+				candidate,
 				`${groupId}:${options.role}:${candidate}:${options.taskTitle || options.taskDescription || 'general'}`
 			),
 			routedFrom: candidate !== primary ? primary : undefined,
@@ -306,6 +318,7 @@ async function chooseConductorProvider(
 	return {
 		toolType: primary,
 		callsign: buildConductorCallsign(
+			primary,
 			`${groupId}:${options.role}:${primary}:${options.taskTitle || options.taskDescription || 'general'}`
 		),
 	};
@@ -634,6 +647,10 @@ export async function runConductorAgentTurn(
 	);
 
 	const effectivePrompt = await buildEffectivePrompt(session, options.prompt);
+	const promptWithDemoCapture = appendDemoCaptureInstructions(
+		effectivePrompt,
+		options.demoCapture?.enabled === true
+	);
 	const baseArgs =
 		options.readOnlyMode
 			? (agent.args || []).filter(
@@ -646,11 +663,118 @@ export async function runConductorAgentTurn(
 		isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
 		supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
 	});
+	const useNativeStructuredSubmission =
+		Boolean(options.expectedSubmissionKind) && supportsNativeConductorToolSubmission(session.toolType);
+	const useConversationDispatch =
+		useNativeStructuredSubmission ||
+		(options.demoCapture?.enabled === true &&
+			!session.sshRemoteId &&
+			session.sessionSshRemoteConfig?.enabled !== true &&
+			session.toolType === 'codex');
 
 	return new Promise((resolve, reject) => {
 		let rawOutput = '';
 		let agentSessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
+		let runtimeKind: ConversationRuntimeKind | undefined;
+		let structuredSubmission: ConductorStructuredSubmission | undefined;
+		let demoCard: DemoCard | undefined;
+		let agentError: AgentError | undefined;
+		let conversationFailureMessage: string | undefined;
+		let finalized = false;
+
+		const loadLatestDemoCard = async (): Promise<DemoCard | undefined> => {
+			if (options.demoCapture?.enabled !== true) {
+				return demoCard;
+			}
+
+			await new Promise((resolveDelay) => window.setTimeout(resolveDelay, 150));
+			const demoCards = await window.maestro.artifacts.listSessionDemos(session.id, activeTab.id);
+			if (demoCard?.demoId) {
+				return demoCards.find((card) => card.demoId === demoCard?.demoId) || demoCard;
+			}
+			return demoCards[0] || demoCard;
+		};
+
+		const cleanup = () => {
+			unsubscribeData();
+			unsubscribeSessionId();
+			unsubscribeUsage();
+			unsubscribeToolExecution?.();
+			unsubscribeDemoGenerated?.();
+			unsubscribeAgentError();
+			unsubscribeConversationEvent?.();
+			unsubscribeQueryComplete?.();
+			unsubscribeExit();
+		};
+
+		const finalizeRun = (completion: { exitCode?: number }) => {
+			if (finalized) {
+				return;
+			}
+			finalized = true;
+			cleanup();
+
+			const response =
+				extractConductorAgentResponse(session.toolType, rawOutput) ||
+				getLatestAssistantResponse(session.id, activeTab.id) ||
+				'';
+
+			void (async () => {
+				const persistedDemoCard = await loadLatestDemoCard();
+
+				if (typeof completion.exitCode === 'number' && completion.exitCode !== 0) {
+					reject(
+						new ConductorAgentRunError(
+							response || `${session.name} exited with code ${completion.exitCode}.`,
+							{ demoCard: persistedDemoCard }
+						)
+					);
+					return;
+				}
+
+				if (agentError?.type === 'demo_capture_failed') {
+					reject(
+						new ConductorAgentRunError(agentError.message, {
+							demoCard: persistedDemoCard,
+						})
+					);
+					return;
+				}
+
+				if (conversationFailureMessage) {
+					reject(
+						new ConductorAgentRunError(conversationFailureMessage, {
+							demoCard: persistedDemoCard,
+						})
+					);
+					return;
+				}
+
+				if (useNativeStructuredSubmission && options.expectedSubmissionKind && !structuredSubmission) {
+					reject(
+						new ConductorAgentRunError(
+							response ||
+								`${session.name} finished without calling the required ${options.expectedSubmissionKind} Conductor result tool.`,
+							{ demoCard: persistedDemoCard }
+						)
+					);
+					return;
+				}
+
+				resolve({
+					sessionId: session.id,
+					tabId: activeTab.id,
+					toolType: selectedProvider.toolType,
+					agentSessionId,
+					response,
+					usageStats,
+					runtimeKind,
+					structuredSubmission,
+					demoCard: persistedDemoCard,
+				});
+			})().catch((error) => reject(error));
+		};
 
 		const unsubscribeData = window.maestro.process.onData((sessionId, data) => {
 			if (sessionId === targetSessionId) {
@@ -667,65 +791,126 @@ export async function runConductorAgentTurn(
 				usageStats = nextUsageStats;
 			}
 		});
-		const unsubscribeExit = window.maestro.process.onExit((sessionId, exitCode) => {
+		const unsubscribeToolExecution = window.maestro.process.onToolExecution?.((sessionId, toolEvent) => {
+			if (sessionId !== targetSessionId || !options.expectedSubmissionKind || structuredSubmission) {
+				return;
+			}
+
+			const parsedSubmission = parseConductorStructuredSubmissionFromToolExecution(
+				toolEvent.toolName,
+				toolEvent.state
+			);
+			if (!parsedSubmission || parsedSubmission.kind !== options.expectedSubmissionKind) {
+				return;
+			}
+
+			structuredSubmission = parsedSubmission;
+		});
+		const unsubscribeDemoGenerated = window.maestro.process.onDemoGenerated?.(
+			(baseSessionId, tabId, nextDemoCard) => {
+				if (baseSessionId === session.id && (tabId || null) === activeTab.id) {
+					demoCard = nextDemoCard;
+				}
+			}
+		);
+		const unsubscribeAgentError = window.maestro.process.onAgentError((sessionId, nextAgentError) => {
+			if (sessionId === targetSessionId) {
+				agentError = nextAgentError as AgentError;
+				if (nextAgentError.type === 'demo_capture_failed') {
+					finalizeRun({});
+				}
+			}
+		});
+		const unsubscribeConversationEvent = conversationService.onEvent((sessionId, event) => {
 			if (sessionId !== targetSessionId) {
 				return;
 			}
 
-			unsubscribeData();
-			unsubscribeSessionId();
-			unsubscribeUsage();
-			unsubscribeExit();
-
-			const response =
-				extractConductorAgentResponse(session.toolType, rawOutput) ||
-				getLatestAssistantResponse(session.id, activeTab.id) ||
-				'';
-
-				if (exitCode !== 0) {
-					reject(
-						new Error(
-							response || `${session.name} exited with code ${exitCode}.`
-						)
-					);
+			if (event.type === 'turn_failed') {
+				conversationFailureMessage = event.message;
+				finalizeRun({});
 				return;
 			}
 
-			resolve({
-				sessionId: session.id,
-				tabId: activeTab.id,
-				toolType: selectedProvider.toolType,
-				agentSessionId,
-				response,
-				usageStats,
-			});
+			if (event.type === 'turn_completed') {
+				if (event.status === 'failed') {
+					conversationFailureMessage =
+						conversationFailureMessage || `${session.name} failed to complete the requested turn.`;
+				}
+				finalizeRun({});
+			}
+		});
+		const unsubscribeQueryComplete = window.maestro.process.onQueryComplete?.(
+			(sessionId, queryData) => {
+				if (sessionId !== targetSessionId) {
+					return;
+				}
+				if ((queryData.tabId || activeTab.id) !== activeTab.id) {
+					return;
+				}
+				finalizeRun({});
+			}
+		);
+		const unsubscribeExit = window.maestro.process.onExit((sessionId, exitCode) => {
+			if (sessionId !== targetSessionId) {
+				return;
+			}
+			finalizeRun({ exitCode });
 		});
 
-		window.maestro.process
-			.spawn({
-				sessionId: targetSessionId,
-				toolType: session.toolType,
-				cwd: session.cwd,
-				command: agent.path ?? agent.command,
-				args: baseArgs,
-				prompt: effectivePrompt,
-				agentSessionId: activeTab.agentSessionId ?? undefined,
-				readOnlyMode: options.readOnlyMode === true,
-				sessionCustomPath: session.customPath,
-				sessionCustomArgs: session.customArgs,
-				sessionCustomEnvVars: session.customEnvVars,
-				sessionCustomModel: session.customModel,
-				sessionCustomContextWindow: session.customContextWindow,
-				sessionReasoningEffort: activeTab.reasoningEffort ?? 'default',
-				sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-				sendPromptViaStdin,
-				sendPromptViaStdinRaw,
-			})
-			.catch((error) => {
-				unsubscribeData();
-				unsubscribeSessionId();
-				unsubscribeUsage();
-				unsubscribeExit();
+		const spawnPromise = useConversationDispatch
+			? conversationService
+					.sendTurn({
+						sessionId: targetSessionId,
+						toolType: session.toolType,
+						cwd: session.cwd,
+						command: agent.path ?? agent.command,
+						args: baseArgs,
+						prompt: promptWithDemoCapture,
+						agentSessionId: activeTab.agentSessionId ?? undefined,
+						readOnlyMode: options.readOnlyMode === true,
+						sessionCustomPath: session.customPath,
+						sessionCustomArgs: session.customArgs,
+						sessionCustomEnvVars: session.customEnvVars,
+						sessionCustomModel: session.customModel,
+						sessionCustomContextWindow: session.customContextWindow,
+						sessionReasoningEffort: activeTab.reasoningEffort ?? 'default',
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						querySource: 'auto',
+						preferLiveRuntime: true,
+						conductorNativeResultTools: useNativeStructuredSubmission,
+						demoCapture: options.demoCapture,
+					})
+					.then((dispatchResult) => {
+						runtimeKind = dispatchResult.runtimeKind;
+						return dispatchResult;
+					})
+			: window.maestro.process.spawn({
+					sessionId: targetSessionId,
+					toolType: session.toolType,
+					cwd: session.cwd,
+					command: agent.path ?? agent.command,
+					args: baseArgs,
+					prompt: promptWithDemoCapture,
+					agentSessionId: activeTab.agentSessionId ?? undefined,
+					readOnlyMode: options.readOnlyMode === true,
+					sessionCustomPath: session.customPath,
+					sessionCustomArgs: session.customArgs,
+					sessionCustomEnvVars: session.customEnvVars,
+					sessionCustomModel: session.customModel,
+					sessionCustomContextWindow: session.customContextWindow,
+					sessionReasoningEffort: activeTab.reasoningEffort ?? 'default',
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					sendPromptViaStdin,
+					sendPromptViaStdinRaw,
+					demoCapture: options.demoCapture,
+				});
+
+		spawnPromise.catch((error) => {
+				if (!finalized) {
+					finalized = true;
+					cleanup();
+				}
 
 				useSessionStore.getState().setSessions((previous) =>
 					previous.map((candidate) => {

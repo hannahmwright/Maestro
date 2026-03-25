@@ -1,5 +1,6 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
+import path from 'path';
 import { WebSocket } from 'ws';
 import { logger } from '../utils/logger';
 import { getDemoArtifactService } from '../artifacts';
@@ -15,6 +16,7 @@ import type {
 } from '../../shared/user-input-requests';
 import type { AgentError } from '../../shared/types';
 import type { ConversationEvent, ConversationInputItem } from '../../shared/conversation';
+import { CONDUCTOR_CODEX_MCP_SERVER_NAME } from '../../shared/conductorNativeTools';
 
 const LOG_CONTEXT = 'CodexAppServerBridge';
 const LISTENING_URL_RE = /listening on:\s*(ws:\/\/[^\s]+)/i;
@@ -115,6 +117,31 @@ function createAgentError(
 	};
 }
 
+function toTomlLiteral(value: string | string[]): string {
+	return JSON.stringify(value);
+}
+
+function buildConductorResultServerConfigArgs(): string[] {
+	const cliPath = path.join(__dirname, 'conductorResultMcpServerCli.js');
+	return [
+		'-c',
+		`mcp_servers.${CONDUCTOR_CODEX_MCP_SERVER_NAME}.command=${toTomlLiteral(process.execPath)}`,
+		'-c',
+		`mcp_servers.${CONDUCTOR_CODEX_MCP_SERVER_NAME}.args=${toTomlLiteral([cliPath])}`,
+		'-c',
+		`mcp_servers.${CONDUCTOR_CODEX_MCP_SERVER_NAME}.env.ELECTRON_RUN_AS_NODE=${toTomlLiteral('1')}`,
+	];
+}
+
+function buildAppServerArgs(config: ProcessConfig): string[] {
+	return [
+		'app-server',
+		'--listen',
+		'ws://127.0.0.1:0',
+		...(config.conductorNativeResultTools ? buildConductorResultServerConfigArgs() : []),
+	];
+}
+
 export class CodexAppServerBridge {
 	constructor(
 		private processes: Map<string, ManagedProcess>,
@@ -164,7 +191,8 @@ export class CodexAppServerBridge {
 			!!config.agentSessionId,
 			config.shellEnvVars
 		);
-		const childProcess = spawn(config.command, ['app-server', '--listen', 'ws://127.0.0.1:0'], {
+		const appServerArgs = buildAppServerArgs(config);
+		const childProcess = spawn(config.command, appServerArgs, {
 			cwd: config.cwd,
 			env,
 			shell: config.runInShell ? config.shell || true : false,
@@ -192,7 +220,7 @@ export class CodexAppServerBridge {
 			projectPath: config.projectPath,
 			currentModel: config.resolvedModel,
 			command: config.command,
-			args: ['app-server', '--listen', 'ws://127.0.0.1:0'],
+			args: appServerArgs,
 			codexAppServerState,
 			conversationRuntime: config.conversationRuntime || 'batch',
 			demoCaptureEnabled: config.demoCapture?.enabled === true,

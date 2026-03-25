@@ -256,6 +256,24 @@ export class StaticRoutes {
 			this.serveIndexHtml(reply, sessionId, null);
 		});
 
+		// Normalize any root-scoped session routes back to the canonical /app surface.
+		server.get('/session/:sessionId', async (request, reply) => {
+			const { sessionId } = request.params as { sessionId: string };
+			const { tabId } = request.query as { tabId?: string };
+			const destination = `${WEB_APP_BASE_PATH}/session/${encodeURIComponent(sessionId)}${
+				tabId ? `?tabId=${encodeURIComponent(tabId)}` : ''
+			}`;
+			return reply.redirect(302, destination);
+		});
+
+		server.get('/session/:sessionId/demo/:demoId', async (request, reply) => {
+			const { sessionId, demoId } = request.params as { sessionId: string; demoId: string };
+			const destination = `${WEB_APP_BASE_PATH}/session/${encodeURIComponent(
+				sessionId
+			)}/demo/${encodeURIComponent(demoId)}`;
+			return reply.redirect(302, destination);
+		});
+
 		// Legacy compatibility: redirect the old tokenized routes to /app.
 		server.get(`/${token}`, async (_request, reply) => {
 			return reply.redirect(302, WEB_APP_BASE_PATH);

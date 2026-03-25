@@ -79,6 +79,10 @@ function getWorkspaceGitFileCount(sessions: Session[]): number {
 	return sessions.find((session) => session.isGitRepo)?.gitFileCount || 0;
 }
 
+function isHiddenConductorWorkspaceSession(session: Session): boolean {
+	return /-conductor(?:-integrate)?-[^\\/]+$/i.test(session.cwd || '');
+}
+
 function SwipeableThreadRow({
 	session,
 	isActive,
@@ -432,7 +436,7 @@ export function MobileNavigationDrawer({
 	const workspaceSections = useMemo((): WorkspaceSection[] => {
 		const grouped = new Map<string, WorkspaceSection>();
 
-		for (const session of sessions) {
+		for (const session of sessions.filter((candidate) => !isHiddenConductorWorkspaceSession(candidate))) {
 			const workspaceId = session.groupId || 'ungrouped';
 			const sessionActivityAt = getSessionActivityTimestamp(session);
 			const existingGroup = grouped.get(workspaceId);
@@ -539,7 +543,8 @@ export function MobileNavigationDrawer({
 		>
 			<aside
 				style={{
-					width: 'min(360px, calc(100vw - 28px))',
+					width: '100%',
+					maxWidth: '100vw',
 					height: '100%',
 					display: 'flex',
 					flexDirection: 'column',

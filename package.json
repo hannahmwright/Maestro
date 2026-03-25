@@ -278,6 +278,7 @@
 		"@fastify/rate-limit": "^9.1.0",
 		"@fastify/static": "^7.0.4",
 		"@fastify/websocket": "^9.0.0",
+		"@modelcontextprotocol/sdk": "^1.27.1",
 		"@sentry/electron": "^7.5.0",
 		"@tanstack/react-virtual": "^3.13.13",
 		"@types/d3-force": "^3.0.10",

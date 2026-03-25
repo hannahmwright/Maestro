@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	buildConductorPlannerPrompt,
+	parseConductorPlannerSubmission,
 	parseConductorPlannerResponse,
 } from '../../../renderer/services/conductorPlanner';
 import type { Session } from '../../../renderer/types';
@@ -60,6 +61,7 @@ describe('conductorPlanner', () => {
 		expect(prompt).toContain('Maestro');
 		expect(prompt).toContain('Polish conductor board');
 		expect(prompt).toContain('Keep the plan incremental.');
+		expect(prompt).toContain('submit_conductor_plan');
 	});
 
 	it('parses JSON fenced planner output', () => {
@@ -128,5 +130,46 @@ describe('conductorPlanner', () => {
 		expect(() =>
 			parseConductorPlannerResponse(JSON.stringify({ summary: 'Nothing', tasks: [] }))
 		).toThrow('Planner returned no usable tasks.');
+	});
+
+	it('caps oversized plans to keep the backlog bounded', () => {
+		const tasks = Array.from({ length: 20 }, (_, index) => ({
+			title: `Task ${index + 1}`,
+			description: 'Planned work',
+			priority: 'medium',
+			acceptanceCriteria: [],
+			dependsOn: [],
+			scopePaths: [],
+		}));
+		const parsed = parseConductorPlannerResponse(
+			JSON.stringify({
+				summary: 'Very large plan.',
+				tasks,
+			})
+		);
+
+		expect(parsed.tasks).toHaveLength(12);
+		expect(parsed.tasks[0].title).toBe('Task 1');
+		expect(parsed.tasks[11].title).toBe('Task 12');
+	});
+
+	it('parses structured planner submissions from native tool calls', () => {
+		const parsed = parseConductorPlannerSubmission({
+			summary: 'Structured plan ready.',
+			tasks: [
+				{
+					title: 'Add native result capture',
+					description: 'Use tool calls instead of scraped JSON.',
+					priority: 'high',
+					acceptanceCriteria: ['Planner uses native structured submission.'],
+					dependsOn: [],
+					scopePaths: ['src/shared/conductorNativeTools.ts'],
+					subtasks: [],
+				},
+			],
+		});
+
+		expect(parsed.summary).toBe('Structured plan ready.');
+		expect(parsed.tasks[0].title).toBe('Add native result capture');
 	});
 });

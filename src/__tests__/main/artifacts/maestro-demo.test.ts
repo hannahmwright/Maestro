@@ -178,6 +178,32 @@ await page.evaluate('() => (location.href)');
 		expect(evaluation.failureReason).toBe('auth_blocked');
 	});
 
+	it('accepts auth targets with trailing punctuation when the observed auth surface matches', () => {
+		const evaluation = evaluateCompletionState(
+			{
+				...baseContext(),
+				requestedTarget: {
+					url: 'http://127.0.0.1:3001/sign-in,',
+					domain: '127.0.0.1',
+				},
+			} as any,
+			{
+				version: 1,
+				started: true,
+				artifactCount: 2,
+				imageCount: 1,
+				videoCount: 1,
+				lastObservedUrl: 'http://127.0.0.1:3001/sign-in',
+				lastObservedTitle: 'Mind Loom',
+			} as any,
+			{}
+		);
+
+		expect(evaluation.ok).toBe(true);
+		expect(evaluation.failureReason).toBeUndefined();
+		expect(evaluation.authTargetReached).toBe(true);
+	});
+
 	it('emits a completed event after a verified artifact is attached', async () => {
 		expect(await runCli(['begin'])).toBe(0);
 		expect(

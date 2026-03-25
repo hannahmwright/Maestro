@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
 import Store from 'electron-store';
 import * as os from 'os';
+import * as path from 'path';
 import { logger } from '../utils/logger';
 import { addBreadcrumb } from '../utils/sentry';
 import { isWebContentsAvailable } from '../utils/safe-send';
@@ -67,6 +68,7 @@ export interface SpawnDispatchRequest {
 		workingDirOverride?: string;
 	};
 	querySource?: 'user' | 'auto';
+	conductorNativeResultTools?: boolean;
 	tabId?: string;
 	projectPath?: string;
 	demoCapture?: ProcessConfig['demoCapture'];
@@ -271,10 +273,12 @@ export async function prepareSpawnContext(
 	let demoCaptureContext: ProcessConfig['demoCaptureContext'];
 
 	if (shouldProvisionDemoRuntime) {
-		const outputDir = 'output/playwright';
 		const provisionalTurnId = randomUUID();
 		const turnToken = randomUUID();
 		const demoProjectRoot = request.projectPath || request.cwd || null;
+		const outputDir = demoProjectRoot
+			? path.join(demoProjectRoot, 'output', 'playwright')
+			: 'output/playwright';
 		const preferredDemoBrowser =
 			request.demoCapture?.browserMode ||
 			((deps.settingsStore.get('demoBrowserMode', 'standard') as string) === 'chrome'

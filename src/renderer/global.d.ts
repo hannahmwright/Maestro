@@ -465,6 +465,8 @@ type ConductorData = {
 		| 'completed'
 		| 'cancelled';
 	resourceProfile: 'conservative' | 'balanced' | 'aggressive';
+	isPaused?: boolean;
+	holdReason?: string | null;
 	keepConductorAgentSessions?: boolean;
 	providerRouting?: {
 		default: {
@@ -502,15 +504,61 @@ type ConductorTaskData = {
 		| 'planning'
 		| 'ready'
 		| 'running'
+		| 'needs_revision'
 		| 'needs_input'
 		| 'blocked'
 		| 'needs_review'
+		| 'needs_proof'
 		| 'cancelled'
 		| 'done';
 	dependsOn: string[];
 	scopePaths: string[];
 	changedPaths?: string[];
 	source: 'manual' | 'planner' | 'worker_followup' | 'reviewer_followup';
+	attentionRequest?: {
+		id: string;
+		status: 'open' | 'resolved';
+		kind:
+			| 'blocked'
+			| 'review_changes'
+			| 'clarification'
+			| 'external_dependency'
+			| 'operator_decision';
+		summary: string;
+		requestedAction: string;
+		requestedByRole: 'planner' | 'worker' | 'reviewer' | 'system';
+		requestedBySessionId?: string;
+		suggestedResponse?: string;
+		response?: string;
+		runId?: string;
+		createdAt: number;
+		updatedAt: number;
+		resolvedAt?: number;
+	} | null;
+	completionProofRequirement?: {
+		required: boolean;
+		requireVideo: boolean;
+		minScreenshots: number;
+	};
+	completionProof?: {
+		status: 'missing' | 'capturing' | 'captured' | 'approved' | 'rejected';
+		demoId?: string;
+		captureRunId?: string;
+		screenshotCount?: number;
+		videoArtifactId?: string;
+		requestedAt?: number;
+		capturedAt?: number;
+		approvedAt?: number;
+		rejectedAt?: number;
+	};
+	agentHistory?: Array<{
+		id: string;
+		role: 'planner' | 'worker' | 'reviewer';
+		sessionId: string;
+		sessionName?: string;
+		runId?: string;
+		createdAt: number;
+	}>;
 	plannerSessionId?: string;
 	plannerSessionName?: string;
 	workerSessionId?: string;
@@ -556,7 +604,9 @@ type ConductorRunData = {
 			| 'execution_started'
 			| 'task_started'
 			| 'task_completed'
+			| 'task_needs_revision'
 			| 'task_needs_input'
+			| 'task_needs_proof'
 			| 'task_blocked'
 			| 'task_cancelled'
 			| 'execution_completed'
@@ -825,6 +875,20 @@ interface MaestroAPI {
 		>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
+		onQueryComplete: (
+			callback: (
+				sessionId: string,
+				queryData: {
+					sessionId: string;
+					agentType: string;
+					source: 'user' | 'auto';
+					startTime: number;
+					duration: number;
+					projectPath?: string;
+					tabId?: string;
+				}
+			) => void
+		) => () => void;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
 		onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
 		onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
@@ -925,9 +989,11 @@ interface MaestroAPI {
 						| 'planning'
 						| 'ready'
 						| 'running'
+						| 'needs_revision'
 						| 'needs_input'
 						| 'blocked'
 						| 'needs_review'
+						| 'needs_proof'
 						| 'cancelled'
 						| 'done';
 				},
@@ -942,14 +1008,20 @@ interface MaestroAPI {
 					title?: string;
 					description?: string;
 					priority?: 'low' | 'medium' | 'high' | 'critical';
+					acceptanceCriteria?: string[];
+					attentionRequest?: ConductorTaskData['attentionRequest'];
+					completionProofRequirement?: ConductorTaskData['completionProofRequirement'];
+					completionProof?: ConductorTaskData['completionProof'];
 					status?:
 						| 'draft'
 						| 'planning'
 						| 'ready'
 						| 'running'
+						| 'needs_revision'
 						| 'needs_input'
 						| 'blocked'
 						| 'needs_review'
+						| 'needs_proof'
 						| 'cancelled'
 						| 'done';
 				},
@@ -1074,6 +1146,7 @@ interface MaestroAPI {
 				remoteId: string | null;
 			};
 			querySource?: 'user' | 'auto';
+			preferLiveRuntime?: boolean;
 		}) => Promise<{
 			supportsLiveRuntime: boolean;
 			supportsTrueSteer: boolean;
@@ -1083,7 +1156,7 @@ interface MaestroAPI {
 			steerMode: ConversationSteerMode;
 			fallbackReason?: string | null;
 		}>;
-		sendTurn: (request: ProcessConfig) => Promise<{
+		sendTurn: (request: import('../shared/conversation').ConversationTurnRequest) => Promise<{
 			success: boolean;
 			pid?: number;
 			runtimeKind: ConversationRuntimeKind;

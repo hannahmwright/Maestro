@@ -346,19 +346,26 @@ export function prependPathEntry(existingPath: string | undefined, entry: string
 }
 
 function normalizeDomain(value: string | null | undefined): string | null {
-	if (!value || !value.trim()) {
+	const sanitizedValue = sanitizeUrlLikeValue(value);
+	if (!sanitizedValue) {
 		return null;
 	}
 	try {
-		return new URL(value).hostname.toLowerCase();
+		return new URL(sanitizedValue).hostname.toLowerCase();
 	} catch {
-		const normalized = value
-			.trim()
+		const normalized = sanitizedValue
 			.toLowerCase()
 			.replace(/^https?:\/\//, '')
 			.replace(/\/.*$/, '');
 		return normalized || null;
 	}
+}
+
+function sanitizeUrlLikeValue(value: string | null | undefined): string | null {
+	if (!value || !value.trim()) {
+		return null;
+	}
+	return value.trim().replace(/[.,;!?]+$/, '') || null;
 }
 
 export function extractRequestedTarget(prompt?: string): DemoRequestedTarget | null {
@@ -368,7 +375,10 @@ export function extractRequestedTarget(prompt?: string): DemoRequestedTarget | n
 
 	const urlMatch = prompt.match(/https?:\/\/[^\s)>"']+/i);
 	if (urlMatch) {
-		const url = urlMatch[0];
+		const url = sanitizeUrlLikeValue(urlMatch[0]);
+		if (!url) {
+			return null;
+		}
 		return {
 			url,
 			domain: normalizeDomain(url),

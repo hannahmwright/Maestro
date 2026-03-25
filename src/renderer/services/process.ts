@@ -25,6 +25,21 @@ export interface ProcessSessionIdHandler {
 	(sessionId: string, agentSessionId: string): void;
 }
 
+export interface ProcessQueryCompleteHandler {
+	(
+		sessionId: string,
+		queryData: {
+			sessionId: string;
+			agentType: string;
+			source: 'user' | 'auto';
+			startTime: number;
+			duration: number;
+			projectPath?: string;
+			tabId?: string;
+		}
+	): void;
+}
+
 /**
  * Result from process spawn operation.
  * Includes SSH remote info when the agent is executed on a remote host.
@@ -113,6 +128,10 @@ export const processService = {
 	 */
 	onExit(handler: ProcessExitHandler): () => void {
 		return window.maestro.process.onExit(handler);
+	},
+
+	onQueryComplete(handler: ProcessQueryCompleteHandler): () => void {
+		return window.maestro.process.onQueryComplete(handler);
 	},
 
 	/**

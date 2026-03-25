@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "enabled": true,
+  "sessionId": "1473a33b-e96a-4e3c-9a30-442261ef2325-ai-20c3030c-ff13-47eb-b369-8bc05c901c7e",
+  "tabId": null,
+  "captureRunId": "b3708b6a-1fa7-4af4-b5bd-3aa944d3d627",
+  "externalRunId": "turn-e7871f41-f069-499d-b676-8736e4c3eeea",
+  "turnId": "e7871f41-f069-499d-b676-8736e4c3eeea",
+  "turnToken": "853e4f7c-dd6a-4830-80f4-c51de400013a",
+  "provider": "claude-code",
+  "model": "claude-opus-4-6",
+  "requestedTarget": {
+    "url": "https://maestro.sh",
+    "domain": "maestro.sh"
+  },
+  "stateFilePath": "/Users/hannahwright/Documents/Code/Maestro/.maestro/demo-runtime/states/1473a33b-e96a-4e3c-9a30-442261ef2325-ai-20c3030c-ff13-47eb-b369-8bc05c901c7e__default.json",
+  "outputDir": "output/playwright"
+}

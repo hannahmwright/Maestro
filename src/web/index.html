@@ -49,14 +49,20 @@
 				margin: 0;
 				padding: 0;
 			}
+			html {
+				background-color: #0b0b0d;
+			}
 			html,
 			body,
 			#root {
 				height: 100%;
+				min-height: 100%;
+				min-height: 100dvh;
 				width: 100%;
-				overflow: hidden;
 			}
 			body {
+				margin: 0;
+				overflow: hidden;
 				font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 				-webkit-font-smoothing: antialiased;
 				-moz-osx-font-smoothing: grayscale;

@@ -52,7 +52,7 @@ describe('StaticRoutes', () => {
 	});
 
 	it('registers the stable app routes and legacy token redirects', () => {
-		expect(mockFastify.get).toHaveBeenCalledTimes(12);
+		expect(mockFastify.get).toHaveBeenCalledTimes(14);
 		expect(mockFastify.routes.has('GET:/')).toBe(true);
 		expect(mockFastify.routes.has('GET:/health')).toBe(true);
 		expect(mockFastify.routes.has(`GET:${WEB_APP_MANIFEST_PATH}`)).toBe(true);
@@ -63,6 +63,8 @@ describe('StaticRoutes', () => {
 		expect(mockFastify.routes.has(`GET:${WEB_APP_BASE_PATH}/session/:sessionId/demo/:demoId`)).toBe(
 			true
 		);
+		expect(mockFastify.routes.has('GET:/session/:sessionId')).toBe(true);
+		expect(mockFastify.routes.has('GET:/session/:sessionId/demo/:demoId')).toBe(true);
 		expect(mockFastify.routes.has(`GET:/${securityToken}`)).toBe(true);
 		expect(mockFastify.routes.has(`GET:/${securityToken}/`)).toBe(true);
 		expect(mockFastify.routes.has(`GET:/${securityToken}/session/:sessionId`)).toBe(true);
@@ -137,6 +139,23 @@ describe('StaticRoutes', () => {
 		expect(reply.redirect).toHaveBeenCalledWith(
 			302,
 			`${WEB_APP_BASE_PATH}/session/session-123?tabId=tab-456`
+		);
+	});
+
+	it('normalizes root-scoped demo routes back to /app', async () => {
+		const route = mockFastify.getRoute('GET', '/session/:sessionId/demo/:demoId');
+		const reply = createMockReply();
+
+		await route!.handler(
+			{
+				params: { sessionId: 'session-123', demoId: 'demo-456' },
+			},
+			reply
+		);
+
+		expect(reply.redirect).toHaveBeenCalledWith(
+			302,
+			`${WEB_APP_BASE_PATH}/session/session-123/demo/demo-456`
 		);
 	});
 

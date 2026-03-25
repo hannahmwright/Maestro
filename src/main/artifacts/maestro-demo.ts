@@ -190,15 +190,22 @@ function emitEvent(event: DemoCaptureEvent): void {
 	process.stdout.write(`${MAESTRO_DEMO_EVENT_PREFIX} ${JSON.stringify(event)}\n`);
 }
 
-function normalizeDomain(value: string | null | undefined): string | null {
+function sanitizeUrlLikeValue(value: string | null | undefined): string | null {
 	if (!value || !value.trim()) {
 		return null;
 	}
+	return value.trim().replace(/[.,;!?]+$/, '') || null;
+}
+
+function normalizeDomain(value: string | null | undefined): string | null {
+	const sanitizedValue = sanitizeUrlLikeValue(value);
+	if (!sanitizedValue) {
+		return null;
+	}
 	try {
-		return new URL(value).hostname.toLowerCase();
+		return new URL(sanitizedValue).hostname.toLowerCase();
 	} catch {
-		return value
-			.trim()
+		return sanitizedValue
 			.toLowerCase()
 			.replace(/^https?:\/\//, '')
 			.replace(/\/.*$/, '')
@@ -214,9 +221,23 @@ function normalizeComparableDomain(value: string | null | undefined): string | n
 	return normalized.replace(/^www\./, '');
 }
 
+function normalizeComparablePath(value: string | null | undefined): string | null {
+	const sanitizedValue = sanitizeUrlLikeValue(value);
+	if (!sanitizedValue) {
+		return null;
+	}
+	try {
+		const pathname = new URL(sanitizedValue).pathname || '/';
+		return pathname.replace(/\/+$/, '') || '/';
+	} catch {
+		return null;
+	}
+}
+
 function isLikelyAuthUrl(value: string | null | undefined): boolean {
-	if (!value) return false;
-	return /(login|sign-?in|auth|oauth|sso)/i.test(value);
+	const sanitizedValue = sanitizeUrlLikeValue(value);
+	if (!sanitizedValue) return false;
+	return /(login|sign-?in|auth|oauth|sso)/i.test(sanitizedValue);
 }
 
 export function extractPlaywrightEvalValue(output: string): string | null {
@@ -314,12 +335,27 @@ export function evaluateCompletionState(
 		requestedTarget?.url || requestedTarget?.domain || null
 	);
 	const comparableObservedDomain = normalizeComparableDomain(observedUrl);
+	const comparableRequestedPath = normalizeComparablePath(requestedTarget?.url || null);
+	const comparableObservedPath = normalizeComparablePath(observedUrl);
 	const explicitSimulated = options.simulated === true || asBoolean(options.simulated) === true;
 	const authTargetReachedOption = asBoolean(options['auth-target-reached']);
+	const requestedAuthTarget = isLikelyAuthUrl(requestedTarget?.url || null);
+	const matchedRequestedAuthTarget =
+		requestedAuthTarget &&
+		Boolean(observedUrl) &&
+		isLikelyAuthUrl(observedUrl) &&
+		(!comparableRequestedDomain ||
+			!comparableObservedDomain ||
+			comparableRequestedDomain === comparableObservedDomain) &&
+		(!comparableRequestedPath ||
+			!comparableObservedPath ||
+			comparableRequestedPath === comparableObservedPath);
 	const authTargetReached =
 		authTargetReachedOption !== null
 			? authTargetReachedOption
-			: observedUrl
+			: requestedAuthTarget
+				? matchedRequestedAuthTarget
+				: observedUrl
 				? !isLikelyAuthUrl(observedUrl)
 				: null;
 	const isLocalObservedTarget =

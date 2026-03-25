@@ -123,4 +123,23 @@ describe('demo artifact API routes', () => {
 
 		await server.close();
 	});
+
+	it('streams artifact content from the root-scoped compatibility path', async () => {
+		const server = createServer(() => ({
+			path: artifactPath,
+			mimeType: 'video/webm',
+			filename: 'artifact.webm',
+		}));
+
+		const response = await server.inject({
+			method: 'GET',
+			url: '/api/artifacts/demo-4/content',
+			headers: { range: 'bytes=0-4' },
+		});
+
+		expect(response.statusCode).toBe(206);
+		expect(response.body).toBe('video');
+
+		await server.close();
+	});
 });

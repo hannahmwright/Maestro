@@ -140,6 +140,7 @@ export class ConversationManager extends EventEmitter {
 			remoteId: string | null;
 		};
 		querySource?: 'user' | 'auto';
+		preferLiveRuntime?: boolean;
 	}): Promise<ConversationCapabilities> {
 		if (!request || !request.toolType) {
 			return {
@@ -155,8 +156,9 @@ export class ConversationManager extends EventEmitter {
 
 		const isSsh = request.sessionSshRemoteConfig?.enabled === true;
 		const isInteractiveUserTurn = request.querySource !== 'auto';
+		const prefersLiveRuntime = request.preferLiveRuntime === true;
 
-		if (request.toolType === 'codex' && !isSsh && isInteractiveUserTurn) {
+		if (request.toolType === 'codex' && !isSsh && (isInteractiveUserTurn || prefersLiveRuntime)) {
 			return {
 				supportsLiveRuntime: true,
 				supportsTrueSteer: true,
@@ -168,7 +170,7 @@ export class ConversationManager extends EventEmitter {
 			};
 		}
 
-		if (request.toolType === 'claude-code' && !isSsh && isInteractiveUserTurn) {
+		if (request.toolType === 'claude-code' && !isSsh && (isInteractiveUserTurn || prefersLiveRuntime)) {
 			return this.getClaudeLiveCapabilities();
 		}
 

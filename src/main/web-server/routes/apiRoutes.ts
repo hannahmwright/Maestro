@@ -60,6 +60,7 @@ export type {
 
 // Logger context for all API route logs
 const LOG_CONTEXT = 'WebServer:API';
+const ROOT_SCOPED_API_BASE_PATH = '/api';
 
 /**
  * Callbacks required by API routes
@@ -778,6 +779,36 @@ export class ApiRoutes {
 		);
 
 		server.get(
+			`${ROOT_SCOPED_API_BASE_PATH}/sessions/:id/demos`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { id } = request.params as { id: string };
+				const { tabId } = request.query as { tabId?: string };
+
+				if (!this.callbacks.getSessionDemos) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Demo listing service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const demos = await this.callbacks.getSessionDemos(id, tabId || null);
+				return {
+					demos,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.get(
 			`${WEB_APP_API_BASE_PATH}/demos/:demoId`,
 			{
 				config: {
@@ -814,7 +845,79 @@ export class ApiRoutes {
 		);
 
 		server.get(
+			`${ROOT_SCOPED_API_BASE_PATH}/demos/:demoId`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { demoId } = request.params as { demoId: string };
+				if (!this.callbacks.getDemoDetail) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Demo detail service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const demo = await this.callbacks.getDemoDetail(demoId);
+				if (!demo) {
+					return reply.code(404).send({
+						error: 'Not Found',
+						message: `Demo with id '${demoId}' not found`,
+						timestamp: Date.now(),
+					});
+				}
+
+				return {
+					demo,
+					timestamp: Date.now(),
+				};
+			}
+		);
+
+		server.get(
 			`${WEB_APP_API_BASE_PATH}/artifacts/:artifactId/content`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.max,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				const { artifactId } = request.params as { artifactId: string };
+
+				if (!this.callbacks.getArtifactContent) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Artifact content service not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const artifact = await this.callbacks.getArtifactContent(artifactId);
+				if (!artifact) {
+					return this.sendContentError(
+						request,
+						reply,
+						404,
+						'Not Found',
+						`Artifact with id '${artifactId}' not found`
+					);
+				}
+
+				return this.sendStreamableFile(request, reply, artifact);
+			}
+		);
+
+		server.get(
+			`${ROOT_SCOPED_API_BASE_PATH}/artifacts/:artifactId/content`,
 			{
 				config: {
 					rateLimit: {

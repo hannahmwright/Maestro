@@ -78,6 +78,11 @@ function createMockFastify() {
 			const config = handler ? options?.config : undefined;
 			routes.set(`POST:${path}`, { handler: h, config });
 		}),
+		delete: vi.fn((path: string, options: any, handler?: Function) => {
+			const h = handler || options;
+			const config = handler ? options?.config : undefined;
+			routes.set(`DELETE:${path}`, { handler: h, config });
+		}),
 		getRoute: (method: string, path: string) => routes.get(`${method}:${path}`),
 		routes,
 	};
@@ -121,6 +126,9 @@ describe('ApiRoutes', () => {
 			true
 		);
 		expect(mockFastify.routes.has(`GET:${WEB_APP_API_BASE_PATH}/history`)).toBe(true);
+		expect(mockFastify.routes.has('GET:/api/sessions/:id/demos')).toBe(true);
+		expect(mockFastify.routes.has('GET:/api/demos/:demoId')).toBe(true);
+		expect(mockFastify.routes.has('GET:/api/artifacts/:artifactId/content')).toBe(true);
 	});
 
 	it('returns enriched sessions with live info', async () => {

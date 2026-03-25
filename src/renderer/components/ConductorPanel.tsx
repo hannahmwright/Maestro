@@ -13,13 +13,14 @@ import {
 	ListFilter,
 	History,
 	Loader2,
+	MessageSquarePlus,
+	PauseCircle,
 	PlayCircle,
 	Rows3,
 	Search,
 	Settings2,
 	ShieldAlert,
 	Square,
-	Sparkles,
 	Trash2,
 	Users,
 } from 'lucide-react';
@@ -28,33 +29,44 @@ import type {
 	ConductorRun,
 	ConductorTask,
 	ConductorAgentRole,
+	ConductorTaskAgentHistoryEntry,
+	ConductorTaskAttentionRequest,
 	ConductorProviderAgent,
 	ConductorProviderChoice,
 	ConductorProviderRouteKey,
 	ConductorTaskStatus,
 	ConductorTaskPriority,
+	ConductorTaskCompletionProofRequirement,
+	ConductorTaskCompletionProofStatus,
 	ConductorRunEvent,
 	LogEntry,
+	Session,
 } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSessionStore } from '../stores/sessionStore';
 import { useConductorStore } from '../stores/conductorStore';
 import { generateId } from '../utils/ids';
 import { notifyToast } from '../stores/notificationStore';
+import { getModalActions } from '../stores/modalStore';
 import { safeClipboardWrite } from '../utils/clipboard';
 import {
 	buildConductorPlannerPrompt,
+	parseConductorPlannerSubmission,
 	parseConductorPlannerResponse,
 } from '../services/conductorPlanner';
 import {
+	CONDUCTOR_REVIEWER_JSON_ERROR,
 	buildConductorReviewerPrompt,
+	parseConductorReviewerSubmission,
 	parseConductorReviewerResponse,
 } from '../services/conductorReviewer';
-import { runConductorAgentTurn } from '../services/conductorAgentRuntime';
+import { ConductorAgentRunError, runConductorAgentTurn } from '../services/conductorAgentRuntime';
 import {
 	buildConductorWorkerPrompt,
+	parseConductorWorkerSubmission,
 	parseConductorWorkerResponse,
 } from '../services/conductorWorker';
+import { buildConductorProofPrompt } from '../services/conductorProof';
 import {
 	buildConductorIntegrationTarget,
 	buildConductorWorktreeTarget,
@@ -64,7 +76,56 @@ import {
 import { getRuntimeIdForThread, getSessionLastActivity } from '../utils/workspaceThreads';
 import { getProviderDisplayName } from '../utils/sessionValidation';
 import { Modal } from './ui/Modal';
+import { DemoCardPanel } from './DemoCardPanel';
+import { DemoViewerModal } from './DemoViewerModal';
 import { ToolActivityBlock } from './ToolActivityBlock';
+import { ConductorTeamPanel, type ConductorTeamMember } from './conductor/ConductorTeamPanel';
+import { ConductorOrchestratorPanel } from './conductor/ConductorOrchestratorPanel';
+import { ConductorUpdatesPanel } from './conductor/ConductorUpdatesPanel';
+import { KANBAN_LANES, PRIORITY_OPTIONS, formatLabel } from './conductor/conductorConstants';
+import { ConductorAttentionBanner, type AttentionItem } from './conductor/ConductorAttentionBanner';
+import { ConductorTaskComposer } from './conductor/ConductorTaskComposer';
+import { ConductorPlanComposer } from './conductor/ConductorPlanComposer';
+import {
+	getGlassPanelStyle,
+	getGlassButtonStyle,
+	getGlassInputStyle,
+	getGlassPillStyle,
+	PASTEL_STATUS_TONES,
+	getTaskStatusTone,
+	getTaskPriorityTone,
+} from './conductor/conductorStyles';
+import {
+	buildConductorChildTaskMap,
+	buildDefaultConductorTaskCompletionProof,
+	buildDefaultConductorTaskCompletionProofRequirement,
+	CONDUCTOR_QA_QUARANTINE_FAILURE_COUNT,
+	eventRelatesToConductorTask,
+	formatConductorOperatorMessage,
+	hasConductorTaskApprovedCompletionProof,
+	getConductorTaskAttentionBlockers,
+	getConductorTaskQaFailureState,
+	getConductorTaskVisibleAttention,
+	isConductorTaskAgentRevision,
+	isConductorCompletionProofAttentionRequestId,
+	isConductorTaskOperatorActionRequired,
+	isConductorTaskRunnableByAgent,
+	getConductorTaskOpenFollowUps,
+	getConductorTaskProgress,
+	getConductorTaskRollupStatus,
+	getEffectiveConductorTaskAttentionRequest,
+	getTopLevelConductorTasks,
+	requiresConductorTaskCompletionProof,
+} from '../../shared/conductorTasks';
+import { buildConductorOrchestratorUpdates } from '../../shared/conductorUpdates';
+import type { ConductorOrchestratorUpdate } from '../../shared/conductorUpdates';
+import type {
+	ConductorOrchestratorAction,
+	ConductorOrchestratorContext,
+} from '../../shared/conductorOrchestrator';
+import { resolveConductorRosterIdentity } from '../../shared/conductorRoster';
+import type { DemoCard, DemoDetail } from '../../shared/demo-artifacts';
+import { isCompletedDemoCapture } from '../../shared/demo-artifacts';
 
 interface ConductorPanelProps {
 	theme: Theme;
@@ -73,7 +134,6 @@ interface ConductorPanelProps {
 
 type ConductorTab = 'overview' | 'history';
 type BacklogView = 'board' | 'table';
-type BacklogStatusFilter = 'all' | ConductorTaskStatus;
 type BacklogSourceFilter = 'all' | ConductorTask['source'];
 type BacklogSort = 'priority' | 'updated_desc' | 'updated_asc' | 'title';
 
@@ -91,14 +151,15 @@ const STATUS_OPTIONS: ConductorTaskStatus[] = [
 	'planning',
 	'ready',
 	'running',
+	'needs_revision',
 	'needs_input',
 	'blocked',
 	'needs_review',
+	'needs_proof',
 	'cancelled',
 	'done',
 ];
 
-const PRIORITY_OPTIONS: ConductorTaskPriority[] = ['low', 'medium', 'high', 'critical'];
 const CONDUCTOR_PROVIDER_OPTIONS: ConductorProviderAgent[] = [
 	'claude-code',
 	'codex',
@@ -114,59 +175,99 @@ const BOARD_COLUMNS: ConductorTaskStatus[] = [
 	'planning',
 	'ready',
 	'running',
+	'needs_review',
+	'needs_proof',
+	'needs_revision',
 	'needs_input',
 	'blocked',
-	'needs_review',
 	'cancelled',
 	'done',
 ];
+const CONDUCTOR_BOARD_MAX_HEIGHT = 'clamp(320px, 62vh, 760px)';
+const CONDUCTOR_STALE_TASK_RECOVERY_MS = 90_000;
+const CONDUCTOR_AUTOPLAY_RETRY_COOLDOWN_MS = 5 * 60_000;
+const conductorAutoplayLocks = {
+	planning: new Set<string>(),
+	execution: new Set<string>(),
+	review: new Set<string>(),
+};
 
-const SETTINGS_GUIDE_STEPS = [
-	{
-		key: 'lead',
-		title: 'Use the workspace lead',
-		description:
-			'Conductor automatically follows this workspace’s primary agent and copies its setup whenever it spins up helpers.',
-		icon: Users,
-		accent: 'success',
-	},
-	{
-		key: 'plan',
-		title: 'Drop in a request',
-		description:
-			'Use + New plan to describe what you want changed. Conductor turns that into task-sized steps.',
-		icon: ClipboardList,
-		accent: 'accent',
-	},
-	{
-		key: 'approve',
-		title: 'Review or auto-run',
-		description:
-			'Keep approvals on if you want to review the task list first, or turn on auto-execute to keep things moving.',
-		icon: Sparkles,
-		accent: 'warning',
-	},
-	{
-		key: 'ship',
-		title: 'Watch progress and ship',
-		description:
-			'Conductor works through the plan, pulls finished work together, and can open a PR when it is ready.',
-		icon: CheckCircle2,
-		accent: 'accent',
-	},
-] as const;
 
 const FRIENDLY_TASK_STATUS_LABELS: Record<ConductorTaskStatus, string> = {
 	draft: 'Brainstorm',
 	planning: 'Planning',
 	ready: 'Ready',
 	running: 'In progress',
-	needs_input: 'Needs input',
+	needs_revision: 'Agents revising',
+	needs_input: 'Waiting on you',
+	needs_proof: 'Needs proof',
 	blocked: 'Blocked',
-	needs_review: 'Check me',
+	needs_review: 'In QA',
 	cancelled: 'Stopped',
 	done: 'Done',
 };
+
+const COMPLETION_PROOF_STATUS_OPTIONS: ConductorTaskCompletionProofStatus[] = [
+	'missing',
+	'capturing',
+	'captured',
+	'approved',
+	'rejected',
+];
+
+const COMPLETION_PROOF_STATUS_LABELS: Record<ConductorTaskCompletionProofStatus, string> = {
+	missing: 'Missing',
+	capturing: 'Capturing',
+	captured: 'Captured',
+	approved: 'Approved',
+	rejected: 'Rejected',
+};
+
+type CompletionProofTone = 'warning' | 'accent' | 'success' | 'error';
+
+interface CompletionProofCardState {
+	label: string;
+	tone: CompletionProofTone;
+}
+
+function getCompletionProofCardState(
+	task: ConductorTask,
+	rolledUpStatus: ConductorTaskStatus
+): CompletionProofCardState | null {
+	if (!requiresConductorTaskCompletionProof(task)) {
+		return null;
+	}
+
+	switch (task.completionProof?.status || 'missing') {
+		case 'approved':
+			return { label: 'Proof approved', tone: 'success' };
+		case 'captured':
+			return { label: 'Proof captured', tone: 'accent' };
+		case 'capturing':
+			return { label: 'Capturing proof', tone: 'accent' };
+		case 'rejected':
+			return { label: 'Proof rejected', tone: 'error' };
+		case 'missing':
+		default:
+			return rolledUpStatus === 'needs_proof'
+				? { label: 'Proof required', tone: 'warning' }
+				: null;
+	}
+}
+
+function getCompletionProofTint(theme: Theme, tone: CompletionProofTone): string {
+	switch (tone) {
+		case 'success':
+			return theme.colors.success;
+		case 'warning':
+			return theme.colors.warning;
+		case 'error':
+			return theme.colors.error;
+		case 'accent':
+		default:
+			return theme.colors.accent;
+	}
+}
 
 const FRIENDLY_TASK_SOURCE_LABELS: Record<ConductorTask['source'], string> = {
 	manual: 'You added this',
@@ -175,9 +276,6 @@ const FRIENDLY_TASK_SOURCE_LABELS: Record<ConductorTask['source'], string> = {
 	reviewer_followup: 'Reviewer follow-up',
 };
 
-function formatLabel(value: string): string {
-	return value.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
-}
 
 function formatTaskStatusLabel(status: ConductorTaskStatus): string {
 	return FRIENDLY_TASK_STATUS_LABELS[status];
@@ -216,9 +314,40 @@ function formatConductorStatusLabel(status?: string): string {
 			return 'Needs your attention';
 		case 'integrating':
 			return 'Pulling results together';
+		case 'paused':
+			return 'Paused';
+		case 'pausing':
+			return 'Pausing after current work';
+		case 'holding':
+			return 'Waiting to resume';
 		default:
 			return status ? formatLabel(status) : 'Needs a workspace agent';
 	}
+}
+
+function satisfiesConductorTaskCompletionProofRequirement(
+	demoCard: DemoCard,
+	requirement: ConductorTaskCompletionProofRequirement
+): boolean {
+	return (
+		isCompletedDemoCapture(demoCard) &&
+		(!requirement.requireVideo || Boolean(demoCard.videoArtifact)) &&
+		demoCard.stepCount >= Math.max(0, requirement.minScreenshots || 0)
+	);
+}
+
+const USER_PAUSED_MESSAGE = 'Paused by you.';
+const USER_PAUSING_MESSAGE = 'Pausing after the current work finishes.';
+const RESOURCE_HOLD_MESSAGE = 'Conductor is waiting for system resources.';
+const PROVIDER_LIMIT_HOLD_PATTERN =
+	/(you(?:'|')ve hit your limit|resets?\s+\d|quota|rate limit|out of credits|no credits|subscription.*exhausted)/i;
+
+function isConductorProviderLimitMessage(message: string | null | undefined): boolean {
+	return Boolean(message && PROVIDER_LIMIT_HOLD_PATTERN.test(message));
+}
+
+function normalizeConductorTaskDuplicateKey(task: ConductorTask): string {
+	return `${task.parentTaskId || 'root'}::${task.title.trim().toLowerCase().replace(/\s+/g, ' ')}`;
 }
 
 function derivePlanTitle(request: string): string {
@@ -235,105 +364,9 @@ function derivePlanTitle(request: string): string {
 	return firstLine.length > 80 ? `${firstLine.slice(0, 77)}...` : firstLine;
 }
 
-function getGlassPanelStyle(
-	theme: Theme,
-	options?: {
-		tint?: string;
-		borderColor?: string;
-		strong?: boolean;
-		elevated?: boolean;
-	}
-): React.CSSProperties {
-	const tint = options?.tint || 'rgba(255, 255, 255, 0.10)';
-	const borderColor = options?.borderColor || 'rgba(255, 255, 255, 0.10)';
-	const strong = options?.strong ?? false;
-	const elevated = options?.elevated ?? false;
 
-	return {
-		background: `linear-gradient(180deg, ${tint} 0%, rgba(255, 255, 255, ${strong ? '0.06' : '0.04'}) 42%, rgba(255, 255, 255, 0.02) 100%)`,
-		backgroundColor: theme.colors.bgSidebar,
-		border: `1px solid ${borderColor}`,
-		backdropFilter: strong ? 'blur(28px) saturate(140%)' : 'blur(22px) saturate(132%)',
-		WebkitBackdropFilter: strong ? 'blur(28px) saturate(140%)' : 'blur(22px) saturate(132%)',
-		boxShadow: strong
-			? elevated
-				? '0 30px 60px rgba(15, 23, 42, 0.18), 0 12px 28px rgba(15, 23, 42, 0.12), 0 1px 0 rgba(255, 255, 255, 0.20) inset, 0 -1px 0 rgba(255, 255, 255, 0.03) inset'
-				: '0 24px 48px rgba(15, 23, 42, 0.14), 0 10px 24px rgba(15, 23, 42, 0.10), 0 1px 0 rgba(255, 255, 255, 0.16) inset, 0 -1px 0 rgba(255, 255, 255, 0.03) inset'
-			: elevated
-				? '0 22px 42px rgba(15, 23, 42, 0.14), 0 8px 20px rgba(15, 23, 42, 0.09), 0 1px 0 rgba(255, 255, 255, 0.14) inset, 0 -1px 0 rgba(255, 255, 255, 0.03) inset'
-				: '0 16px 30px rgba(15, 23, 42, 0.10), 0 6px 14px rgba(15, 23, 42, 0.07), 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 -1px 0 rgba(255, 255, 255, 0.02) inset',
-	};
-}
 
-function getGlassButtonStyle(
-	theme: Theme,
-	options?: {
-		active?: boolean;
-		accent?: boolean;
-	}
-): React.CSSProperties {
-	const active = options?.active ?? false;
-	const accent = options?.accent ?? false;
 
-	if (accent) {
-		return {
-			border: `1px solid ${theme.colors.accent}35`,
-			background: `linear-gradient(180deg, ${theme.colors.accent} 0%, ${theme.colors.accent}e0 55%, ${theme.colors.accent}c8 100%)`,
-			color: theme.colors.accentForeground,
-			boxShadow: `0 22px 34px ${theme.colors.accent}30, 0 10px 18px ${theme.colors.accent}18, inset 0 1px 0 rgba(255,255,255,0.24), inset 0 -1px 0 rgba(0,0,0,0.08)`,
-		};
-	}
-
-	return {
-		border: `1px solid ${active ? `${theme.colors.accent}32` : 'rgba(255, 255, 255, 0.10)'}`,
-		background: active
-			? `linear-gradient(180deg, ${theme.colors.accent}18 0%, rgba(255,255,255,0.08) 55%, rgba(255,255,255,0.03) 100%)`
-			: 'linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 55%, rgba(255,255,255,0.03) 100%)',
-		color: active ? theme.colors.textMain : theme.colors.textDim,
-		backdropFilter: 'blur(18px)',
-		WebkitBackdropFilter: 'blur(18px)',
-		boxShadow: active
-			? '0 16px 28px rgba(15, 23, 42, 0.12), 0 6px 14px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255,255,255,0.12), inset 0 -1px 0 rgba(255,255,255,0.03)'
-			: '0 12px 22px rgba(15, 23, 42, 0.08), 0 4px 10px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(255,255,255,0.02)',
-	};
-}
-
-function getGlassInputStyle(theme: Theme): React.CSSProperties {
-	return {
-		background:
-			'linear-gradient(180deg, rgba(255,255,255,0.15) 0%, rgba(255,255,255,0.07) 55%, rgba(255,255,255,0.03) 100%)',
-		backgroundColor: theme.colors.bgMain,
-		border: '1px solid rgba(255,255,255,0.10)',
-		color: theme.colors.textMain,
-		backdropFilter: 'blur(18px)',
-		WebkitBackdropFilter: 'blur(18px)',
-		boxShadow:
-			'0 10px 20px rgba(15, 23, 42, 0.05), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 -1px 0 rgba(255,255,255,0.02)',
-	};
-}
-
-function getGlassPillStyle(
-	theme: Theme,
-	tone?: 'default' | 'accent' | 'success' | 'warning'
-): React.CSSProperties {
-	const tint =
-		tone === 'success'
-			? theme.colors.success
-			: tone === 'warning'
-				? theme.colors.warning
-				: tone === 'accent'
-					? theme.colors.accent
-					: theme.colors.textDim;
-
-	return {
-		background: `linear-gradient(180deg, ${tint}18 0%, rgba(255,255,255,0.07) 55%, rgba(255,255,255,0.03) 100%)`,
-		border: `1px solid ${tint}28`,
-		color: tint,
-		backdropFilter: 'blur(16px)',
-		WebkitBackdropFilter: 'blur(16px)',
-		boxShadow: '0 10px 18px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255,255,255,0.08)',
-	};
-}
 
 
 function getConductorEventTone(
@@ -349,6 +382,8 @@ function getConductorEventTone(
 		case 'pr_created':
 			return 'success';
 		case 'task_needs_input':
+		case 'task_needs_proof':
+		case 'task_needs_revision':
 		case 'task_blocked':
 		case 'task_cancelled':
 		case 'planning_failed':
@@ -419,6 +454,53 @@ function buildConductorConflictResolutionPrompt(input: {
 	].join('\n\n');
 }
 
+const OPERATOR_BLOCK_REASON_PATTERN =
+	/\b(user|operator|approval|approve|confirm|credentials?|token|api key|access|permission|subscription|billing|design preference|preference|which option|what should|do you want|external dependency)\b/i;
+
+function shouldRouteWorkerBlockToOperator(blockedReason: string): boolean {
+	return OPERATOR_BLOCK_REASON_PATTERN.test(blockedReason);
+}
+
+function buildConductorWorkerClarificationPrompt(input: {
+	groupName: string;
+	task: ConductorTask;
+	templateSession: Session;
+	dependencyTitles: string[];
+	blockedReason: string;
+}): string {
+	const acceptanceCriteria =
+		input.task.acceptanceCriteria.length > 0
+			? input.task.acceptanceCriteria.map((item) => `- ${item}`).join('\n')
+			: '- No explicit acceptance criteria provided.';
+	const dependencyLines =
+		input.dependencyTitles.length > 0
+			? input.dependencyTitles.map((title) => `- ${title}`).join('\n')
+			: '- No task dependencies.';
+	const scopeLines =
+		input.task.scopePaths.length > 0
+			? input.task.scopePaths.map((path) => `- ${path}`).join('\n')
+			: '- Scope unknown; stay narrow and follow nearby patterns.';
+
+	return [
+		`You are Conductor for the Maestro group "${input.groupName}".`,
+		'A worker paused on a technical clarification that should be answered from existing task context, not escalated to the operator.',
+		`Working directory: ${input.templateSession.cwd}`,
+		`Task: ${input.task.title}`,
+		`Description: ${input.task.description || 'No description provided.'}`,
+		'Acceptance criteria:',
+		acceptanceCriteria,
+		'Completed dependencies:',
+		dependencyLines,
+		'Expected scope:',
+		scopeLines,
+		`Worker clarification: ${input.blockedReason}`,
+		'Respond with a short actionable answer for the worker.',
+		'Do not ask the operator anything.',
+		'If the worker should make a reasonable assumption, state the assumption clearly and keep scope narrow.',
+		'Return plain text only.',
+	].join('\n\n');
+}
+
 function formatMemorySummary(snapshot: ResourceSnapshot | null): string {
 	if (!snapshot) {
 		return 'Unavailable';
@@ -429,69 +511,6 @@ function formatMemorySummary(snapshot: ResourceSnapshot | null): string {
 	return `${freeGb} GB available of ${totalGb} GB`;
 }
 
-// Spring pastel palette - each status gets a distinct soft color
-const PASTEL_STATUS_TONES: Record<ConductorTaskStatus, { fg: string; bg: string; border: string }> = {
-	draft:        { fg: '#b0b8c4', bg: '#b0b8c412', border: '#b0b8c428' },     // soft gray
-	planning:     { fg: '#a78bfa', bg: '#a78bfa12', border: '#a78bfa28' },     // lavender
-	ready:        { fg: '#60a5fa', bg: '#60a5fa12', border: '#60a5fa28' },     // sky blue
-	running:      { fg: '#818cf8', bg: '#818cf812', border: '#818cf828' },     // periwinkle
-	needs_input:  { fg: '#fbbf24', bg: '#fbbf2412', border: '#fbbf2428' },     // buttercup
-	blocked:      { fg: '#fb923c', bg: '#fb923c12', border: '#fb923c28' },     // peach
-	needs_review: { fg: '#f9a8d4', bg: '#f9a8d412', border: '#f9a8d428' },    // rose pink
-	cancelled:    { fg: '#94a3b8', bg: '#94a3b812', border: '#94a3b828' },     // slate
-	done:         { fg: '#86efac', bg: '#86efac12', border: '#86efac28' },     // mint green
-};
-
-function getTaskStatusTone(
-	_theme: Theme,
-	status: ConductorTaskStatus
-): { bg: string; fg: string; border: string } {
-	return PASTEL_STATUS_TONES[status] ?? PASTEL_STATUS_TONES.draft;
-}
-
-function getTaskPriorityTone(
-	theme: Theme,
-	priority: ConductorTaskPriority
-): { bg: string; fg: string; border: string } {
-	switch (priority) {
-		case 'critical':
-			return {
-				bg: `${theme.colors.error}18`,
-				fg: theme.colors.error,
-				border: `${theme.colors.error}35`,
-			};
-		case 'high':
-			return {
-				bg: `${theme.colors.warning}18`,
-				fg: theme.colors.warning,
-				border: `${theme.colors.warning}35`,
-			};
-		case 'medium':
-			return {
-				bg: `${theme.colors.accent}14`,
-				fg: theme.colors.accent,
-				border: `${theme.colors.accent}30`,
-			};
-		default:
-			return {
-				bg: `${theme.colors.textDim}10`,
-				fg: theme.colors.textDim,
-				border: `${theme.colors.textDim}24`,
-			};
-	}
-}
-
-function eventRelatesToTask(run: ConductorRun, event: ConductorRunEvent, task: ConductorTask): boolean {
-	if (!run.taskIds.includes(task.id)) {
-		return false;
-	}
-
-	if (run.taskIds.length === 1) {
-		return true;
-	}
-
-	return event.message.toLowerCase().includes(task.title.trim().toLowerCase());
-}
 
 function collectRunArtifactPaths(run: ConductorRun | null): string[] {
 	if (!run) {
@@ -617,7 +636,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const [activeTab, setActiveTab] = useState<ConductorTab>('overview');
 	const [backlogView, setBacklogView] = useState<BacklogView>('board');
 	const [taskSearch, setTaskSearch] = useState('');
-	const [statusFilter, setStatusFilter] = useState<BacklogStatusFilter>('all');
+	const [statusFilter, setStatusFilter] = useState<ConductorTaskStatus[]>([]);
 	const [sourceFilter, setSourceFilter] = useState<BacklogSourceFilter>('all');
 	const [sortMode, setSortMode] = useState<BacklogSort>('priority');
 	const [advancedMode, setAdvancedMode] = useState(false);
@@ -625,17 +644,23 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const [isPlanComposerOpen, setIsPlanComposerOpen] = useState(false);
 	const [isTaskComposerOpen, setIsTaskComposerOpen] = useState(false);
 	const [selectedTaskDetailId, setSelectedTaskDetailId] = useState<string | null>(null);
+	const [selectedTaskProofDemo, setSelectedTaskProofDemo] = useState<DemoDetail | null>(null);
+	const [openProofDemoId, setOpenProofDemoId] = useState<string | null>(null);
+	const [capturingProofTaskId, setCapturingProofTaskId] = useState<string | null>(null);
 	const [selectedConductorSessionId, setSelectedConductorSessionId] = useState<string | null>(null);
+	const [selectedConductorThreadMember, setSelectedConductorThreadMember] = useState<ConductorTeamMember | null>(null);
+	const [orchestratorPanelContext, setOrchestratorPanelContext] =
+		useState<ConductorOrchestratorContext | null>(null);
 	const [expandedConductorToolLogIds, setExpandedConductorToolLogIds] = useState<Set<string>>(
 		() => new Set()
 	);
 	const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
-	const [draftDescription, setDraftDescription] = useState('');
+	const [dragOverLaneKey, setDragOverLaneKey] = useState<string | null>(null);
+	const [attentionDismissedAt, setAttentionDismissedAt] = useState(0);
+	const [, setDraftDescription] = useState('');
 	const [plannerNotes, setPlannerNotes] = useState('');
-	const [manualTaskTitle, setManualTaskTitle] = useState('');
-	const [manualTaskDescription, setManualTaskDescription] = useState('');
-	const [manualTaskPriority, setManualTaskPriority] = useState<ConductorTaskPriority>('medium');
 	const [manualTaskParentId, setManualTaskParentId] = useState<string>('');
+	const [taskResponseDrafts, setTaskResponseDrafts] = useState<Record<string, string>>({});
 	const [planningError, setPlanningError] = useState<string | null>(null);
 	const [isPlanning, setIsPlanning] = useState(false);
 	const [executionError, setExecutionError] = useState<string | null>(null);
@@ -656,6 +681,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const boardScrollRef = useRef<HTMLDivElement>(null);
 	const lastAutoPlanReadyKeyRef = useRef<string | null>(null);
 	const lastAutoRunReadyKeyRef = useRef<string | null>(null);
+	const lastAutoReviewReadyKeyRef = useRef<string | null>(null);
+	const autoplayPauseRef = useRef(false);
 	const groups = useSessionStore((s) => s.groups);
 	const sessions = useSessionStore((s) => s.sessions);
 	const threads = useSessionStore((s) => s.threads);
@@ -672,6 +699,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const addTask = useConductorStore((s) => s.addTask);
 	const setConductor = useConductorStore((s) => s.setConductor);
 	const setTasks = useConductorStore((s) => s.setTasks);
+	const setRuns = useConductorStore((s) => s.setRuns);
 	const updateTask = useConductorStore((s) => s.updateTask);
 	const deleteTask = useConductorStore((s) => s.deleteTask);
 	const replacePlannerTasks = useConductorStore((s) => s.replacePlannerTasks);
@@ -687,6 +715,75 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		[allTasks, groupId]
 	);
 	const runs = useMemo(() => allRuns.filter((run) => run.groupId === groupId), [allRuns, groupId]);
+	const duplicateAutoplayWinnerByKey = useMemo(() => {
+		const statusRank = new Map<ConductorTaskStatus, number>([
+			['needs_review', 8],
+			['needs_proof', 7],
+			['running', 6],
+			['planning', 5],
+			['needs_revision', 4],
+			['needs_input', 3],
+			['blocked', 2],
+			['ready', 1],
+			['draft', 0],
+			['cancelled', -1],
+			['done', -1],
+		]);
+		const winners = new Map<string, ConductorTask>();
+		for (const task of tasks) {
+			if (task.status === 'done' || task.status === 'cancelled') {
+				continue;
+			}
+
+			const key = normalizeConductorTaskDuplicateKey(task);
+			const currentWinner = winners.get(key);
+			if (!currentWinner) {
+				winners.set(key, task);
+				continue;
+			}
+
+			const taskRank = statusRank.get(task.status) ?? 0;
+			const currentRank = statusRank.get(currentWinner.status) ?? 0;
+			if (
+				taskRank > currentRank ||
+				(taskRank === currentRank &&
+					(task.updatedAt > currentWinner.updatedAt ||
+						(task.updatedAt === currentWinner.updatedAt &&
+							task.createdAt > currentWinner.createdAt)))
+			) {
+				winners.set(key, task);
+			}
+		}
+
+		return new Map(Array.from(winners.entries()).map(([key, task]) => [key, task.id]));
+	}, [tasks]);
+	const latestRunByTaskAndKind = useMemo(() => {
+		const map = new Map<string, ConductorRun>();
+		const orderedRuns = [...runs].sort(
+			(left, right) =>
+				(right.endedAt || right.startedAt || 0) - (left.endedAt || left.startedAt || 0)
+		);
+		for (const run of orderedRuns) {
+			const kind = run.kind || 'planning';
+			for (const taskId of run.taskIds) {
+				const key = `${kind}:${taskId}`;
+				if (!map.has(key)) {
+					map.set(key, run);
+				}
+			}
+		}
+		return map;
+	}, [runs]);
+	const autoplaySuppressedDuplicateCount = useMemo(
+		() =>
+			tasks.filter((task) => {
+				if (task.status === 'done' || task.status === 'cancelled') {
+					return false;
+				}
+				return duplicateAutoplayWinnerByKey.get(normalizeConductorTaskDuplicateKey(task)) !== task.id;
+			}).length,
+		[duplicateAutoplayWinnerByKey, tasks]
+	);
 	const groupSessions = useMemo(
 		() =>
 			sessions.filter(
@@ -737,11 +834,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		},
 		[groupId, groupSessions, groupSessionsByRuntimeId, threads]
 	);
-	const displayConductorStatus = selectedTemplate
-		? conductor?.status === 'needs_setup'
-			? 'idle'
-			: conductor?.status
-		: 'needs_setup';
+	const isAutoplayPaused = Boolean(conductor?.isPaused);
+	const autoplayPauseMessage =
+		isPlanning || isExecuting || isReviewing || isIntegrating
+			? USER_PAUSING_MESSAGE
+			: USER_PAUSED_MESSAGE;
 	const providerRouting = conductor?.providerRouting || {
 		default: { primary: 'workspace-lead' as const, fallback: null },
 		ui: { primary: 'claude-code' as const, fallback: 'codex' as const },
@@ -750,6 +847,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		nearLimitPercent: 88,
 	};
 	const validationCommand = conductor?.validationCommand || '';
+	const conductorWorktreeBasePath = selectedTemplate?.worktreeConfig?.basePath?.trim() || '';
 	const latestPlanningRun = useMemo(
 		() => runs.find((run) => (run.kind || 'planning') === 'planning') || null,
 		[runs]
@@ -770,29 +868,104 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const plannerTasks = useMemo(() => tasks.filter((task) => task.source === 'planner'), [tasks]);
 	const manualTasks = useMemo(() => tasks.filter((task) => task.source !== 'planner'), [tasks]);
 	const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
-	const childTasksByParentId = useMemo(() => {
-		const map = new Map<string, ConductorTask[]>();
-		for (const task of tasks) {
-			if (!task.parentTaskId) {
-				continue;
-			}
-			const existing = map.get(task.parentTaskId);
-			if (existing) {
-				existing.push(task);
-			} else {
-				map.set(task.parentTaskId, [task]);
-			}
-		}
-		return map;
-	}, [tasks]);
+	const childTasksByParentId = useMemo(() => buildConductorChildTaskMap(tasks), [tasks]);
+	const topLevelTasks = useMemo(() => getTopLevelConductorTasks(tasks), [tasks]);
+	const rolledUpTaskStatusById = useMemo(() => {
+		const entries = tasks.map((task) => [
+			task.id,
+			getConductorTaskRollupStatus(task, childTasksByParentId, runs),
+		] as const);
+		return new Map(entries);
+	}, [childTasksByParentId, runs, tasks]);
+	const effectiveAttentionByTaskId = useMemo(() => {
+		const entries = tasks.map((task) => [
+			task.id,
+			getEffectiveConductorTaskAttentionRequest(task, runs),
+		] as const);
+		return new Map(entries);
+	}, [runs, tasks]);
+	const visibleAttentionByTaskId = useMemo(() => {
+		const entries = tasks.map((task) => [
+			task.id,
+			getConductorTaskVisibleAttention(task, childTasksByParentId, runs),
+		] as const);
+		return new Map(entries);
+	}, [childTasksByParentId, runs, tasks]);
+	const qaFailureStateByTaskId = useMemo(() => {
+		const entries = tasks.map((task) => [task.id, getConductorTaskQaFailureState(task, runs)] as const);
+		return new Map(entries);
+	}, [runs, tasks]);
+	const openFollowUpsByTaskId = useMemo(() => {
+		const entries = tasks.map((task) => [
+			task.id,
+			getConductorTaskOpenFollowUps(task, childTasksByParentId),
+		] as const);
+		return new Map(entries);
+	}, [childTasksByParentId, tasks]);
 	const selectedTaskDetail = useMemo(
 		() => (selectedTaskDetailId ? tasksById.get(selectedTaskDetailId) || null : null),
 		[selectedTaskDetailId, tasksById]
 	);
 	const reviewReadyTasks = useMemo(
-		() => tasks.filter((task) => task.status === 'needs_review'),
-		[tasks]
+		() =>
+			tasks.filter(
+				(task) => {
+					if (task.status !== 'needs_review' || qaFailureStateByTaskId.get(task.id)?.isQuarantined) {
+						return false;
+					}
+					if (
+						duplicateAutoplayWinnerByKey.get(normalizeConductorTaskDuplicateKey(task)) !== task.id
+					) {
+						return false;
+					}
+
+					const latestRun = latestRunByTaskAndKind.get(`review:${task.id}`);
+					if (
+						latestRun &&
+						(latestRun.status === 'attention_required' || latestRun.status === 'blocked')
+					) {
+						const endedAt = latestRun.endedAt || latestRun.startedAt || 0;
+						return Date.now() - endedAt >= CONDUCTOR_AUTOPLAY_RETRY_COOLDOWN_MS;
+					}
+
+					return true;
+				}
+			),
+		[duplicateAutoplayWinnerByKey, latestRunByTaskAndKind, qaFailureStateByTaskId, tasks]
 	);
+	const quarantinedReviewTasks = useMemo(
+		() =>
+			tasks.filter(
+				(task) => task.status === 'needs_review' && Boolean(qaFailureStateByTaskId.get(task.id)?.isQuarantined)
+			),
+		[qaFailureStateByTaskId, tasks]
+	);
+	const autoplayCooldownTaskCount = useMemo(() => {
+		const now = Date.now();
+		return tasks.filter((task) => {
+			if (task.status === 'done' || task.status === 'cancelled') {
+				return false;
+			}
+			const relevantKinds: Array<'planning' | 'execution' | 'review'> = [];
+			if (task.source !== 'planner' && (task.status === 'ready' || task.status === 'planning')) {
+				relevantKinds.push('planning');
+			}
+			if (task.source !== 'manual' && isConductorTaskRunnableByAgent(task, childTasksByParentId, runs)) {
+				relevantKinds.push('execution');
+			}
+			if (task.status === 'needs_review') {
+				relevantKinds.push('review');
+			}
+			return relevantKinds.some((kind) => {
+				const latestRun = latestRunByTaskAndKind.get(`${kind}:${task.id}`);
+				if (!latestRun || (latestRun.status !== 'attention_required' && latestRun.status !== 'blocked')) {
+					return false;
+				}
+				const endedAt = latestRun.endedAt || latestRun.startedAt || 0;
+				return now - endedAt < CONDUCTOR_AUTOPLAY_RETRY_COOLDOWN_MS;
+			});
+		}).length;
+	}, [childTasksByParentId, latestRunByTaskAndKind, runs, tasks]);
 	const integrationReadyTaskIds = useMemo(() => {
 		if (!latestExecutionRun?.taskBranches) {
 			return [];
@@ -893,7 +1066,9 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				? selectedTaskRelatedRuns
 						.flatMap((run) =>
 							run.events
-								.filter((event) => eventRelatesToTask(run, event, selectedTaskDetail))
+								.filter((event) =>
+									eventRelatesToConductorTask(run, event, selectedTaskDetail)
+								)
 								.map((event) => ({
 									event,
 									runKind: run.kind || 'planning',
@@ -914,6 +1089,63 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		() => (selectedTaskDetail ? childTasksByParentId.get(selectedTaskDetail.id) || [] : []),
 		[selectedTaskDetail, childTasksByParentId]
 	);
+	const selectedTaskOpenFollowUps = useMemo(
+		() =>
+			selectedTaskDetail
+				? getConductorTaskOpenFollowUps(selectedTaskDetail, childTasksByParentId)
+				: [],
+		[selectedTaskDetail, childTasksByParentId]
+	);
+	const selectedTaskAttentionBlockers = useMemo(
+		() =>
+			selectedTaskDetail
+				? getConductorTaskAttentionBlockers(selectedTaskDetail, childTasksByParentId, runs)
+				: [],
+		[selectedTaskDetail, childTasksByParentId, runs]
+	);
+	const selectedTaskNeedsOperatorAttention = useMemo(
+		() =>
+			selectedTaskDetail
+				? (() => {
+						const visibleAttention = visibleAttentionByTaskId.get(selectedTaskDetail.id);
+						return visibleAttention
+							? isConductorTaskOperatorActionRequired(
+									visibleAttention.task,
+									childTasksByParentId,
+									runs
+								)
+							: false;
+					})()
+				: false,
+		[selectedTaskDetail, visibleAttentionByTaskId, childTasksByParentId, runs]
+	);
+	const selectedTaskRolledUpStatus = useMemo(
+		() =>
+			selectedTaskDetail
+				? rolledUpTaskStatusById.get(selectedTaskDetail.id) || selectedTaskDetail.status
+				: null,
+		[rolledUpTaskStatusById, selectedTaskDetail]
+	);
+	const selectedTaskProgress = useMemo(
+		() =>
+			selectedTaskDetail
+				? getConductorTaskProgress(selectedTaskDetail, childTasksByParentId)
+				: { totalSubtasks: 0, completedSubtasks: 0, openSubtasks: 0, completionRatio: 0 },
+		[selectedTaskDetail, childTasksByParentId]
+	);
+	const selectedTaskEffectiveAttention = useMemo(
+		() =>
+			selectedTaskDetail ? visibleAttentionByTaskId.get(selectedTaskDetail.id)?.attentionRequest || null : null,
+		[selectedTaskDetail, visibleAttentionByTaskId]
+	);
+	const selectedTaskAttentionTarget = useMemo(
+		() => (selectedTaskDetail ? visibleAttentionByTaskId.get(selectedTaskDetail.id)?.task || null : null),
+		[selectedTaskDetail, visibleAttentionByTaskId]
+	);
+	const selectedTaskQaFailureState = useMemo(
+		() => (selectedTaskDetail ? qaFailureStateByTaskId.get(selectedTaskDetail.id) || null : null),
+		[qaFailureStateByTaskId, selectedTaskDetail]
+	);
 	const selectedTaskLatestExecution = useMemo(
 		() =>
 			selectedTaskDetail
@@ -929,23 +1161,143 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				: null,
 		[runs, selectedTaskDetail]
 	);
+	const staleTaskRecoveryIds = useMemo(() => {
+		if (
+			isPlanning ||
+			isExecuting ||
+			isReviewing ||
+			conductorAutoplayLocks.planning.has(groupId) ||
+			conductorAutoplayLocks.execution.has(groupId) ||
+			conductorAutoplayLocks.review.has(groupId)
+		) {
+			return [];
+		}
 
-	const taskCounts = useMemo(
-		() => ({
-			total: tasks.length,
-			done: tasks.filter((task) => task.status === 'done').length,
-			cancelled: tasks.filter((task) => task.status === 'cancelled').length,
-			ready: tasks.filter((task) => task.status === 'ready').length,
-			running: tasks.filter((task) => task.status === 'running').length,
-			planning: tasks.filter((task) => task.status === 'planning').length,
-			needsInput: tasks.filter((task) => task.status === 'needs_input').length,
-			blocked: tasks.filter((task) => task.status === 'blocked').length,
-			needsReview: tasks.filter((task) => task.status === 'needs_review').length,
-			draft: tasks.filter((task) => task.status === 'draft').length,
-		}),
-		[tasks]
-	);
+		const now = Date.now();
+		return tasks
+			.filter((task) => task.status === 'planning' || task.status === 'running')
+			.filter((task) => {
+				if (cancelledTaskIdsRef.current.has(task.id)) {
+					return false;
+				}
+
+				const sessionId =
+					task.status === 'planning' ? task.plannerSessionId : task.workerSessionId;
+				const session = sessionId ? sessionById.get(sessionId) : null;
+				if (session?.state === 'busy') {
+					return false;
+				}
+
+				const taskAgeMs = Math.max(0, now - (task.updatedAt || task.createdAt || now));
+				return taskAgeMs >= CONDUCTOR_STALE_TASK_RECOVERY_MS;
+			})
+			.map((task) => task.id);
+	}, [groupId, isExecuting, isPlanning, isReviewing, sessionById, tasks]);
+	const staleRunRecoveryIds = useMemo(() => {
+		if (
+			isPlanning ||
+			isExecuting ||
+			isReviewing ||
+			conductorAutoplayLocks.planning.has(groupId) ||
+			conductorAutoplayLocks.execution.has(groupId) ||
+			conductorAutoplayLocks.review.has(groupId)
+		) {
+			return [];
+		}
+
+		const now = Date.now();
+		return runs
+			.filter((run) => run.status === 'running' || run.status === 'planning')
+			.filter((run) => {
+				if (Math.max(0, now - (run.startedAt || now)) < CONDUCTOR_STALE_TASK_RECOVERY_MS) {
+					return false;
+				}
+
+				const runSessionIds = new Set<string>([
+					run.plannerSessionId,
+					...(run.agentSessionIds || []),
+					...Object.values(run.taskWorkerSessionIds || {}),
+					...Object.values(run.taskReviewerSessionIds || {}),
+				].filter((sessionId): sessionId is string => Boolean(sessionId)));
+				const hasBusySession = Array.from(runSessionIds).some(
+					(sessionId) => sessionById.get(sessionId)?.state === 'busy'
+				);
+				if (hasBusySession) {
+					return false;
+				}
+
+				if (run.kind === 'planning') {
+					return run.taskIds.every((taskId) => tasksById.get(taskId)?.status !== 'planning');
+				}
+				if (run.kind === 'execution') {
+					return run.taskIds.every((taskId) => tasksById.get(taskId)?.status !== 'running');
+				}
+				if (run.kind === 'review') {
+					return run.taskIds.every((taskId) => tasksById.get(taskId)?.status !== 'needs_review');
+				}
+
+				return false;
+			})
+			.map((run) => run.id);
+	}, [groupId, isExecuting, isPlanning, isReviewing, runs, sessionById, tasksById]);
+
+	useEffect(() => {
+		if (!selectedTaskDetail || !selectedTaskAttentionTarget) {
+			return;
+		}
+
+		setTaskResponseDrafts((previous) => {
+			if (previous[selectedTaskAttentionTarget.id] !== undefined) {
+				return previous;
+			}
+
+			return {
+				...previous,
+				[selectedTaskAttentionTarget.id]: selectedTaskEffectiveAttention?.response || '',
+			};
+		});
+	}, [selectedTaskAttentionTarget, selectedTaskDetail, selectedTaskEffectiveAttention]);
+
+	useEffect(() => {
+		const demoId = selectedTaskDetail?.completionProof?.demoId;
+		if (!demoId) {
+			setSelectedTaskProofDemo(null);
+			return;
+		}
+
+		let cancelled = false;
+		void window.maestro.artifacts.getDemo(demoId).then((demoDetail) => {
+			if (!cancelled) {
+				setSelectedTaskProofDemo(demoDetail);
+			}
+		});
+
+		return () => {
+			cancelled = true;
+		};
+	}, [selectedTaskDetail?.completionProof?.demoId]);
+
+	const taskCounts = useMemo(() => {
+		const topLevelStatuses = topLevelTasks.map(
+			(task) => rolledUpTaskStatusById.get(task.id) || task.status
+		);
+		return {
+			total: topLevelTasks.length,
+			done: topLevelStatuses.filter((status) => status === 'done').length,
+			cancelled: topLevelStatuses.filter((status) => status === 'cancelled').length,
+			ready: topLevelStatuses.filter((status) => status === 'ready').length,
+			running: topLevelStatuses.filter((status) => status === 'running').length,
+			planning: topLevelStatuses.filter((status) => status === 'planning').length,
+			needsRevision: topLevelStatuses.filter((status) => status === 'needs_revision').length,
+			needsInput: topLevelStatuses.filter((status) => status === 'needs_input').length,
+			needsProof: topLevelStatuses.filter((status) => status === 'needs_proof').length,
+			blocked: topLevelStatuses.filter((status) => status === 'blocked').length,
+			needsReview: topLevelStatuses.filter((status) => status === 'needs_review').length,
+			draft: topLevelStatuses.filter((status) => status === 'draft').length,
+		};
+	}, [rolledUpTaskStatusById, topLevelTasks]);
 	const tasksNeedingPlanningIds = useMemo(() => {
+		const now = Date.now();
 		const priorityRank = new Map<ConductorTaskPriority, number>([
 			['critical', 0],
 			['high', 1],
@@ -959,6 +1311,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					task.source !== 'planner' &&
 					(task.status === 'ready' || (task.status === 'planning' && !task.plannerSessionId))
 			)
+			.filter(
+				(task) =>
+					duplicateAutoplayWinnerByKey.get(normalizeConductorTaskDuplicateKey(task)) === task.id
+			)
+			.filter((task) => {
+				const latestRun = latestRunByTaskAndKind.get(`planning:${task.id}`);
+				if (!latestRun || latestRun.status !== 'attention_required') {
+					return true;
+				}
+				const endedAt = latestRun.endedAt || latestRun.startedAt || 0;
+				return now - endedAt >= CONDUCTOR_AUTOPLAY_RETRY_COOLDOWN_MS;
+			})
 			.sort((left, right) => {
 				const priorityDiff =
 					(priorityRank.get(left.priority) ?? 99) - (priorityRank.get(right.priority) ?? 99);
@@ -968,10 +1332,13 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				return left.createdAt - right.createdAt;
 			})
 			.map((task) => task.id);
-	}, [tasks]);
+	}, [duplicateAutoplayWinnerByKey, latestRunByTaskAndKind, tasks]);
 	const dependencyReadyTaskIds = useMemo(() => {
+		const now = Date.now();
 		const completedTaskIds = new Set(
-			tasks.filter((task) => task.status === 'done').map((task) => task.id)
+			tasks
+				.filter((task) => (rolledUpTaskStatusById.get(task.id) || task.status) === 'done')
+				.map((task) => task.id)
 		);
 		const priorityRank = new Map<ConductorTaskPriority, number>([
 			['critical', 0],
@@ -981,23 +1348,203 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		]);
 
 		return [...tasks]
-			.filter(
-				(task) =>
-					task.source === 'planner' &&
-					task.status === 'ready' &&
-					task.dependsOn.every((dependencyId) => completedTaskIds.has(dependencyId))
-			)
-			.sort((left, right) => {
-				const priorityDiff =
-					(priorityRank.get(left.priority) ?? 99) - (priorityRank.get(right.priority) ?? 99);
+				.filter(
+					(task) =>
+						task.source !== 'manual' &&
+						isConductorTaskRunnableByAgent(task, childTasksByParentId, runs) &&
+						task.dependsOn.every((dependencyId) => completedTaskIds.has(dependencyId))
+				)
+				.filter(
+					(task) =>
+						duplicateAutoplayWinnerByKey.get(normalizeConductorTaskDuplicateKey(task)) === task.id
+				)
+				.filter((task) => {
+					const latestRun = latestRunByTaskAndKind.get(`execution:${task.id}`);
+					if (
+						!latestRun ||
+						(latestRun.status !== 'attention_required' && latestRun.status !== 'blocked')
+					) {
+						return true;
+					}
+					const endedAt = latestRun.endedAt || latestRun.startedAt || 0;
+					return now - endedAt >= CONDUCTOR_AUTOPLAY_RETRY_COOLDOWN_MS;
+				})
+				.sort((left, right) => {
+					const priorityDiff =
+						(priorityRank.get(left.priority) ?? 99) - (priorityRank.get(right.priority) ?? 99);
 				if (priorityDiff !== 0) {
 					return priorityDiff;
 				}
-				return left.createdAt - right.createdAt;
-			})
-			.map((task) => task.id);
-	}, [tasks]);
-	const filteredTasks = useMemo(() => {
+					return left.createdAt - right.createdAt;
+				})
+				.map((task) => task.id);
+	}, [childTasksByParentId, duplicateAutoplayWinnerByKey, latestRunByTaskAndKind, rolledUpTaskStatusById, runs, tasks]);
+	const runIsLiveById = useMemo(() => {
+		const map = new Map<string, boolean>();
+		const planningStillMatters =
+			Boolean(pendingRun) ||
+			conductor?.status === 'planning' ||
+			conductor?.status === 'awaiting_approval' ||
+			tasksNeedingPlanningIds.length > 0;
+
+		for (const run of runs) {
+			const kind = run.kind || 'planning';
+			let isLive = false;
+
+			switch (kind) {
+				case 'planning':
+					isLive = Boolean(
+						(run.status === 'awaiting_approval' && pendingRun?.id === run.id) ||
+							(planningStillMatters && latestPlanningRun?.id === run.id)
+					);
+					break;
+				case 'review':
+					isLive =
+						run.status === 'running' ||
+						run.taskIds.some((taskId) => tasksById.get(taskId)?.status === 'needs_review');
+					break;
+				case 'execution':
+					isLive =
+						run.status === 'running' ||
+						run.taskIds.some((taskId) => tasksById.get(taskId)?.status === 'running');
+					break;
+				case 'integration':
+					isLive = Boolean(
+						latestIntegrationRun?.id === run.id &&
+							(conductor?.status === 'integrating' || hasOutstandingIntegrationConflict(run))
+					);
+					break;
+				default:
+					isLive = false;
+			}
+
+			map.set(run.id, isLive);
+		}
+
+		return map;
+	}, [
+		conductor?.status,
+		latestIntegrationRun,
+		latestPlanningRun,
+		pendingRun,
+		runs,
+		tasksById,
+		tasksNeedingPlanningIds.length,
+	]);
+	const visiblePlanningSummary = useMemo(() => {
+		if (!latestPlanningRun?.summary || !runIsLiveById.get(latestPlanningRun.id)) {
+			return null;
+		}
+
+		return formatConductorOperatorMessage(latestPlanningRun.summary);
+	}, [latestPlanningRun, runIsLiveById]);
+	const runDisabledReason = useMemo(() => {
+		if (isAutoplayPaused) {
+			return conductor?.holdReason || autoplayPauseMessage;
+		}
+		if (isExecuting) {
+			return 'Workers are already running.';
+		}
+		if (isReviewing) {
+			return 'QA is already running.';
+		}
+		if (pendingRun) {
+			return 'Conductor is waiting to approve the current plan.';
+		}
+		if (dependencyReadyTaskIds.length > 0) {
+			return null;
+		}
+
+		const readyTasks = tasks.filter(
+			(task) =>
+				task.source !== 'manual' &&
+				isConductorTaskRunnableByAgent(task, childTasksByParentId, runs)
+		);
+		const blockedReadyTask = readyTasks.find((task) =>
+			task.dependsOn.some((dependencyId) => (rolledUpTaskStatusById.get(dependencyId) || tasksById.get(dependencyId)?.status) !== 'done')
+		);
+		if (blockedReadyTask) {
+			const unresolvedDependencies = blockedReadyTask.dependsOn
+				.map((dependencyId) => tasksById.get(dependencyId))
+				.filter(
+					(dependencyTask): dependencyTask is ConductorTask => dependencyTask != null
+				);
+			const incompleteDependencies = unresolvedDependencies.filter(
+				(dependencyTask) =>
+					(rolledUpTaskStatusById.get(dependencyTask.id) || dependencyTask.status) !== 'done'
+			);
+			const qaDependency = incompleteDependencies.find(
+				(dependencyTask) =>
+					(rolledUpTaskStatusById.get(dependencyTask.id) || dependencyTask.status) === 'needs_review'
+			);
+			if (qaDependency) {
+				return `"${blockedReadyTask.title}" is queued behind "${qaDependency.title}", which is still in QA.`;
+			}
+			const proofDependency = incompleteDependencies.find(
+				(dependencyTask) =>
+					(rolledUpTaskStatusById.get(dependencyTask.id) || dependencyTask.status) === 'needs_proof'
+			);
+			if (proofDependency) {
+				return `"${blockedReadyTask.title}" is queued behind "${proofDependency.title}", which is still waiting on proof of completion.`;
+			}
+			if (incompleteDependencies.length > 0) {
+				return `"${blockedReadyTask.title}" is still waiting on ${incompleteDependencies
+					.slice(0, 2)
+					.map((dependencyTask) => `"${dependencyTask.title}"`)
+					.join(' and ')}.`;
+			}
+		}
+
+		if (reviewReadyTasks.length > 0) {
+			return `QA is queued for ${reviewReadyTasks.length} task${reviewReadyTasks.length === 1 ? '' : 's'}.`;
+		}
+
+		if (quarantinedReviewTasks.length > 0) {
+			return `QA is paused for ${quarantinedReviewTasks.length} task${quarantinedReviewTasks.length === 1 ? '' : 's'} after repeated malformed reviewer replies.`;
+		}
+
+		if (autoplayCooldownTaskCount > 0) {
+			return `Conductor is waiting a few minutes before retrying ${autoplayCooldownTaskCount} recently-failed task${autoplayCooldownTaskCount === 1 ? '' : 's'}.`;
+		}
+
+		const operatorAttentionCount = tasks.filter((task) =>
+			isConductorTaskOperatorActionRequired(task, childTasksByParentId, runs)
+		).length;
+		if (operatorAttentionCount > 0) {
+			return `Conductor is waiting on you for ${operatorAttentionCount} task${operatorAttentionCount === 1 ? '' : 's'}.`;
+		}
+
+		const revisionCount = tasks.filter((task) =>
+			isConductorTaskAgentRevision(task, childTasksByParentId, runs)
+		).length;
+		if (revisionCount > 0) {
+			return `Agents are revising ${revisionCount} task${revisionCount === 1 ? '' : 's'}. Execution will resume when a follow-up task is ready.`;
+		}
+
+		if (autoplaySuppressedDuplicateCount > 0) {
+			return `Conductor is ignoring ${autoplaySuppressedDuplicateCount} duplicate task${autoplaySuppressedDuplicateCount === 1 ? '' : 's'} until you decide which copy to keep.`;
+		}
+
+		return 'No runnable tasks are available yet.';
+	}, [
+		autoplayCooldownTaskCount,
+		autoplayPauseMessage,
+		autoplaySuppressedDuplicateCount,
+		childTasksByParentId,
+		conductor?.holdReason,
+		dependencyReadyTaskIds.length,
+		isExecuting,
+		isAutoplayPaused,
+		isReviewing,
+		pendingRun,
+		quarantinedReviewTasks.length,
+		reviewReadyTasks.length,
+		rolledUpTaskStatusById,
+		runs,
+		tasks,
+		tasksById,
+	]);
+	const baseFilteredTasks = useMemo(() => {
 		const search = taskSearch.trim().toLowerCase();
 		const priorityRank = new Map<ConductorTaskPriority, number>([
 			['critical', 0],
@@ -1010,12 +1557,14 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			if (!search) {
 				return true;
 			}
+			const childTasks = childTasksByParentId.get(task.id) || [];
 
 			return [
 				task.title,
 				task.description,
 				task.source,
 				task.parentTaskId ? tasksById.get(task.parentTaskId)?.title || '' : '',
+				...childTasks.map((childTask) => `${childTask.title} ${childTask.description}`),
 				...task.scopePaths,
 				...(task.changedPaths || []),
 				...task.acceptanceCriteria,
@@ -1025,8 +1574,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				.includes(search);
 		};
 
-		return tasks
-			.filter((task) => (statusFilter === 'all' ? true : task.status === statusFilter))
+		return topLevelTasks
 			.filter((task) => (sourceFilter === 'all' ? true : task.source === sourceFilter))
 			.filter(matchesSearch)
 			.sort((left, right) => {
@@ -1048,22 +1596,36 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					}
 				}
 			});
-	}, [tasks, taskSearch, statusFilter, sourceFilter, sortMode, tasksById]);
+	}, [childTasksByParentId, sourceFilter, sortMode, taskSearch, tasksById, topLevelTasks]);
+	const filteredTasks = useMemo(
+		() =>
+			baseFilteredTasks.filter((task) =>
+				statusFilter.length === 0
+					? true
+					: statusFilter.includes(rolledUpTaskStatusById.get(task.id) || task.status)
+			),
+		[baseFilteredTasks, rolledUpTaskStatusById, statusFilter]
+	);
 	const taskCountsByStatus = useMemo(() => {
 		const counts: Record<string, number> = {};
 		for (const status of BOARD_COLUMNS) {
-			counts[status] = tasks.filter((t) => t.status === status).length;
+			counts[status] = baseFilteredTasks.filter(
+				(task) => (rolledUpTaskStatusById.get(task.id) || task.status) === status
+			).length;
 		}
 		return counts;
-	}, [tasks]);
-
-	const scrollToColumn = (status: ConductorTaskStatus) => {
+	}, [baseFilteredTasks, rolledUpTaskStatusById]);
+	const scrollToColumn = (status: string) => {
 		const container = boardScrollRef.current;
 		if (!container) return;
-		const column = container.querySelector(`[data-column-status="${status}"]`);
-		if (column) {
-			column.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
-		}
+
+		window.requestAnimationFrame(() => {
+			const column = container.querySelector(`[data-column-status="${status}"]`);
+			if (column instanceof HTMLElement) {
+				const targetLeft = Math.max(column.offsetLeft - 12, 0);
+				container.scrollTo({ left: targetLeft, behavior: 'smooth' });
+			}
+		});
 	};
 
 	const shippingComplete = Boolean(
@@ -1074,12 +1636,54 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const percentComplete = taskCounts.total
 		? Math.round((taskCounts.done / taskCounts.total) * 100)
 		: 0;
+	// ── "Since last visit" delta tracking ──────────────────────────────
+	const lastVisitKey = `conductor-last-visit-${groupId}`;
+	const [lastVisitTimestamp] = useState<number>(() => {
+		try {
+			const stored = localStorage.getItem(lastVisitKey);
+			return stored ? Number(stored) : 0;
+		} catch {
+			return 0;
+		}
+	});
+
+	useEffect(() => {
+		// Record the current visit timestamp when leaving the page
+		return () => {
+			try {
+				localStorage.setItem(lastVisitKey, String(Date.now()));
+			} catch {
+				// localStorage may be unavailable
+			}
+		};
+	}, [lastVisitKey]);
+
+	const sinceLastVisitDeltas = useMemo(() => {
+		if (!lastVisitTimestamp) {
+			return { newTasks: 0, updatedTasks: 0, newRuns: 0 };
+		}
+		const newTasks = tasks.filter(
+			(task) => task.createdAt && task.createdAt > lastVisitTimestamp
+		).length;
+		const updatedTasks = tasks.filter(
+			(task) =>
+				task.updatedAt &&
+				task.updatedAt > lastVisitTimestamp &&
+				(!task.createdAt || task.createdAt <= lastVisitTimestamp)
+		).length;
+		const newRuns = runs.filter(
+			(run) => run.startedAt && run.startedAt > lastVisitTimestamp
+		).length;
+		return { newTasks, updatedTasks, newRuns };
+	}, [lastVisitTimestamp, tasks, runs]);
+
 	const overviewPills = useMemo<
 		Array<{
 			label: string;
 			value: string | number;
 			color: string;
 			icon: React.ReactNode;
+			delta?: number;
 		}>
 	>(
 		() => {
@@ -1088,6 +1692,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				value: string | number;
 				color: string;
 				icon: React.ReactNode;
+				delta?: number;
 			}> = [];
 
 			// Progress — only show when there are tasks
@@ -1097,6 +1702,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					value: `${percentComplete}%`,
 					color: percentComplete === 100 ? '#86efac' : '#60a5fa',
 					icon: <Activity className="w-3.5 h-3.5" />,
+					delta: sinceLastVisitDeltas.newTasks || undefined,
 				});
 			}
 
@@ -1114,7 +1720,12 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			}
 
 			// Needs input — only show when there's something actionable
-			const inputCount = taskCounts.needsInput + taskCounts.blocked + taskCounts.needsReview;
+			const inputCount =
+				taskCounts.needsInput +
+				taskCounts.needsProof +
+				taskCounts.needsRevision +
+				taskCounts.blocked +
+				taskCounts.needsReview;
 			if (pendingRun) {
 				pills.push({
 					label: `Plan review · ${pendingRun.taskIds.length} task${pendingRun.taskIds.length === 1 ? '' : 's'}`,
@@ -1124,8 +1735,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				});
 			} else if (inputCount > 0) {
 				const parts: string[] = [];
-				if (taskCounts.needsInput > 0) parts.push(`${taskCounts.needsInput} need input`);
-				if (taskCounts.needsReview > 0) parts.push(`${taskCounts.needsReview} need review`);
+				if (taskCounts.needsInput > 0) parts.push(`${taskCounts.needsInput} waiting on you`);
+				if (taskCounts.needsProof > 0) parts.push(`${taskCounts.needsProof} waiting on proof`);
+				if (taskCounts.needsRevision > 0) parts.push(`${taskCounts.needsRevision} in revision`);
+				if (taskCounts.needsReview > 0) parts.push(`${taskCounts.needsReview} in QA`);
 				if (taskCounts.blocked > 0) parts.push(`${taskCounts.blocked} blocked`);
 				pills.push({
 					label: parts.join(' · '),
@@ -1171,32 +1784,171 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			taskCounts.blocked,
 			taskCounts.done,
 			taskCounts.needsInput,
+			taskCounts.needsProof,
+			taskCounts.needsRevision,
 			taskCounts.needsReview,
 			taskCounts.planning,
 			taskCounts.running,
 			taskCounts.total,
 			activeConductorAgentSessions.length,
+			sinceLastVisitDeltas,
 		]
 	);
-	const recentEvents = useMemo(
+	const conductorTeamMembers = useMemo<ConductorTeamMember[]>(
+		() => {
+			const byKey = new Map<
+				string,
+				{
+					member: ConductorTeamMember;
+					priority: number;
+				}
+			>();
+
+			const getStatusPriority = (status: ConductorTeamMember['status']): number => {
+				switch (status) {
+					case 'working':
+						return 3;
+					case 'error':
+						return 2;
+					case 'waiting':
+						return 1;
+					case 'idle':
+					default:
+						return 0;
+				}
+			};
+
+			for (const session of sortedConductorAgentSessions) {
+				const providerToolType =
+					session.toolType === 'terminal' ? 'claude-code' : session.toolType;
+				const identity = resolveConductorRosterIdentity(providerToolType, session.name);
+				const assignedTask = session.conductorMetadata?.taskId
+					? tasksById.get(session.conductorMetadata.taskId) || null
+					: null;
+				const parentTask =
+					assignedTask?.parentTaskId ? tasksById.get(assignedTask.parentTaskId) || assignedTask : assignedTask;
+				const rolledUpStatus = parentTask
+					? getConductorTaskRollupStatus(parentTask, childTasksByParentId, runs)
+					: null;
+				const status: ConductorTeamMember['status'] =
+					session.state === 'busy'
+						? 'working'
+						: session.state === 'error' || Boolean(session.agentError)
+							? 'error'
+							: rolledUpStatus &&
+								  ['needs_revision', 'needs_review', 'needs_input', 'needs_proof', 'blocked'].includes(rolledUpStatus)
+								? 'waiting'
+								: 'idle';
+				const isActivelyWorking = session.state === 'busy';
+				const member: ConductorTeamMember = {
+					sessionId: session.id,
+					name: identity.name,
+					emoji: identity.emoji,
+					providerLabel: getProviderDisplayName(session.toolType),
+					status,
+					parentTaskId: isActivelyWorking ? parentTask?.id : undefined,
+					parentTaskTitle: isActivelyWorking ? parentTask?.title : undefined,
+					threadTargets:
+						session.aiTabs.length > 0
+							? session.aiTabs.map((tab, index) => ({
+									sessionId: session.id,
+									tabId: tab.id,
+									label:
+										session.conductorMetadata?.taskTitle ||
+										tab.name?.trim() ||
+										`Thread ${index + 1}`,
+							  }))
+							: [
+									{
+										sessionId: session.id,
+										label: 'Conversation',
+									},
+							  ],
+					lastActiveAt: getSessionLastActivity(session),
+				};
+				const key = `${providerToolType}:${identity.name}`;
+				const existing = byKey.get(key);
+				if (!existing) {
+					byKey.set(key, { member, priority: getStatusPriority(status) });
+					continue;
+				}
+
+				const nextPriority = getStatusPriority(status);
+				const mergedThreadTargets = [...existing.member.threadTargets];
+				for (const target of member.threadTargets) {
+					if (
+						!mergedThreadTargets.some(
+							(existingTarget) =>
+								existingTarget.sessionId === target.sessionId &&
+								existingTarget.tabId === target.tabId &&
+								existingTarget.label === target.label
+						)
+					) {
+						mergedThreadTargets.push(target);
+					}
+				}
+
+				const shouldReplacePrimary =
+					nextPriority > existing.priority ||
+					(nextPriority === existing.priority && member.lastActiveAt > existing.member.lastActiveAt);
+
+				byKey.set(key, {
+					priority: Math.max(existing.priority, nextPriority),
+					member: {
+						...(shouldReplacePrimary ? member : existing.member),
+						threadTargets: mergedThreadTargets,
+						parentTaskId:
+							existing.member.parentTaskId || member.parentTaskId,
+						parentTaskTitle:
+							existing.member.parentTaskTitle || member.parentTaskTitle,
+						lastActiveAt: Math.max(existing.member.lastActiveAt, member.lastActiveAt),
+					},
+				});
+			}
+
+			return [...byKey.values()]
+				.map((entry) => entry.member)
+				.sort((left, right) => right.lastActiveAt - left.lastActiveAt);
+		},
+		[childTasksByParentId, runs, sortedConductorAgentSessions, tasksById]
+	);
+	const orchestratorUpdates = useMemo(
 		() =>
-			[...runs]
-				.flatMap((run) =>
-					run.events.map((event) => ({
-						event,
-						runKind: run.kind || 'planning',
-						runStatus: run.status,
-					}))
-				)
-				.sort((left, right) => right.event.createdAt - left.event.createdAt)
-				.slice(0, 6),
-		[runs]
+			buildConductorOrchestratorUpdates({
+				runs,
+				tasksById,
+				runIsLiveById,
+				limit: 8,
+			}),
+		[runs, runIsLiveById, tasksById]
 	);
 
 	const resourceGate = useMemo(
 		() => evaluateConductorResourceGate(conductor?.resourceProfile || 'aggressive', resourceSnapshot),
 		[conductor?.resourceProfile, resourceSnapshot]
 	);
+	const hasQueuedAutoplayWork =
+		dependencyReadyTaskIds.length > 0 || reviewReadyTasks.length > 0 || Boolean(pendingRun);
+	const resourceHoldMessage = resourceGate.message || RESOURCE_HOLD_MESSAGE;
+	const isSystemHolding = !isAutoplayPaused && hasQueuedAutoplayWork && !resourceGate.allowed;
+	const displayConductorStatus = selectedTemplate
+		? isAutoplayPaused
+			? isPlanning || isExecuting || isReviewing || isIntegrating
+				? 'pausing'
+				: 'paused'
+			: isSystemHolding
+				? 'holding'
+				: conductor?.status === 'needs_setup'
+					? 'idle'
+					: conductor?.status
+		: 'needs_setup';
+	const rawControlStatusMessage =
+		(isAutoplayPaused ? conductor?.holdReason || autoplayPauseMessage : null) ||
+		(isSystemHolding ? resourceHoldMessage : null) ||
+		(runDisabledReason === 'No runnable tasks are available yet.' ? null : runDisabledReason);
+	const controlStatusMessage = rawControlStatusMessage
+		? formatConductorOperatorMessage(rawControlStatusMessage)
+		: null;
 	const selectedTemplateSshRemoteId = useMemo(() => {
 		if (
 			selectedTemplate?.sessionSshRemoteConfig?.enabled &&
@@ -1278,6 +2030,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	}, []);
 
 	useEffect(() => {
+		autoplayPauseRef.current = isAutoplayPaused;
+	}, [isAutoplayPaused]);
+
+	useEffect(() => {
 		if (selectedTaskDetailId && !tasksById.has(selectedTaskDetailId)) {
 			setSelectedTaskDetailId(null);
 		}
@@ -1288,6 +2044,124 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			setSelectedConductorSessionId(null);
 		}
 	}, [selectedConductorSessionId, sessionById]);
+
+	useEffect(() => {
+		if (staleTaskRecoveryIds.length === 0) {
+			return;
+		}
+
+		const staleTaskIdSet = new Set(staleTaskRecoveryIds);
+		const recoveredAt = Date.now();
+		setTasks((previousTasks) => {
+			let changed = false;
+			const nextTasks = previousTasks.map((task) => {
+				if (!staleTaskIdSet.has(task.id)) {
+					return task;
+				}
+				changed = true;
+				return {
+					...task,
+					status: 'ready' as const,
+					plannerSessionId: task.status === 'planning' ? undefined : task.plannerSessionId,
+					plannerSessionName: task.status === 'planning' ? undefined : task.plannerSessionName,
+					workerSessionId: task.status === 'running' ? undefined : task.workerSessionId,
+					workerSessionName: task.status === 'running' ? undefined : task.workerSessionName,
+					updatedAt: recoveredAt,
+				};
+			});
+			return changed ? nextTasks : previousTasks;
+		});
+		setRuns((previousRuns) =>
+			previousRuns.map((run) => {
+				if (
+					run.groupId !== groupId ||
+					(run.status !== 'running' && run.status !== 'planning') ||
+					!run.taskIds.some((taskId) => staleTaskIdSet.has(taskId))
+				) {
+					return run;
+				}
+
+				const eventType = run.kind === 'planning' ? 'planning_failed' : 'execution_failed';
+				const staleTitles = run.taskIds
+					.map((taskId) => tasksById.get(taskId)?.title)
+					.filter((title): title is string => Boolean(title));
+				return {
+					...run,
+					status: 'cancelled',
+					summary:
+						staleTitles.length > 0
+							? `Recovered stale ${run.kind || 'conductor'} work for ${staleTitles.join(', ')}.`
+							: `Recovered stale ${run.kind || 'conductor'} work.`,
+					endedAt: recoveredAt,
+					events: [
+						...run.events,
+						{
+							id: `conductor-run-event-${generateId()}`,
+							runId: run.id,
+							groupId,
+							type: eventType,
+							message:
+								staleTitles.length > 0
+									? `Recovered stale ${run.kind || 'conductor'} work for ${staleTitles.join(', ')} after the helper session disappeared.`
+									: `Recovered stale ${run.kind || 'conductor'} work after the helper session disappeared.`,
+							createdAt: recoveredAt,
+						},
+					],
+				};
+			})
+		);
+		if (conductor?.status === 'running' || conductor?.status === 'planning') {
+			setConductor(groupId, { status: 'idle', holdReason: null });
+		}
+		lastAutoRunReadyKeyRef.current = null;
+		lastAutoPlanReadyKeyRef.current = null;
+		lastAutoReviewReadyKeyRef.current = null;
+	}, [conductor?.status, groupId, setConductor, setRuns, setTasks, staleTaskRecoveryIds, tasksById]);
+
+	useEffect(() => {
+		if (staleRunRecoveryIds.length === 0) {
+			return;
+		}
+
+		const staleRunIdSet = new Set(staleRunRecoveryIds);
+		const recoveredAt = Date.now();
+		setRuns((previousRuns) =>
+			previousRuns.map((run) => {
+				if (!staleRunIdSet.has(run.id)) {
+					return run;
+				}
+
+				return {
+					...run,
+					status: 'cancelled',
+					summary: `Recovered stale ${run.kind || 'conductor'} run after its helper sessions disappeared.`,
+					endedAt: recoveredAt,
+					events: [
+						...run.events,
+						{
+							id: `conductor-run-event-${generateId()}`,
+							runId: run.id,
+							groupId,
+							type:
+								run.kind === 'planning'
+									? 'planning_failed'
+									: run.kind === 'review'
+										? 'review_failed'
+										: 'execution_failed',
+							message: `Recovered stale ${run.kind || 'conductor'} run after its helper sessions disappeared.`,
+							createdAt: recoveredAt,
+						},
+					],
+				};
+			})
+		);
+		if (conductor?.status === 'running' || conductor?.status === 'planning') {
+			setConductor(groupId, { status: 'idle', holdReason: null });
+		}
+		lastAutoRunReadyKeyRef.current = null;
+		lastAutoPlanReadyKeyRef.current = null;
+		lastAutoReviewReadyKeyRef.current = null;
+	}, [conductor?.status, groupId, setConductor, setRuns, staleRunRecoveryIds]);
 
 	useEffect(() => {
 		setExpandedConductorToolLogIds(new Set());
@@ -1301,30 +2175,53 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			return;
 		}
 
+		if (isAutoplayPaused) {
+			lastAutoPlanReadyKeyRef.current = null;
+			return;
+		}
+
 		if (!selectedTemplate || pendingRun || isPlanning || isExecuting || isReviewing || isIntegrating) {
 			return;
 		}
 
-		if (lastAutoPlanReadyKeyRef.current === readyKey) {
+		if (conductorAutoplayLocks.planning.has(groupId)) {
 			return;
 		}
 
-		lastAutoPlanReadyKeyRef.current = readyKey;
-		void handlePlanTask(tasksNeedingPlanningIds[0]);
-	}, [
-		tasksNeedingPlanningIds,
-		isExecuting,
-		isIntegrating,
-		isPlanning,
-		isReviewing,
-		pendingRun,
-		selectedTemplate,
+			if (lastAutoPlanReadyKeyRef.current === readyKey) {
+				return;
+			}
+
+			lastAutoPlanReadyKeyRef.current = readyKey;
+			void handlePlanTask(tasksNeedingPlanningIds[0]);
+		}, [
+			tasksNeedingPlanningIds,
+			isAutoplayPaused,
+			isExecuting,
+			isIntegrating,
+			isPlanning,
+			isReviewing,
+			pendingRun,
+			selectedTemplate,
 	]);
 
 	useEffect(() => {
 		const readyKey = dependencyReadyTaskIds.join('|');
 
 		if (!readyKey) {
+			lastAutoRunReadyKeyRef.current = null;
+			return;
+		}
+
+		if (isAutoplayPaused) {
+			lastAutoRunReadyKeyRef.current = null;
+			return;
+		}
+
+		if (!resourceGate.allowed) {
+			if (conductor?.holdReason !== resourceHoldMessage) {
+				setConductor(groupId, { holdReason: resourceHoldMessage });
+			}
 			lastAutoRunReadyKeyRef.current = null;
 			return;
 		}
@@ -1341,21 +2238,136 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			return;
 		}
 
+		if (conductorAutoplayLocks.execution.has(groupId)) {
+			return;
+		}
+
 		if (lastAutoRunReadyKeyRef.current === readyKey) {
 			return;
 		}
 
+		if (conductor?.holdReason === resourceHoldMessage) {
+			setConductor(groupId, { holdReason: null });
+		}
 		lastAutoRunReadyKeyRef.current = readyKey;
 		void handleRunReadyTasks();
 	}, [
+		conductor?.holdReason,
 		dependencyReadyTaskIds,
+		groupId,
+		isAutoplayPaused,
 		isExecuting,
 		gitReadiness,
 		isIntegrating,
 		isPlanning,
 		isReviewing,
 		pendingRun,
+		resourceGate.allowed,
+		resourceHoldMessage,
 		selectedTemplate,
+		setConductor,
+	]);
+
+	useEffect(() => {
+		const reviewKey = reviewReadyTasks.map((task) => task.id).join('|');
+
+		if (!reviewKey) {
+			lastAutoReviewReadyKeyRef.current = null;
+			return;
+		}
+
+		if (isAutoplayPaused) {
+			lastAutoReviewReadyKeyRef.current = null;
+			return;
+		}
+
+		if (!resourceGate.allowed) {
+			if (conductor?.holdReason !== resourceHoldMessage) {
+				setConductor(groupId, { holdReason: resourceHoldMessage });
+			}
+			lastAutoReviewReadyKeyRef.current = null;
+			return;
+		}
+
+		if (
+			!selectedTemplate ||
+			pendingRun ||
+			isPlanning ||
+			isExecuting ||
+			isReviewing ||
+			isIntegrating ||
+			dependencyReadyTaskIds.length > 0
+		) {
+			return;
+		}
+
+		if (conductorAutoplayLocks.review.has(groupId)) {
+			return;
+		}
+
+		if (lastAutoReviewReadyKeyRef.current === reviewKey) {
+			return;
+		}
+
+		if (conductor?.holdReason === resourceHoldMessage) {
+			setConductor(groupId, { holdReason: null });
+		}
+		lastAutoReviewReadyKeyRef.current = reviewKey;
+		void handleRunReviewTasks();
+	}, [
+		conductor?.holdReason,
+		dependencyReadyTaskIds.length,
+		groupId,
+		isAutoplayPaused,
+		isExecuting,
+		isIntegrating,
+		isPlanning,
+		isReviewing,
+		pendingRun,
+		resourceGate.allowed,
+		resourceHoldMessage,
+		reviewReadyTasks,
+		selectedTemplate,
+		setConductor,
+	]);
+
+	useEffect(() => {
+		if (
+			!pendingRun ||
+			isAutoplayPaused ||
+			isPlanning ||
+			isExecuting ||
+			isReviewing ||
+			isIntegrating ||
+			conductor?.autoExecuteOnPlanCreation === false
+		) {
+			return;
+		}
+
+		const approved = approvePlanningRun(pendingRun.id, { approvedBy: 'conductor' });
+		if (!approved) {
+			return;
+		}
+
+		window.setTimeout(() => {
+			if (dependencyReadyTaskIds.length > 0) {
+				void handleRunReadyTasks();
+				return;
+			}
+			if (reviewReadyTasks.length > 0) {
+				void handleRunReviewTasks();
+			}
+		}, 0);
+	}, [
+		conductor?.autoExecuteOnPlanCreation,
+		dependencyReadyTaskIds.length,
+		isAutoplayPaused,
+		isExecuting,
+		isIntegrating,
+		isPlanning,
+		isReviewing,
+		pendingRun,
+		reviewReadyTasks.length,
 	]);
 
 	const handleBootstrapGitRepo = async () => {
@@ -1405,7 +2417,14 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					: 'The workspace repository is ready for Conductor.',
 			});
 
-			if (dependencyReadyTaskIds.length > 0 && !pendingRun && !isPlanning && !isReviewing && !isIntegrating) {
+			if (
+				!isAutoplayPaused &&
+				dependencyReadyTaskIds.length > 0 &&
+				!pendingRun &&
+				!isPlanning &&
+				!isReviewing &&
+				!isIntegrating
+			) {
 				void handleRunReadyTasks();
 			}
 		} finally {
@@ -1432,11 +2451,123 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	};
 
 	const handleTaskStatusMove = (taskId: string, nextStatus: ConductorTaskStatus) => {
-		updateTask(taskId, { status: nextStatus });
+		const task = tasksById.get(taskId);
+		if (!task) {
+			return;
+		}
+		const currentAttention = effectiveAttentionByTaskId.get(taskId) || null;
+		const isProofAttention = isConductorCompletionProofAttentionRequestId(currentAttention?.id);
+
+		const nextAttentionRequest =
+			nextStatus === 'needs_input' || nextStatus === 'needs_proof'
+				? currentAttention
+				: isProofAttention
+					? null
+				: currentAttention?.status === 'open'
+					? {
+							...currentAttention,
+							status: 'resolved' as const,
+							updatedAt: Date.now(),
+							resolvedAt: Date.now(),
+					  }
+					: currentAttention;
+
+		updateTask(taskId, {
+			status: nextStatus,
+			attentionRequest: nextAttentionRequest,
+		});
+	};
+
+	const handleTaskCompletionProofRequirementChange = (
+		task: ConductorTask,
+		enabled: boolean
+	) => {
+		const now = Date.now();
+		const nextRequirement = enabled
+			? task.completionProofRequirement || buildDefaultConductorTaskCompletionProofRequirement()
+			: undefined;
+		const nextProof = enabled
+			? task.completionProof || buildDefaultConductorTaskCompletionProof(now)
+			: undefined;
+		updateTask(task.id, {
+			status: enabled
+				? task.status === 'done' &&
+				  !hasConductorTaskApprovedCompletionProof({
+						...task,
+						completionProofRequirement: nextRequirement,
+						completionProof: nextProof,
+				  })
+					? 'needs_proof'
+					: task.status
+				: task.status === 'needs_proof'
+					? 'done'
+					: task.status,
+			attentionRequest: !enabled ? null : task.attentionRequest,
+			completionProofRequirement: nextRequirement,
+			completionProof: nextProof,
+		});
+	};
+
+	const handleTaskCompletionProofStatusChange = (
+		task: ConductorTask,
+		nextStatus: ConductorTaskCompletionProofStatus
+	) => {
+		const now = Date.now();
+		const currentProof = task.completionProof || buildDefaultConductorTaskCompletionProof(now);
+		const nextTaskStatus =
+			nextStatus === 'approved'
+				? task.status === 'needs_proof'
+					? 'done'
+					: task.status
+				: task.status === 'done' && requiresConductorTaskCompletionProof(task)
+					? 'needs_proof'
+					: task.status;
+		updateTask(task.id, {
+			status: nextTaskStatus,
+			attentionRequest:
+				nextTaskStatus === 'done' ? null : task.attentionRequest,
+			completionProof: {
+				...currentProof,
+				status: nextStatus,
+				requestedAt: currentProof.requestedAt || now,
+				capturedAt:
+					nextStatus === 'captured' || nextStatus === 'approved'
+						? currentProof.capturedAt || now
+						: undefined,
+				approvedAt: nextStatus === 'approved' ? currentProof.approvedAt || now : undefined,
+				rejectedAt: nextStatus === 'rejected' ? now : undefined,
+			},
+		});
+	};
+
+	const handleResolveTaskAttention = (task: ConductorTask) => {
+		const response = (taskResponseDrafts[task.id] || '').trim();
+		const currentAttention = effectiveAttentionByTaskId.get(task.id) || null;
+		const nextDescription = response
+			? [task.description.trim(), `Operator follow-up:\n${response}`].filter(Boolean).join('\n\n')
+			: task.description;
+
+		updateTask(task.id, {
+			description: nextDescription,
+			status: 'ready',
+			attentionRequest: currentAttention
+				? {
+						...currentAttention,
+						status: 'resolved',
+						response,
+						updatedAt: Date.now(),
+						resolvedAt: Date.now(),
+				  }
+				: null,
+		});
 	};
 
 	const openTaskDetails = (taskId: string) => {
 		setSelectedTaskDetailId(taskId);
+	};
+
+	const openOrchestratorPanel = (context?: ConductorOrchestratorContext) => {
+		setOrchestratorPanelContext(context || { scope: 'board' });
 	};
 
 	const getActiveTaskSessionId = (task: ConductorTask): string | null => {
@@ -1473,14 +2604,82 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		setSelectedConductorSessionId(sessionId);
 	};
 
+	const handleNavigateToAgentThread = (sessionId: string, tabId?: string) => {
+		const session = sessionById.get(sessionId);
+		if (!session) {
+			return;
+		}
+
+		if (tabId && session.activeTabId !== tabId) {
+			updateSession(sessionId, { activeTabId: tabId, activeFileTabId: null, inputMode: 'ai' });
+		}
+
+		setActiveSessionId(sessionId);
+		setSelectedConductorThreadMember(null);
+	};
+
+	const handleOpenTeamMember = (member: ConductorTeamMember) => {
+		if (member.threadTargets.length <= 1) {
+			const target = member.threadTargets[0];
+			handleNavigateToAgentThread(target?.sessionId || member.sessionId, target?.tabId);
+			return;
+		}
+
+		setSelectedConductorThreadMember(member);
+	};
+
+	const handleConfigureConductorWorktreeStorage = () => {
+		if (!selectedTemplate) {
+			notifyToast({
+				type: 'warning',
+				title: 'No workspace lead yet',
+				message: 'Add a workspace lead agent first so Conductor knows where to store worktrees.',
+			});
+			return;
+		}
+
+		setActiveSessionId(selectedTemplate.id);
+		getModalActions().setWorktreeConfigModalOpen(true);
+	};
+
+	const handleAskAboutUpdate = (update: ConductorOrchestratorUpdate) => {
+		openOrchestratorPanel({ scope: 'update', updateId: update.id });
+	};
+
+	const handleAskAboutTeamMember = (member: ConductorTeamMember) => {
+		openOrchestratorPanel({ scope: 'member', memberName: member.name });
+	};
+
+	const handleOpenTeamMemberByName = (memberName: string) => {
+		const member = conductorTeamMembers.find((candidate) => candidate.name === memberName);
+		if (!member) {
+			return;
+		}
+		handleOpenTeamMember(member);
+	};
+
 	const handleCleanupIdleConductorAgents = () => {
 		cleanupConductorAgentSessions(
-			conductorAgentSessions.filter((session) => session.state !== 'busy').map((session) => session.id)
+			conductorAgentSessions.filter((session) => session.state !== 'busy').map((session) => session.id),
+			{ force: true }
 		);
 	};
 
-	const cleanupConductorAgentSessions = (sessionIds: string[]) => {
-		if (conductor?.keepConductorAgentSessions || sessionIds.length === 0) {
+	const cleanupConductorAgentSessions = (
+		sessionIds: string[],
+		options?: {
+			force?: boolean;
+			preserveWhilePaused?: boolean;
+		}
+	) => {
+		const force = options?.force ?? false;
+		const preserveWhilePaused = options?.preserveWhilePaused ?? true;
+
+		if (
+			(!force && conductor?.keepConductorAgentSessions) ||
+			(!force && preserveWhilePaused && autoplayPauseRef.current) ||
+			sessionIds.length === 0
+		) {
 			return;
 		}
 
@@ -1506,6 +2705,72 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		}
 	};
 
+	const recordTaskAgentHistory = (
+		taskId: string,
+		role: ConductorAgentRole,
+		sessionId: string,
+		sessionName: string | undefined,
+		runId?: string
+	) => {
+		setTasks((previousTasks) =>
+			previousTasks.map((task) => {
+				if (task.id !== taskId) {
+					return task;
+				}
+
+				const existingHistory = task.agentHistory || [];
+				if (
+					existingHistory.some(
+						(entry) =>
+							entry.role === role && entry.sessionId === sessionId && entry.runId === (runId || undefined)
+					)
+				) {
+					return task;
+				}
+
+				const nextEntry: ConductorTaskAgentHistoryEntry = {
+					id: `conductor-task-agent-${generateId()}`,
+					role,
+					sessionId,
+					sessionName,
+					runId,
+					createdAt: Date.now(),
+				};
+
+				return {
+					...task,
+					agentHistory: [...existingHistory, nextEntry],
+					updatedAt: Date.now(),
+				};
+			})
+		);
+	};
+
+	const buildTaskAttentionRequest = (input: {
+		kind: ConductorTaskAttentionRequest['kind'];
+		summary: string;
+		requestedAction: string;
+		requestedByRole: ConductorTaskAttentionRequest['requestedByRole'];
+		requestedBySessionId?: string;
+		suggestedResponse?: string;
+		runId?: string;
+	}): ConductorTaskAttentionRequest => {
+		const now = Date.now();
+		return {
+			id: `conductor-task-attention-${generateId()}`,
+			status: 'open',
+			kind: input.kind,
+			summary: input.summary,
+			requestedAction: input.requestedAction,
+			requestedByRole: input.requestedByRole,
+			requestedBySessionId: input.requestedBySessionId,
+			suggestedResponse: input.suggestedResponse,
+			runId: input.runId,
+			createdAt: now,
+			updatedAt: now,
+		};
+	};
+
 	const getTaskAgentBadges = (
 		task: ConductorTask
 	): Array<{
@@ -1515,19 +2780,51 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		tone: 'default' | 'accent' | 'success' | 'warning';
 	}> => {
 		const sessionRefs = [
-			{ role: 'planner' as const, sessionId: task.plannerSessionId },
-			{ role: 'worker' as const, sessionId: task.workerSessionId },
-			{ role: 'reviewer' as const, sessionId: task.reviewerSessionId },
+			{
+				role: 'planner' as const,
+				sessionId: task.plannerSessionId,
+				sessionName: task.plannerSessionName,
+			},
+			{
+				role: 'worker' as const,
+				sessionId: task.workerSessionId,
+				sessionName: task.workerSessionName,
+			},
+			{
+				role: 'reviewer' as const,
+				sessionId: task.reviewerSessionId,
+				sessionName: task.reviewerSessionName,
+			},
 		].flatMap((candidate) =>
-			candidate.sessionId ? [{ role: candidate.role, sessionId: candidate.sessionId }] : []
+			candidate.sessionId
+				? [
+						{
+							role: candidate.role,
+							sessionId: candidate.sessionId,
+							sessionName: candidate.sessionName,
+						},
+					]
+				: []
+		);
+		const historyRefs = (task.agentHistory || []).map((entry) => ({
+			role: entry.role,
+			sessionId: entry.sessionId,
+			sessionName: entry.sessionName,
+		}));
+		const uniqueRefs = [...historyRefs, ...sessionRefs].filter(
+			(candidate, index, candidates) =>
+				candidates.findIndex(
+					(entry) => entry.role === candidate.role && entry.sessionId === candidate.sessionId
+				) === index
 		);
 
-		return sessionRefs.map(({ role, sessionId }) => {
+		return uniqueRefs.map(({ role, sessionId, sessionName }) => {
 			const session = sessionById.get(sessionId);
 			return {
 				key: `${task.id}-${role}-${sessionId}`,
 				sessionId,
 				label: `${formatConductorRoleLabel(role)}: ${
+					sessionName ||
 					(role === 'planner'
 						? task.plannerSessionName
 						: role === 'worker'
@@ -1548,12 +2845,6 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		});
 	};
 
-	const resetTaskComposer = () => {
-		setManualTaskTitle('');
-		setManualTaskDescription('');
-		setManualTaskPriority('medium');
-		setManualTaskParentId('');
-	};
 
 	const openTaskComposer = (parentTaskId?: string) => {
 		setManualTaskParentId(parentTaskId || '');
@@ -1562,27 +2853,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 
 	const clearTaskFilters = () => {
 		setTaskSearch('');
-		setStatusFilter('all');
+		setStatusFilter([]);
 		setSourceFilter('all');
 		setSortMode('priority');
 	};
 
-	const handleCreateManualTask = () => {
-		if (!manualTaskTitle.trim()) {
-			return;
-		}
-
-		addTask(groupId, {
-			title: manualTaskTitle,
-			description: manualTaskDescription,
-			priority: manualTaskPriority,
-			status: 'draft',
-			parentTaskId: manualTaskParentId || undefined,
-			source: 'manual',
-		});
-		resetTaskComposer();
-		setIsTaskComposerOpen(false);
-	};
 
 	const getLatestExecutionForTask = (taskId: string): ConductorRun | null =>
 		runs.find(
@@ -1595,6 +2870,197 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const getLatestRunForTask = (taskId: string): ConductorRun | null =>
 		runs.find((run) => run.taskIds.includes(taskId)) || null;
 
+	const resolveProofExecutionContext = async (
+		task: ConductorTask
+	): Promise<{ cwd: string; branch: string | null }> => {
+		const latestTaskExecution = getLatestExecutionForTask(task.id);
+		const candidateContexts = [
+			{
+				cwd: latestTaskExecution?.taskWorktreePaths?.[task.id] || null,
+				branch: latestTaskExecution?.taskBranches?.[task.id] || null,
+			},
+			{
+				cwd: latestTaskExecution?.worktreePath || null,
+				branch: latestTaskExecution?.branchName || null,
+			},
+			{
+				cwd: selectedTemplate?.cwd || null,
+				branch: null,
+			},
+		];
+
+		for (const candidate of candidateContexts) {
+			if (!candidate.cwd) {
+				continue;
+			}
+
+			try {
+				const stat = await window.maestro.fs.stat(candidate.cwd);
+				if (stat.isDirectory) {
+					return {
+						cwd: candidate.cwd,
+						branch: candidate.branch,
+					};
+				}
+			} catch {
+				// Fall through to the next candidate path.
+			}
+		}
+
+		return {
+			cwd: selectedTemplate?.cwd || task.scopePaths[0] || '',
+			branch: null,
+		};
+	};
+
+	const handleCaptureTaskCompletionProof = async (task: ConductorTask) => {
+		if (!selectedTemplate) {
+			notifyToast({
+				type: 'error',
+				title: 'Proof Capture Unavailable',
+				message: 'This workspace needs a top-level agent before Conductor can capture proof.',
+			});
+			return;
+		}
+
+		if (capturingProofTaskId === task.id || !requiresConductorTaskCompletionProof(task)) {
+			return;
+		}
+
+		const now = Date.now();
+		const proofRequirement =
+			task.completionProofRequirement || buildDefaultConductorTaskCompletionProofRequirement();
+		const previousProof = task.completionProof || buildDefaultConductorTaskCompletionProof(now);
+		const { cwd: proofCwd, branch: proofBranch } = await resolveProofExecutionContext(task);
+		const requestedAt = previousProof.requestedAt || now;
+
+		setCapturingProofTaskId(task.id);
+		updateTask(task.id, {
+			status: 'needs_proof',
+			completionProof: {
+				...previousProof,
+				status: 'capturing',
+				requestedAt,
+				approvedAt: undefined,
+				rejectedAt: undefined,
+			},
+		});
+
+		try {
+			const proofResult = await runConductorAgentTurn({
+				parentSession: selectedTemplate,
+				role: 'reviewer',
+				taskTitle: task.title,
+				taskDescription: task.description,
+				scopePaths: task.scopePaths,
+				providerRouteHint: 'ui',
+				prompt: buildConductorProofPrompt(group?.name || 'Unnamed Group', { ...selectedTemplate, cwd: proofCwd }, task),
+				cwd: proofCwd,
+				branch: proofBranch,
+				taskId: task.id,
+				readOnlyMode: false,
+				demoCapture: { enabled: true },
+				onSessionReady: (session) => {
+					recordTaskAgentHistory(task.id, 'reviewer', session.id, session.name);
+					updateTask(task.id, {
+						reviewerSessionId: session.id,
+						reviewerSessionName: session.name,
+					});
+				},
+			});
+
+			if (
+				!proofResult.demoCard ||
+				!satisfiesConductorTaskCompletionProofRequirement(proofResult.demoCard, proofRequirement)
+			) {
+				throw new ConductorAgentRunError(
+					'Proof capture finished without the required recording and screenshots.',
+					{
+						demoCard: proofResult.demoCard,
+					}
+				);
+			}
+
+			const capturedAt = Date.now();
+			updateTask(task.id, {
+				status: 'needs_proof',
+				completionProof: {
+					...previousProof,
+					status: 'captured',
+					demoId: proofResult.demoCard.demoId,
+					captureRunId: proofResult.demoCard.captureRunId,
+					screenshotCount: proofResult.demoCard.stepCount,
+					videoArtifactId: proofResult.demoCard.videoArtifact?.id,
+					requestedAt,
+					capturedAt,
+					approvedAt: undefined,
+					rejectedAt: undefined,
+				},
+			});
+
+			const persistedDemo = await window.maestro.artifacts.getDemo(proofResult.demoCard.demoId);
+			setSelectedTaskProofDemo(persistedDemo);
+			notifyToast({
+				type: 'success',
+				title: 'Proof Captured',
+				message: `Captured completion proof for ${task.title}.`,
+			});
+		} catch (error) {
+			const failedDemo =
+				error instanceof ConductorAgentRunError ? error.demoCard : undefined;
+			const hadExistingApprovedProof =
+				previousProof.demoId &&
+				(previousProof.status === 'captured' || previousProof.status === 'approved');
+
+			if (hadExistingApprovedProof) {
+				updateTask(task.id, {
+					status: 'needs_proof',
+					completionProof: previousProof,
+				});
+			} else if (failedDemo) {
+				const rejectedAt = Date.now();
+				updateTask(task.id, {
+					status: 'needs_proof',
+					completionProof: {
+						...previousProof,
+						status: 'rejected',
+						demoId: failedDemo.demoId,
+						captureRunId: failedDemo.captureRunId,
+						screenshotCount: failedDemo.stepCount,
+						videoArtifactId: failedDemo.videoArtifact?.id,
+						requestedAt,
+						capturedAt: undefined,
+						approvedAt: undefined,
+						rejectedAt,
+					},
+				});
+				const persistedFailedDemo = await window.maestro.artifacts.getDemo(failedDemo.demoId);
+				setSelectedTaskProofDemo(persistedFailedDemo);
+			} else {
+				updateTask(task.id, {
+					status: 'needs_proof',
+					completionProof: {
+						...previousProof,
+						status: previousProof.status === 'capturing' ? 'missing' : previousProof.status,
+						requestedAt,
+						approvedAt: previousProof.status === 'approved' ? previousProof.approvedAt : undefined,
+						rejectedAt: previousProof.status === 'rejected' ? previousProof.rejectedAt : undefined,
+					},
+				});
+			}
+
+			notifyToast({
+				type: 'error',
+				title: 'Proof Capture Failed',
+				message: error instanceof Error ? error.message : 'Proof capture did not complete.',
+			});
+		} finally {
+			setCapturingProofTaskId((currentTaskId) =>
+				currentTaskId === task.id ? null : currentTaskId
+			);
+		}
+	};
+
 	const handlePlanTask = async (taskId: string) => {
 		if (!selectedTemplate) {
 			setPlanningError('This workspace needs at least one top-level agent before Conductor can plan.');
@@ -1606,42 +3072,48 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			return;
 		}
 
-		const now = Date.now();
-		const runId = `conductor-run-${generateId()}`;
-		const planningStartedEvent = {
-			id: `conductor-run-event-${generateId()}`,
-			runId,
-			groupId,
-			type: 'planning_started' as const,
-			message: `Planning started for ${task.title}.`,
-			createdAt: now,
-		};
+		if (conductorAutoplayLocks.planning.has(groupId)) {
+			return;
+		}
+		conductorAutoplayLocks.planning.add(groupId);
 
-		cancelledTaskIdsRef.current.delete(task.id);
-		setPlanningError(null);
-		setIsPlanning(true);
-		updateTask(task.id, { status: 'planning' });
-		setConductor(groupId, { status: 'planning' });
-		upsertRun({
-			id: runId,
-			groupId,
-			kind: 'planning',
-			baseBranch: selectedTemplate.worktreeBranch || '',
-			sshRemoteId: selectedTemplateSshRemoteId,
-			agentSessionIds: [],
-			integrationBranch: '',
-			status: 'planning',
-			summary: '',
-			plannerInput: task.description,
-			taskIds: [task.id],
-			events: [planningStartedEvent],
-			startedAt: now,
-		});
-
-		let plannerSessionId: string | undefined;
-		let plannerSessionName: string | undefined;
 		try {
-			const prompt = buildConductorPlannerPrompt({
+			const now = Date.now();
+			const runId = `conductor-run-${generateId()}`;
+			const planningStartedEvent = {
+				id: `conductor-run-event-${generateId()}`,
+				runId,
+				groupId,
+				type: 'planning_started' as const,
+				message: `Planning started for ${task.title}.`,
+				createdAt: now,
+			};
+
+			cancelledTaskIdsRef.current.delete(task.id);
+			setPlanningError(null);
+			setIsPlanning(true);
+			updateTask(task.id, { status: 'planning' });
+			setConductor(groupId, { status: 'planning', holdReason: null });
+			upsertRun({
+				id: runId,
+				groupId,
+				kind: 'planning',
+				baseBranch: selectedTemplate.worktreeBranch || '',
+				sshRemoteId: selectedTemplateSshRemoteId,
+				agentSessionIds: [],
+				integrationBranch: '',
+				status: 'planning',
+				summary: '',
+				plannerInput: task.description,
+				taskIds: [task.id],
+				events: [planningStartedEvent],
+				startedAt: now,
+			});
+
+			let plannerSessionId: string | undefined;
+			let plannerSessionName: string | undefined;
+			try {
+				const prompt = buildConductorPlannerPrompt({
 				groupName: group?.name || 'Unnamed Group',
 				templateSession: selectedTemplate,
 				manualTasks: [
@@ -1655,18 +3127,19 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				operatorNotes:
 					'Break this task into executable work. If it can stay as one task, return a single execution task.',
 			});
-			const plannerResult = await runConductorAgentTurn({
-				parentSession: selectedTemplate,
-				role: 'planner',
+				const plannerResult = await runConductorAgentTurn({
+					parentSession: selectedTemplate,
+					role: 'planner',
 				taskTitle: task.title,
 				taskDescription: task.description,
 				scopePaths: task.scopePaths,
 				prompt,
 				cwd: selectedTemplate.cwd,
-				runId,
-				taskId: task.id,
-				readOnlyMode: true,
-				onSessionReady: (session) => {
+					runId,
+					taskId: task.id,
+					readOnlyMode: true,
+					expectedSubmissionKind: 'planner',
+					onSessionReady: (session) => {
 					plannerSessionId = session.id;
 					plannerSessionName = session.name;
 					updateTask(task.id, {
@@ -1680,7 +3153,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				},
 			});
 
-			if (cancelledTaskIdsRef.current.has(task.id)) {
+				if (cancelledTaskIdsRef.current.has(task.id)) {
 				const cancelledAt = Date.now();
 				updateRun(runId, {
 					status: 'cancelled',
@@ -1698,15 +3171,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						},
 					],
 				});
-				setConductor(groupId, { status: 'idle' });
+				setConductor(groupId, { status: 'idle', holdReason: null });
 				cleanupConductorAgentSessions([plannerSessionId || '']);
 				return;
 			}
 
-			const parsedPlan = parseConductorPlannerResponse(plannerResult.response);
-			if (parsedPlan.tasks.length === 0) {
+				const parsedPlan =
+					plannerResult.structuredSubmission?.kind === 'planner'
+						? parseConductorPlannerSubmission(plannerResult.structuredSubmission.payload)
+						: parseConductorPlannerResponse(plannerResult.response);
+				if (parsedPlan.tasks.length === 0) {
 				throw new Error('Planner did not return any executable tasks.');
-			}
+				}
 
 			const updatedAt = Date.now();
 			const generatedTaskIds = parsedPlan.tasks.map((plannedTask, index) => ({
@@ -1743,18 +3219,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				};
 			});
 
-			const [anchorTask, ...extraTasks] = plannedTasks;
-			const extraTaskIds = new Set(extraTasks.map((plannedTask) => plannedTask.id));
-			setTasks((previousTasks) => [
+				const [anchorTask, ...extraTasks] = plannedTasks;
+				const extraTaskIds = new Set(extraTasks.map((plannedTask) => plannedTask.id));
+				setTasks((previousTasks) => [
 				...previousTasks.filter(
 					(candidate) => candidate.id !== task.id && !extraTaskIds.has(candidate.id)
 				),
 				anchorTask,
 				...extraTasks,
-			]);
+				]);
 
 			const completedAt = Date.now();
-			updateRun(runId, {
+				updateRun(runId, {
 				status: 'completed',
 				summary: parsedPlan.summary,
 				taskIds: plannedTasks.map((plannedTask) => plannedTask.id),
@@ -1780,11 +3256,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					},
 				],
 			});
-			setConductor(groupId, { status: 'idle' });
-			cleanupConductorAgentSessions([plannerSessionId || '']);
-		} catch (error) {
-			const finishedAt = Date.now();
-			if (cancelledTaskIdsRef.current.has(task.id)) {
+				setConductor(groupId, { status: 'idle' });
+				cleanupConductorAgentSessions([plannerSessionId || '']);
+			} catch (error) {
+				const finishedAt = Date.now();
+				if (cancelledTaskIdsRef.current.has(task.id)) {
 				updateRun(runId, {
 					status: 'cancelled',
 					summary: `Planning was stopped for ${task.title}.`,
@@ -1801,15 +3277,16 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						},
 					],
 				});
-				setConductor(groupId, { status: 'idle' });
+				setConductor(groupId, { status: 'idle', holdReason: null });
 				cleanupConductorAgentSessions([plannerSessionId || '']);
 				return;
 			}
 
-			const message = error instanceof Error ? error.message : 'Plan generation failed.';
-			setPlanningError(message);
-			updateTask(task.id, { status: 'needs_input' });
-			updateRun(runId, {
+				const message = error instanceof Error ? error.message : 'Plan generation failed.';
+				const isProviderLimit = isConductorProviderLimitMessage(message);
+				setPlanningError(message);
+				updateTask(task.id, { status: isProviderLimit ? 'ready' : 'needs_input' });
+				updateRun(runId, {
 				status: 'attention_required',
 				summary: message,
 				endedAt: finishedAt,
@@ -1825,11 +3302,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					},
 				],
 			});
-			setConductor(groupId, { status: 'attention_required' });
-			cleanupConductorAgentSessions([plannerSessionId || '']);
+					setConductor(groupId, {
+						status: 'attention_required',
+						isPaused: isProviderLimit,
+						holdReason: isProviderLimit ? message : null,
+					});
+				cleanupConductorAgentSessions([plannerSessionId || '']);
+			} finally {
+				cancelledTaskIdsRef.current.delete(task.id);
+				setIsPlanning(false);
+			}
 		} finally {
-			cancelledTaskIdsRef.current.delete(task.id);
-			setIsPlanning(false);
+			conductorAutoplayLocks.planning.delete(groupId);
 		}
 	};
 
@@ -1879,7 +3363,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 
 		setPlanningError(null);
 		setIsPlanning(true);
-		setConductor(groupId, { status: 'planning' });
+		setConductor(groupId, { status: 'planning', holdReason: null });
 		upsertRun({
 			id: runId,
 			groupId,
@@ -1914,6 +3398,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				cwd: selectedTemplate.cwd,
 				runId,
 				readOnlyMode: true,
+				expectedSubmissionKind: 'planner',
 				onSessionReady: (session) => {
 					plannerSessionId = session.id;
 					plannerSessionName = session.name;
@@ -1923,7 +3408,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					});
 				},
 			});
-			const parsedPlan = parseConductorPlannerResponse(plannerResult.response);
+			const parsedPlan =
+				plannerResult.structuredSubmission?.kind === 'planner'
+					? parseConductorPlannerSubmission(plannerResult.structuredSubmission.payload)
+					: parseConductorPlannerResponse(plannerResult.response);
 			const titleToId = new Map<string, string>();
 			const plannedTasks = parsedPlan.tasks.map((task) => {
 				const taskId = `conductor-task-${generateId()}`;
@@ -1941,6 +3429,19 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					scopePaths: task.scopePaths,
 					changedPaths: [],
 					source: 'planner' as const,
+					attentionRequest: null,
+					agentHistory: plannerSessionId
+						? [
+								{
+									id: `conductor-task-agent-${generateId()}`,
+									role: 'planner' as const,
+									sessionId: plannerSessionId,
+									sessionName: plannerSessionName,
+									runId,
+									createdAt: Date.now(),
+								},
+							]
+						: [],
 					plannerSessionId,
 					plannerSessionName,
 					createdAt: Date.now(),
@@ -1972,15 +3473,15 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				taskIds: plannedTasksWithDeps.map((task) => task.id),
 				events: [planningStartedEvent, planGeneratedEvent],
 			});
-			setConductor(groupId, { status: 'awaiting_approval' });
+				setConductor(groupId, { status: 'awaiting_approval', holdReason: null });
 			setActiveTab('overview');
 			if (requestOverride) {
 				setDraftDescription('');
 				setPlannerNotes('');
 				setIsPlanComposerOpen(false);
 			}
-			if (options?.autoExecute) {
-				const approved = approvePlanningRun(runId);
+				if (options?.autoExecute) {
+					const approved = approvePlanningRun(runId, { approvedBy: 'conductor' });
 				if (approved) {
 					window.setTimeout(() => {
 						void handleRunReadyTasks();
@@ -1989,6 +3490,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : 'Plan generation failed.';
+			const isProviderLimit = isConductorProviderLimitMessage(message);
 			const failedAt = Date.now();
 			setPlanningError(message);
 			updateRun(runId, {
@@ -2007,7 +3509,11 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					},
 				],
 			});
-			setConductor(groupId, { status: 'attention_required' });
+			setConductor(groupId, {
+				status: 'attention_required',
+				isPaused: isProviderLimit,
+				holdReason: isProviderLimit ? message : null,
+			});
 			cleanupConductorAgentSessions([plannerSessionId || '']);
 		} finally {
 			setIsPlanning(false);
@@ -2017,6 +3523,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const handleRunReadyTasks = async () => {
 		if (!selectedTemplate) {
 			setExecutionError('This workspace needs at least one top-level agent before Conductor can run tasks.');
+			return;
+		}
+		if (isAutoplayPaused) {
+			setExecutionError(conductor?.holdReason || autoplayPauseMessage);
 			return;
 		}
 		if (gitReadiness === 'missing_repo') {
@@ -2041,34 +3551,45 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			return;
 		}
 
-		let currentSnapshot = resourceSnapshot;
-		try {
-			currentSnapshot = await window.maestro.system.getResourceSnapshot();
-			setResourceSnapshot(currentSnapshot);
-		} catch {
-			currentSnapshot = resourceSnapshot;
+		if (conductorAutoplayLocks.execution.has(groupId)) {
+			return;
 		}
+		conductorAutoplayLocks.execution.add(groupId);
+
+		try {
+			let currentSnapshot = resourceSnapshot;
+			try {
+				currentSnapshot = await window.maestro.system.getResourceSnapshot();
+				setResourceSnapshot(currentSnapshot);
+			} catch {
+				currentSnapshot = resourceSnapshot;
+			}
 
 			const currentResourceGate = evaluateConductorResourceGate(
-				conductor?.resourceProfile || 'aggressive',
-				currentSnapshot
+			conductor?.resourceProfile || 'aggressive',
+			currentSnapshot
 			);
-		if (!currentResourceGate.allowed) {
+			if (!currentResourceGate.allowed) {
 			const message =
-				currentResourceGate.message || 'Conductor execution is paused by resource limits.';
+				currentResourceGate.message || RESOURCE_HOLD_MESSAGE;
 			setExecutionError(message);
+			setConductor(groupId, { holdReason: message });
 			notifyToast({
 				type: 'warning',
 				title: 'Conductor Is Waiting',
 				message,
 			});
-			return;
-		}
+				return;
+			}
 
-		const tasksById = new Map(tasks.map((task) => [task.id, { ...task }]));
+			const tasksById = new Map(tasks.map((task) => [task.id, { ...task }]));
+		const executionChildTasksByParentId = buildConductorChildTaskMap(Array.from(tasksById.values()));
 		const completedTaskIds = new Set(
 			Array.from(tasksById.values())
-				.filter((task) => task.status === 'done')
+				.filter(
+					(task) =>
+						getConductorTaskRollupStatus(task, executionChildTasksByParentId, runs) === 'done'
+				)
 				.map((task) => task.id)
 		);
 		const blockedTaskIds = new Set<string>();
@@ -2093,53 +3614,54 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			Array.from(tasksById.values())
 				.filter(
 					(task) =>
-						task.status === 'ready' &&
+						task.source !== 'manual' &&
+						isConductorTaskRunnableByAgent(task, executionChildTasksByParentId, runs) &&
 						task.dependsOn.every((dependencyId) => completedTaskIds.has(dependencyId))
 				)
 				.sort(sortTasks);
 		const initialCandidates = getDependencyReadyTasks();
 
-		if (initialCandidates.length === 0) {
-			setExecutionError('No dependency-ready tasks are available to run.');
+			if (initialCandidates.length === 0) {
+			setExecutionError('No runnable tasks are available to run yet.');
 			return;
-		}
+			}
 
-		setExecutionError(null);
-		setIsExecuting(true);
-		setConductor(groupId, { status: 'running' });
+			setExecutionError(null);
+			setIsExecuting(true);
+			setConductor(groupId, { status: 'running', holdReason: null });
 
-		const runId = `conductor-run-${generateId()}`;
-		const sshRemoteId = selectedTemplateSshRemoteId;
-		const repoRootResult = await window.maestro.git.getRepoRoot(selectedTemplate.cwd, sshRemoteId);
+			const runId = `conductor-run-${generateId()}`;
+			const sshRemoteId = selectedTemplateSshRemoteId;
+			const repoRootResult = await window.maestro.git.getRepoRoot(selectedTemplate.cwd, sshRemoteId);
 		if (!repoRootResult.success || !repoRootResult.root) {
 			setConductor(groupId, { status: 'attention_required' });
 			setIsExecuting(false);
 			setExecutionError(repoRootResult.error || 'Conductor execution requires a git repository.');
 			return;
 		}
-		const repoRoot = repoRootResult.root;
+			const repoRoot = repoRootResult.root;
 
-		const baseBranchResult = await window.maestro.git.branch(selectedTemplate.cwd, sshRemoteId);
-		const baseBranch = baseBranchResult.stdout.trim();
-		const startedAt = Date.now();
-		const events: ConductorRunEvent[] = [
-			{
-				id: `conductor-run-event-${generateId()}`,
-				runId,
-				groupId,
-				type: 'execution_started',
-				message: `Execution started for ${initialCandidates.length} dependency-ready task${initialCandidates.length === 1 ? '' : 's'}.`,
-				createdAt: startedAt,
-			},
-		];
-		const workerBranches: string[] = [];
+			const baseBranchResult = await window.maestro.git.branch(selectedTemplate.cwd, sshRemoteId);
+			const baseBranch = baseBranchResult.stdout.trim();
+			const startedAt = Date.now();
+			const events: ConductorRunEvent[] = [
+				{
+					id: `conductor-run-event-${generateId()}`,
+					runId,
+					groupId,
+					type: 'execution_started',
+					message: `Execution started for ${initialCandidates.length} runnable task${initialCandidates.length === 1 ? '' : 's'}.`,
+					createdAt: startedAt,
+				},
+			];
+			const workerBranches: string[] = [];
 		const worktreePaths: string[] = [];
 		const taskBranches: Record<string, string> = {};
 		const taskWorktreePaths: Record<string, string> = {};
 		let workerAgentSessionIds: string[] = [];
 		const taskWorkerSessionIds: Record<string, string> = {};
 
-		upsertRun({
+			upsertRun({
 			id: runId,
 			groupId,
 			kind: 'execution',
@@ -2153,17 +3675,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			worktreePaths: [],
 			taskWorktreePaths: {},
 			status: 'running',
-			summary: `Executing ${initialCandidates.length} dependency-ready task${initialCandidates.length === 1 ? '' : 's'}.`,
+				summary: `Executing ${initialCandidates.length} runnable task${initialCandidates.length === 1 ? '' : 's'}.`,
 			taskIds: initialCandidates.map((task) => task.id),
 			events,
 			startedAt,
 		});
 
-		let blockedMessage: string | null = null;
-		const activeWorkers = new Map<string, Promise<void>>();
-		const runningTaskIds = new Set<string>();
+			let blockedMessage: string | null = null;
+			let pausedByUser = false;
+			const activeWorkers = new Map<string, Promise<void>>();
+			const runningTaskIds = new Set<string>();
 
-		try {
+			try {
 			const launchTask = async (taskId: string) => {
 				const task = tasksById.get(taskId);
 				if (!task) {
@@ -2173,7 +3696,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				const workerTarget = buildConductorWorktreeTarget(
 					repoRoot,
 					group?.name || 'group',
-					`${runId}-${task.id}`
+					`${runId}-${task.id}`,
+					conductorWorktreeBasePath || undefined
 				);
 				const workerSetupResult = await window.maestro.git.worktreeSetup(
 					repoRoot,
@@ -2217,16 +3741,18 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				updateTask(task.id, { status: 'running' });
 				tasksById.set(task.id, { ...task, status: 'running', updatedAt: taskStartedAt });
 
-				try {
-					const dependencyTitles = task.dependsOn
-						.map((dependencyId) => tasksById.get(dependencyId)?.title)
-						.filter((title): title is string => Boolean(title));
-					const prompt = buildConductorWorkerPrompt(
-						group?.name || 'Unnamed Group',
-						{ ...selectedTemplate, cwd: workerTarget.worktreePath },
-						task,
-						dependencyTitles
-					);
+					try {
+						const dependencyTitles = task.dependsOn
+							.map((dependencyId) => tasksById.get(dependencyId)?.title)
+							.filter((title): title is string => Boolean(title));
+						const revisionRequest = getEffectiveConductorTaskAttentionRequest(task, runs);
+						const prompt = buildConductorWorkerPrompt(
+							group?.name || 'Unnamed Group',
+							{ ...selectedTemplate, cwd: workerTarget.worktreePath },
+							task,
+							dependencyTitles,
+							revisionRequest?.status === 'open' ? revisionRequest.requestedAction : null
+						);
 					const workerResult = await runConductorAgentTurn({
 						parentSession: selectedTemplate,
 						role: 'worker',
@@ -2239,18 +3765,22 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						runId,
 						taskId: task.id,
 						readOnlyMode: false,
+						expectedSubmissionKind: 'worker',
 						onSessionReady: (session) => {
 							taskWorkerSessionIds[task.id] = session.id;
 							workerAgentSessionIds = Array.from(new Set([...workerAgentSessionIds, session.id]));
+							recordTaskAgentHistory(task.id, 'worker', session.id, session.name, runId);
 							updateTask(task.id, {
 								workerSessionId: session.id,
 								workerSessionName: session.name,
+								attentionRequest: null,
 							});
 							tasksById.set(task.id, {
 								...task,
 								status: 'running',
 								workerSessionId: session.id,
 								workerSessionName: session.name,
+								attentionRequest: null,
 								updatedAt: Date.now(),
 							});
 							updateRun(runId, {
@@ -2259,16 +3789,107 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							});
 						},
 					});
-					const result = parseConductorWorkerResponse(workerResult.response);
+					const result =
+						workerResult.structuredSubmission?.kind === 'worker'
+							? parseConductorWorkerSubmission(workerResult.structuredSubmission.payload)
+							: parseConductorWorkerResponse(workerResult.response);
 					const finishedAt = Date.now();
 
 					if (result.outcome === 'blocked') {
 						const blockedReason = result.blockedReason || result.summary;
-						updateTask(task.id, { status: 'needs_input', changedPaths: result.changedPaths });
+						if (!shouldRouteWorkerBlockToOperator(blockedReason)) {
+							let clarificationSessionId: string | undefined;
+							let clarificationGuidance = `Make the narrowest reasonable assumption that fits the task description, acceptance criteria, and nearby code patterns. Keep scope tight and avoid introducing extra work.`;
+
+							try {
+								const clarificationResult = await runConductorAgentTurn({
+									parentSession: selectedTemplate,
+									role: 'planner',
+									taskTitle: task.title,
+									taskDescription: task.description,
+									scopePaths: task.scopePaths,
+									prompt: buildConductorWorkerClarificationPrompt({
+										groupName: group?.name || 'Unnamed Group',
+										task,
+										templateSession: { ...selectedTemplate, cwd: workerTarget.worktreePath },
+										dependencyTitles,
+										blockedReason,
+									}),
+									cwd: workerTarget.worktreePath,
+									branch: workerTarget.branchName,
+									runId,
+									taskId: task.id,
+									readOnlyMode: true,
+									onSessionReady: (session) => {
+										clarificationSessionId = session.id;
+										workerAgentSessionIds = Array.from(
+											new Set([...workerAgentSessionIds, session.id])
+										);
+										recordTaskAgentHistory(task.id, 'planner', session.id, session.name, runId);
+										updateRun(runId, {
+											agentSessionIds: [...workerAgentSessionIds],
+										});
+									},
+								});
+								if (clarificationResult.response.trim()) {
+									clarificationGuidance = clarificationResult.response.trim();
+								}
+							} catch {
+								// Fall back to a narrow default guidance note so the worker can keep moving.
+							}
+
+							const attentionRequest = buildTaskAttentionRequest({
+								kind: 'clarification',
+								summary: 'Conductor answered an agent clarification and queued another pass.',
+								requestedAction: `Worker asked: ${blockedReason}\n\nConductor guidance: ${clarificationGuidance}`,
+								requestedByRole: 'planner',
+								requestedBySessionId: clarificationSessionId,
+								runId,
+							});
+							updateTask(task.id, {
+								status: 'needs_revision',
+								changedPaths: result.changedPaths,
+								attentionRequest,
+							});
+							tasksById.set(task.id, {
+								...task,
+								status: 'needs_revision',
+								changedPaths: result.changedPaths,
+								attentionRequest,
+								updatedAt: finishedAt,
+							});
+							events.push({
+								id: `conductor-run-event-${generateId()}`,
+								runId,
+								groupId,
+								type: 'task_needs_revision',
+								message: `Conductor answered a worker clarification for ${task.title} and queued another pass.`,
+								createdAt: finishedAt,
+							});
+							updateRun(runId, { events: [...events] });
+							return;
+						}
+
+						const attentionRequest = buildTaskAttentionRequest({
+							kind: 'blocked',
+							summary: blockedReason,
+							requestedAction: blockedReason,
+							requestedByRole: 'worker',
+							requestedBySessionId: taskWorkerSessionIds[task.id],
+							suggestedResponse:
+								'Clarify what should happen next, then move the task back to Ready so Conductor can retry it.',
+							runId,
+						});
+						updateTask(task.id, {
+							status: 'needs_input',
+							changedPaths: result.changedPaths,
+							attentionRequest,
+						});
 						tasksById.set(task.id, {
 							...task,
 							status: 'needs_input',
 							changedPaths: result.changedPaths,
+							attentionRequest,
 							updatedAt: finishedAt,
 						});
 						blockedTaskIds.add(task.id);
@@ -2284,11 +3905,16 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						return;
 					}
 
-					updateTask(task.id, { status: 'needs_review', changedPaths: result.changedPaths });
+					updateTask(task.id, {
+						status: 'needs_review',
+						changedPaths: result.changedPaths,
+						attentionRequest: null,
+					});
 					tasksById.set(task.id, {
 						...task,
 						status: 'needs_review',
 						changedPaths: result.changedPaths,
+						attentionRequest: null,
 						updatedAt: finishedAt,
 					});
 					completedTaskIds.add(task.id);
@@ -2304,11 +3930,13 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								description: followUpTask.description,
 								acceptanceCriteria: [],
 								priority: followUpTask.priority,
-								status: 'draft' as const,
+								status: 'ready' as const,
 								dependsOn: [],
-								scopePaths: [],
+								scopePaths: task.scopePaths,
 								changedPaths: [],
 								source: 'worker_followup' as const,
+								attentionRequest: null,
+								agentHistory: [],
 								createdAt: finishedAt,
 								updatedAt: finishedAt,
 							})),
@@ -2355,13 +3983,13 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				}
 			};
 
-			while (true) {
-				let launchedWorker = false;
+				while (true) {
+					let launchedWorker = false;
 
-				while (activeWorkers.size < currentResourceGate.maxWorkers) {
-					const runningTasks = Array.from(runningTaskIds)
-						.map((taskId) => tasksById.get(taskId))
-						.filter((task): task is NonNullable<typeof task> => Boolean(task));
+					while (activeWorkers.size < currentResourceGate.maxWorkers && !autoplayPauseRef.current) {
+						const runningTasks = Array.from(runningTaskIds)
+							.map((taskId) => tasksById.get(taskId))
+							.filter((task): task is NonNullable<typeof task> => Boolean(task));
 					const nextTask = getDependencyReadyTasks().find(
 						(task) => !runningTasks.some((runningTask) => tasksConflict(task, runningTask))
 					);
@@ -2377,18 +4005,25 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					launchedWorker = true;
 				}
 
-				if (activeWorkers.size === 0) {
-					const remainingReady = Array.from(tasksById.values()).filter(
-						(task) => task.status === 'ready'
-					);
-					if (remainingReady.length > 0) {
-						blockedMessage =
-							blockedTaskIds.size > 0
-								? 'Execution finished with blocked tasks. Some remaining tasks could not start because their dependencies are blocked.'
-								: 'Execution stopped because remaining ready tasks overlap in scope or are still waiting on dependencies.';
+					if (activeWorkers.size === 0) {
+						if (autoplayPauseRef.current) {
+							pausedByUser = true;
+							blockedMessage = USER_PAUSED_MESSAGE;
+							break;
+						}
+						const remainingReady = Array.from(tasksById.values()).filter(
+							(task) =>
+								isConductorTaskRunnableByAgent(task, executionChildTasksByParentId, runs) &&
+								task.dependsOn.every((dependencyId) => completedTaskIds.has(dependencyId))
+						);
+						if (remainingReady.length > 0) {
+							blockedMessage =
+								blockedTaskIds.size > 0
+									? 'Execution finished with blocked tasks. Some remaining tasks could not start because their dependencies are blocked.'
+									: 'Execution stopped because remaining runnable tasks overlap in scope or are still waiting on dependencies.';
+						}
+						break;
 					}
-					break;
-				}
 
 				if (launchedWorker) {
 					await Promise.resolve();
@@ -2397,52 +4032,63 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				await Promise.race(Array.from(activeWorkers.values()));
 			}
 
-			const endedAt = Date.now();
-			const finalBlocked = Boolean(blockedMessage) || blockedTaskIds.size > 0;
-			events.push({
-				id: `conductor-run-event-${generateId()}`,
-				runId,
-				groupId,
-				type: finalBlocked ? 'execution_failed' : 'execution_completed',
-				message:
-					blockedMessage ||
-					(finalBlocked
-						? 'Execution completed with blocked tasks.'
-						: 'Execution lane completed all dependency-ready tasks.'),
-				createdAt: endedAt,
-			});
-			updateRun(runId, {
-				status: finalBlocked ? 'blocked' : 'completed',
-				summary:
-					blockedMessage ||
-					(finalBlocked
-						? 'Execution completed with blocked tasks.'
-						: 'Execution lane completed all dependency-ready tasks.'),
-				endedAt,
-				workerBranches: [...workerBranches],
+				const endedAt = Date.now();
+				const finalBlocked = Boolean(blockedMessage) || blockedTaskIds.size > 0;
+				events.push({
+					id: `conductor-run-event-${generateId()}`,
+					runId,
+					groupId,
+					type: finalBlocked && !pausedByUser ? 'execution_failed' : 'execution_completed',
+					message:
+						blockedMessage ||
+						(finalBlocked
+							? 'Execution completed with blocked tasks.'
+							: 'Execution lane completed all runnable tasks.'),
+					createdAt: endedAt,
+				});
+				updateRun(runId, {
+					status: pausedByUser ? 'cancelled' : finalBlocked ? 'blocked' : 'completed',
+					summary:
+						blockedMessage ||
+						(finalBlocked
+							? 'Execution completed with blocked tasks.'
+							: 'Execution lane completed all runnable tasks.'),
+					endedAt,
+					workerBranches: [...workerBranches],
 				worktreePaths: [...worktreePaths],
 				taskBranches: { ...taskBranches },
 				taskWorktreePaths: { ...taskWorktreePaths },
 				branchName: workerBranches[0],
-				worktreePath: worktreePaths[0],
-				events: [...events],
-			});
-			setConductor(groupId, {
-				status: Array.from(tasksById.values()).some((task) => task.status === 'needs_input')
-					? 'attention_required'
-					: finalBlocked
-						? 'blocked'
-						: 'idle',
-			});
-			if (finalBlocked) {
-				setExecutionError(
-					blockedMessage ||
-						'One or more tasks blocked during execution. Check the event feed for details.'
+					worktreePath: worktreePaths[0],
+					events: [...events],
+				});
+				const needsOperatorAttention = Array.from(tasksById.values()).some((task) =>
+					isConductorTaskOperatorActionRequired(task, executionChildTasksByParentId, runs)
 				);
-			}
-			cleanupConductorAgentSessions(workerAgentSessionIds);
-		} catch (error) {
+				setConductor(groupId, {
+					status: pausedByUser
+						? 'idle'
+						: needsOperatorAttention
+							? 'attention_required'
+							: finalBlocked
+								? 'blocked'
+								: 'idle',
+					holdReason: pausedByUser
+						? USER_PAUSED_MESSAGE
+						: finalBlocked
+							? blockedMessage
+							: null,
+				});
+				if (finalBlocked && !pausedByUser) {
+					setExecutionError(
+						blockedMessage ||
+							'One or more tasks blocked during execution. Check the event feed for details.'
+					);
+				}
+				cleanupConductorAgentSessions(workerAgentSessionIds);
+			} catch (error) {
 			const message = error instanceof Error ? error.message : 'Execution failed.';
+			const isProviderLimit = isConductorProviderLimitMessage(message);
 			const failedAt = Date.now();
 			events.push({
 				id: `conductor-run-event-${generateId()}`,
@@ -2464,28 +4110,56 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				worktreePath: worktreePaths[0],
 				events: [...events],
 			});
-			setConductor(groupId, { status: 'attention_required' });
+			setConductor(groupId, {
+				status: 'attention_required',
+				isPaused: isProviderLimit,
+				holdReason: isProviderLimit ? message : null,
+			});
 			setExecutionError(message);
 			cleanupConductorAgentSessions(workerAgentSessionIds);
+			} finally {
+				setIsExecuting(false);
+			}
 		} finally {
-			setIsExecuting(false);
+			conductorAutoplayLocks.execution.delete(groupId);
 		}
-		};
+	};
 
-		const handleRunReviewTasks = async () => {
-			if (!selectedTemplate) {
-				setReviewError('This workspace needs at least one top-level agent before Conductor can run review.');
-				return;
-			}
+	const handleRunReviewTasks = async () => {
+		if (!selectedTemplate) {
+			setReviewError('This workspace needs at least one top-level agent before Conductor can run review.');
+			return;
+		}
+		if (isAutoplayPaused) {
+			setReviewError(conductor?.holdReason || autoplayPauseMessage);
+			return;
+		}
 
-			if (reviewReadyTasks.length === 0) {
-				setReviewError('No tasks are waiting in the review lane.');
-				return;
-			}
+		if (reviewReadyTasks.length === 0) {
+			setReviewError('No tasks are waiting in the review lane.');
+			return;
+		}
 
+		const currentResourceGate = evaluateConductorResourceGate(
+			conductor?.resourceProfile || 'aggressive',
+			resourceSnapshot
+		);
+		if (!currentResourceGate.allowed) {
+			const message = currentResourceGate.message || RESOURCE_HOLD_MESSAGE;
+			setReviewError(message);
+			setConductor(groupId, { holdReason: message });
+			return;
+		}
+
+		if (conductorAutoplayLocks.review.has(groupId)) {
+			return;
+		}
+		conductorAutoplayLocks.review.add(groupId);
+
+		try {
 			setReviewError(null);
 			setIsReviewing(true);
-			setConductor(groupId, { status: 'running' });
+			setConductor(groupId, { status: 'running', holdReason: null });
 
 			const now = Date.now();
 			const runId = `conductor-run-${generateId()}`;
@@ -2519,9 +4193,52 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			let reviewAgentSessionIds: string[] = [];
 			try {
 				let changesRequested = 0;
+				let malformedResponses = 0;
+				let queuedRevisionCount = 0;
+				let pausedByUser = false;
 				const taskReviewerSessionIds: Record<string, string> = {};
+				const runReviewerAttempt = async (
+					task: ConductorTask,
+					prompt: string,
+					reviewCwd: string,
+					branch?: string | null
+				) => {
+					const reviewResult = await runConductorAgentTurn({
+						parentSession: selectedTemplate,
+						role: 'reviewer',
+						taskTitle: task.title,
+						taskDescription: task.description,
+						scopePaths: task.scopePaths,
+						prompt,
+						cwd: reviewCwd,
+						branch,
+						runId,
+						taskId: task.id,
+						readOnlyMode: true,
+						expectedSubmissionKind: 'reviewer',
+						onSessionReady: (session) => {
+							taskReviewerSessionIds[task.id] = session.id;
+							reviewAgentSessionIds = Array.from(new Set([...reviewAgentSessionIds, session.id]));
+							recordTaskAgentHistory(task.id, 'reviewer', session.id, session.name, runId);
+							updateTask(task.id, {
+								reviewerSessionId: session.id,
+								reviewerSessionName: session.name,
+							});
+							updateRun(runId, {
+								taskReviewerSessionIds: { ...taskReviewerSessionIds },
+								agentSessionIds: [...reviewAgentSessionIds],
+							});
+						},
+					});
+
+					return reviewResult;
+				};
 
 				for (const task of reviewReadyTasks) {
+					if (autoplayPauseRef.current) {
+						pausedByUser = true;
+						break;
+					}
 					const latestTaskExecution = getLatestExecutionForTask(task.id);
 					const reviewCwd =
 						latestTaskExecution?.taskWorktreePaths?.[task.id] ||
@@ -2533,36 +4250,78 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 						task
 					);
 					try {
-						const reviewResult = await runConductorAgentTurn({
-							parentSession: selectedTemplate,
-							role: 'reviewer',
-							taskTitle: task.title,
-							taskDescription: task.description,
-							scopePaths: task.scopePaths,
-							prompt,
-							cwd: reviewCwd,
-							branch: latestTaskExecution?.taskBranches?.[task.id],
-							runId,
-							taskId: task.id,
-							readOnlyMode: true,
-							onSessionReady: (session) => {
-								taskReviewerSessionIds[task.id] = session.id;
-								reviewAgentSessionIds = Array.from(new Set([...reviewAgentSessionIds, session.id]));
-								updateTask(task.id, {
-									reviewerSessionId: session.id,
-									reviewerSessionName: session.name,
-								});
-								updateRun(runId, {
-									taskReviewerSessionIds: { ...taskReviewerSessionIds },
-									agentSessionIds: [...reviewAgentSessionIds],
-								});
-							},
-						});
-						const result = parseConductorReviewerResponse(reviewResult.response);
+						const reviewBranch = latestTaskExecution?.taskBranches?.[task.id];
+						let reviewAttempt = await runReviewerAttempt(task, prompt, reviewCwd, reviewBranch);
+						let result;
+						try {
+							result =
+								reviewAttempt.structuredSubmission?.kind === 'reviewer'
+									? parseConductorReviewerSubmission(reviewAttempt.structuredSubmission.payload)
+									: parseConductorReviewerResponse(reviewAttempt.response);
+						} catch (error) {
+							const shouldRetry =
+								error instanceof Error && error.message === CONDUCTOR_REVIEWER_JSON_ERROR;
+							if (!shouldRetry) {
+								throw error;
+							}
+
+							const retryPrompt = `${prompt}
+
+IMPORTANT:
+- Return exactly one JSON object and nothing else.
+- Do not include markdown code fences.
+- Do not include commentary before or after the JSON.
+- The first character of your response must be { and the last character must be }.`;
+							reviewAttempt = await runReviewerAttempt(task, retryPrompt, reviewCwd, reviewBranch);
+							result =
+								reviewAttempt.structuredSubmission?.kind === 'reviewer'
+									? parseConductorReviewerSubmission(reviewAttempt.structuredSubmission.payload)
+									: parseConductorReviewerResponse(reviewAttempt.response);
+						}
 						const reviewedAt = Date.now();
 
 						if (result.decision === 'approved') {
-							updateTask(task.id, { status: 'done' });
+							const requiresProof = requiresConductorTaskCompletionProof(task);
+							const hasApprovedProof = hasConductorTaskApprovedCompletionProof(task);
+							if (requiresProof && !hasApprovedProof) {
+								const nextProof =
+									task.completionProof || buildDefaultConductorTaskCompletionProof(reviewedAt);
+								updateTask(task.id, {
+									status: 'needs_proof',
+									attentionRequest: null,
+									completionProof: {
+										...nextProof,
+										requestedAt: nextProof.requestedAt || reviewedAt,
+									},
+								});
+								tasksById.set(task.id, {
+									...task,
+									status: 'needs_proof',
+									attentionRequest: null,
+									completionProof: {
+										...nextProof,
+										requestedAt: nextProof.requestedAt || reviewedAt,
+									},
+									updatedAt: reviewedAt,
+								});
+								events.push({
+									id: `conductor-run-event-${generateId()}`,
+									runId,
+									groupId,
+									type: 'task_needs_proof',
+									message: `Review passed for ${task.title}, but proof of completion is still required before it can move into Done.`,
+									createdAt: reviewedAt,
+								});
+								continue;
+							}
+
+							updateTask(task.id, { status: 'done', attentionRequest: null });
+							tasksById.set(task.id, {
+								...task,
+								status: 'done',
+								attentionRequest: null,
+								updatedAt: reviewedAt,
+							});
 							events.push({
 								id: `conductor-run-event-${generateId()}`,
 								runId,
@@ -2572,42 +4331,72 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								createdAt: reviewedAt,
 							});
 							continue;
-						}
+							}
 
-						changesRequested += 1;
-						updateTask(task.id, { status: 'needs_input' });
-						if (result.followUpTasks.length > 0) {
-							setTasks((previousTasks) => [
-								...previousTasks,
-								...result.followUpTasks.map((followUpTask) => ({
-									id: `conductor-task-${generateId()}`,
-									groupId,
-									parentTaskId: task.id,
-									title: followUpTask.title,
-									description: followUpTask.description,
-									acceptanceCriteria: [],
-									priority: followUpTask.priority,
-									status: 'draft' as const,
-									dependsOn: [],
-									scopePaths: [],
-									changedPaths: [],
-									source: 'reviewer_followup' as const,
-									createdAt: reviewedAt,
-									updatedAt: reviewedAt,
-								})),
-							]);
-						}
-						events.push({
-							id: `conductor-run-event-${generateId()}`,
-							runId,
-							groupId,
-							type: 'task_needs_input',
-							message:
-								result.followUpTasks.length > 0
-									? `Review requested changes for ${task.title}. ${result.followUpTasks.length} follow-up subtask${result.followUpTasks.length === 1 ? '' : 's'} added.`
-									: `Review requested changes for ${task.title}. ${result.summary}`,
-							createdAt: reviewedAt,
-						});
+							changesRequested += 1;
+							const followUpTasks = result.followUpTasks;
+							const revisionAttentionRequest =
+								followUpTasks.length === 0
+									? buildTaskAttentionRequest({
+											kind: 'review_changes',
+											summary: result.summary,
+											requestedAction: result.reviewNotes || result.summary,
+											requestedByRole: 'reviewer',
+											requestedBySessionId: taskReviewerSessionIds[task.id],
+											suggestedResponse:
+												'Conductor will send this task back to a worker automatically with the reviewer notes attached.',
+											runId,
+									  })
+									: null;
+							const createdFollowUpTasks = followUpTasks.map((followUpTask) => ({
+								id: `conductor-task-${generateId()}`,
+								groupId,
+							parentTaskId: task.id,
+							title: followUpTask.title,
+							description: followUpTask.description,
+							acceptanceCriteria: [],
+							priority: followUpTask.priority,
+							status: 'ready' as const,
+							dependsOn: [],
+							scopePaths: task.scopePaths,
+							changedPaths: [],
+							source: 'reviewer_followup' as const,
+							attentionRequest: null,
+							agentHistory: [],
+								createdAt: reviewedAt,
+								updatedAt: reviewedAt,
+							}));
+							queuedRevisionCount += createdFollowUpTasks.length > 0 ? createdFollowUpTasks.length : 1;
+							updateTask(task.id, {
+								status: 'needs_revision',
+								attentionRequest: revisionAttentionRequest,
+							});
+							tasksById.set(task.id, {
+								...task,
+								status: 'needs_revision',
+								attentionRequest: revisionAttentionRequest,
+								updatedAt: reviewedAt,
+							});
+							for (const followUpTask of createdFollowUpTasks) {
+								tasksById.set(followUpTask.id, followUpTask);
+							}
+							if (createdFollowUpTasks.length > 0) {
+								setTasks((previousTasks) => [
+									...previousTasks,
+									...createdFollowUpTasks,
+								]);
+							}
+							events.push({
+								id: `conductor-run-event-${generateId()}`,
+								runId,
+								groupId,
+								type: 'task_needs_revision',
+								message:
+									followUpTasks.length > 0
+										? `Review sent ${task.title} back to revision. ${followUpTasks.length} follow-up task${followUpTasks.length === 1 ? '' : 's'} queued for agents.`
+										: `Review sent ${task.title} back for another pass. ${result.summary}`,
+								createdAt: reviewedAt,
+							});
 					} catch (error) {
 						if (cancelledTaskIdsRef.current.has(task.id)) {
 							const cancelledAt = Date.now();
@@ -2622,6 +4411,19 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							});
 							continue;
 						}
+						const message = error instanceof Error ? error.message : 'Review failed.';
+						if (message === CONDUCTOR_REVIEWER_JSON_ERROR) {
+							malformedResponses += 1;
+							events.push({
+								id: `conductor-run-event-${generateId()}`,
+								runId,
+								groupId,
+								type: 'review_failed',
+								message: `Review output for ${task.title} was not valid JSON after retry. Task remains in QA.`,
+								createdAt: Date.now(),
+							});
+							continue;
+						}
 						throw error;
 					} finally {
 						cancelledTaskIdsRef.current.delete(task.id);
@@ -2629,24 +4431,86 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				}
 
 				const finishedAt = Date.now();
+				const nextReviewRun: ConductorRun = {
+					id: runId,
+					groupId,
+					kind: 'review',
+					baseBranch: latestExecutionRun?.baseBranch || selectedTemplate.worktreeBranch || '',
+					sshRemoteId: selectedTemplateSshRemoteId,
+					agentSessionIds: [...reviewAgentSessionIds],
+					taskReviewerSessionIds: { ...taskReviewerSessionIds },
+					integrationBranch: '',
+					status: 'running',
+					summary: '',
+					taskIds: reviewReadyTasks.map((task) => task.id),
+					events: [...events],
+					startedAt: now,
+					endedAt: finishedAt,
+				};
+				const nextRuns = [...runs.filter((run) => run.id !== runId), nextReviewRun];
+				const quarantinedMalformedTaskIds = reviewReadyTasks
+					.filter((task) => getConductorTaskQaFailureState(tasksById.get(task.id) || task, nextRuns).isQuarantined)
+					.map((task) => task.id);
+				const remainingMalformedResponses = Math.max(
+					0,
+					malformedResponses - quarantinedMalformedTaskIds.length
+				);
+				const postReviewTasks = Array.from(tasksById.values());
+				const postReviewChildTaskMap = buildConductorChildTaskMap(postReviewTasks);
+				const completedTaskIds = new Set(
+					postReviewTasks
+						.filter(
+							(task) =>
+								getConductorTaskRollupStatus(task, postReviewChildTaskMap, nextRuns) === 'done'
+						)
+						.map((task) => task.id)
+				);
+				const dependencyReadyAfterReview = postReviewTasks.filter(
+					(task) =>
+						task.source !== 'manual' &&
+						isConductorTaskRunnableByAgent(task, postReviewChildTaskMap, nextRuns) &&
+						task.dependsOn.every((dependencyId) => completedTaskIds.has(dependencyId))
+				);
+				const needsAttention = remainingMalformedResponses > 0;
+				const summary =
+					pausedByUser
+						? USER_PAUSED_MESSAGE
+						: remainingMalformedResponses > 0
+						? `Review finished with ${remainingMalformedResponses} malformed response${remainingMalformedResponses === 1 ? '' : 's'} left in QA${quarantinedMalformedTaskIds.length > 0 ? ` after quarantining ${quarantinedMalformedTaskIds.length} task${quarantinedMalformedTaskIds.length === 1 ? '' : 's'}` : ''}${changesRequested > 0 ? ` and ${changesRequested} task${changesRequested === 1 ? '' : 's'} sent to revision` : ''}.`
+						: quarantinedMalformedTaskIds.length > 0
+							? `Review paused QA for ${quarantinedMalformedTaskIds.length} task${quarantinedMalformedTaskIds.length === 1 ? '' : 's'} after repeated malformed reviewer replies${changesRequested > 0 ? ` and sent ${changesRequested} task${changesRequested === 1 ? '' : 's'} to revision` : ''}.`
+						: changesRequested > 0
+							? `Review finished with ${changesRequested} task${changesRequested === 1 ? '' : 's'} sent to revision.`
+							: 'Review lane approved all queued tasks.';
 				updateRun(runId, {
-					status: changesRequested > 0 ? 'blocked' : 'completed',
-					summary:
-						changesRequested > 0
-							? `Review finished with ${changesRequested} task${changesRequested === 1 ? '' : 's'} requesting changes.`
-							: 'Review lane approved all queued tasks.',
+					status: pausedByUser ? 'cancelled' : remainingMalformedResponses > 0 ? 'attention_required' : 'completed',
+					summary,
 					endedAt: finishedAt,
 					events: [...events],
 				});
-				setConductor(groupId, { status: changesRequested > 0 ? 'attention_required' : 'idle' });
-				if (changesRequested > 0) {
-					setReviewError(
-						`${changesRequested} task${changesRequested === 1 ? '' : 's'} came back with requested changes.`
-					);
+				setConductor(groupId, {
+					status: pausedByUser ? 'idle' : needsAttention ? 'attention_required' : 'idle',
+					holdReason: pausedByUser ? USER_PAUSED_MESSAGE : null,
+				});
+				if (pausedByUser) {
+					setReviewError(null);
+				} else if (remainingMalformedResponses > 0) {
+					setReviewError(summary);
+				} else {
+					setReviewError(null);
+					lastAutoRunReadyKeyRef.current = null;
+					if (!autoplayPauseRef.current) {
+						window.setTimeout(() => {
+							if (dependencyReadyAfterReview.length > 0) {
+								void handleRunReadyTasks();
+							}
+						}, 0);
+					}
 				}
 				cleanupConductorAgentSessions(reviewAgentSessionIds);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : 'Review failed.';
+				const isProviderLimit = isConductorProviderLimitMessage(message);
 				const failedAt = Date.now();
 				events.push({
 					id: `conductor-run-event-${generateId()}`,
@@ -2662,13 +4526,20 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					endedAt: failedAt,
 					events: [...events],
 				});
-				setConductor(groupId, { status: 'attention_required' });
+				setConductor(groupId, {
+					status: 'attention_required',
+					isPaused: isProviderLimit,
+					holdReason: isProviderLimit ? message : null,
+				});
 				setReviewError(message);
 				cleanupConductorAgentSessions(reviewAgentSessionIds);
 			} finally {
 				setIsReviewing(false);
 			}
-		};
+		} finally {
+			conductorAutoplayLocks.review.delete(groupId);
+		}
+	};
 
 		const handleCleanupRunArtifacts = async (run: ConductorRun) => {
 			if (!selectedTemplate) {
@@ -2809,7 +4680,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		const integrationTarget = buildConductorIntegrationTarget(
 			repoRoot,
 			group?.name || 'group',
-			integrationRunId
+			integrationRunId,
+			conductorWorktreeBasePath || undefined
 		);
 		const setupResult = await window.maestro.git.worktreeSetup(
 			repoRoot,
@@ -3152,11 +5024,17 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		}
 	};
 
-	const approvePlanningRun = (runId: string): boolean => {
+	const approvePlanningRun = (
+		runId: string,
+		options?: {
+			approvedBy?: 'operator' | 'conductor';
+		}
+	): boolean => {
 		const run = runs.find((candidate) => candidate.id === runId);
 		if (!run) {
 			return false;
 		}
+		const approvedBy = options?.approvedBy || 'operator';
 		const approvedAt = Date.now();
 		setTasks((previousTasks) =>
 			previousTasks.map((task) =>
@@ -3171,17 +5049,20 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			endedAt: approvedAt,
 			events: [
 				...run.events,
-				{
-					id: `conductor-run-event-${generateId()}`,
-					runId: run.id,
-					groupId,
-					type: 'plan_approved',
-					message: 'Operator approved the plan. Planner tasks are now ready for execution.',
-					createdAt: approvedAt,
-				},
-			],
-		});
-		setConductor(groupId, { status: 'idle' });
+					{
+						id: `conductor-run-event-${generateId()}`,
+						runId: run.id,
+						groupId,
+						type: 'plan_approved',
+						message:
+							approvedBy === 'conductor'
+								? 'Conductor approved the plan automatically and queued it for execution.'
+								: 'You approved the plan. Planner tasks are now ready for execution.',
+						createdAt: approvedAt,
+					},
+				],
+			});
+		setConductor(groupId, { status: 'idle', holdReason: null });
 		cleanupConductorAgentSessions(run.agentSessionIds || []);
 		return true;
 	};
@@ -3192,6 +5073,146 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		}
 
 		approvePlanningRun(pendingRun.id);
+	};
+
+	const handleSetAutoplayPaused = (nextPaused: boolean) => {
+		lastAutoPlanReadyKeyRef.current = null;
+		lastAutoRunReadyKeyRef.current = null;
+		lastAutoReviewReadyKeyRef.current = null;
+		setConductor(groupId, {
+			isPaused: nextPaused,
+			holdReason: nextPaused ? autoplayPauseMessage : null,
+		});
+	};
+
+	const handleToggleAutoplay = () => {
+		handleSetAutoplayPaused(!isAutoplayPaused);
+	};
+
+	const handleApplyOrchestratorAction = (action: ConductorOrchestratorAction) => {
+		switch (action.type) {
+			case 'pause_board':
+				if (!isAutoplayPaused) {
+					handleSetAutoplayPaused(true);
+				}
+				notifyToast({
+					type: 'success',
+					title: 'Conductor Paused',
+					message: 'New helper work is paused until you resume it.',
+				});
+				return;
+			case 'resume_board':
+				if (isAutoplayPaused) {
+					handleSetAutoplayPaused(false);
+				}
+				notifyToast({
+					type: 'success',
+					title: 'Conductor Resumed',
+					message: 'Queued work can start moving again.',
+				});
+				return;
+			case 'prioritize_task': {
+				const task = tasksById.get(action.taskId);
+				if (!task || task.priority === action.priority) {
+					return;
+				}
+				updateTask(action.taskId, { priority: action.priority });
+				notifyToast({
+					type: 'success',
+					title: 'Priority Updated',
+					message: `${task.title} is now ${formatLabel(action.priority)} priority.`,
+				});
+				return;
+			}
+			case 'set_task_group_priority': {
+				const matchingTasks = action.taskIds
+					.map((taskId) => tasksById.get(taskId))
+					.filter((task): task is ConductorTask => Boolean(task))
+					.filter((task) => task.priority !== action.priority);
+				if (matchingTasks.length === 0) {
+					return;
+				}
+				for (const task of matchingTasks) {
+					updateTask(task.id, { priority: action.priority });
+				}
+				notifyToast({
+					type: 'success',
+					title: 'Workstream Reprioritized',
+					message: `${action.summary} Updated ${matchingTasks.length} task${matchingTasks.length === 1 ? '' : 's'}.`,
+				});
+				return;
+			}
+			case 'rebalance_task_groups': {
+				const raiseTasks = action.raiseTaskIds
+					.map((taskId) => tasksById.get(taskId))
+					.filter((task): task is ConductorTask => Boolean(task))
+					.filter((task) => task.priority !== action.raisePriority);
+				const lowerTasks = action.lowerTaskIds
+					.map((taskId) => tasksById.get(taskId))
+					.filter((task): task is ConductorTask => Boolean(task))
+					.filter((task) => task.priority !== action.lowerPriority);
+				for (const task of raiseTasks) {
+					updateTask(task.id, { priority: action.raisePriority });
+				}
+				for (const task of lowerTasks) {
+					updateTask(task.id, { priority: action.lowerPriority });
+				}
+				if (raiseTasks.length === 0 && lowerTasks.length === 0) {
+					return;
+				}
+				notifyToast({
+					type: 'success',
+					title: 'Priority Plan Applied',
+					message: `${action.summary} Updated ${raiseTasks.length + lowerTasks.length} task${
+						raiseTasks.length + lowerTasks.length === 1 ? '' : 's'
+					}.`,
+				});
+				return;
+			}
+			case 'pause_task': {
+				const task = tasksById.get(action.taskId);
+				if (!task) {
+					return;
+				}
+				handleTaskStatusMove(task.id, 'blocked');
+				notifyToast({
+					type: 'success',
+					title: 'Task Paused',
+					message: `${task.title} is paused for now.`,
+				});
+				return;
+			}
+			case 'resume_task': {
+				const task = tasksById.get(action.taskId);
+				if (!task) {
+					return;
+				}
+				handleTaskStatusMove(task.id, 'ready');
+				notifyToast({
+					type: 'success',
+					title: 'Task Resumed',
+					message: `${task.title} is back in the queue.`,
+				});
+				return;
+			}
+			case 'requeue_task': {
+				const task = tasksById.get(action.taskId);
+				if (!task) {
+					return;
+				}
+				handleTaskStatusMove(task.id, 'ready');
+				notifyToast({
+					type: 'success',
+					title: 'Task Re-Queued',
+					message: `${task.title} is ready for another agent pass.`,
+				});
+				return;
+			}
+			case 'open_task':
+			case 'open_member':
+			default:
+				return;
+		}
 	};
 
 	const handleStopTask = async (task: ConductorTask) => {
@@ -3250,7 +5271,6 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 	const tabButtonClass =
 		'px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-transparent';
 	const latestIntegrationIsRemote = Boolean(latestIntegrationRun?.sshRemoteId);
-	const hasReviewWork = isReviewing || reviewReadyTasks.length > 0;
 	const hasIntegrationResults = isIntegrating || integrationReadyTaskIds.length > 0;
 	const latestIntegrationHasConflict = hasOutstandingIntegrationConflict(latestIntegrationRun);
 	const showResolveConflictAction =
@@ -3263,6 +5283,84 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 		!latestIntegrationHasConflict;
 	const latestIntegrationPrUrl = latestIntegrationRun?.prUrl || null;
 	const showViewPrAction = Boolean(latestIntegrationPrUrl);
+
+	const attentionItems = useMemo<AttentionItem[]>(() => {
+		const items: AttentionItem[] = [];
+
+		// Pending plan approval
+		if (pendingRun) {
+			items.push({
+				id: `plan-${pendingRun.id}`,
+				kind: 'plan_approval',
+				title: `Plan ready for review · ${pendingRun.taskIds.length} task${pendingRun.taskIds.length === 1 ? '' : 's'}`,
+				summary: pendingRun.summary || '',
+				actionLabel: 'Approve plan',
+				onAction: handleApprovePlan,
+			});
+		}
+
+		// Integration conflicts
+		if (latestIntegrationHasConflict && latestIntegrationRun) {
+			items.push({
+				id: `conflict-${latestIntegrationRun.id}`,
+				kind: 'integration_conflict',
+				title: 'Merge conflict needs resolution',
+				summary: 'Integration branch has conflicts that need to be resolved before continuing.',
+				actionLabel: 'Resolve',
+				onAction: handleResolveIntegrationConflict,
+			});
+		}
+
+		// Tasks needing operator action
+		for (const task of topLevelTasks) {
+			const rolledUpStatus = rolledUpTaskStatusById.get(task.id) || task.status;
+			if (
+				rolledUpStatus !== 'needs_input' &&
+				rolledUpStatus !== 'needs_proof' &&
+				rolledUpStatus !== 'blocked'
+			) {
+				continue;
+			}
+			const visibleAttention = visibleAttentionByTaskId.get(task.id);
+			if (
+				visibleAttention?.attentionRequest.status === 'open' &&
+				isConductorTaskOperatorActionRequired(
+					visibleAttention.task,
+					childTasksByParentId,
+					runs
+				)
+			) {
+				items.push({
+					id: `task-${task.id}`,
+					kind: 'operator_action',
+					title: task.title,
+					summary: formatConductorOperatorMessage(
+						visibleAttention.attentionRequest.requestedAction
+					),
+					actionLabel: rolledUpStatus === 'needs_proof' ? 'Review proof' : 'Respond',
+					onAction: () => openTaskDetails(task.id),
+				});
+			}
+		}
+
+		return items;
+	}, [
+		childTasksByParentId,
+		handleApprovePlan,
+		handleResolveIntegrationConflict,
+		latestIntegrationHasConflict,
+		latestIntegrationRun,
+		pendingRun,
+		rolledUpTaskStatusById,
+		runs,
+		topLevelTasks,
+		visibleAttentionByTaskId,
+	]);
+
+	const showAttentionBanner = attentionItems.length > 0 && (
+		attentionDismissedAt === 0 ||
+		attentionItems.some((item) => !item.id.startsWith('task-') || true)
+	);
 
 	return (
 		<div
@@ -3355,6 +5453,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				</div>
 			</div>
 
+			<div className="flex-1 min-h-0 flex">
 			<div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 scrollbar-thin">
 				{!selectedTemplate && (
 					<div
@@ -3374,8 +5473,8 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 									Add a workspace agent to get Conductor moving
 								</div>
 								<p className="text-sm mt-1 mb-4" style={{ color: theme.colors.textDim }}>
-									Conductor follows this workspace’s primary top-level agent automatically. Once
-									the workspace has an agent, it will copy that agent’s repo, tools, model
+									Conductor follows this workspace's primary top-level agent automatically. Once
+									the workspace has an agent, it will copy that agent's repo, tools, model
 									settings, and env vars whenever it spins up helpers.
 								</p>
 								<div className="text-sm" style={{ color: theme.colors.textDim }}>
@@ -3452,10 +5551,10 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 					</div>
 				)}
 
-				{selectedTemplate &&
-					gitReadiness === 'ready' &&
-					dependencyReadyTaskIds.length > 0 &&
-					!resourceGate.allowed && (
+					{selectedTemplate &&
+						gitReadiness === 'ready' &&
+						hasQueuedAutoplayWork &&
+						!resourceGate.allowed && (
 						<div
 							className="rounded-xl border p-5 mb-5"
 							style={{
@@ -3469,13 +5568,13 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							<div className="flex items-start gap-3">
 								<ShieldAlert className="w-5 h-5 mt-0.5" style={{ color: theme.colors.warning }} />
 								<div className="flex-1 min-w-0">
-									<div className="font-semibold" style={{ color: theme.colors.textMain }}>
-										Conductor is holding ready work until this machine settles
-									</div>
-									<p className="text-sm mt-1 leading-6" style={{ color: theme.colors.textDim }}>
-										{resourceGate.message ||
-											'Ready tasks are queued, but the current system load or memory headroom is below the launch threshold.'}
-									</p>
+										<div className="font-semibold" style={{ color: theme.colors.textMain }}>
+											Conductor is holding queued work until this machine settles
+										</div>
+										<p className="text-sm mt-1 leading-6" style={{ color: theme.colors.textDim }}>
+											{resourceGate.message ||
+												'Queued work is ready, but the current system load or memory headroom is below the launch threshold.'}
+										</p>
 								</div>
 							</div>
 						</div>
@@ -3488,12 +5587,23 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								{overviewPills.map((pill) => (
 									<div
 										key={pill.label}
-										className="flex items-center gap-2 px-3 py-2 rounded-xl"
+										className="relative flex items-center gap-2 px-3 py-2 rounded-xl"
 										style={{
 											backgroundColor: `${pill.color}10`,
 											border: `1px solid ${pill.color}25`,
 										}}
 									>
+										{pill.delta && pill.delta > 0 && (
+											<span
+												className="absolute -top-1.5 -right-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"
+												style={{
+													backgroundColor: pill.color,
+													color: theme.colors.bgMain,
+												}}
+											>
+												+{pill.delta}
+											</span>
+										)}
 										<div
 											className="flex items-center justify-center w-6 h-6 rounded-lg"
 											style={{
@@ -3514,6 +5624,15 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							</div>
 						)}
 
+						{/* Attention banner */}
+						{showAttentionBanner && (
+							<ConductorAttentionBanner
+								theme={theme}
+								items={attentionItems}
+								onDismiss={() => setAttentionDismissedAt(Date.now())}
+							/>
+						)}
+
 						{/* Action toolbar */}
 						<div className="flex flex-wrap items-center gap-1.5">
 							{pendingRun && (
@@ -3521,39 +5640,48 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 									onClick={handleApprovePlan}
 									className="px-3 py-1.5 rounded-lg text-xs font-medium"
 									style={getGlassButtonStyle(theme, { accent: true })}
-								>
-									Approve plan
-								</button>
-							)}
-							<button
-								onClick={handleRunReadyTasks}
-								disabled={isExecuting || dependencyReadyTaskIds.length === 0 || !!pendingRun}
-								className="px-3 py-1.5 rounded-lg text-xs disabled:opacity-40 inline-flex items-center gap-1.5"
-								style={getGlassButtonStyle(theme)}
-							>
-								{isExecuting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
-								{isExecuting ? 'Running...' : 'Run'}
-							</button>
-							{hasReviewWork && (
+									>
+										Approve plan
+									</button>
+								)}
 								<button
-									onClick={handleRunReviewTasks}
-									disabled={isReviewing}
+									onClick={handleToggleAutoplay}
+									title={controlStatusMessage || undefined}
 									className="px-3 py-1.5 rounded-lg text-xs disabled:opacity-40 inline-flex items-center gap-1.5"
+									style={getGlassButtonStyle(theme, { accent: !isAutoplayPaused })}
+								>
+									{isAutoplayPaused ? (
+										<PlayCircle className="w-3.5 h-3.5" />
+									) : isExecuting || isReviewing ? (
+										<Loader2 className="w-3.5 h-3.5 animate-spin" />
+									) : (
+										<PauseCircle className="w-3.5 h-3.5" />
+									)}
+									{isAutoplayPaused ? 'Resume' : 'Pause'}
+								</button>
+								<button
+									onClick={() => openOrchestratorPanel({ scope: 'board' })}
+									className="px-3 py-1.5 rounded-lg text-xs inline-flex items-center gap-1.5"
 									style={getGlassButtonStyle(theme)}
 								>
-									{isReviewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-									{isReviewing ? 'Reviewing...' : 'QA'}
+									<MessageSquarePlus className="w-3.5 h-3.5" />
+									Ask Orchestrator
 								</button>
-							)}
+								{controlStatusMessage && (
+									<div className="text-[11px] ml-1" style={{ color: theme.colors.textDim }}>
+										{controlStatusMessage}
+									</div>
+								)}
 							{hasIntegrationResults && (
 								<button
 									onClick={handleIntegrateCompletedWork}
 									disabled={isIntegrating}
+									title="Merge completed worker worktrees into one integration branch"
 									className="px-3 py-1.5 rounded-lg text-xs disabled:opacity-40 inline-flex items-center gap-1.5"
 									style={getGlassButtonStyle(theme)}
 								>
 									{isIntegrating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderKanban className="w-3.5 h-3.5" />}
-									{isIntegrating ? 'Integrating...' : 'Integrate'}
+									{isIntegrating ? 'Merging...' : 'Merge worktrees'}
 								</button>
 							)}
 							{showResolveConflictAction && (
@@ -3611,12 +5739,12 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							)}
 							<button
 								onClick={handleCleanupIdleConductorAgents}
-								disabled={Boolean(conductor?.keepConductorAgentSessions) || conductorAgentSessions.every((s) => s.state === 'busy')}
+								disabled={conductorAgentSessions.length === 0 || conductorAgentSessions.every((s) => s.state === 'busy')}
 								className="px-3 py-1.5 rounded-lg text-xs disabled:opacity-40 inline-flex items-center gap-1.5"
 								style={getGlassButtonStyle(theme)}
 							>
 								<Trash2 className="w-3.5 h-3.5" />
-								Tidy agents
+								End helper agents
 							</button>
 						</div>
 
@@ -3626,144 +5754,29 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								className="rounded-lg px-3 py-2 text-xs"
 								style={{ backgroundColor: `${theme.colors.warning}12`, border: `1px solid ${theme.colors.warning}28`, color: theme.colors.warning }}
 							>
-								{executionError || reviewError || integrationError}
+								{formatConductorOperatorMessage(
+									executionError || reviewError || integrationError
+								)}
 							</div>
 						)}
 
-						{/* Activity feed */}
-						<div
-							className="rounded-xl overflow-hidden"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								border: '1px solid rgba(255,255,255,0.08)',
-								boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-							}}
-						>
-							<div
-								className="flex items-center justify-between px-4 py-2.5"
-								style={{
-									borderBottom: '1px solid rgba(255,255,255,0.06)',
-									backgroundColor: 'rgba(255,255,255,0.03)',
-								}}
-							>
-								<div className="flex items-center gap-2">
-									<Activity className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-									<span className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
-										Activity
-									</span>
-								</div>
-								{latestPlanningRun?.summary && (
-									<span className="text-[11px] truncate max-w-[50%]" style={{ color: theme.colors.textDim }}>
-										Plan: {latestPlanningRun.summary}
-									</span>
-								)}
-							</div>
-							<div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.04)' }}>
-								{recentEvents.length ? (
-									recentEvents.map(({ event, runKind }) => {
-										const tone = getConductorEventTone(event.type);
-										const toneColor =
-											tone === 'success' ? theme.colors.success
-												: tone === 'warning' ? theme.colors.warning
-													: tone === 'accent' ? theme.colors.accent
-														: theme.colors.textDim;
-										return (
-											<div key={event.id} className="flex items-start gap-3 px-4 py-2.5">
-												<div
-													className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0"
-													style={{ backgroundColor: toneColor }}
-												/>
-												<div className="min-w-0 flex-1">
-													<div className="text-sm leading-snug" style={{ color: theme.colors.textMain }}>
-														{event.message}
-													</div>
-													<div className="text-[11px] mt-0.5" style={{ color: theme.colors.textDim }}>
-														{formatLabel(runKind)} · {formatTimestamp(event.createdAt)}
-													</div>
-												</div>
-											</div>
-										);
-									})
-								) : (
-									<div className="px-4 py-4 text-xs" style={{ color: theme.colors.textDim }}>
-										No activity yet.
-									</div>
-								)}
-							</div>
+						<div className="grid grid-cols-1 xl:grid-cols-[280px_1fr] gap-4 items-start">
+							<ConductorTeamPanel
+								theme={theme}
+								members={conductorTeamMembers}
+								onOpenMember={handleOpenTeamMember}
+								onOpenTask={openTaskDetails}
+								onAskMember={handleAskAboutTeamMember}
+							/>
+
+							<ConductorUpdatesPanel
+								theme={theme}
+								updates={orchestratorUpdates}
+								planningSummary={visiblePlanningSummary}
+								onOpenTask={openTaskDetails}
+								onAskUpdate={handleAskAboutUpdate}
+							/>
 						</div>
-
-						{/* Team members - compact inline */}
-						{sortedConductorAgentSessions.length > 0 && (
-							<div
-								className="rounded-xl overflow-hidden"
-								style={{
-									backgroundColor: theme.colors.bgSidebar,
-									border: '1px solid rgba(255,255,255,0.08)',
-									boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-								}}
-							>
-								<div
-									className="flex items-center justify-between px-4 py-2.5"
-									style={{
-										borderBottom: '1px solid rgba(255,255,255,0.06)',
-										backgroundColor: 'rgba(255,255,255,0.03)',
-									}}
-								>
-									<div className="flex items-center gap-2">
-										<Users className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
-										<span className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
-											Team
-										</span>
-									</div>
-									<div className="flex items-center gap-2 text-[11px]" style={{ color: theme.colors.textDim }}>
-										<span style={{ color: theme.colors.accent }}>{activeConductorAgentSessions.length} active</span>
-										<span>· {conductorAgentSessions.length} total</span>
-									</div>
-								</div>
-								<div className="p-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-									{sortedConductorAgentSessions.map((session) => (
-										<button
-											key={session.id}
-											type="button"
-											onClick={() => handleOpenAgentSession(session.id)}
-											className="rounded-lg p-3 text-left transition-colors hover:bg-white/5 flex items-start gap-3"
-											style={{
-												backgroundColor: session.state === 'busy' ? `${theme.colors.accent}06` : 'transparent',
-												border: `1px solid ${session.state === 'busy' ? `${theme.colors.accent}20` : 'rgba(255,255,255,0.06)'}`,
-											}}
-										>
-											<div
-												className="w-2 h-2 rounded-full mt-1.5 shrink-0"
-												style={{
-													backgroundColor: session.state === 'busy' ? theme.colors.accent : theme.colors.textDim,
-												}}
-											/>
-											<div className="min-w-0 flex-1">
-												<div className="flex items-center gap-2">
-													<span
-														className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded"
-														style={getGlassPillStyle(theme, session.state === 'busy' ? 'accent' : 'default')}
-													>
-														{formatConductorRoleLabel(session.conductorMetadata?.role || 'worker')}
-													</span>
-													<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
-														{getProviderDisplayName(session.toolType)}
-													</span>
-												</div>
-												<div className="text-sm font-medium mt-1 truncate" style={{ color: theme.colors.textMain }}>
-													{session.name}
-												</div>
-												{session.conductorMetadata?.taskTitle && (
-													<div className="text-xs mt-0.5 truncate" style={{ color: theme.colors.textDim }}>
-														{session.conductorMetadata.taskTitle}
-													</div>
-												)}
-											</div>
-										</button>
-									))}
-								</div>
-							</div>
-						)}
 
 						{/* Kanban / Task board - inline */}
 						<div className="space-y-5">
@@ -3796,7 +5809,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 												className="rounded-lg border p-3 text-sm mt-4"
 												style={{ ...getGlassPanelStyle(theme), color: theme.colors.textMain }}
 											>
-												{pendingRun.summary}
+												{formatConductorOperatorMessage(pendingRun.summary)}
 											</div>
 										)}
 									</div>
@@ -3811,101 +5824,17 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 							</div>
 						)}
 
-						<div className="flex justify-end">
-							<div className="flex items-center gap-2">
-								<button
-									onClick={handleRunReadyTasks}
-									disabled={isExecuting || dependencyReadyTaskIds.length === 0 || !!pendingRun}
-									className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-									style={getGlassButtonStyle(theme, { accent: true })}
-								>
-									{isExecuting ? (
-										<Loader2 className="w-4 h-4 animate-spin" />
-									) : (
-										<PlayCircle className="w-4 h-4" />
-									)}
-									{isExecuting ? 'Running...' : 'Start the run'}
-								</button>
-								{hasReviewWork && (
-									<button
-										onClick={handleRunReviewTasks}
-										disabled={isReviewing}
-										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-										style={getGlassButtonStyle(theme)}
-									>
-										{isReviewing ? (
-											<Loader2 className="w-4 h-4 animate-spin" />
-										) : (
-											<CheckCircle2 className="w-4 h-4" />
-										)}
-										{isReviewing ? 'Reviewing...' : 'Run QA'}
-									</button>
-								)}
-								{hasIntegrationResults && (
-									<button
-										onClick={handleIntegrateCompletedWork}
-										disabled={isIntegrating}
-										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-										style={getGlassButtonStyle(theme)}
-									>
-										{isIntegrating ? (
-											<Loader2 className="w-4 h-4 animate-spin" />
-										) : (
-											<FolderKanban className="w-4 h-4" />
-										)}
-										{isIntegrating ? 'Integrating...' : 'Pull results together'}
-									</button>
-								)}
-								{showResolveConflictAction && (
-									<button
-										onClick={handleResolveIntegrationConflict}
-										disabled={isResolvingConflict}
-										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-										style={getGlassButtonStyle(theme)}
-									>
-										{isResolvingConflict ? (
-											<Loader2 className="w-4 h-4 animate-spin" />
-										) : (
-											<ShieldAlert className="w-4 h-4" />
-										)}
-										{isResolvingConflict ? 'Resolving...' : 'Resolve with agent'}
-									</button>
-								)}
-								{showCreatePrAction && (
-									<button
-										onClick={handleCreateIntegrationPr}
-										disabled={isCreatingPr || latestIntegrationRun?.status === 'integrating'}
-										className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-										style={getGlassButtonStyle(theme)}
-									>
-										{isCreatingPr ? (
-											<Loader2 className="w-4 h-4 animate-spin" />
-										) : (
-											<History className="w-4 h-4" />
-										)}
-										{isCreatingPr ? 'Creating PR...' : 'Open a PR'}
-									</button>
-								)}
-									{showViewPrAction && latestIntegrationPrUrl && (
-										<button
-											onClick={() => void window.maestro.shell.openExternal(latestIntegrationPrUrl)}
-											className="px-4 py-2 rounded-lg text-sm font-medium inline-flex items-center gap-2"
-											style={getGlassButtonStyle(theme)}
-										>
-										<ExternalLink className="w-4 h-4" />
-										View PR
-									</button>
-								)}
-							</div>
-						</div>
-
 						<div
 							className="rounded-xl border p-5"
-							style={getGlassPanelStyle(theme, {
-								tint: 'rgba(255,255,255,0.10)',
-								borderColor: 'rgba(255,255,255,0.08)',
-								strong: true,
-							})}
+							style={{
+								background: `linear-gradient(180deg, ${theme.colors.bgSidebar}f2 0%, ${theme.colors.bgMain}fa 100%)`,
+								backgroundColor: theme.colors.bgSidebar,
+								border: '1px solid rgba(255,255,255,0.08)',
+								boxShadow:
+									'0 20px 38px rgba(15, 23, 42, 0.12), 0 8px 18px rgba(15, 23, 42, 0.07), inset 0 1px 0 rgba(255,255,255,0.08)',
+								isolation: 'isolate',
+								overflow: 'hidden',
+							}}
 						>
 							<div className="flex flex-col gap-4">
 								<div className="flex items-center justify-between gap-3">
@@ -3963,8 +5892,14 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 											style={{ color: theme.colors.textDim }}
 										/>
 										<select
-											value={statusFilter}
-											onChange={(e) => setStatusFilter(e.target.value as BacklogStatusFilter)}
+											value={statusFilter.length === 1 ? statusFilter[0] : 'all'}
+											onChange={(e) =>
+												setStatusFilter(
+													e.target.value === 'all'
+														? []
+														: [e.target.value as ConductorTaskStatus]
+												)
+											}
 											className="w-full rounded-lg border pl-9 pr-3 py-2 text-sm"
 											style={getGlassInputStyle(theme)}
 										>
@@ -4017,32 +5952,73 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 									</div>
 								</div>
 
-								{/* Clickable status nav - scrolls to column */}
+								{/* Clickable status nav */}
 								<div className="flex items-center gap-1 overflow-x-auto scrollbar-thin">
-									{BOARD_COLUMNS.map((status) => {
-										const tone = getTaskStatusTone(theme, status);
-										const count = taskCountsByStatus[status] ?? 0;
-										return (
-											<button
-												key={status}
-												type="button"
-												onClick={() => scrollToColumn(status)}
-												className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors hover:bg-white/5 shrink-0"
-											>
-												<span
-													className="w-2.5 h-2.5 rounded-full shrink-0"
-													style={{ backgroundColor: tone.fg }}
-												/>
-												<span style={{ color: theme.colors.textMain }}>
-													{formatTaskStatusLabel(status)}
-												</span>
-												<span className="font-semibold" style={{ color: count > 0 ? tone.fg : theme.colors.textDim }}>
-													{count}
-												</span>
-											</button>
-										);
-									})}
-									{(statusFilter !== 'all' || sourceFilter !== 'all' || taskSearch.trim()) && (
+									{backlogView === 'board' ? (
+										<>
+											{KANBAN_LANES.map((lane) => {
+												const laneCount = lane.statuses.reduce(
+													(sum, s) => sum + (taskCountsByStatus[s] ?? 0),
+													0
+												);
+												return (
+													<button
+														key={lane.key}
+														type="button"
+														onClick={() => scrollToColumn(lane.key)}
+														className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors hover:bg-white/5 shrink-0"
+														style={getGlassButtonStyle(theme)}
+													>
+														<span
+															className="w-2.5 h-2.5 rounded-full shrink-0"
+															style={{ backgroundColor: lane.color }}
+														/>
+														<span style={{ color: theme.colors.textMain }}>
+															{lane.label}
+														</span>
+														<span className="font-semibold" style={{ color: laneCount > 0 ? lane.color : theme.colors.textDim }}>
+															{laneCount}
+														</span>
+													</button>
+												);
+											})}
+										</>
+									) : (
+										<>
+											{BOARD_COLUMNS.map((status) => {
+												const tone = getTaskStatusTone(theme, status);
+												const count = taskCountsByStatus[status] ?? 0;
+												const isActive = statusFilter.includes(status);
+												return (
+													<button
+														key={status}
+														type="button"
+														onClick={() => {
+															setStatusFilter((current) =>
+																current.includes(status)
+																	? current.filter((candidate) => candidate !== status)
+																	: [...current, status]
+															);
+														}}
+														className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors hover:bg-white/5 shrink-0"
+														style={getGlassButtonStyle(theme, { active: isActive })}
+													>
+														<span
+															className="w-2.5 h-2.5 rounded-full shrink-0"
+															style={{ backgroundColor: tone.fg }}
+														/>
+														<span style={{ color: theme.colors.textMain }}>
+															{formatTaskStatusLabel(status)}
+														</span>
+														<span className="font-semibold" style={{ color: count > 0 ? tone.fg : theme.colors.textDim }}>
+															{count}
+														</span>
+													</button>
+												);
+											})}
+										</>
+									)}
+									{(statusFilter.length > 0 || sourceFilter !== 'all' || taskSearch.trim()) && (
 										<button
 											onClick={clearTaskFilters}
 											className="px-2.5 py-1.5 rounded-lg text-xs ml-auto shrink-0"
@@ -4053,7 +6029,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 									)}
 								</div>
 
-								{tasks.length === 0 ? (
+								{topLevelTasks.length === 0 ? (
 									<div
 										className="rounded-xl border p-8 text-center"
 										style={{ ...getGlassPanelStyle(theme), color: theme.colors.textDim }}
@@ -4062,73 +6038,169 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 										a plan.
 									</div>
 								) : backlogView === 'board' ? (
-									<div ref={boardScrollRef} className="overflow-x-auto pb-2 scrollbar-thin">
-										<div className="flex gap-3 min-w-[1200px]">
-											{BOARD_COLUMNS.map((status) => {
-												const columnTasks = filteredTasks.filter((task) => task.status === status);
-												const tone = getTaskStatusTone(theme, status);
+									<div
+										ref={boardScrollRef}
+										className="overflow-x-auto pb-2 scrollbar-thin"
+										style={{
+											overflowY: 'hidden',
+											backgroundColor: theme.colors.bgMain,
+											backfaceVisibility: 'hidden',
+											transform: 'translateZ(0)',
+											overscrollBehaviorX: 'contain',
+											maxHeight: CONDUCTOR_BOARD_MAX_HEIGHT,
+										}}
+									>
+										<div className="flex items-start gap-3 min-h-0">
+											{KANBAN_LANES.map((lane) => {
+												const laneTasks = filteredTasks.filter(
+													(task) => lane.statuses.includes(rolledUpTaskStatusById.get(task.id) || task.status)
+												);
+												const isEmptyLane = laneTasks.length === 0;
+												const isExpandedForDrop = dragOverLaneKey === lane.key;
+												const isCollapsedLane = isEmptyLane && !isExpandedForDrop;
+												const subCounts = lane.statuses
+													.map((s) => {
+														const count = laneTasks.filter(
+															(t) => (rolledUpTaskStatusById.get(t.id) || t.status) === s
+														).length;
+														return count > 0 ? `${count} ${formatTaskStatusLabel(s).toLowerCase()}` : null;
+													})
+													.filter(Boolean);
 												return (
 													<div
-														key={status}
-														data-column-status={status}
-														className="rounded-xl flex-1 min-w-[200px] min-h-[280px] flex flex-col overflow-hidden"
+														key={lane.key}
+														data-column-status={lane.key}
+														className="rounded-xl min-h-[280px] flex flex-col overflow-hidden transition-[width,min-width,flex-basis] duration-200 ease-out"
+														onDragEnter={(e) => {
+															e.preventDefault();
+															if (draggedTaskId) {
+																setDragOverLaneKey(lane.key);
+															}
+														}}
 														onDragOver={(e) => {
 															e.preventDefault();
+															if (draggedTaskId && dragOverLaneKey !== lane.key) {
+																setDragOverLaneKey(lane.key);
+															}
+														}}
+														onDragLeave={(e) => {
+															const relatedTarget = e.relatedTarget;
+															if (
+																relatedTarget instanceof Node &&
+																e.currentTarget.contains(relatedTarget)
+															) {
+																return;
+															}
+															if (dragOverLaneKey === lane.key) {
+																setDragOverLaneKey(null);
+															}
 														}}
 														onDrop={() => {
 															if (draggedTaskId) {
-																handleTaskStatusMove(draggedTaskId, status);
+																handleTaskStatusMove(draggedTaskId, lane.dropDefault);
 																setDraggedTaskId(null);
 															}
+															setDragOverLaneKey(null);
 														}}
 														style={{
 															backgroundColor: theme.colors.bgSidebar,
-															border: `1px solid ${tone.border}`,
+															border: `1px solid ${lane.color}3d`,
 															boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+															flex: isCollapsedLane ? '0 0 56px' : '1 1 0%',
+															minWidth: isCollapsedLane ? '56px' : '180px',
+															height: isCollapsedLane ? undefined : CONDUCTOR_BOARD_MAX_HEIGHT,
+															maxHeight: isCollapsedLane ? undefined : CONDUCTOR_BOARD_MAX_HEIGHT,
 														}}
 													>
 														{/* Colored top bar */}
 														<div
 															className="h-1 w-full shrink-0"
-															style={{ backgroundColor: tone.fg }}
+															style={{ backgroundColor: lane.color }}
 														/>
-														{/* Column header */}
-														<div className="flex items-center gap-2 px-3 py-2.5" style={{
-															backgroundColor: `${tone.fg}08`,
-															borderBottom: `1px solid ${tone.border}`,
-														}}>
-															<span className="text-sm font-semibold" style={{ color: tone.fg }}>
-																{formatTaskStatusLabel(status)}
-															</span>
-															<span
-																className="ml-auto text-[11px] font-medium px-1.5 py-0.5 rounded-full"
-																style={{
-																	backgroundColor: `${tone.fg}18`,
-																	color: tone.fg,
-																}}
-															>
-																{columnTasks.length}
-															</span>
+														{/* Lane header */}
+														<div
+															className={`px-3 py-2.5 ${isCollapsedLane ? 'flex flex-col items-center justify-start text-center gap-1.5 px-1.5 py-3 min-h-[140px]' : 'flex flex-col gap-1'}`}
+															style={{
+																backgroundColor: `${lane.color}0d`,
+																borderBottom: isCollapsedLane ? 'none' : `1px solid ${lane.color}3d`,
+															}}
+														>
+															<div className={isCollapsedLane ? 'flex flex-col items-center gap-1.5' : 'flex items-center gap-2'}>
+																<span
+																	className="text-sm font-semibold"
+																	style={{
+																		color: lane.color,
+																		writingMode: isCollapsedLane ? 'vertical-rl' : undefined,
+																		letterSpacing: isCollapsedLane ? '0.08em' : undefined,
+																	}}
+																>
+																	{lane.label}
+																</span>
+																<span
+																	className="text-[11px] font-medium px-1.5 py-0.5 rounded-full ml-auto"
+																	style={{
+																		backgroundColor: `${lane.color}1a`,
+																		color: lane.color,
+																	}}
+																>
+																	{laneTasks.length}
+																</span>
+															</div>
+															{!isCollapsedLane && subCounts.length > 1 && (
+																<div className="text-[11px]" style={{ color: theme.colors.textDim }}>
+																	{subCounts.join(' · ')}
+																</div>
+															)}
+															{isCollapsedLane && draggedTaskId && (
+																<span
+																	className="text-[11px]"
+																	style={{ color: theme.colors.textDim }}
+																>
+																	Drop here
+																</span>
+															)}
 														</div>
 														{/* Cards */}
-														<div className="flex-1 p-2 space-y-2 overflow-y-auto scrollbar-thin">
-																{columnTasks.length > 0 ? (
-																	columnTasks.map((task) => {
+														<div
+															className="flex-1 p-2 space-y-2 overflow-y-auto scrollbar-thin"
+															style={{
+																display: isCollapsedLane ? 'none' : undefined,
+																minHeight: 0,
+																maxHeight: '100%',
+																overscrollBehavior: 'contain',
+																backfaceVisibility: 'hidden',
+																backgroundColor: theme.colors.bgSidebar,
+															}}
+														>
+																{laneTasks.length > 0 ? (
+																	laneTasks.map((task) => {
+																		const taskStatus = rolledUpTaskStatusById.get(task.id) || task.status;
 																		const priorityTone = getTaskPriorityTone(theme, task.priority);
-																		const parentTask = task.parentTaskId
-																			? tasksById.get(task.parentTaskId)
+																		const statusTone = getTaskStatusTone(theme, taskStatus);
+																		const completionProofCardState = getCompletionProofCardState(
+																			task,
+																			taskStatus
+																		);
+																		const completionProofTint = completionProofCardState
+																			? getCompletionProofTint(theme, completionProofCardState.tone)
 																			: null;
 																		const childTasks = childTasksByParentId.get(task.id) || [];
+																		const taskProgress = getConductorTaskProgress(
+																			task,
+																			childTasksByParentId
+																		);
 																		const canStopTask = Boolean(getActiveTaskSessionId(task));
 																		return (
 																		<div
 																			key={task.id}
 																			draggable
 																			onDragStart={() => setDraggedTaskId(task.id)}
-																			onDragEnd={() => setDraggedTaskId(null)}
-																			onDoubleClick={() => openTaskDetails(task.id)}
+																			onDragEnd={() => {
+																				setDraggedTaskId(null);
+																				setDragOverLaneKey(null);
+																			}}
+																			onClick={() => openTaskDetails(task.id)}
 																			className="rounded-lg overflow-hidden cursor-grab active:cursor-grabbing group transition-all hover:translate-y-[-1px] hover:shadow-lg"
-																			title="Double-click for details"
 																			style={{
 																				backgroundColor: draggedTaskId === task.id
 																					? `${theme.colors.accent}08`
@@ -4137,19 +6209,12 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																					? `${theme.colors.accent}45`
 																					: 'rgba(255,255,255,0.08)'}`,
 																				boxShadow: '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+																				borderLeft: lane.statuses.length > 1 ? `3px solid ${statusTone.fg}` : undefined,
 																			}}
 																		>
 																				<div className="p-2.5">
 																				<div className="flex items-start gap-2">
 																					<div className="min-w-0 flex-1">
-																						{parentTask && (
-																							<div
-																								className="text-[11px] mb-1 truncate"
-																								style={{ color: theme.colors.textDim }}
-																							>
-																								{parentTask.title}
-																							</div>
-																						)}
 																						<div className="flex items-center gap-2">
 																							<div
 																								className="w-2 h-2 rounded-full shrink-0"
@@ -4163,22 +6228,102 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																								{task.title}
 																							</div>
 																						</div>
-																						{task.description && (
-																							<p
-																								className="text-xs mt-1.5 line-clamp-2 leading-relaxed"
-																								style={{ color: theme.colors.textDim }}
+																						{lane.statuses.length > 1 && (
+																							<span
+																								className="inline-block text-[11px] mt-1 px-1.5 py-0.5 rounded"
+																								style={{ backgroundColor: statusTone.bg, color: statusTone.fg }}
 																							>
-																								{task.description}
+																								{formatTaskStatusLabel(taskStatus)}
+																							</span>
+																						)}
+																							{task.description && (
+																								<p
+																									className="text-xs mt-1.5 line-clamp-2 leading-relaxed"
+																									style={{ color: theme.colors.textDim }}
+																								>
+																									{task.description}
+																								</p>
+																							)}
+																							{completionProofCardState && (
+																								<div className="flex flex-wrap gap-1.5 mt-2">
+																									<span
+																										className="px-1.5 py-0.5 rounded text-[11px] font-medium"
+																										style={{
+																											backgroundColor: `${completionProofTint}14`,
+																											border: `1px solid ${completionProofTint}28`,
+																											color: completionProofTint || theme.colors.textDim,
+																										}}
+																									>
+																										{completionProofCardState.label}
+																									</span>
+																									{task.completionProof?.demoId ? (
+																										<button
+																											onClick={(e) => {
+																												e.stopPropagation();
+																												setOpenProofDemoId(task.completionProof?.demoId || null);
+																											}}
+																											className="px-1.5 py-0.5 rounded text-[11px] inline-flex items-center gap-1 hover:bg-white/10"
+																											style={{
+																												color: theme.colors.textMain,
+																												border: '1px solid rgba(255,255,255,0.10)',
+																											}}
+																										>
+																											<PlayCircle className="w-3 h-3" />
+																											Review proof
+																										</button>
+																									) : null}
+																								</div>
+																							)}
+																							{(visibleAttentionByTaskId.get(task.id)?.attentionRequest.status === 'open' ||
+																								(taskStatus === 'needs_revision' && Boolean(openFollowUpsByTaskId.get(task.id)?.length))) && (
+																							<p
+																								className="text-[11px] mt-2 leading-relaxed"
+																								style={{ color: theme.colors.warning }}
+																							>
+																								{visibleAttentionByTaskId.get(task.id) &&
+																									isConductorTaskOperatorActionRequired(
+																										visibleAttentionByTaskId.get(task.id)!.task,
+																										childTasksByParentId,
+																										runs
+																									)
+																										? formatConductorOperatorMessage(
+																											visibleAttentionByTaskId.get(task.id)?.attentionRequest.requestedAction
+																										)
+																										: openFollowUpsByTaskId.get(task.id)?.[0]?.title || 'Agents are handling review changes.'}
 																							</p>
+																						)}
+																						{taskProgress.totalSubtasks > 0 && (
+																							<div className="mt-2 space-y-1.5">
+																								<div className="flex items-center justify-between gap-2 text-[11px]">
+																									<span style={{ color: theme.colors.textDim }}>
+																										Subtasks
+																									</span>
+																									<span style={{ color: theme.colors.textMain }}>
+																										{taskProgress.completedSubtasks}/{taskProgress.totalSubtasks}
+																									</span>
+																								</div>
+																								<div
+																									className="h-1.5 rounded-full overflow-hidden"
+																									style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+																								>
+																									<div
+																										className="h-full rounded-full"
+																										style={{
+																											width: `${Math.round(taskProgress.completionRatio * 100)}%`,
+																											backgroundColor: priorityTone.fg,
+																										}}
+																									/>
+																								</div>
+																							</div>
 																						)}
 																						{getTaskAgentBadges(task).length > 0 && (
 																							<div className="flex flex-wrap gap-1.5 mt-2">
 																								{getTaskAgentBadges(task).map((badge) => (
 																									<button
 																										key={badge.key}
-																										onClick={() => handleOpenAgentSession(badge.sessionId)}
+																										onClick={(e) => { e.stopPropagation(); handleOpenAgentSession(badge.sessionId); }}
 																										disabled={!sessionById.has(badge.sessionId)}
-																										className="px-1.5 py-0.5 rounded text-[10px] disabled:opacity-70"
+																										className="px-1.5 py-0.5 rounded text-[11px] disabled:opacity-70"
 																										style={getGlassPillStyle(theme, badge.tone)}
 																									>
 																										{badge.label}
@@ -4188,7 +6333,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																						)}
 																					</div>
 																					<button
-																						onClick={() => deleteTask(task.id)}
+																						onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }}
 																						className="p-1 rounded hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
 																						title="Delete task"
 																						style={{ color: theme.colors.textDim }}
@@ -4201,7 +6346,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																					<div className="flex items-center gap-1.5 mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
 																						{canStopTask && (
 																							<button
-																								onClick={() => void handleStopTask(task)}
+																								onClick={(e) => { e.stopPropagation(); void handleStopTask(task); }}
 																								className="rounded px-1.5 py-1 text-[11px] inline-flex items-center gap-1 hover:bg-white/10"
 																								style={{ color: theme.colors.textDim }}
 																							>
@@ -4211,7 +6356,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																						)}
 																						{childTasks.length > 0 && (
 																							<span className="text-[11px] ml-auto" style={{ color: theme.colors.textDim }}>
-																								{childTasks.length} sub
+																								{taskProgress.openSubtasks} open
 																							</span>
 																						)}
 																					</div>
@@ -4224,7 +6369,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 																<div
 																	className="rounded-lg border border-dashed p-4"
 																	style={{
-																		borderColor: `${tone.fg}20`,
+																		borderColor: `${lane.color}20`,
 																		minHeight: '60px',
 																	}}
 																/>
@@ -4236,200 +6381,417 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 										</div>
 									</div>
 								) : (
-									<div className="overflow-x-auto pb-2 scrollbar-thin">
-										<div
-											className="rounded-xl border overflow-hidden min-w-[1132px]"
-											style={getGlassPanelStyle(theme, {
-												tint: 'rgba(255,255,255,0.10)',
-												borderColor: 'rgba(255,255,255,0.08)',
-											})}
-										>
-											<div
-												className="grid gap-3 px-4 py-3 text-xs uppercase tracking-wide border-b"
-												style={{
-													gridTemplateColumns:
-														'minmax(260px,2fr) 110px 110px 140px 100px 120px 120px 72px',
-													borderColor: theme.colors.border,
-													color: theme.colors.textDim,
-												}}
-											>
-												<div>Task</div>
-												<div>Status</div>
-												<div>Priority</div>
-												<div>Source</div>
-												<div>Deps</div>
-												<div>Scope</div>
-												<div>Updated</div>
-												<div />
-											</div>
-											<div className="divide-y" style={{ borderColor: theme.colors.border }}>
-													{filteredTasks.length > 0 ? (
-														filteredTasks.map((task) => {
-															const statusTone = getTaskStatusTone(theme, task.status);
-															const priorityTone = getTaskPriorityTone(theme, task.priority);
-															const parentTask = task.parentTaskId
-																? tasksById.get(task.parentTaskId)
-																: null;
-															const childTasks = childTasksByParentId.get(task.id) || [];
-															const canStopTask = Boolean(getActiveTaskSessionId(task));
-															return (
-															<div
-																key={task.id}
-																className="grid gap-3 px-4 py-4 items-start"
-																onDoubleClick={() => openTaskDetails(task.id)}
-																title="Double-click for task details"
-																style={{
-																	gridTemplateColumns:
-																		'minmax(260px,2fr) 110px 110px 140px 100px 120px 120px 72px',
-																}}
-															>
-																	<div className="min-w-0">
-																		{parentTask && (
-																			<div
-																				className="text-[11px] uppercase tracking-[0.16em] mb-2"
-																				style={{ color: theme.colors.textDim }}
-																			>
-																				Subtask of {parentTask.title}
-																			</div>
-																		)}
-																		<div
-																			className="font-semibold"
-																			style={{ color: theme.colors.textMain }}
-																	>
-																		{task.title}
-																	</div>
-																	{task.description && (
-																		<div
-																			className="text-sm mt-1 line-clamp-2"
-																			style={{ color: theme.colors.textDim }}
+									<div className="space-y-3">
+										{filteredTasks.length > 0 ? (
+											<>
+												<div
+													className="hidden lg:block rounded-xl border overflow-hidden"
+													style={getGlassPanelStyle(theme, {
+														tint: 'rgba(255,255,255,0.08)',
+														borderColor: 'rgba(255,255,255,0.08)',
+													})}
+												>
+													<div className="overflow-x-auto scrollbar-thin">
+														<table
+															className="w-full text-sm"
+															style={{ borderCollapse: 'separate', borderSpacing: 0, minWidth: 960 }}
+														>
+															<colgroup>
+																<col style={{ width: '42%' }} />
+																<col style={{ width: '12%' }} />
+																<col style={{ width: '12%' }} />
+																<col style={{ width: '7%' }} />
+																<col style={{ width: '8%' }} />
+																<col style={{ width: '11%' }} />
+																<col style={{ width: '8%' }} />
+															</colgroup>
+															<thead>
+																<tr
+																	style={{
+																		backgroundColor: 'rgba(255,255,255,0.04)',
+																	}}
+																>
+																	{['Task', 'Priority', 'Source', 'Deps', 'Scope', 'Updated', 'Actions'].map((label) => (
+																		<th
+																			key={label}
+																			className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wide"
+																			style={{
+																				color: theme.colors.textDim,
+																				borderBottom: '1px solid rgba(255,255,255,0.08)',
+																			}}
 																		>
-																			{task.description}
-																		</div>
-																	)}
-																	{getTaskAgentBadges(task).length > 0 && (
-																		<div className="flex flex-wrap gap-2 mt-2">
-																			{getTaskAgentBadges(task).map((badge) => (
-																				<button
-																					key={badge.key}
-																					onClick={() => handleOpenAgentSession(badge.sessionId)}
-																					disabled={!sessionById.has(badge.sessionId)}
-																					className="px-2 py-1 rounded-full border text-[11px] disabled:opacity-70"
-																					style={getGlassPillStyle(theme, badge.tone)}
+																			{label}
+																		</th>
+																	))}
+																</tr>
+															</thead>
+															{BOARD_COLUMNS.map((status) => {
+																const sectionTasks = filteredTasks.filter(
+																	(task) => (rolledUpTaskStatusById.get(task.id) || task.status) === status
+																);
+																if (sectionTasks.length === 0) {
+																	return null;
+																}
+
+																const tone = getTaskStatusTone(theme, status);
+																return (
+																	<tbody key={status}>
+																		<tr>
+																			<td
+																				colSpan={7}
+																				className="px-4 py-2.5"
+																				style={{
+																					backgroundColor: `${tone.fg}10`,
+																					borderTop: '1px solid rgba(255,255,255,0.06)',
+																					borderBottom: '1px solid rgba(255,255,255,0.06)',
+																				}}
+																			>
+																				<div className="flex items-center justify-between gap-3">
+																					<div className="flex items-center gap-2">
+																						<span
+																							className="w-2.5 h-2.5 rounded-full shrink-0"
+																							style={{ backgroundColor: tone.fg }}
+																						/>
+																						<span
+																							className="text-xs font-semibold uppercase tracking-wide"
+																							style={{ color: tone.fg }}
+																						>
+																							{formatTaskStatusLabel(status)}
+																						</span>
+																					</div>
+																					<span
+																						className="text-[11px] font-medium"
+																						style={{ color: theme.colors.textDim }}
+																					>
+																						{sectionTasks.length}
+																					</span>
+																				</div>
+																			</td>
+																		</tr>
+																		{sectionTasks.map((task) => {
+																			const priorityTone = getTaskPriorityTone(theme, task.priority);
+																			const taskStatus =
+																				rolledUpTaskStatusById.get(task.id) || task.status;
+																			const completionProofCardState = getCompletionProofCardState(
+																				task,
+																				taskStatus
+																			);
+																			const completionProofTint = completionProofCardState
+																				? getCompletionProofTint(theme, completionProofCardState.tone)
+																				: null;
+																			const childTasks = childTasksByParentId.get(task.id) || [];
+																			const taskProgress = getConductorTaskProgress(task, childTasksByParentId);
+																			const canStopTask = Boolean(getActiveTaskSessionId(task));
+																			const visibleAttention = visibleAttentionByTaskId.get(task.id);
+																			const attentionText =
+																				visibleAttention?.attentionRequest.status === 'open'
+																					? isConductorTaskOperatorActionRequired(
+																						visibleAttention.task,
+																						childTasksByParentId,
+																						runs
+																					)
+																						? formatConductorOperatorMessage(
+																							visibleAttention.attentionRequest.requestedAction
+																						)
+																						: openFollowUpsByTaskId.get(task.id)?.[0]?.title ||
+																							'Agents are handling review changes.'
+																					: null;
+																			return (
+																				<tr
+																					key={task.id}
+																					onClick={() => openTaskDetails(task.id)}
+																					className="hover:bg-white/5 cursor-pointer"
 																				>
-																					{badge.label}
-																				</button>
-																			))}
-																		</div>
-																	)}
-																		{task.scopePaths.length > 0 && (
-																			<div
-																				className="text-xs mt-2"
-																				style={{ color: theme.colors.textDim }}
-																			>
-																				{task.scopePaths.join(', ')}
-																			</div>
-																		)}
-																		{childTasks.length > 0 && (
-																			<div className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-																				{childTasks.length} subtask{childTasks.length === 1 ? '' : 's'}
-																			</div>
-																		)}
-																	</div>
-																<div>
-																	<select
-																		value={task.status}
-																		onChange={(e) =>
-																			handleTaskStatusMove(task.id, e.target.value as ConductorTaskStatus)
-																		}
-																		className="w-full rounded-lg border px-2 py-2 text-xs"
-																		style={{
-																			backgroundColor: statusTone.bg,
-																			borderColor: statusTone.border,
-																			color: statusTone.fg,
-																		}}
-																	>
-																		{STATUS_OPTIONS.map((option) => (
-																			<option key={option} value={option}>
-																				{formatTaskStatusLabel(option)}
-																			</option>
-																		))}
-																	</select>
-																</div>
-																<div>
-																	<select
-																		value={task.priority}
-																		onChange={(e) =>
-																			updateTask(task.id, {
-																				priority: e.target.value as ConductorTaskPriority,
-																			})
-																		}
-																		className="w-full rounded-lg border px-2 py-2 text-xs"
-																		style={{
-																			backgroundColor: priorityTone.bg,
-																			borderColor: priorityTone.border,
-																			color: priorityTone.fg,
-																		}}
-																	>
-																		{PRIORITY_OPTIONS.map((option) => (
-																			<option key={option} value={option}>
-																				{formatLabel(option)}
-																			</option>
-																		))}
-																	</select>
-																</div>
-																<div className="text-sm" style={{ color: theme.colors.textDim }}>
-																	{formatTaskSourceLabel(task.source)}
-																</div>
-																<div className="text-sm" style={{ color: theme.colors.textMain }}>
-																	{task.dependsOn.length}
-																</div>
-																<div className="text-sm" style={{ color: theme.colors.textMain }}>
-																	{task.scopePaths.length}
-																</div>
-																<div className="text-sm" style={{ color: theme.colors.textDim }}>
-																	{new Date(task.updatedAt).toLocaleDateString()}
-																</div>
-																	<div className="flex justify-end">
-																		{canStopTask && (
-																			<button
-																				onClick={() => void handleStopTask(task)}
-																				className="p-2 rounded-lg hover:bg-white/5"
-																				title="Stop task"
-																				style={{ color: theme.colors.textDim }}
-																			>
-																				<Square className="w-4 h-4" />
-																			</button>
-																		)}
-																		<button
-																			onClick={() => openTaskComposer(task.id)}
-																			className="p-2 rounded-lg hover:bg-white/5"
-																			title="Add subtask"
-																			style={{ color: theme.colors.textDim }}
+																					<td
+																						className="px-4 py-3 align-top"
+																						style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+																					>
+																						<div
+																							className="font-medium"
+																							style={{ color: theme.colors.textMain }}
+																						>
+																							{task.title}
+																						</div>
+																						{attentionText && (
+																							<div
+																								className="text-xs mt-1 line-clamp-1"
+																								title={attentionText}
+																								style={{ color: theme.colors.warning }}
+																							>
+																								{attentionText}
+																							</div>
+																						)}
+																							{childTasks.length > 0 && (
+																								<div
+																									className="text-[11px] mt-1"
+																									style={{ color: theme.colors.textDim }}
+																								>
+																									{taskProgress.completedSubtasks}/{taskProgress.totalSubtasks} subtasks complete
+																								</div>
+																							)}
+																							{completionProofCardState && (
+																								<div className="flex flex-wrap gap-1.5 mt-2">
+																									<span
+																										className="px-1.5 py-0.5 rounded text-[11px] font-medium"
+																										style={{
+																											backgroundColor: `${completionProofTint}14`,
+																											border: `1px solid ${completionProofTint}28`,
+																											color: completionProofTint || theme.colors.textDim,
+																										}}
+																									>
+																										{completionProofCardState.label}
+																									</span>
+																									{task.completionProof?.demoId ? (
+																										<button
+																											onClick={(event) => {
+																												event.stopPropagation();
+																												setOpenProofDemoId(task.completionProof?.demoId || null);
+																											}}
+																											className="px-1.5 py-0.5 rounded text-[11px] inline-flex items-center gap-1 hover:bg-white/10"
+																											style={{
+																												color: theme.colors.textMain,
+																												border: '1px solid rgba(255,255,255,0.10)',
+																											}}
+																										>
+																											<PlayCircle className="w-3 h-3" />
+																											Review proof
+																										</button>
+																									) : null}
+																								</div>
+																							)}
+																						</td>
+																					<td
+																						className="px-4 py-3 align-top"
+																						style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+																					>
+																						<select
+																							value={task.priority}
+																							onChange={(e) =>
+																								updateTask(task.id, {
+																									priority: e.target.value as ConductorTaskPriority,
+																								})
+																							}
+																							className="w-full rounded-lg border px-2 py-1.5 text-xs"
+																							style={{
+																								backgroundColor: priorityTone.bg,
+																								borderColor: priorityTone.border,
+																								color: priorityTone.fg,
+																							}}
+																						>
+																							{PRIORITY_OPTIONS.map((option) => (
+																								<option key={option} value={option}>
+																									{formatLabel(option)}
+																								</option>
+																							))}
+																						</select>
+																					</td>
+																					<td
+																						className="px-4 py-3 align-top text-xs"
+																						style={{
+																							color: theme.colors.textDim,
+																							borderBottom: '1px solid rgba(255,255,255,0.05)',
+																						}}
+																					>
+																						{formatTaskSourceLabel(task.source)}
+																					</td>
+																					<td
+																						className="px-4 py-3 align-top text-xs"
+																						style={{
+																							color: theme.colors.textMain,
+																							borderBottom: '1px solid rgba(255,255,255,0.05)',
+																						}}
+																					>
+																						{task.dependsOn.length}
+																					</td>
+																					<td
+																						className="px-4 py-3 align-top text-xs"
+																						style={{
+																							color: theme.colors.textMain,
+																							borderBottom: '1px solid rgba(255,255,255,0.05)',
+																						}}
+																					>
+																						{task.scopePaths.length}
+																					</td>
+																					<td
+																						className="px-4 py-3 align-top text-xs"
+																						style={{
+																							color: theme.colors.textDim,
+																							borderBottom: '1px solid rgba(255,255,255,0.05)',
+																						}}
+																					>
+																						{new Date(task.updatedAt).toLocaleDateString()}
+																					</td>
+																					<td
+																						className="px-4 py-3 align-top"
+																						style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+																					>
+																						<div className="flex justify-end items-center gap-1">
+																							{canStopTask && (
+																								<button
+																									onClick={() => void handleStopTask(task)}
+																									className="p-1.5 rounded-lg hover:bg-white/5"
+																									title="Stop task"
+																									style={{ color: theme.colors.textDim }}
+																								>
+																									<Square className="w-4 h-4" />
+																								</button>
+																							)}
+																							<button
+																								onClick={() => openTaskComposer(task.id)}
+																								className="p-1.5 rounded-lg hover:bg-white/5"
+																								title="Add subtask"
+																								style={{ color: theme.colors.textDim }}
+																							>
+																								<ClipboardList className="w-4 h-4" />
+																							</button>
+																							<button
+																								onClick={() => deleteTask(task.id)}
+																								className="p-1.5 rounded-lg hover:bg-white/5"
+																								title="Delete task"
+																								style={{ color: theme.colors.textDim }}
+																							>
+																								<Trash2 className="w-4 h-4" />
+																							</button>
+																						</div>
+																					</td>
+																				</tr>
+																			);
+																		})}
+																	</tbody>
+																);
+															})}
+														</table>
+													</div>
+												</div>
+
+												<div className="lg:hidden space-y-3">
+													{BOARD_COLUMNS.map((status) => {
+														const sectionTasks = filteredTasks.filter(
+															(task) => (rolledUpTaskStatusById.get(task.id) || task.status) === status
+														);
+														if (sectionTasks.length === 0) {
+															return null;
+														}
+
+														const tone = getTaskStatusTone(theme, status);
+														return (
+															<div
+																key={status}
+																className="rounded-xl border overflow-hidden"
+																style={getGlassPanelStyle(theme, {
+																	tint: 'rgba(255,255,255,0.08)',
+																	borderColor: tone.border,
+																})}
+															>
+																<div
+																	className="flex items-center justify-between gap-3 px-4 py-3"
+																	style={{
+																		borderBottom: `1px solid ${tone.border}`,
+																		backgroundColor: `${tone.fg}10`,
+																	}}
+																>
+																	<div className="flex items-center gap-2">
+																		<span
+																			className="w-2.5 h-2.5 rounded-full shrink-0"
+																			style={{ backgroundColor: tone.fg }}
+																		/>
+																		<div
+																			className="text-sm font-semibold"
+																			style={{ color: theme.colors.textMain }}
 																		>
-																			<ClipboardList className="w-4 h-4" />
-																		</button>
-																		<button
-																			onClick={() => deleteTask(task.id)}
-																		className="p-2 rounded-lg hover:bg-white/5"
-																		title="Delete task"
-																		style={{ color: theme.colors.textDim }}
+																			{formatTaskStatusLabel(status)}
+																		</div>
+																	</div>
+																	<div
+																		className="px-2 py-1 rounded-full text-[11px] font-medium"
+																		style={{
+																			backgroundColor: `${tone.fg}18`,
+																			color: tone.fg,
+																		}}
 																	>
-																		<Trash2 className="w-4 h-4" />
-																	</button>
+																		{sectionTasks.length}
+																	</div>
+																</div>
+																<div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+																	{sectionTasks.map((task) => {
+																		const canStopTask = Boolean(getActiveTaskSessionId(task));
+																		const visibleAttention = visibleAttentionByTaskId.get(task.id);
+																		const attentionText =
+																			visibleAttention?.attentionRequest.status === 'open'
+																				? formatConductorOperatorMessage(
+																					visibleAttention.attentionRequest.requestedAction
+																				)
+																				: null;
+																		return (
+																			<div
+																				key={task.id}
+																				className="px-4 py-3"
+																				onClick={() => openTaskDetails(task.id)}
+																				style={{ cursor: 'pointer' }}
+																			>
+																				<div className="flex items-start justify-between gap-3">
+																					<div className="min-w-0">
+																						<div
+																							className="text-sm font-medium"
+																							style={{ color: theme.colors.textMain }}
+																						>
+																							{task.title}
+																						</div>
+																						{attentionText && (
+																							<div
+																								className="text-xs mt-1"
+																								style={{ color: theme.colors.warning }}
+																							>
+																								{attentionText}
+																							</div>
+																						)}
+																					</div>
+																					<div className="flex items-center gap-1">
+																						{canStopTask && (
+																							<button
+																								onClick={() => void handleStopTask(task)}
+																								className="p-1.5 rounded-lg hover:bg-white/5"
+																								title="Stop task"
+																								style={{ color: theme.colors.textDim }}
+																							>
+																								<Square className="w-4 h-4" />
+																							</button>
+																						)}
+																						<button
+																							onClick={() => openTaskComposer(task.id)}
+																							className="p-1.5 rounded-lg hover:bg-white/5"
+																							title="Add subtask"
+																							style={{ color: theme.colors.textDim }}
+																						>
+																							<ClipboardList className="w-4 h-4" />
+																						</button>
+																						<button
+																							onClick={() => deleteTask(task.id)}
+																							className="p-1.5 rounded-lg hover:bg-white/5"
+																							title="Delete task"
+																							style={{ color: theme.colors.textDim }}
+																						>
+																							<Trash2 className="w-4 h-4" />
+																						</button>
+																					</div>
+																				</div>
+																			</div>
+																		);
+																	})}
 																</div>
 															</div>
 														);
-													})
-												) : (
-													<div
-														className="px-4 py-10 text-center"
-														style={{ color: theme.colors.textDim }}
-													>
-														No tasks match the current search and filters.
-													</div>
-												)}
+													})}
+												</div>
+											</>
+										) : (
+											<div
+												className="rounded-xl border px-4 py-10 text-center"
+												style={{ ...getGlassPanelStyle(theme), color: theme.colors.textDim }}
+											>
+												No tasks match the current search and filters.
 											</div>
-										</div>
+										)}
 									</div>
 								)}
 							</div>
@@ -4452,8 +6814,21 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								>
 									<div className="flex items-start justify-between gap-4">
 										<div>
-											<div className="font-semibold" style={{ color: theme.colors.textMain }}>
-												{run.summary || 'Conductor planning run'}
+											<div className="flex items-center gap-2">
+												<div className="font-semibold" style={{ color: theme.colors.textMain }}>
+													{formatConductorOperatorMessage(run.summary) || 'Conductor planning run'}
+												</div>
+												{!runIsLiveById.get(run.id) && run.endedAt && (
+													<span
+														className="px-1.5 py-0.5 rounded-full text-[11px] uppercase tracking-wide"
+														style={{
+															backgroundColor: 'rgba(255,255,255,0.06)',
+															color: theme.colors.textDim,
+														}}
+													>
+														History
+													</span>
+												)}
 											</div>
 											<div className="text-sm mt-2" style={{ color: theme.colors.textDim }}>
 												Type:{' '}
@@ -4553,448 +6928,350 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				)}
 			</div>
 
+			{orchestratorPanelContext && (
+				<ConductorOrchestratorPanel
+					theme={theme}
+					groupName={group?.name || 'Conductor'}
+					isOpen
+					context={orchestratorPanelContext}
+					conductor={conductor}
+					tasksById={tasksById}
+					childTasksByParentId={childTasksByParentId}
+					runs={runs}
+					updates={orchestratorUpdates}
+					teamMembers={conductorTeamMembers}
+					onOpenTask={openTaskDetails}
+					onOpenMember={handleOpenTeamMemberByName}
+					onApplyAction={handleApplyOrchestratorAction}
+					onClose={() => setOrchestratorPanelContext(null)}
+				/>
+			)}
+			</div>
+
 			{isSettingsOpen && (
 				<Modal
 					theme={theme}
-					title="Conductor Settings"
+					title="Settings"
 					priority={MODAL_PRIORITIES.SETTINGS + 1}
 					onClose={() => setIsSettingsOpen(false)}
-					width={860}
+					width={620}
 					maxHeight="85vh"
 					closeOnBackdropClick
 				>
-					<div className="space-y-5">
-						<div
-							className="rounded-xl border p-5"
-							style={getGlassPanelStyle(theme, {
-								tint: 'rgba(255,255,255,0.10)',
-								borderColor: 'rgba(255,255,255,0.08)',
-								strong: true,
-							})}
+					<div className="space-y-4 text-sm">
+						{/* ── Workspace lead (read-only) ── */}
+						<div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+							style={{ borderColor: 'rgba(255,255,255,0.08)', backgroundColor: `${theme.colors.bgSidebar}80` }}
 						>
-							<div
-								className="flex items-center gap-2 mb-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								<Sparkles className="w-4 h-4" />
-								<h2 className="font-semibold">How Conductor works</h2>
-							</div>
-							<p className="text-sm leading-6 mb-4" style={{ color: theme.colors.textDim }}>
-								Conductor is easiest when you treat it like a lead dev for this group: pick one
-								trusted agent, describe the changes you want, then decide whether you want to review
-								the plan or let it keep moving.
-							</p>
-							<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-								{SETTINGS_GUIDE_STEPS.map((step, index) => {
-									const Icon = step.icon;
-									const accentColor =
-										step.accent === 'success'
-											? theme.colors.success
-											: step.accent === 'warning'
-												? theme.colors.warning
-												: theme.colors.accent;
+							<span style={{ color: theme.colors.textDim }}>Workspace lead</span>
+							<span className="font-medium" style={{ color: theme.colors.textMain }}>
+								{selectedTemplate?.name || 'None'}
+							</span>
+						</div>
 
-									return (
-										<div
-											key={step.key}
-											className="rounded-2xl border p-4"
-											style={getGlassPanelStyle(theme, {
-												tint: `${accentColor}12`,
-												borderColor: `${accentColor}2f`,
-											})}
-										>
-											<div className="flex items-start gap-3">
-												<div
-													className="w-10 h-10 rounded-xl border flex items-center justify-center flex-shrink-0"
-													style={{
-														backgroundColor: `${accentColor}14`,
-														borderColor: `${accentColor}30`,
-														color: accentColor,
-													}}
-												>
-													<Icon className="w-4 h-4" />
-												</div>
-												<div className="min-w-0">
-													<div className="flex items-center gap-2 mb-1">
-														<span
-															className="text-[11px] uppercase tracking-[0.18em]"
-															style={{ color: accentColor }}
-														>
-															Step {index + 1}
-														</span>
-													</div>
-													<div className="font-semibold" style={{ color: theme.colors.textMain }}>
-														{step.title}
-													</div>
-													<p
-														className="text-sm leading-6 mt-2"
-														style={{ color: theme.colors.textDim }}
-													>
-														{step.description}
-													</p>
-												</div>
-											</div>
-										</div>
-									);
-								})}
+						{/* ── Core controls (2-col grid) ── */}
+						<div className="grid grid-cols-2 gap-3">
+							<div>
+								<div className="mb-1.5 text-xs" style={{ color: theme.colors.textDim }}>Resource profile</div>
+								<select
+									value={conductor?.resourceProfile || 'aggressive'}
+									onChange={(e) =>
+										setConductor(groupId, {
+											resourceProfile: e.target.value as 'conservative' | 'balanced' | 'aggressive',
+										})
+									}
+									className="w-full rounded-lg border px-3 py-2 text-sm"
+									style={getGlassInputStyle(theme)}
+								>
+									<option value="conservative">Conservative</option>
+									<option value="balanced">Balanced</option>
+									<option value="aggressive">Aggressive</option>
+								</select>
+							</div>
+							<div>
+								<div className="mb-1.5 text-xs" style={{ color: theme.colors.textDim }}>Publish policy</div>
+								<select
+									value={conductor?.publishPolicy || 'manual_pr'}
+									onChange={(e) =>
+										setConductor(groupId, {
+											publishPolicy: e.target.value as 'none' | 'manual_pr',
+										})
+									}
+									className="w-full rounded-lg border px-3 py-2 text-sm"
+									style={getGlassInputStyle(theme)}
+								>
+									<option value="manual_pr">Manual PR</option>
+									<option value="none">None</option>
+								</select>
 							</div>
 						</div>
 
-						<div
-							className="rounded-xl border p-5"
-							style={getGlassPanelStyle(theme, {
-								tint: 'rgba(255,255,255,0.10)',
-								borderColor: 'rgba(255,255,255,0.08)',
-								strong: true,
-							})}
-						>
-							<div className="flex items-start justify-between gap-3 mb-3">
-								<div className="flex items-center gap-2" style={{ color: theme.colors.textMain }}>
-									<Settings2 className="w-4 h-4" />
-									<h2 className="font-semibold">Lead Setup</h2>
-								</div>
+						{/* ── Validation command ── */}
+						<div>
+							<div className="mb-1.5 text-xs" style={{ color: theme.colors.textDim }}>Validation command</div>
+							<div className="flex items-center gap-2">
+								<input
+									value={validationDraft}
+									onChange={(e) => setValidationDraft(e.target.value)}
+									placeholder="e.g. npm test"
+									className="flex-1 rounded-lg border px-3 py-2 text-sm"
+									style={getGlassInputStyle(theme)}
+								/>
 								<button
-									onClick={() => setAdvancedMode((value) => !value)}
+									onClick={() =>
+										setConductor(groupId, {
+											validationCommand: validationDraft.trim() || undefined,
+										})
+									}
 									className="px-3 py-2 rounded-lg text-sm font-medium"
-									style={getGlassButtonStyle(theme, { active: advancedMode })}
+									style={getGlassButtonStyle(theme)}
 								>
-									{advancedMode ? 'Hide Advanced Mode' : 'Advanced Mode'}
+									Save
 								</button>
 							</div>
-							<p className="text-sm leading-6 mb-4" style={{ color: theme.colors.textDim }}>
-								Conductor automatically uses this workspace’s current lead agent and copies its
-								environment before it spins up helpers. Defaults are already selected, so most
-								people can leave advanced controls alone.
-							</p>
-							<div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm mb-4">
-								<div className="rounded-2xl border p-4" style={getGlassPanelStyle(theme)}>
-									<div style={{ color: theme.colors.textDim }}>Workspace lead</div>
-									<div className="font-semibold mt-2" style={{ color: theme.colors.textMain }}>
-										{selectedTemplate?.name || 'No workspace agent yet'}
-									</div>
-								</div>
-								<div className="rounded-2xl border p-4" style={getGlassPanelStyle(theme)}>
-									<div style={{ color: theme.colors.textDim }}>Work style</div>
-									<div className="font-semibold mt-2" style={{ color: theme.colors.textMain }}>
-										{formatLabel(conductor?.resourceProfile || 'aggressive')}
-									</div>
-								</div>
-							</div>
-							{!advancedMode && (
-								<div className="rounded-2xl border p-4 text-sm" style={getGlassPanelStyle(theme)}>
-									<div className="font-semibold" style={{ color: theme.colors.textMain }}>
-										Defaults selected
-									</div>
-									<div className="mt-2 leading-6" style={{ color: theme.colors.textDim }}>
-										Resource profile: {formatLabel(conductor?.resourceProfile || 'aggressive')}
-										<br />
-										Publish policy:{' '}
-										{conductor?.publishPolicy === 'none' ? 'No publish action' : 'Manual PR'}
-										<br />
-										Auto execute tasks: {conductor?.autoExecuteOnPlanCreation ? 'On' : 'Off'}
-										<br />
-										Keep helper agents: {conductor?.keepConductorAgentSessions ? 'On' : 'Off'}
-										<br />
-										UI provider: {formatProviderChoiceLabel(providerRouting.ui.primary)}
-										<br />
-										Backend provider: {formatProviderChoiceLabel(providerRouting.backend.primary)}
-									</div>
-								</div>
-							)}
-							{advancedMode && (
-								<div className="rounded-2xl border p-4" style={getGlassPanelStyle(theme)}>
-									<div className="space-y-3 text-sm">
-										<div>
-											<div className="mb-2" style={{ color: theme.colors.textDim }}>
-												Resource profile
-											</div>
-											<select
-												value={conductor?.resourceProfile || 'aggressive'}
-												onChange={(e) =>
-													setConductor(groupId, {
-														resourceProfile: e.target.value as
-															| 'conservative'
-															| 'balanced'
-															| 'aggressive',
-													})
-												}
-												className="w-full rounded-lg border px-3 py-2 text-sm"
-												style={getGlassInputStyle(theme)}
-											>
-												<option value="conservative">Conservative</option>
-												<option value="balanced">Balanced</option>
-												<option value="aggressive">Aggressive</option>
-											</select>
-										</div>
-										<div>
-											<div className="mb-2" style={{ color: theme.colors.textDim }}>
-												Publish policy
-											</div>
-											<select
-												value={conductor?.publishPolicy || 'manual_pr'}
-												onChange={(e) =>
-													setConductor(groupId, {
-														publishPolicy: e.target.value as 'none' | 'manual_pr',
-													})
-												}
-												className="w-full rounded-lg border px-3 py-2 text-sm"
-												style={getGlassInputStyle(theme)}
-											>
-												<option value="manual_pr">Manual PR</option>
-												<option value="none">No publish action</option>
-											</select>
-										</div>
-										<label
-											className="flex items-center gap-2 rounded-lg border px-3 py-2"
-											style={{ ...getGlassPanelStyle(theme), color: theme.colors.textMain }}
-										>
-											<input
-												type="checkbox"
-												checked={Boolean(conductor?.autoExecuteOnPlanCreation)}
-												onChange={(e) =>
-													setConductor(groupId, {
-														autoExecuteOnPlanCreation: e.target.checked,
-													})
-												}
-											/>
-											Auto execute tasks for approved plans
-										</label>
-										<label
-											className="flex items-center gap-2 rounded-lg border px-3 py-2"
-											style={{ ...getGlassPanelStyle(theme), color: theme.colors.textMain }}
-										>
-											<input
-												type="checkbox"
-												checked={Boolean(conductor?.deleteWorkerBranchesOnSuccess)}
-												onChange={(e) =>
-													setConductor(groupId, {
-														deleteWorkerBranchesOnSuccess: e.target.checked,
-													})
-												}
-											/>
-											Delete worker branches after successful integration
-										</label>
-										<label
-											className="flex items-center gap-2 rounded-lg border px-3 py-2"
-											style={{ ...getGlassPanelStyle(theme), color: theme.colors.textMain }}
-										>
-											<input
-												type="checkbox"
-												checked={Boolean(conductor?.keepConductorAgentSessions)}
-												onChange={(e) =>
-													setConductor(groupId, {
-														keepConductorAgentSessions: e.target.checked,
-													})
-												}
-											/>
-											Keep Conductor helper agents after runs finish
-										</label>
-										<div
-											className="rounded-2xl border p-4"
-											style={getGlassPanelStyle(theme, {
-												tint: `${theme.colors.accent}08`,
-												borderColor: `${theme.colors.accent}20`,
-											})}
-										>
-											<div className="font-semibold" style={{ color: theme.colors.textMain }}>
-												Provider preference
-											</div>
-											<p className="text-sm mt-2 leading-6" style={{ color: theme.colors.textDim }}>
-												Route UI-heavy work and backend-heavy work to different providers, and let
-												Conductor fail over before your subscription gets tight.
-											</p>
-											<div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
-												{([
-													['default', 'General work'],
-													['ui', 'UI work'],
-													['backend', 'Backend work'],
-												] as Array<[ConductorProviderRouteKey, string]>).map(([routeKey, label]) => (
-													<div key={routeKey} className="space-y-2">
-														<div style={{ color: theme.colors.textDim }}>{label}</div>
-														<select
-															value={providerRouting[routeKey].primary}
-															onChange={(e) =>
-																setConductor(groupId, {
-																	providerRouting: {
-																		...providerRouting,
-																		[routeKey]: {
-																			...providerRouting[routeKey],
-																			primary: e.target.value as ConductorProviderChoice,
-																		},
-																	},
-																})
-															}
-															className="w-full rounded-lg border px-3 py-2 text-sm"
-															style={getGlassInputStyle(theme)}
-														>
-															{CONDUCTOR_PROVIDER_PRIMARY_OPTIONS.map((option) => (
-																<option key={`${routeKey}-${option}`} value={option}>
-																	Primary: {formatProviderChoiceLabel(option)}
-																</option>
-															))}
-														</select>
-														<select
-															value={providerRouting[routeKey].fallback || ''}
-															onChange={(e) =>
-																setConductor(groupId, {
-																	providerRouting: {
-																		...providerRouting,
-																		[routeKey]: {
-																			...providerRouting[routeKey],
-																			fallback:
-																				(e.target.value as ConductorProviderAgent) || null,
-																		},
-																	},
-																})
-															}
-															className="w-full rounded-lg border px-3 py-2 text-sm"
-															style={getGlassInputStyle(theme)}
-														>
-															<option value="">No fallback</option>
-															{CONDUCTOR_PROVIDER_OPTIONS.map((option) => (
-																<option key={`${routeKey}-fallback-${option}`} value={option}>
-																	Fallback: {getProviderDisplayName(option)}
-																</option>
-															))}
-														</select>
-													</div>
-												))}
-											</div>
-											<div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_140px] gap-3 mt-4">
-												<label
-													className="flex items-center gap-2 rounded-lg border px-3 py-2"
-													style={{ ...getGlassPanelStyle(theme), color: theme.colors.textMain }}
-												>
-													<input
-														type="checkbox"
-														checked={providerRouting.pauseNearLimit}
-														onChange={(e) =>
-															setConductor(groupId, {
-																providerRouting: {
-																	...providerRouting,
-																	pauseNearLimit: e.target.checked,
-																},
-															})
-														}
-													/>
-													Pause or fail over when provider usage gets tight
-												</label>
-												<div>
-													<div className="mb-2" style={{ color: theme.colors.textDim }}>
-														Near-limit %
-													</div>
-													<input
-														type="number"
-														min={50}
-														max={99}
-														value={providerRouting.nearLimitPercent}
-														onChange={(e) =>
-															setConductor(groupId, {
-																providerRouting: {
-																	...providerRouting,
-																	nearLimitPercent: Math.min(
-																		99,
-																		Math.max(50, Number(e.target.value) || 88)
-																	),
-																},
-															})
-														}
-														className="w-full rounded-lg border px-3 py-2 text-sm"
-														style={getGlassInputStyle(theme)}
-													/>
-												</div>
-											</div>
-										</div>
-										<div>
-											<div className="mb-2" style={{ color: theme.colors.textDim }}>
-												Validation command
-											</div>
-											<div className="flex items-center gap-2">
-												<input
-													value={validationDraft}
-													onChange={(e) => setValidationDraft(e.target.value)}
-													placeholder="Optional, e.g. npm test"
-													className="flex-1 rounded-lg border px-3 py-2 text-sm"
-													style={getGlassInputStyle(theme)}
-												/>
-												<button
-													onClick={() =>
-														setConductor(groupId, {
-															validationCommand: validationDraft.trim() || undefined,
-														})
-													}
-													className="px-3 py-2 rounded-lg text-sm font-medium"
-													style={getGlassButtonStyle(theme)}
-												>
-													Save
-												</button>
-											</div>
-										</div>
-									</div>
-								</div>
-							)}
 						</div>
 
-						<div
-							className="rounded-xl border p-5"
-							style={getGlassPanelStyle(theme, {
-								tint: 'rgba(255,255,255,0.10)',
-								borderColor: 'rgba(255,255,255,0.08)',
-								strong: true,
-							})}
-						>
-							<div
-								className="flex items-center gap-2 mb-3"
+						{/* ── Toggle switches ── */}
+						<div className="space-y-1">
+							<label
+								className="flex items-center gap-2.5 rounded-lg px-3 py-2 cursor-pointer"
 								style={{ color: theme.colors.textMain }}
 							>
-								<FolderKanban className="w-4 h-4" />
-								<h2 className="font-semibold">How fast Conductor should go</h2>
+								<input
+									type="checkbox"
+									checked={Boolean(conductor?.autoExecuteOnPlanCreation)}
+									onChange={(e) =>
+										setConductor(groupId, { autoExecuteOnPlanCreation: e.target.checked })
+									}
+								/>
+								Autoplay approved plans
+							</label>
+							<label
+								className="flex items-center gap-2.5 rounded-lg px-3 py-2 cursor-pointer"
+								style={{ color: theme.colors.textMain }}
+							>
+								<input
+									type="checkbox"
+									checked={Boolean(conductor?.deleteWorkerBranchesOnSuccess)}
+									onChange={(e) =>
+										setConductor(groupId, { deleteWorkerBranchesOnSuccess: e.target.checked })
+									}
+								/>
+								Delete worker branches on success
+							</label>
+							<label
+								className="flex items-center gap-2.5 rounded-lg px-3 py-2 cursor-pointer"
+								style={{ color: theme.colors.textMain }}
+							>
+								<input
+									type="checkbox"
+									checked={Boolean(conductor?.keepConductorAgentSessions)}
+									onChange={(e) =>
+										setConductor(groupId, { keepConductorAgentSessions: e.target.checked })
+									}
+								/>
+								Keep helper agents after runs
+							</label>
+							<label
+								className="flex items-center gap-2.5 rounded-lg px-3 py-2 cursor-pointer"
+								style={{ color: theme.colors.textMain }}
+							>
+								<input
+									type="checkbox"
+									checked={advancedMode}
+									onChange={(e) => setAdvancedMode(e.target.checked)}
+								/>
+								Show advanced details in UI
+							</label>
+						</div>
+
+						{/* ── Worktree storage ── */}
+						<div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
+							style={{ borderColor: 'rgba(255,255,255,0.08)', backgroundColor: `${theme.colors.bgSidebar}80` }}
+						>
+							<div className="min-w-0">
+								<span className="text-xs" style={{ color: theme.colors.textDim }}>Worktrees</span>
+								<div className="text-xs mt-0.5 truncate" style={{ color: theme.colors.textMain }}>
+									{conductorWorktreeBasePath || 'Beside the repo'}
+								</div>
 							</div>
-							<p className="text-sm leading-6 mb-4" style={{ color: theme.colors.textDim }}>
-								Conductor slows itself down when your machine is under pressure, so you do not have
-								to think about worker counts all day.
-							</p>
-							<div className="space-y-2 text-sm" style={{ color: theme.colors.textDim }}>
-								<div>
-									CPU threads:{' '}
-									<span style={{ color: theme.colors.textMain }}>
-										{resourceSnapshot?.cpuCount || 'Unavailable'}
-									</span>
-								</div>
-								<div>
-									1m load:{' '}
-									<span style={{ color: theme.colors.textMain }}>
-										{resourceSnapshot ? resourceSnapshot.loadAverage[0].toFixed(2) : 'Unavailable'}
-									</span>
-								</div>
-								<div>
-									Available memory:{' '}
-									<span style={{ color: theme.colors.textMain }}>
-										{formatMemorySummary(resourceSnapshot)}
-									</span>
-								</div>
-								{resourceSnapshot?.platform === 'darwin' && (
-									<div>
-										Raw free memory:{' '}
-										<span style={{ color: theme.colors.textMain }}>
-											{(resourceSnapshot.freeMemoryMB / 1024).toFixed(1)} GB
-										</span>
+							<button
+								onClick={handleConfigureConductorWorktreeStorage}
+								className="px-2.5 py-1.5 rounded-lg text-xs shrink-0 inline-flex items-center gap-1.5"
+								style={getGlassButtonStyle(theme)}
+							>
+								<FolderOpen className="w-3 h-3" />
+								Change
+							</button>
+						</div>
+
+						{/* ── Provider routing ── */}
+						<div className="rounded-lg border p-3"
+							style={{ borderColor: 'rgba(255,255,255,0.08)', backgroundColor: `${theme.colors.bgSidebar}80` }}
+						>
+							<div className="text-xs mb-3" style={{ color: theme.colors.textDim }}>Provider routing</div>
+							<div className="grid grid-cols-3 gap-3">
+								{([
+									['default', 'General'],
+									['ui', 'UI'],
+									['backend', 'Backend'],
+								] as Array<[ConductorProviderRouteKey, string]>).map(([routeKey, label]) => (
+									<div key={routeKey} className="space-y-1.5">
+										<div className="text-xs font-medium" style={{ color: theme.colors.textMain }}>{label}</div>
+										<select
+											value={providerRouting[routeKey].primary}
+											onChange={(e) =>
+												setConductor(groupId, {
+													providerRouting: {
+														...providerRouting,
+														[routeKey]: {
+															...providerRouting[routeKey],
+															primary: e.target.value as ConductorProviderChoice,
+														},
+													},
+												})
+											}
+											className="w-full rounded-lg border px-2 py-1.5 text-xs"
+											style={getGlassInputStyle(theme)}
+										>
+											{CONDUCTOR_PROVIDER_PRIMARY_OPTIONS.map((option) => (
+												<option key={`${routeKey}-${option}`} value={option}>
+													{formatProviderChoiceLabel(option)}
+												</option>
+											))}
+										</select>
+										<select
+											value={providerRouting[routeKey].fallback || ''}
+											onChange={(e) =>
+												setConductor(groupId, {
+													providerRouting: {
+														...providerRouting,
+														[routeKey]: {
+															...providerRouting[routeKey],
+															fallback: (e.target.value as ConductorProviderAgent) || null,
+														},
+													},
+												})
+											}
+											className="w-full rounded-lg border px-2 py-1.5 text-xs"
+											style={getGlassInputStyle(theme)}
+										>
+											<option value="">No fallback</option>
+											{CONDUCTOR_PROVIDER_OPTIONS.map((option) => (
+												<option key={`${routeKey}-fb-${option}`} value={option}>
+													{getProviderDisplayName(option)}
+												</option>
+											))}
+										</select>
 									</div>
-								)}
-								<div>
-									Launch gate:{' '}
-									<span
-										style={{
-											color: resourceGate.allowed ? theme.colors.textMain : theme.colors.warning,
-										}}
-									>
-										{resourceGate.allowed ? 'Open' : 'Holding'}
-									</span>
-								</div>
-								{resourceGate.message && (
-									<div style={{ color: theme.colors.warning }}>{resourceGate.message}</div>
-								)}
+								))}
 							</div>
+							<div className="flex items-center gap-3 mt-3">
+								<label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: theme.colors.textMain }}>
+									<input
+										type="checkbox"
+										checked={providerRouting.pauseNearLimit}
+										onChange={(e) =>
+											setConductor(groupId, {
+												providerRouting: { ...providerRouting, pauseNearLimit: e.target.checked },
+											})
+										}
+									/>
+									Pause near limit
+								</label>
+								<div className="flex items-center gap-1.5">
+									<span className="text-xs" style={{ color: theme.colors.textDim }}>at</span>
+									<input
+										type="number"
+										min={50}
+										max={99}
+										value={providerRouting.nearLimitPercent}
+										onChange={(e) =>
+											setConductor(groupId, {
+												providerRouting: {
+													...providerRouting,
+													nearLimitPercent: Math.min(99, Math.max(50, Number(e.target.value) || 88)),
+												},
+											})
+										}
+										className="w-16 rounded-lg border px-2 py-1 text-xs text-center"
+										style={getGlassInputStyle(theme)}
+									/>
+									<span className="text-xs" style={{ color: theme.colors.textDim }}>%</span>
+								</div>
+							</div>
+						</div>
+
+						{/* ── System resources (compact footer) ── */}
+						<div
+							className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs rounded-lg border px-3 py-2"
+							style={{ borderColor: 'rgba(255,255,255,0.06)', color: theme.colors.textDim }}
+						>
+							<span>CPU: <span style={{ color: theme.colors.textMain }}>{resourceSnapshot?.cpuCount || '–'}</span></span>
+							<span>Load: <span style={{ color: theme.colors.textMain }}>{resourceSnapshot ? resourceSnapshot.loadAverage[0].toFixed(2) : '–'}</span></span>
+							<span>Mem: <span style={{ color: theme.colors.textMain }}>{formatMemorySummary(resourceSnapshot)}</span></span>
+							<span>Gate:{' '}
+								<span style={{ color: resourceGate.allowed ? theme.colors.success : theme.colors.warning }}>
+									{resourceGate.allowed ? 'Open' : 'Holding'}
+								</span>
+							</span>
+							{resourceGate.message && (
+								<span style={{ color: theme.colors.warning }}>{resourceGate.message}</span>
+							)}
+						</div>
+					</div>
+				</Modal>
+			)}
+
+			{selectedConductorThreadMember && selectedConductorThreadMember.threadTargets.length > 1 && (
+				<Modal
+					theme={theme}
+					title="Choose a thread"
+					priority={MODAL_PRIORITIES.SETTINGS + 4}
+					onClose={() => setSelectedConductorThreadMember(null)}
+					width={520}
+					maxHeight="70vh"
+					closeOnBackdropClick
+				>
+					<div className="space-y-3">
+						<div className="text-sm" style={{ color: theme.colors.textDim }}>
+							Pick the conversation you want to open for {selectedConductorThreadMember.name}.
+						</div>
+						<div className="space-y-2">
+							{selectedConductorThreadMember.threadTargets.map((target, index) => (
+								<button
+									key={`${target.sessionId}-${target.tabId || index}`}
+									type="button"
+									onClick={() => handleNavigateToAgentThread(target.sessionId, target.tabId)}
+									className="w-full rounded-lg border px-3 py-3 text-left hover:bg-white/5"
+									style={{
+										backgroundColor:
+											selectedConductorThreadMember.sessionId === target.sessionId
+												? `${theme.colors.accent}08`
+												: 'rgba(255,255,255,0.02)',
+										borderColor:
+											selectedConductorThreadMember.sessionId === target.sessionId
+												? `${theme.colors.accent}26`
+												: 'rgba(255,255,255,0.08)',
+									}}
+								>
+									<div className="flex items-center justify-between gap-3">
+										<div className="min-w-0">
+											<div className="text-sm font-medium truncate" style={{ color: theme.colors.textMain }}>
+												{target.label || `Thread ${index + 1}`}
+											</div>
+										</div>
+										{selectedConductorThreadMember.sessionId === target.sessionId && (
+											<span
+												className="px-2 py-1 rounded-full text-[11px] uppercase tracking-wide"
+												style={getGlassPillStyle(theme, 'accent')}
+											>
+												Current
+											</span>
+										)}
+									</div>
+								</button>
+							))}
 						</div>
 					</div>
 				</Modal>
@@ -5213,8 +7490,20 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 			)}
 
 			{selectedTaskDetail && (() => {
-				const detailStatusTone = PASTEL_STATUS_TONES[selectedTaskDetail.status] || PASTEL_STATUS_TONES.draft;
+				const detailStatus =
+					selectedTaskRolledUpStatus || selectedTaskDetail.status;
+				const detailStatusTone = PASTEL_STATUS_TONES[detailStatus] || PASTEL_STATUS_TONES.draft;
 				const detailPriorityTone = getTaskPriorityTone(theme, selectedTaskDetail.priority);
+				const isTopLevelTask = !selectedTaskDetail.parentTaskId;
+				const completionProofRequired = requiresConductorTaskCompletionProof(selectedTaskDetail);
+				const completionProofRequirement =
+					selectedTaskDetail.completionProofRequirement ||
+					buildDefaultConductorTaskCompletionProofRequirement();
+				const completionProofStatus =
+					selectedTaskDetail.completionProof?.status || 'missing';
+				const showProofResponseUi =
+					detailStatus !== 'needs_proof' &&
+					!isConductorCompletionProofAttentionRequestId(selectedTaskEffectiveAttention?.id);
 				return (
 				<Modal
 					theme={theme}
@@ -5290,6 +7579,30 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								{formatTaskSourceLabel(selectedTaskDetail.source)}
 							</span>
 
+							{detailStatus !== selectedTaskDetail.status && (
+								<span
+									className="px-2.5 py-1 rounded-full text-[11px]"
+									style={{
+										backgroundColor: `${detailStatusTone.fg}12`,
+										color: detailStatusTone.fg,
+									}}
+								>
+									Board: {formatTaskStatusLabel(detailStatus)}
+								</span>
+							)}
+
+							<button
+								onClick={() => openOrchestratorPanel({ scope: 'task', taskId: selectedTaskDetail.id })}
+								className="px-3 py-1.5 rounded-lg text-xs font-medium inline-flex items-center gap-1.5 hover:bg-white/10"
+								style={{
+									color: theme.colors.textDim,
+									border: '1px solid rgba(255,255,255,0.10)',
+								}}
+							>
+								<MessageSquarePlus className="w-3.5 h-3.5" />
+								Ask orchestrator
+							</button>
+
 							<span className="text-xs ml-auto" style={{ color: theme.colors.textDim }}>
 								{formatTimestamp(selectedTaskDetail.updatedAt)}
 							</span>
@@ -5324,7 +7637,421 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 								color: theme.colors.textMain,
 								borderColor: 'rgba(255,255,255,0.08)',
 							}}
-						/>
+							/>
+
+						{isTopLevelTask && (
+							<div
+								className="rounded-xl border p-4 space-y-3"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									borderColor: 'rgba(255,255,255,0.08)',
+								}}
+							>
+								<div className="flex items-start justify-between gap-4">
+									<div>
+										<div
+											className="text-xs font-medium uppercase tracking-wider"
+											style={{ color: theme.colors.textDim }}
+										>
+											Completion Proof
+										</div>
+										<div className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+											Require a screen recording and screenshots before this task can move into Done.
+										</div>
+									</div>
+									<label
+										className="inline-flex items-center gap-2 text-sm"
+										style={{ color: theme.colors.textMain }}
+									>
+										<input
+											type="checkbox"
+											checked={completionProofRequired}
+											onChange={(event) =>
+												handleTaskCompletionProofRequirementChange(
+													selectedTaskDetail,
+													event.target.checked
+												)
+											}
+										/>
+										Require proof
+									</label>
+								</div>
+								{completionProofRequired && (
+									<div className="space-y-3">
+										<div className="flex flex-wrap items-center gap-3">
+											<select
+												value={completionProofStatus}
+												onChange={(event) =>
+													handleTaskCompletionProofStatusChange(
+														selectedTaskDetail,
+														event.target.value as ConductorTaskCompletionProofStatus
+													)
+												}
+												className="rounded-full px-3 py-1.5 text-xs font-medium border outline-none cursor-pointer"
+												style={{
+													backgroundColor: `${theme.colors.accent}14`,
+													borderColor: `${theme.colors.accent}28`,
+													color: theme.colors.accent,
+												}}
+											>
+												{COMPLETION_PROOF_STATUS_OPTIONS.map((option) => (
+													<option key={option} value={option}>
+														{COMPLETION_PROOF_STATUS_LABELS[option]}
+													</option>
+												))}
+											</select>
+											<button
+												type="button"
+												onClick={() => void handleCaptureTaskCompletionProof(selectedTaskDetail)}
+												disabled={capturingProofTaskId === selectedTaskDetail.id}
+												className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium border transition-opacity disabled:cursor-not-allowed disabled:opacity-60"
+												style={{
+													backgroundColor: `${theme.colors.success}12`,
+													borderColor: `${theme.colors.success}28`,
+													color: theme.colors.success,
+												}}
+											>
+												{capturingProofTaskId === selectedTaskDetail.id ? (
+													<Loader2 className="h-3.5 w-3.5 animate-spin" />
+												) : (
+													<Activity className="h-3.5 w-3.5" />
+												)}
+												{selectedTaskProofDemo ? 'Recapture proof' : 'Capture proof'}
+											</button>
+											{selectedTaskProofDemo && (
+												<button
+													type="button"
+													onClick={() => setOpenProofDemoId(selectedTaskProofDemo.demoId)}
+													className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium border hover:bg-white/5"
+													style={{
+														backgroundColor: 'transparent',
+														borderColor: 'rgba(255,255,255,0.12)',
+														color: theme.colors.textMain,
+													}}
+												>
+													<ExternalLink className="h-3.5 w-3.5" />
+													View proof
+												</button>
+											)}
+											{completionProofStatus === 'captured' && (
+												<button
+													type="button"
+													onClick={() =>
+														handleTaskCompletionProofStatusChange(selectedTaskDetail, 'approved')
+													}
+													className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium border hover:bg-white/5"
+													style={{
+														backgroundColor: `${theme.colors.success}10`,
+														borderColor: `${theme.colors.success}22`,
+														color: theme.colors.success,
+													}}
+												>
+													<CheckCircle2 className="h-3.5 w-3.5" />
+													Approve proof
+												</button>
+											)}
+										</div>
+										<div className="text-xs leading-5" style={{ color: theme.colors.textDim }}>
+											Required artifacts: {completionProofRequirement.requireVideo ? 'screen recording' : 'capture artifacts'}
+											{completionProofRequirement.minScreenshots > 0
+												? ` + ${completionProofRequirement.minScreenshots} screenshot${completionProofRequirement.minScreenshots === 1 ? '' : 's'}`
+												: ''}
+											.
+											{selectedTaskDetail.completionProof?.capturedAt
+												? ` Captured ${formatTimestamp(selectedTaskDetail.completionProof.capturedAt)}.`
+												: ''}
+										</div>
+										{selectedTaskProofDemo && (
+											<DemoCardPanel
+												theme={theme}
+												demoCard={selectedTaskProofDemo}
+												onOpen={() => setOpenProofDemoId(selectedTaskProofDemo.demoId)}
+											/>
+										)}
+									</div>
+								)}
+							</div>
+						)}
+
+						{selectedTaskProgress.totalSubtasks > 0 && (
+							<div
+								className="rounded-xl border p-4"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									borderColor: 'rgba(255,255,255,0.08)',
+								}}
+							>
+								<div className="flex items-center justify-between gap-3">
+									<div>
+										<div className="text-xs font-medium uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
+											Subtask Progress
+										</div>
+										<div className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+											{selectedTaskProgress.completedSubtasks}/{selectedTaskProgress.totalSubtasks} nested tasks complete
+										</div>
+									</div>
+									<div className="text-xs" style={{ color: theme.colors.textDim }}>
+										{selectedTaskProgress.openSubtasks} open
+									</div>
+								</div>
+								<div
+									className="mt-3 h-2 rounded-full overflow-hidden"
+									style={{ backgroundColor: 'rgba(255,255,255,0.08)' }}
+								>
+									<div
+										className="h-full rounded-full"
+										style={{
+											width: `${Math.round(selectedTaskProgress.completionRatio * 100)}%`,
+											backgroundColor: detailPriorityTone.fg,
+										}}
+									/>
+								</div>
+							</div>
+						)}
+
+						{selectedTaskQaFailureState?.isQuarantined && (
+							<div
+								className="rounded-xl border p-4 space-y-3"
+								style={{
+									backgroundColor: `${theme.colors.warning}10`,
+									borderColor: `${theme.colors.warning}30`,
+								}}
+							>
+								<div className="flex items-center justify-between gap-3">
+									<div>
+										<div className="text-xs font-medium uppercase tracking-wider" style={{ color: theme.colors.warning }}>
+											QA Paused For This Task
+										</div>
+										<div className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+											Conductor stopped auto-retrying QA after {selectedTaskQaFailureState.malformedFailureCount} malformed reviewer response{selectedTaskQaFailureState.malformedFailureCount === 1 ? '' : 's'} so unrelated work can keep moving.
+										</div>
+									</div>
+									<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+										Threshold {CONDUCTOR_QA_QUARANTINE_FAILURE_COUNT}
+									</span>
+								</div>
+								{selectedTaskQaFailureState.lastFailureEvent?.message && (
+									<div className="text-sm leading-6" style={{ color: theme.colors.textDim }}>
+										{selectedTaskQaFailureState.lastFailureEvent.message}
+									</div>
+								)}
+							</div>
+						)}
+
+						{(selectedTaskEffectiveAttention?.status === 'open' ||
+							(selectedTaskOpenFollowUps.length > 0 &&
+								(selectedTaskDetail.status === 'needs_revision' ||
+									isConductorTaskAgentRevision(selectedTaskDetail, childTasksByParentId, runs)))) && (
+							<div
+								className="rounded-xl border p-4 space-y-3"
+								style={{
+									backgroundColor: `${theme.colors.warning}10`,
+									borderColor: `${theme.colors.warning}30`,
+								}}
+							>
+								<div className="flex items-center justify-between gap-3">
+									<div>
+										<div className="text-xs font-medium uppercase tracking-wider" style={{ color: theme.colors.warning }}>
+											{detailStatus === 'needs_proof'
+												? 'Proof Required'
+												: selectedTaskNeedsOperatorAttention
+													? 'Waiting On You'
+													: 'Agents Revising'}
+										</div>
+										<div className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+											{selectedTaskNeedsOperatorAttention
+												? selectedTaskEffectiveAttention?.summary
+												: selectedTaskEffectiveAttention?.summary || 'Reviewer feedback has already been turned into agent follow-up work.'}
+										</div>
+										{selectedTaskAttentionTarget &&
+											selectedTaskAttentionTarget.id !== selectedTaskDetail.id && (
+											<div className="text-[11px] mt-1" style={{ color: theme.colors.textDim }}>
+												From subtask: {selectedTaskAttentionTarget.title}
+											</div>
+										)}
+									</div>
+									{selectedTaskEffectiveAttention && (
+										<span className="text-[11px]" style={{ color: theme.colors.textDim }}>
+											{formatLabel(selectedTaskEffectiveAttention.kind)}
+										</span>
+									)}
+								</div>
+								{selectedTaskEffectiveAttention?.requestedAction && (
+									<div className="text-sm leading-6" style={{ color: theme.colors.textDim }}>
+										{formatConductorOperatorMessage(
+											selectedTaskEffectiveAttention.requestedAction
+										)}
+									</div>
+								)}
+								{selectedTaskNeedsOperatorAttention &&
+									selectedTaskEffectiveAttention?.suggestedResponse && (
+									<div className="text-xs leading-5" style={{ color: theme.colors.textDim }}>
+										Suggested: {selectedTaskEffectiveAttention.suggestedResponse}
+									</div>
+								)}
+								{selectedTaskOpenFollowUps.length > 0 && (
+									<div className="space-y-2">
+										<div className="text-[11px] uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
+											Requested Changes
+										</div>
+										<div className="space-y-2">
+											{selectedTaskOpenFollowUps.map((followUpTask) => (
+												<button
+													key={followUpTask.id}
+													onClick={() => openTaskDetails(followUpTask.id)}
+													className="w-full rounded-lg px-3 py-2 text-left border hover:bg-white/5"
+													style={{
+														borderColor: 'rgba(255,255,255,0.08)',
+														backgroundColor: 'rgba(255,255,255,0.03)',
+													}}
+												>
+													<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+														{followUpTask.title}
+													</div>
+													{followUpTask.description && (
+														<div className="text-xs mt-1 leading-5" style={{ color: theme.colors.textDim }}>
+															{followUpTask.description}
+														</div>
+													)}
+												</button>
+											))}
+										</div>
+									</div>
+								)}
+								{selectedTaskNeedsOperatorAttention && showProofResponseUi && (
+									<>
+										<textarea
+											value={
+												selectedTaskAttentionTarget
+													? taskResponseDrafts[selectedTaskAttentionTarget.id] || ''
+													: ''
+											}
+											onChange={(event) =>
+												setTaskResponseDrafts((previous) => ({
+													...previous,
+													[(selectedTaskAttentionTarget || selectedTaskDetail).id]: event.target.value,
+												}))
+											}
+											placeholder="Write the answer or clarification the next agent run should use."
+											rows={4}
+											className="w-full bg-transparent rounded-xl border px-3.5 py-3 text-sm resize-y outline-none leading-relaxed"
+											style={{
+												color: theme.colors.textMain,
+												borderColor: `${theme.colors.warning}28`,
+											}}
+										/>
+										<div className="flex items-center justify-end">
+											<button
+												onClick={() =>
+													handleResolveTaskAttention(selectedTaskAttentionTarget || selectedTaskDetail)
+												}
+												className="px-3 py-2 rounded-lg text-xs font-medium"
+												style={{
+													backgroundColor: `${theme.colors.accent}18`,
+													border: `1px solid ${theme.colors.accent}30`,
+													color: theme.colors.accent,
+												}}
+											>
+												Save Response And Return To Ready
+											</button>
+										</div>
+									</>
+								)}
+							</div>
+						)}
+
+						{selectedTaskEffectiveAttention?.status !== 'open' &&
+							selectedTaskAttentionBlockers.length > 0 && (
+								<div
+									className="rounded-xl border p-4 space-y-3"
+									style={{
+										backgroundColor: `${theme.colors.warning}08`,
+										borderColor: `${theme.colors.warning}24`,
+									}}
+								>
+									<div>
+										<div
+											className="text-xs font-medium uppercase tracking-wider"
+											style={{ color: theme.colors.warning }}
+										>
+											Nested Tasks Waiting
+										</div>
+										<div className="text-sm mt-1" style={{ color: theme.colors.textMain }}>
+											This parent task is waiting because one or more subtasks were sent back with requested changes.
+										</div>
+									</div>
+									<div className="space-y-3">
+										{selectedTaskAttentionBlockers.map(({ task: blockerTask, attentionRequest, followUpTasks }) => {
+											const blockerTone =
+												PASTEL_STATUS_TONES[blockerTask.status] || PASTEL_STATUS_TONES.needs_input;
+											return (
+												<div
+													key={blockerTask.id}
+													className="rounded-lg border px-3.5 py-3 space-y-2"
+													style={{
+														borderColor: 'rgba(255,255,255,0.08)',
+														backgroundColor: 'rgba(255,255,255,0.03)',
+													}}
+												>
+													<div className="flex items-start justify-between gap-3">
+														<button
+															onClick={() => openTaskDetails(blockerTask.id)}
+															className="text-left hover:underline"
+															style={{ color: theme.colors.textMain }}
+														>
+															{blockerTask.title}
+														</button>
+														<span
+															className="text-[11px] px-2 py-1 rounded-full shrink-0"
+															style={{
+																backgroundColor: blockerTone.bg,
+																color: blockerTone.fg,
+															}}
+														>
+															{FRIENDLY_TASK_STATUS_LABELS[blockerTask.status]}
+														</span>
+													</div>
+													<div className="text-xs leading-5" style={{ color: theme.colors.textDim }}>
+														{formatConductorOperatorMessage(attentionRequest?.requestedAction) ||
+															'This subtask is waiting for follow-up changes before it can continue.'}
+													</div>
+													{followUpTasks.length > 0 && (
+														<div className="space-y-1.5">
+															<div className="text-[11px] uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
+																Requested Changes
+															</div>
+															<div className="space-y-1.5">
+																{followUpTasks.slice(0, 3).map((followUpTask) => (
+																	<button
+																		key={followUpTask.id}
+																		onClick={() => openTaskDetails(followUpTask.id)}
+																		className="w-full text-left rounded-lg px-2.5 py-2 hover:bg-white/5"
+																		style={{ backgroundColor: 'rgba(255,255,255,0.02)' }}
+																	>
+																		<div className="text-xs font-medium" style={{ color: theme.colors.textMain }}>
+																			{followUpTask.title}
+																		</div>
+																		{followUpTask.description && (
+																			<div className="text-[11px] mt-1 leading-5" style={{ color: theme.colors.textDim }}>
+																				{followUpTask.description}
+																			</div>
+																		)}
+																	</button>
+																))}
+																{followUpTasks.length > 3 && (
+																	<div className="text-[11px]" style={{ color: theme.colors.textDim }}>
+																		+{followUpTasks.length - 3} more requested change{followUpTasks.length - 3 === 1 ? '' : 's'}
+																	</div>
+																)}
+															</div>
+														</div>
+													)}
+												</div>
+											);
+										})}
+									</div>
+								</div>
+							)}
 
 						{/* Acceptance criteria — editable */}
 						<div>
@@ -5466,7 +8193,7 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 														/>
 														<div className="min-w-0 flex-1">
 															<div className="text-sm" style={{ color: theme.colors.textMain }}>
-																{event.message}
+																{formatConductorOperatorMessage(event.message)}
 															</div>
 															<div className="flex items-center gap-2 mt-0.5 text-[11px]" style={{ color: theme.colors.textDim }}>
 																<span>{formatLabel(runKind)}</span>
@@ -5645,210 +8372,57 @@ export function ConductorPanel({ theme, groupId }: ConductorPanelProps): JSX.Ele
 				);
 			})()}
 
-			{isTaskComposerOpen && (
-				<Modal
+			{openProofDemoId && (
+				<DemoViewerModal
 					theme={theme}
-					title={manualTaskParentId ? 'Add Subtask' : 'Add Task'}
-					priority={MODAL_PRIORITIES.SETTINGS + 2}
-					onClose={() => {
+					demoId={openProofDemoId}
+					onClose={() => setOpenProofDemoId(null)}
+				/>
+			)}
+
+			{isTaskComposerOpen && (
+				<ConductorTaskComposer
+					theme={theme}
+					tasks={tasks}
+					initialParentId={manualTaskParentId}
+					onCreateTask={({ parentId, title, description, priority, completionProofRequired }) => {
+						addTask(groupId, {
+							title,
+							description,
+							priority,
+							status: 'draft',
+							parentTaskId: parentId || undefined,
+							source: 'manual',
+							completionProofRequired,
+						});
 						setIsTaskComposerOpen(false);
-						resetTaskComposer();
 					}}
-					width={680}
-					maxHeight="85vh"
-					closeOnBackdropClick
-				>
-					<div className="space-y-4">
-						<p className="text-sm leading-6" style={{ color: theme.colors.textDim }}>
-							Add a task directly to the board. If you attach it to a parent, it becomes a first-class
-							subtask that can move through planning, execution, and QA on its own.
-						</p>
-
-						<div>
-							<div className="mb-2 text-sm" style={{ color: theme.colors.textDim }}>
-								Parent task
-							</div>
-							<select
-								value={manualTaskParentId}
-								onChange={(e) => setManualTaskParentId(e.target.value)}
-								className="w-full rounded-lg border px-3 py-2 text-sm"
-								style={getGlassInputStyle(theme)}
-							>
-								<option value="">No parent, create a top-level task</option>
-								{tasks.map((task) => (
-									<option key={task.id} value={task.id}>
-										{task.title}
-									</option>
-								))}
-							</select>
-						</div>
-
-						<input
-							value={manualTaskTitle}
-							onChange={(e) => setManualTaskTitle(e.target.value)}
-							placeholder="Short task title"
-							className="w-full rounded-lg border px-3 py-3 text-sm"
-							style={getGlassInputStyle(theme)}
-						/>
-
-						<textarea
-							value={manualTaskDescription}
-							onChange={(e) => setManualTaskDescription(e.target.value)}
-							placeholder="What needs to happen?"
-							rows={4}
-							className="w-full rounded-lg border px-3 py-3 text-sm resize-y"
-							style={getGlassInputStyle(theme)}
-						/>
-
-						<div>
-							<div className="mb-2 text-sm" style={{ color: theme.colors.textDim }}>
-								Priority
-							</div>
-							<select
-								value={manualTaskPriority}
-								onChange={(e) => setManualTaskPriority(e.target.value as ConductorTaskPriority)}
-								className="w-full rounded-lg border px-3 py-2 text-sm"
-								style={getGlassInputStyle(theme)}
-							>
-								{PRIORITY_OPTIONS.map((option) => (
-									<option key={option} value={option}>
-										{formatLabel(option)}
-									</option>
-								))}
-							</select>
-						</div>
-
-						<div className="flex items-center justify-between gap-3 pt-2">
-							<button
-								onClick={() => {
-									setIsTaskComposerOpen(false);
-									resetTaskComposer();
-								}}
-								className="px-3 py-2 rounded-lg text-sm font-medium"
-								style={getGlassButtonStyle(theme)}
-							>
-								Cancel
-							</button>
-
-							<button
-								onClick={handleCreateManualTask}
-								disabled={!manualTaskTitle.trim()}
-								className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-								style={getGlassButtonStyle(theme, { accent: true })}
-							>
-								<ClipboardList className="w-4 h-4" />
-								{manualTaskParentId ? 'Create subtask' : 'Create task'}
-							</button>
-						</div>
-					</div>
-				</Modal>
+					onClose={() => setIsTaskComposerOpen(false)}
+				/>
 			)}
 
 			{isPlanComposerOpen && (
-				<Modal
+				<ConductorPlanComposer
 					theme={theme}
-					title="New Plan"
-					priority={MODAL_PRIORITIES.SETTINGS + 2}
+					conductor={conductor}
+					selectedTemplate={selectedTemplate}
+					isPlanning={isPlanning}
+					planningError={planningError}
+					onSetAutoExecute={(value) =>
+						setConductor(groupId, { autoExecuteOnPlanCreation: value })
+					}
+					onSubmitPlan={(input) =>
+						void handleGeneratePlan({
+							requestOverride: input.requestOverride,
+							operatorNotesOverride: input.operatorNotesOverride,
+							autoExecute: input.autoExecute,
+						})
+					}
 					onClose={() => {
 						setIsPlanComposerOpen(false);
-						setDraftDescription('');
-						setPlannerNotes('');
 						setPlanningError(null);
 					}}
-					width={760}
-					maxHeight="85vh"
-					closeOnBackdropClick
-				>
-					<div className="space-y-4">
-						<p className="text-sm leading-6" style={{ color: theme.colors.textDim }}>
-							Write the request in plain English. Conductor will break it down into tasks.
-						</p>
-
-						<textarea
-							value={draftDescription}
-							onChange={(e) => setDraftDescription(e.target.value)}
-							placeholder="Example: fix the flaky login issue, tighten the onboarding copy, and make the settings page easier to scan."
-							rows={6}
-							className="w-full rounded-lg border px-3 py-3 text-sm resize-y"
-							style={getGlassInputStyle(theme)}
-						/>
-
-						<textarea
-							value={plannerNotes}
-							onChange={(e) => setPlannerNotes(e.target.value)}
-							placeholder="Optional notes: what matters most, what should happen first, what areas to avoid, or how bold the changes should be."
-							rows={3}
-							className="w-full rounded-lg border px-3 py-2 text-sm resize-y"
-							style={getGlassInputStyle(theme)}
-						/>
-
-						<label
-							className="flex items-center gap-2 text-sm"
-							style={{ color: theme.colors.textMain }}
-						>
-							<input
-								type="checkbox"
-								checked={Boolean(conductor?.autoExecuteOnPlanCreation)}
-								onChange={(e) =>
-									setConductor(groupId, {
-										autoExecuteOnPlanCreation: e.target.checked,
-									})
-								}
-							/>
-							Auto execute tasks for approved plans
-						</label>
-
-						{planningError && (
-							<div
-								className="rounded-lg border p-3 text-sm"
-								style={{
-									...getGlassPanelStyle(theme, {
-										tint: `${theme.colors.warning}12`,
-										borderColor: `${theme.colors.warning}35`,
-									}),
-									color: theme.colors.warning,
-								}}
-							>
-								{planningError}
-							</div>
-						)}
-
-						<div className="flex items-center justify-between gap-3 pt-2">
-							<button
-								onClick={() => {
-									setIsPlanComposerOpen(false);
-									setDraftDescription('');
-									setPlannerNotes('');
-									setPlanningError(null);
-								}}
-								className="px-3 py-2 rounded-lg text-sm font-medium"
-								style={getGlassButtonStyle(theme)}
-							>
-								Cancel
-							</button>
-
-							<button
-								onClick={() =>
-									void handleGeneratePlan({
-										requestOverride: draftDescription,
-										operatorNotesOverride: plannerNotes,
-										autoExecute: Boolean(conductor?.autoExecuteOnPlanCreation),
-									})
-								}
-								disabled={isPlanning || !selectedTemplate || !draftDescription.trim()}
-								className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
-								style={getGlassButtonStyle(theme, { accent: true })}
-							>
-								{isPlanning ? (
-									<Loader2 className="w-4 h-4 animate-spin" />
-								) : (
-									<Sparkles className="w-4 h-4" />
-								)}
-								{isPlanning ? 'Planning...' : 'Submit plan'}
-							</button>
-						</div>
-					</div>
-				</Modal>
+				/>
 			)}
 		</div>
 	);

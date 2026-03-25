@@ -43,6 +43,8 @@ export interface MessageHistoryProps {
 	onJumpHandled?: () => void;
 	/** Called when the most visible user turn changes while scrolling */
 	onVisibleUserTurnChange?: (messageKey: string | null) => void;
+	/** Bottom inset reserved for the fixed mobile composer */
+	bottomInset?: number | string;
 }
 
 /**
@@ -173,6 +175,7 @@ export const MessageHistory = memo(function MessageHistory({
 	jumpToMessageKey = null,
 	onJumpHandled,
 	onVisibleUserTurnChange,
+	bottomInset = 0,
 }: MessageHistoryProps) {
 	const colors = useThemeColors();
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -590,6 +593,11 @@ export const MessageHistory = memo(function MessageHistory({
 		);
 	}
 
+	const bottomPadding =
+		typeof bottomInset === 'number'
+			? `${12 + Math.max(0, bottomInset)}px`
+			: `calc(12px + ${bottomInset})`;
+
 	return (
 		<div
 			style={{
@@ -618,7 +626,10 @@ export const MessageHistory = memo(function MessageHistory({
 					display: 'flex',
 					flexDirection: 'column',
 					gap: '14px',
-					padding: '18px 16px 12px',
+					paddingTop: '18px',
+					paddingLeft: '16px',
+					paddingRight: '16px',
+					paddingBottom: bottomPadding,
 					...(maxHeight === 'none' ? { flex: 1, minHeight: 0 } : { maxHeight }),
 					overflowY: 'auto',
 					overflowX: 'hidden',

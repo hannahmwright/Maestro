@@ -1,4 +1,11 @@
 import type { ConductorTask, ConductorTaskPriority, Session } from '../types';
+import { CONDUCTOR_MAX_REVIEW_FOLLOW_UP_TASKS } from '../../shared/conductorLimits';
+import {
+	buildConductorNativeSubmissionInstruction,
+	type ConductorReviewToolInput,
+} from '../../shared/conductorNativeTools';
+
+export const CONDUCTOR_REVIEWER_JSON_ERROR = 'Reviewer did not return a JSON object.';
 
 export interface ConductorReviewerFollowUpDraft {
 	title: string;
@@ -45,10 +52,18 @@ function extractJsonBlock(text: string): string {
 		return fencedMatch[1].trim();
 	}
 
+	const genericFencedMatch = text.match(/```\s*([\s\S]*?)```/i);
+	if (genericFencedMatch?.[1]) {
+		const fencedContent = genericFencedMatch[1].trim();
+		if (fencedContent.startsWith('{') && fencedContent.endsWith('}')) {
+			return fencedContent;
+		}
+	}
+
 	const firstBrace = text.indexOf('{');
 	const lastBrace = text.lastIndexOf('}');
 	if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-		throw new Error('Reviewer did not return a JSON object.');
+		throw new Error(CONDUCTOR_REVIEWER_JSON_ERROR);
 	}
 
 	return text.slice(firstBrace, lastBrace + 1).trim();
@@ -89,9 +104,14 @@ ${changedPaths}
 Instructions:
 - Review the workspace as it currently exists.
 - Approve only if the task appears complete and acceptance criteria are satisfied.
-- If changes are still needed, request changes clearly and suggest at most 3 follow-up subtasks.
+- If changes are still needed, request changes clearly.
+- When the same task just needs another pass, leave "followUpTasks" empty and put the requested fixes in "reviewNotes".
+- Only return followUpTasks when the remaining work truly splits into separate independent child tasks.
+- Do not suggest more than ${CONDUCTOR_MAX_REVIEW_FOLLOW_UP_TASKS} follow-up subtasks.
 
-Return ONLY valid JSON with this exact shape:
+${buildConductorNativeSubmissionInstruction('reviewer')}
+
+If you need the JSON fallback, return ONLY valid JSON with this exact shape:
 {
   "decision": "approved | changes_requested",
   "summary": "short review summary",
@@ -108,6 +128,21 @@ Return ONLY valid JSON with this exact shape:
 
 export function parseConductorReviewerResponse(text: string): ConductorReviewerResult {
 	const parsed = JSON.parse(extractJsonBlock(text)) as RawReviewerResponse;
+	return normalizeConductorReviewerResult(parsed);
+}
+
+export function parseConductorReviewerSubmission(
+	submission: ConductorReviewToolInput
+): ConductorReviewerResult {
+	return normalizeConductorReviewerResult(submission);
+}
+
+function normalizeConductorReviewerResult(parsed: {
+	decision?: unknown;
+	summary?: unknown;
+	followUpTasks?: unknown;
+	reviewNotes?: unknown;
+}): ConductorReviewerResult {
 	const followUpTasks = Array.isArray(parsed.followUpTasks)
 		? parsed.followUpTasks
 				.map((rawTask): ConductorReviewerFollowUpDraft | null => {
@@ -124,6 +159,7 @@ export function parseConductorReviewerResponse(text: string): ConductorReviewerR
 					};
 				})
 				.filter((task): task is ConductorReviewerFollowUpDraft => Boolean(task))
+				.slice(0, CONDUCTOR_MAX_REVIEW_FOLLOW_UP_TASKS)
 		: [];
 
 	const decision = parsed.decision === 'changes_requested' ? 'changes_requested' : 'approved';

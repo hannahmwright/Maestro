@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+	CONDUCTOR_REVIEWER_JSON_ERROR,
 	buildConductorReviewerPrompt,
+	parseConductorReviewerSubmission,
 	parseConductorReviewerResponse,
 } from '../../../renderer/services/conductorReviewer';
 import type { ConductorTask, Session } from '../../../renderer/types';
@@ -66,6 +68,7 @@ describe('conductorReviewer', () => {
 		expect(prompt).toContain('Implement review lane');
 		expect(prompt).toContain('Completed tasks require review before done.');
 		expect(prompt).toContain('src/renderer/components/ConductorPanel.tsx');
+		expect(prompt).toContain('submit_conductor_review');
 	});
 
 	it('parses approved reviewer output', () => {
@@ -100,5 +103,57 @@ describe('conductorReviewer', () => {
 		expect(parsed.decision).toBe('changes_requested');
 		expect(parsed.followUpTasks).toHaveLength(1);
 		expect(parsed.followUpTasks[0].title).toBe('Tighten the blocked-state copy');
+	});
+
+	it('parses JSON wrapped in a generic code fence', () => {
+		const parsed = parseConductorReviewerResponse(`
+Here is the final review.
+
+\`\`\`
+{
+	"decision": "approved",
+	"summary": "Looks good.",
+	"followUpTasks": []
+}
+\`\`\`
+`);
+
+		expect(parsed.decision).toBe('approved');
+		expect(parsed.summary).toBe('Looks good.');
+	});
+
+	it('throws a stable error when no JSON object is present', () => {
+		expect(() => parseConductorReviewerResponse('This looks correct to me.')).toThrow(
+			CONDUCTOR_REVIEWER_JSON_ERROR
+		);
+	});
+
+	it('caps reviewer follow-up tasks so QA cannot explode the backlog', () => {
+		const parsed = parseConductorReviewerResponse(`
+	{
+		"decision": "changes_requested",
+		"summary": "Needs more work.",
+		"followUpTasks": [
+			{ "title": "Fix 1", "description": "One", "priority": "medium" },
+			{ "title": "Fix 2", "description": "Two", "priority": "medium" },
+			{ "title": "Fix 3", "description": "Three", "priority": "medium" }
+		]
+	}
+	`);
+
+		expect(parsed.followUpTasks).toHaveLength(2);
+		expect(parsed.followUpTasks.map((task) => task.title)).toEqual(['Fix 1', 'Fix 2']);
+	});
+
+	it('parses structured reviewer submissions from native tool calls', () => {
+		const parsed = parseConductorReviewerSubmission({
+			decision: 'approved',
+			summary: 'Structured review result.',
+			followUpTasks: [],
+			reviewNotes: 'Looks good.',
+		});
+
+		expect(parsed.decision).toBe('approved');
+		expect(parsed.reviewNotes).toBe('Looks good.');
 	});
 });

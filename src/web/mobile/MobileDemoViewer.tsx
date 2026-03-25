@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ChevronLeft, ChevronRight, Download, Expand, X } from 'lucide-react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { DemoDetail } from '../../shared/demo-artifacts';
@@ -16,6 +16,288 @@ interface MobileDemoMediaItem {
 	alt: string;
 	filename: string;
 	posterSrc?: string | null;
+}
+
+interface ZoomState {
+	scale: number;
+	offsetX: number;
+	offsetY: number;
+}
+
+interface TouchGestureState {
+	mode: 'none' | 'pan' | 'pinch';
+	startScale: number;
+	startOffsetX: number;
+	startOffsetY: number;
+	startDistance: number;
+	startCenterX: number;
+	startCenterY: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+	return Math.min(Math.max(value, min), max);
+}
+
+function getTouchDistance(touches: React.TouchList): number {
+	if (touches.length < 2) return 0;
+	const dx = touches[0].clientX - touches[1].clientX;
+	const dy = touches[0].clientY - touches[1].clientY;
+	return Math.hypot(dx, dy);
+}
+
+function getTouchCenter(touches: React.TouchList): { x: number; y: number } {
+	if (touches.length === 0) {
+		return { x: 0, y: 0 };
+	}
+	if (touches.length === 1) {
+		return { x: touches[0].clientX, y: touches[0].clientY };
+	}
+	return {
+		x: (touches[0].clientX + touches[1].clientX) / 2,
+		y: (touches[0].clientY + touches[1].clientY) / 2,
+	};
+}
+
+function clampZoomOffsets(
+	nextScale: number,
+	nextOffsetX: number,
+	nextOffsetY: number,
+	container: HTMLDivElement | null,
+	image: HTMLImageElement | null
+): { offsetX: number; offsetY: number } {
+	if (!container || !image || nextScale <= 1) {
+		return { offsetX: 0, offsetY: 0 };
+	}
+
+	const containerRect = container.getBoundingClientRect();
+	const imageWidth = image.clientWidth;
+	const imageHeight = image.clientHeight;
+	const maxOffsetX = Math.max(0, (imageWidth * nextScale - containerRect.width) / 2);
+	const maxOffsetY = Math.max(0, (imageHeight * nextScale - containerRect.height) / 2);
+
+	return {
+		offsetX: clamp(nextOffsetX, -maxOffsetX, maxOffsetX),
+		offsetY: clamp(nextOffsetY, -maxOffsetY, maxOffsetY),
+	};
+}
+
+function ZoomableImage({ src, alt }: { src: string; alt: string }) {
+	const containerRef = useRef<HTMLDivElement | null>(null);
+	const imageRef = useRef<HTMLImageElement | null>(null);
+	const gestureRef = useRef<TouchGestureState>({
+		mode: 'none',
+		startScale: 1,
+		startOffsetX: 0,
+		startOffsetY: 0,
+		startDistance: 0,
+		startCenterX: 0,
+		startCenterY: 0,
+	});
+	const lastTapRef = useRef<{ timestamp: number; x: number; y: number } | null>(null);
+	const [zoom, setZoom] = useState<ZoomState>({
+		scale: 1,
+		offsetX: 0,
+		offsetY: 0,
+	});
+
+	const updateZoom = useCallback((nextScale: number, nextOffsetX: number, nextOffsetY: number) => {
+		const constrainedScale = clamp(nextScale, 1, 4);
+		const constrainedOffsets = clampZoomOffsets(
+			constrainedScale,
+			nextOffsetX,
+			nextOffsetY,
+			containerRef.current,
+			imageRef.current
+		);
+		setZoom({
+			scale: constrainedScale,
+			offsetX: constrainedOffsets.offsetX,
+			offsetY: constrainedOffsets.offsetY,
+		});
+	}, []);
+
+	useEffect(() => {
+		setZoom({ scale: 1, offsetX: 0, offsetY: 0 });
+		lastTapRef.current = null;
+		gestureRef.current = {
+			mode: 'none',
+			startScale: 1,
+			startOffsetX: 0,
+			startOffsetY: 0,
+			startDistance: 0,
+			startCenterX: 0,
+			startCenterY: 0,
+		};
+	}, [src]);
+
+	const handleTouchStart = useCallback(
+		(event: React.TouchEvent<HTMLDivElement>) => {
+			event.stopPropagation();
+			if (event.touches.length >= 2) {
+				const center = getTouchCenter(event.touches);
+				gestureRef.current = {
+					mode: 'pinch',
+					startScale: zoom.scale,
+					startOffsetX: zoom.offsetX,
+					startOffsetY: zoom.offsetY,
+					startDistance: getTouchDistance(event.touches),
+					startCenterX: center.x,
+					startCenterY: center.y,
+				};
+				return;
+			}
+
+			if (event.touches.length === 1 && zoom.scale > 1) {
+				const center = getTouchCenter(event.touches);
+				gestureRef.current = {
+					mode: 'pan',
+					startScale: zoom.scale,
+					startOffsetX: zoom.offsetX,
+					startOffsetY: zoom.offsetY,
+					startDistance: 0,
+					startCenterX: center.x,
+					startCenterY: center.y,
+				};
+			}
+		},
+		[zoom]
+	);
+
+	const handleTouchMove = useCallback(
+		(event: React.TouchEvent<HTMLDivElement>) => {
+			event.stopPropagation();
+			if (event.touches.length >= 2) {
+				event.preventDefault();
+				const currentDistance = getTouchDistance(event.touches);
+				const center = getTouchCenter(event.touches);
+				const gesture = gestureRef.current;
+				const nextScale = gesture.startDistance
+					? gesture.startScale * (currentDistance / gesture.startDistance)
+					: gesture.startScale;
+				const nextOffsetX = gesture.startOffsetX + (center.x - gesture.startCenterX);
+				const nextOffsetY = gesture.startOffsetY + (center.y - gesture.startCenterY);
+				updateZoom(nextScale, nextOffsetX, nextOffsetY);
+				return;
+			}
+
+			if (event.touches.length === 1 && gestureRef.current.mode === 'pan' && zoom.scale > 1) {
+				event.preventDefault();
+				const center = getTouchCenter(event.touches);
+				const gesture = gestureRef.current;
+				const nextOffsetX = gesture.startOffsetX + (center.x - gesture.startCenterX);
+				const nextOffsetY = gesture.startOffsetY + (center.y - gesture.startCenterY);
+				updateZoom(zoom.scale, nextOffsetX, nextOffsetY);
+			}
+		},
+		[updateZoom, zoom.scale]
+	);
+
+	const handleTouchEnd = useCallback(
+		(event: React.TouchEvent<HTMLDivElement>) => {
+			event.stopPropagation();
+
+			if (event.touches.length >= 2) {
+				const center = getTouchCenter(event.touches);
+				gestureRef.current = {
+					mode: 'pinch',
+					startScale: zoom.scale,
+					startOffsetX: zoom.offsetX,
+					startOffsetY: zoom.offsetY,
+					startDistance: getTouchDistance(event.touches),
+					startCenterX: center.x,
+					startCenterY: center.y,
+				};
+				return;
+			}
+
+			if (event.touches.length === 1 && zoom.scale > 1) {
+				const center = getTouchCenter(event.touches);
+				gestureRef.current = {
+					mode: 'pan',
+					startScale: zoom.scale,
+					startOffsetX: zoom.offsetX,
+					startOffsetY: zoom.offsetY,
+					startDistance: 0,
+					startCenterX: center.x,
+					startCenterY: center.y,
+				};
+				return;
+			}
+
+			if (event.changedTouches.length === 1) {
+				const touch = event.changedTouches[0];
+				const now = Date.now();
+				const lastTap = lastTapRef.current;
+				const withinDoubleTapWindow =
+					lastTap &&
+					now - lastTap.timestamp < 280 &&
+					Math.abs(lastTap.x - touch.clientX) < 24 &&
+					Math.abs(lastTap.y - touch.clientY) < 24;
+
+				if (withinDoubleTapWindow) {
+					if (zoom.scale > 1) {
+						updateZoom(1, 0, 0);
+					} else {
+						updateZoom(2, 0, 0);
+					}
+					lastTapRef.current = null;
+				} else {
+					lastTapRef.current = {
+						timestamp: now,
+						x: touch.clientX,
+						y: touch.clientY,
+					};
+				}
+			}
+
+			gestureRef.current = {
+				mode: 'none',
+				startScale: zoom.scale,
+				startOffsetX: zoom.offsetX,
+				startOffsetY: zoom.offsetY,
+				startDistance: 0,
+				startCenterX: 0,
+				startCenterY: 0,
+			};
+		},
+		[updateZoom, zoom]
+	);
+
+	return (
+		<div
+			ref={containerRef}
+			onTouchStart={handleTouchStart}
+			onTouchMove={handleTouchMove}
+			onTouchEnd={handleTouchEnd}
+			onTouchCancel={handleTouchEnd}
+			style={{
+				width: '100%',
+				height: '100%',
+				display: 'flex',
+				alignItems: 'center',
+				justifyContent: 'center',
+				overflow: 'hidden',
+				touchAction: 'none',
+			}}
+		>
+			<img
+				ref={imageRef}
+				src={src}
+				alt={alt}
+				style={{
+					maxWidth: '100%',
+					maxHeight: '100%',
+					borderRadius: '24px',
+					objectFit: 'contain',
+					boxShadow: '0 24px 64px rgba(0, 0, 0, 0.38)',
+					transform: `translate3d(${zoom.offsetX}px, ${zoom.offsetY}px, 0) scale(${zoom.scale})`,
+					transformOrigin: 'center center',
+					transition: gestureRef.current.mode === 'none' ? 'transform 180ms ease-out' : 'none',
+					willChange: 'transform',
+				}}
+			/>
+		</div>
+	);
 }
 
 function formatDuration(durationMs?: number | null): string | null {
@@ -230,7 +512,7 @@ function MobileMediaLightbox({
 						alignItems: 'center',
 						justifyContent: 'center',
 						overflow: 'auto',
-						touchAction: 'pan-x pan-y pinch-zoom',
+						touchAction: item.kind === 'image' ? 'none' : 'pan-x pan-y pinch-zoom',
 					}}
 				>
 					{item.kind === 'video' ? (
@@ -249,17 +531,7 @@ function MobileMediaLightbox({
 							}}
 						/>
 					) : (
-						<img
-							src={item.src}
-							alt={item.alt}
-							style={{
-								maxWidth: '100%',
-								maxHeight: '100%',
-								borderRadius: '24px',
-								objectFit: 'contain',
-								boxShadow: '0 24px 64px rgba(0, 0, 0, 0.38)',
-							}}
-						/>
+						<ZoomableImage src={item.src} alt={item.alt} />
 					)}
 				</div>
 				{canNavigate ? (
@@ -303,7 +575,7 @@ function MobileMediaLightbox({
 				{item.kind === 'image'
 					? canNavigate
 						? `Image ${activeIndex + 1} of ${items.length}`
-						: 'Tap Save to keep a copy'
+						: 'Pinch to zoom and drag • Double tap to reset • Tap Save to keep a copy'
 					: 'Tap Save to keep a copy'}
 			</div>
 		</div>
@@ -357,6 +629,11 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 		() => artifactUrl(demo?.posterArtifact?.id),
 		[demo?.posterArtifact?.id]
 	);
+	const hasStepScreenshots = useMemo(
+		() => Boolean(demo?.steps.some((step) => step.screenshotArtifact?.id)),
+		[demo]
+	);
+	const showPosterHero = Boolean(!videoUrl && posterUrl && demo?.posterArtifact?.id && !hasStepScreenshots);
 
 	const imageItems = useMemo(() => {
 		if (!demo) {
@@ -379,7 +656,7 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 			});
 		};
 
-		if (demo.posterArtifact?.id) {
+		if (showPosterHero && demo.posterArtifact?.id) {
 			pushImage(demo.posterArtifact.id, demo.posterArtifact.filename, demo.title, posterUrl);
 		}
 
@@ -395,7 +672,7 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 		}
 
 		return items;
-	}, [demo, posterUrl]);
+	}, [demo, posterUrl, showPosterHero]);
 
 	const videoItem = useMemo(() => {
 		if (!demo?.videoArtifact?.id || !videoUrl) {
@@ -410,6 +687,8 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 			posterSrc: posterUrl,
 		};
 	}, [demo, posterUrl, videoUrl]);
+
+	const posterArtifactId = demo?.posterArtifact?.id || null;
 
 	const openImageGallery = useCallback(
 		(artifactId: string) => {
@@ -580,7 +859,7 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 											Open full screen
 										</button>
 									</div>
-								) : posterUrl && demo.posterArtifact?.id ? (
+								) : showPosterHero ? (
 								<button
 									type="button"
 									onClick={() => openImageGallery(demo.posterArtifact!.id)}
@@ -591,11 +870,11 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 										background: 'transparent',
 										cursor: 'pointer',
 									}}
-								>
-									<img
-										src={posterUrl}
-										alt={demo.title}
-										style={{
+									>
+										<img
+											src={posterUrl || undefined}
+											alt={demo.title}
+											style={{
 											width: '100%',
 											borderRadius: '20px',
 											border: `1px solid ${colors.border}`,
@@ -647,6 +926,10 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 								{demo.steps.map((step, index) => {
 									const screenshotArtifactId = step.screenshotArtifact?.id;
 									const screenshotUrl = artifactUrl(screenshotArtifactId);
+									const shouldHideDuplicateScreenshot =
+										showPosterHero &&
+										!!posterArtifactId &&
+										screenshotArtifactId === posterArtifactId;
 									return (
 										<div
 											key={step.id}
@@ -667,7 +950,9 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 											{step.description && (
 												<div style={{ fontSize: '13px', lineHeight: 1.5 }}>{step.description}</div>
 											)}
-											{screenshotUrl && screenshotArtifactId && (
+											{screenshotUrl &&
+												screenshotArtifactId &&
+												!shouldHideDuplicateScreenshot && (
 												<button
 													type="button"
 													onClick={() => openImageGallery(screenshotArtifactId)}

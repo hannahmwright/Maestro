@@ -17,6 +17,7 @@ export function createConversationApi() {
 				remoteId: string | null;
 			};
 			querySource?: 'user' | 'auto';
+			preferLiveRuntime?: boolean;
 		}): Promise<ConversationCapabilities> =>
 			ipcRenderer.invoke('conversation:getCapabilities', request),
 

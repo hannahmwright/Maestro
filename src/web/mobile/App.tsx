@@ -72,11 +72,28 @@ import type {
 	ConductorTaskStatus,
 } from '../../shared/types';
 
+declare const __APP_VERSION__: string;
+declare const __GIT_HASH__: string;
+declare const __BUILD_ID__: string;
+
 function getDemoCaptureTargetKey(sessionId: string | null, tabId: string | null): string | null {
 	if (!sessionId) {
 		return null;
 	}
 	return `${sessionId}::${tabId || ''}`;
+}
+
+function formatWebBuildTimestamp(buildId: string): string {
+	const parsed = new Date(buildId);
+	if (Number.isNaN(parsed.getTime())) {
+		return buildId;
+	}
+	return parsed.toLocaleString(undefined, {
+		month: 'short',
+		day: 'numeric',
+		hour: 'numeric',
+		minute: '2-digit',
+	});
 }
 
 const MobileHistoryPanel = lazy(() =>
@@ -687,6 +704,10 @@ function AppControlsPanel({
 	hideHeader = false,
 }: AppControlsPanelProps) {
 	const colors = useThemeColors();
+	const buildVersion = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
+	const buildCommit = typeof __GIT_HASH__ === 'string' ? __GIT_HASH__ : 'local';
+	const buildId = typeof __BUILD_ID__ === 'string' ? __BUILD_ID__ : 'unknown';
+	const buildTimestamp = formatWebBuildTimestamp(buildId);
 
 	const renderIcon = (type: 'install' | 'notifications' | 'push' | 'test') => {
 		switch (type) {
@@ -1195,6 +1216,138 @@ function AppControlsPanel({
 
 			<div
 				style={{
+					padding: '10px 11px',
+					borderRadius: '14px',
+					border: '1px solid rgba(255, 255, 255, 0.08)',
+					background: 'rgba(255, 255, 255, 0.05)',
+					display: 'flex',
+					flexDirection: 'column',
+					gap: '8px',
+				}}
+			>
+				<div
+					style={{
+						display: 'flex',
+						alignItems: 'center',
+						justifyContent: 'space-between',
+						gap: '10px',
+						flexWrap: 'wrap',
+					}}
+				>
+					<div>
+						<div
+							style={{
+								fontSize: '12px',
+								fontWeight: 650,
+								color: colors.textMain,
+								lineHeight: 1.25,
+							}}
+						>
+							Web Build
+						</div>
+						<div
+							style={{
+								marginTop: '3px',
+								fontSize: '10px',
+								color: colors.textDim,
+								lineHeight: 1.4,
+							}}
+						>
+							Use this to confirm the iPhone is running the latest PWA bundle.
+						</div>
+					</div>
+					<div style={getStatusChipStyle('accent')}>
+						<span style={{ opacity: 0.7 }}>Version</span>
+						<span>v{buildVersion}</span>
+					</div>
+				</div>
+
+				<div
+					style={{
+						display: 'grid',
+						gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))',
+						gap: '8px',
+					}}
+				>
+					<div
+						style={{
+							padding: '9px 10px',
+							borderRadius: '12px',
+							border: '1px solid rgba(255, 255, 255, 0.08)',
+							background: 'rgba(255, 255, 255, 0.04)',
+						}}
+					>
+						<div
+							style={{
+								fontSize: '10px',
+								color: colors.textDim,
+								lineHeight: 1.3,
+							}}
+						>
+							Commit
+						</div>
+						<div
+							style={{
+								marginTop: '4px',
+								fontSize: '11px',
+								fontWeight: 650,
+								fontFamily:
+									'"JetBrains Mono", "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, monospace',
+								color: colors.textMain,
+								lineHeight: 1.3,
+								wordBreak: 'break-word',
+							}}
+						>
+							{buildCommit}
+						</div>
+					</div>
+
+					<div
+						style={{
+							padding: '9px 10px',
+							borderRadius: '12px',
+							border: '1px solid rgba(255, 255, 255, 0.08)',
+							background: 'rgba(255, 255, 255, 0.04)',
+						}}
+					>
+						<div
+							style={{
+								fontSize: '10px',
+								color: colors.textDim,
+								lineHeight: 1.3,
+							}}
+						>
+							Built
+						</div>
+						<div
+							style={{
+								marginTop: '4px',
+								fontSize: '11px',
+								fontWeight: 650,
+								color: colors.textMain,
+								lineHeight: 1.3,
+							}}
+						>
+							{buildTimestamp}
+						</div>
+					</div>
+				</div>
+
+				<div
+					style={{
+						fontSize: '10px',
+						color: colors.textDim,
+						lineHeight: 1.45,
+						wordBreak: 'break-word',
+					}}
+					title={buildId}
+				>
+					Build ID: {buildId}
+				</div>
+			</div>
+
+			<div
+				style={{
 					display: 'grid',
 					gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
 					gap: '8px',
@@ -1419,7 +1572,6 @@ export default function MobileApp() {
 	const [demoCaptureRequiredByTarget, setDemoCaptureRequiredByTarget] = useState<
 		Record<string, true | undefined>
 	>({});
-	const [composerHeight, setComposerHeight] = useState(0);
 	const [showResponseViewer, setShowResponseViewer] = useState(false);
 	const [selectedResponse, setSelectedResponse] = useState<LastResponsePreview | null>(null);
 	const [responseIndex, setResponseIndex] = useState(0);
@@ -2313,18 +2465,22 @@ export default function MobileApp() {
 		[mutateConductorTask]
 	);
 
-	const handleUpdateConductorTask = useCallback(
-		async (
-			taskId: string,
-			updates: {
-				title?: string;
-				description?: string;
-				priority?: ConductorTaskPriority;
-				status?: ConductorTaskStatus;
-			}
-		) => {
-			await mutateConductorTask(`/conductor/tasks/${encodeURIComponent(taskId)}`, {
-				method: 'POST',
+		const handleUpdateConductorTask = useCallback(
+			async (
+				taskId: string,
+				updates: {
+					title?: string;
+					description?: string;
+					priority?: ConductorTaskPriority;
+					status?: ConductorTaskStatus;
+					acceptanceCriteria?: string[];
+					attentionRequest?: ConductorTask['attentionRequest'] | null;
+					completionProofRequirement?: ConductorTask['completionProofRequirement'];
+					completionProof?: ConductorTask['completionProof'];
+				}
+			) => {
+				await mutateConductorTask(`/conductor/tasks/${encodeURIComponent(taskId)}`, {
+					method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
 				},
@@ -3032,17 +3188,17 @@ export default function MobileApp() {
 							overflow: 'hidden',
 						}}
 					>
-						<MessageHistory
-							logs={chatLogs}
-							sessionId={activeSessionId}
-							inputMode={activeSession.inputMode as 'ai' | 'terminal'}
-							toolLogs={toolLogs}
-							isSessionBusy={activeSession.state === 'busy'}
-							autoScroll={true}
-							maxHeight="none"
-							onMessageTap={handleMessageTap}
-							jumpToMessageKey={pendingTurnJumpKey}
-							onJumpHandled={() => setPendingTurnJumpKey(null)}
+							<MessageHistory
+								logs={chatLogs}
+								sessionId={activeSessionId}
+								inputMode={activeSession.inputMode as 'ai' | 'terminal'}
+								toolLogs={toolLogs}
+								isSessionBusy={activeSession.state === 'busy'}
+								autoScroll={true}
+								maxHeight="none"
+								onMessageTap={handleMessageTap}
+								jumpToMessageKey={pendingTurnJumpKey}
+								onJumpHandled={() => setPendingTurnJumpKey(null)}
 							onVisibleUserTurnChange={(messageKey) => {
 								if (!messageKey) {
 									return;
@@ -3056,22 +3212,19 @@ export default function MobileApp() {
 		);
 	};
 
-	// CSS variable for dynamic viewport height with fallback
-	// The fixed CommandInputBar requires padding at the bottom of the container
-	const containerStyle: React.CSSProperties = {
-		display: 'flex',
-		flexDirection: 'column',
-		height: '100dvh',
-		maxHeight: '100dvh',
-		overflow: 'hidden',
-		backgroundColor: colors.bgMain,
-		color: colors.textMain,
-	};
-	const composerReserveHeight =
-		composerHeight > 0 ? Math.max(68, Math.round(composerHeight * 0.53)) : null;
-	const searchableSessions = useMemo(
-		() => sessions.filter((session) => (session.aiTabs?.length || 0) > 0),
-		[sessions]
+		const containerStyle: React.CSSProperties = {
+			display: 'flex',
+			flexDirection: 'column',
+			height: '100%',
+			minHeight: '100%',
+			maxHeight: '100%',
+			overflow: 'hidden',
+			backgroundColor: colors.bgMain,
+			color: colors.textMain,
+		};
+		const searchableSessions = useMemo(
+			() => sessions.filter((session) => (session.aiTabs?.length || 0) > 0),
+			[sessions]
 	);
 	const canOpenTabSearch = searchableSessions.length > 0;
 
@@ -3133,6 +3286,7 @@ export default function MobileApp() {
 				conductors={conductorState.conductors}
 				tasks={conductorState.tasks}
 				runs={conductorState.runs}
+				sessions={sessions}
 				isLoading={isKanbanLoading}
 				error={kanbanError}
 				onClose={handleCloseKanbanPanel}
@@ -3142,6 +3296,11 @@ export default function MobileApp() {
 				onCreateTask={handleCreateConductorTask}
 				onUpdateTask={handleUpdateConductorTask}
 				onDeleteTask={handleDeleteConductorTask}
+				onOpenDemo={handleOpenDemo}
+				onOpenAgentSession={(sessionId) => {
+					setKanbanScope(null);
+					handleSelectSession(sessionId);
+				}}
 			/>
 
 			{showAppControlsSheet && (
@@ -3291,10 +3450,6 @@ export default function MobileApp() {
 					display: 'flex',
 					flexDirection: 'column',
 					backgroundColor: colors.bgMain,
-					paddingBottom:
-						composerReserveHeight !== null
-							? `${composerReserveHeight}px`
-							: 'calc(96px + env(safe-area-inset-bottom))',
 					overflow: 'hidden',
 					minHeight: 0,
 				}}
@@ -3322,6 +3477,7 @@ export default function MobileApp() {
 			<CommandInputBar
 				isOffline={isOffline}
 				isConnected={connectionState === 'connected' || connectionState === 'authenticated'}
+				layoutMode="in-flow"
 				value={commandInput}
 				onChange={handleCommandChange}
 				onSubmit={handleCommandSubmit}
@@ -3348,7 +3504,6 @@ export default function MobileApp() {
 				onSelectModel={handleSelectSessionModel}
 				slashCommands={allSlashCommands}
 				showRecentCommands={false}
-				onHeightChange={setComposerHeight}
 			/>
 
 			{/* Full-screen response viewer modal */}

@@ -111,11 +111,17 @@ export function useKeyboardVisibility(): UseKeyboardVisibilityReturn {
 			return;
 		}
 
+		const viewportBottom = viewport.height + viewport.offsetTop;
+		if (!hasFocusedEditableElement()) {
+			baselineViewportBottomRef.current = viewportBottom;
+			updateKeyboardState(0);
+			return;
+		}
+
 		const windowSize = {
 			width: window.innerWidth,
 			height: window.innerHeight,
 		};
-		const viewportBottom = viewport.height + viewport.offsetTop;
 		const lastWindowSize = lastWindowSizeRef.current;
 		const windowSizeChanged =
 			!lastWindowSize ||

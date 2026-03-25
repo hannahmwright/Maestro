@@ -102,7 +102,8 @@ describe('MobileDemoViewer', () => {
 		fireEvent.click((await screen.findAllByRole('button', { name: /tap to zoom/i }))[0]);
 
 		expect(await screen.findByRole('button', { name: /close media preview/i })).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: /previous image/i })).toBeDisabled();
+		expect(screen.queryByRole('button', { name: /previous image/i })).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: /next image/i })).not.toBeInTheDocument();
 		expect(screen.getByRole('button', { name: /save/i })).toBeInTheDocument();
 	});
 
@@ -148,5 +149,76 @@ describe('MobileDemoViewer', () => {
 		revokeObjectUrlSpy.mockRestore();
 		appendSpy.mockRestore();
 		removeSpy.mockRestore();
+	});
+
+	it('does not duplicate the poster image inside the first step when they share the same artifact', async () => {
+		const duplicatePosterDemo = {
+			...mockDemo,
+			posterArtifact: {
+				...mockDemo.posterArtifact,
+				id: 'shared-artifact',
+				filename: 'shared.png',
+			},
+			steps: [
+				{
+					...mockDemo.steps[0],
+					screenshotArtifact: {
+						...mockDemo.steps[0].screenshotArtifact,
+						id: 'shared-artifact',
+						filename: 'shared.png',
+					},
+				},
+			],
+		};
+
+		global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			if (String(input).includes('/demos/demo-1')) {
+				return {
+					ok: true,
+					json: async () => ({ demo: duplicatePosterDemo }),
+				} as Response;
+			}
+
+			return {
+				ok: true,
+				blob: async () => new Blob(['demo-image'], { type: 'image/png' }),
+			} as Response;
+		}) as typeof fetch;
+
+		render(<MobileDemoViewer demoId="demo-1" onClose={vi.fn()} />);
+
+		await screen.findByText('Example.com');
+		expect(await screen.findAllByRole('button', { name: /tap to zoom/i })).toHaveLength(1);
+		expect(screen.queryByAltText('Example.com')).not.toBeInTheDocument();
+	});
+
+	it('uses step screenshots as the only image surface for screenshot-only demos', async () => {
+		render(<MobileDemoViewer demoId="demo-1" onClose={vi.fn()} />);
+
+		await screen.findByText('Example.com');
+		expect(await screen.findAllByRole('button', { name: /tap to zoom/i })).toHaveLength(1);
+		expect(screen.queryByAltText('Example.com')).not.toBeInTheDocument();
+		expect(screen.getByAltText('Example Domain loaded')).toBeInTheDocument();
+	});
+
+	it('supports zooming the full-screen image with touch gestures', async () => {
+		render(<MobileDemoViewer demoId="demo-1" onClose={vi.fn()} />);
+
+		await screen.findByText('Example.com');
+		fireEvent.click((await screen.findAllByRole('button', { name: /tap to zoom/i }))[0]);
+
+		const zoomedImage = (await screen.findAllByAltText('Example Domain loaded')).at(-1) as HTMLImageElement;
+		const gestureSurface = zoomedImage.parentElement as HTMLElement;
+
+		fireEvent.touchEnd(gestureSurface, {
+			changedTouches: [{ clientX: 120, clientY: 160 }],
+			touches: [],
+		});
+		fireEvent.touchEnd(gestureSurface, {
+			changedTouches: [{ clientX: 122, clientY: 162 }],
+			touches: [],
+		});
+
+		expect(zoomedImage.style.transform).toContain('scale(2)');
 	});
 });

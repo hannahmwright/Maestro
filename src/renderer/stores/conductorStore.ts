@@ -11,6 +11,11 @@ import type {
 	Group,
 } from '../types';
 import { generateId } from '../utils/ids';
+import {
+	buildDefaultConductorTaskCompletionProof,
+	buildDefaultConductorTaskCompletionProofRequirement,
+	repairLegacyConductorTasks,
+} from '../../shared/conductorTasks';
 
 interface ConductorStoreState {
 	conductors: Conductor[];
@@ -37,6 +42,7 @@ interface ConductorStoreActions {
 			status?: ConductorTaskStatus;
 			parentTaskId?: string;
 			source?: ConductorTaskSource;
+			completionProofRequired?: boolean;
 		}
 	) => void;
 	updateTask: (taskId: string, updates: Partial<ConductorTask>) => void;
@@ -85,7 +91,9 @@ function buildConductor(groupId: string, existing?: Partial<Conductor>): Conduct
 		groupId,
 		status: 'needs_setup',
 		resourceProfile: 'aggressive',
-		autoExecuteOnPlanCreation: false,
+		autoExecuteOnPlanCreation: existing?.autoExecuteOnPlanCreation ?? true,
+		isPaused: existing?.isPaused ?? false,
+		holdReason: existing?.holdReason ?? null,
 		keepConductorAgentSessions: false,
 		providerRouting: buildProviderRouting(existing?.providerRouting),
 		publishPolicy: 'manual_pr',
@@ -102,6 +110,8 @@ function sameConductor(left: Conductor, right: Conductor): boolean {
 		left.status === right.status &&
 		left.resourceProfile === right.resourceProfile &&
 		left.autoExecuteOnPlanCreation === right.autoExecuteOnPlanCreation &&
+		left.isPaused === right.isPaused &&
+		left.holdReason === right.holdReason &&
 		left.keepConductorAgentSessions === right.keepConductorAgentSessions &&
 		JSON.stringify(left.providerRouting) === JSON.stringify(right.providerRouting) &&
 		left.validationCommand === right.validationCommand &&
@@ -119,8 +129,19 @@ export const useConductorStore = create<ConductorStore>()((set) => ({
 	activeConductorView: null,
 
 	setConductors: (v) => set((s) => ({ conductors: resolve(v, s.conductors) })),
-	setTasks: (v) => set((s) => ({ tasks: resolve(v, s.tasks) })),
-	setRuns: (v) => set((s) => ({ runs: resolve(v, s.runs) })),
+	setTasks: (v) =>
+		set((s) => {
+			const nextTasks = resolve(v, s.tasks);
+			return { tasks: repairLegacyConductorTasks(nextTasks, s.runs) };
+		}),
+	setRuns: (v) =>
+		set((s) => {
+			const nextRuns = resolve(v, s.runs);
+			return {
+				runs: nextRuns,
+				tasks: repairLegacyConductorTasks(s.tasks, nextRuns),
+			};
+		}),
 	setActiveConductorView: (v) =>
 		set((s) => ({ activeConductorView: resolve(v, s.activeConductorView) })),
 
@@ -188,6 +209,16 @@ export const useConductorStore = create<ConductorStore>()((set) => ({
 				dependsOn: [],
 				scopePaths: [],
 				source: input.source || 'manual',
+				attentionRequest: null,
+				completionProofRequirement:
+					!input.parentTaskId && input.completionProofRequired
+						? buildDefaultConductorTaskCompletionProofRequirement()
+						: undefined,
+				completionProof:
+					!input.parentTaskId && input.completionProofRequired
+						? buildDefaultConductorTaskCompletionProof(now)
+						: undefined,
+				agentHistory: [],
 				createdAt: now,
 				updatedAt: now,
 			};

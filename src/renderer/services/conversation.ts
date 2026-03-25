@@ -16,6 +16,7 @@ export const conversationService = {
 			remoteId: string | null;
 		};
 		querySource?: 'user' | 'auto';
+		preferLiveRuntime?: boolean;
 	}): Promise<ConversationCapabilities> =>
 		createIpcMethod({
 			call: () => window.maestro.conversation.getCapabilities(request),

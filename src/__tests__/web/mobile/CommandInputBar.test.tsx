@@ -205,6 +205,25 @@ describe('CommandInputBar', () => {
 			expect(screen.getByRole('textbox')).toBeInTheDocument();
 		});
 
+		it('renders a filled bottom dock when the keyboard is hidden', () => {
+			const { container } = renderComponent();
+			const dock = container.firstElementChild as HTMLElement;
+			const form = container.querySelector('form') as HTMLElement;
+			expect(dock.style.background).toContain('linear-gradient');
+			expect(dock.style.borderTop).not.toBe('none');
+			expect(dock.style.paddingBottom).toBe('0px');
+			expect(form.style.paddingBottom).toContain('env(safe-area-inset-bottom)');
+		});
+
+		it('can render the composer in normal layout flow', () => {
+			const { container } = renderComponent({ layoutMode: 'in-flow' });
+			const dock = container.firstElementChild as HTMLElement;
+			expect(dock.style.position).toBe('relative');
+			expect(dock.style.bottom).toBe('auto');
+			expect(dock.style.flexShrink).toBe('0');
+			expect(dock.style.paddingBottom).toBe('0px');
+		});
+
 		it('renders textarea for AI mode', () => {
 			renderComponent({ inputMode: 'ai' });
 			const input = screen.getByRole('textbox');
@@ -629,6 +648,56 @@ describe('CommandInputBar', () => {
 			renderComponent({ inputMode: 'ai' });
 			const textarea = await focusAiComposer();
 			expect(textarea.tagName.toLowerCase()).toBe('textarea');
+		});
+
+		it('keeps a stable textarea surface for in-flow mobile layout', () => {
+			renderComponent({ inputMode: 'ai', layoutMode: 'in-flow' });
+			const input = screen.getByRole('textbox');
+			expect(input.tagName.toLowerCase()).toBe('textarea');
+			fireEvent.focus(input);
+			expect(screen.getByRole('textbox').tagName.toLowerCase()).toBe('textarea');
+		});
+
+		it('does not change in-flow composer chrome after blur', () => {
+			renderComponent({ inputMode: 'ai', layoutMode: 'in-flow' });
+			const input = screen.getByRole('textbox');
+			const form = input.closest('form') as HTMLElement;
+			const initialPaddingTop = form.style.paddingTop;
+			const initialPaddingBottom = form.style.paddingBottom;
+
+			fireEvent.focus(input);
+			fireEvent.blur(screen.getByRole('textbox'));
+
+			const blurredInput = screen.getByRole('textbox');
+			const blurredForm = blurredInput.closest('form') as HTMLElement;
+
+			expect(blurredInput.tagName.toLowerCase()).toBe('textarea');
+			expect(blurredForm.style.paddingTop).toBe(initialPaddingTop);
+			expect(blurredForm.style.paddingBottom).toBe(initialPaddingBottom);
+		});
+
+		it('uses the larger AI composer in in-flow mobile layout', () => {
+			renderComponent({ inputMode: 'ai', layoutMode: 'in-flow' });
+			const textarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			expect(textarea.style.minHeight).toBe('40px');
+			fireEvent.focus(textarea);
+			const focusedTextarea = screen.getByRole('textbox') as HTMLTextAreaElement;
+			expect(focusedTextarea.style.minHeight).toBe('88px');
+			expect(screen.queryAllByRole('button', { name: /start voice recording/i }).length).toBeLessThanOrEqual(1);
+			expect(screen.getByRole('button', { name: /send message/i })).toBeInTheDocument();
+		});
+
+		it('shows focused action badges in in-flow mobile layout', () => {
+			renderComponent({
+				inputMode: 'ai',
+				layoutMode: 'in-flow',
+				onAddAttachments: vi.fn(),
+				onToggleDemoCapture: vi.fn(),
+			});
+			const textarea = screen.getByRole('textbox');
+			fireEvent.focus(textarea);
+			expect(screen.getByRole('button', { name: /add files/i })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: /require demo/i })).toBeInTheDocument();
 		});
 
 		it('adds focus ring on focus in terminal mode', () => {

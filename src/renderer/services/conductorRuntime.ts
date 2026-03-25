@@ -108,7 +108,8 @@ export function tasksConflict(left: ConductorTask, right: ConductorTask): boolea
 export function buildConductorWorktreeTarget(
 	repoRoot: string,
 	groupName: string,
-	runId: string
+	runId: string,
+	worktreeBasePath?: string
 ): ConductorWorktreeTarget {
 	const groupSlug = slugify(groupName) || 'group';
 	const separator = repoRoot.includes('\\') && !repoRoot.includes('/') ? '\\' : '/';
@@ -116,7 +117,8 @@ export function buildConductorWorktreeTarget(
 	const runSuffix = runId.replace(/^conductor-run-/, '').slice(-8);
 	const branchName = `codex/conductor-${groupSlug}-${runSuffix}`;
 	const repoParent = repoRoot.replace(/[\\/][^\\/]+$/, '');
-	const worktreePath = `${repoParent}${separator}${repoName}-conductor-${groupSlug}-${runSuffix}`;
+	const targetBasePath = (worktreeBasePath || repoParent).replace(/[\\/]+$/, '');
+	const worktreePath = `${targetBasePath}${separator}${repoName}-conductor-${groupSlug}-${runSuffix}`;
 
 	return { branchName, worktreePath };
 }
@@ -124,7 +126,8 @@ export function buildConductorWorktreeTarget(
 export function buildConductorIntegrationTarget(
 	repoRoot: string,
 	groupName: string,
-	runId: string
+	runId: string,
+	worktreeBasePath?: string
 ): ConductorWorktreeTarget {
 	const groupSlug = slugify(groupName) || 'group';
 	const separator = repoRoot.includes('\\') && !repoRoot.includes('/') ? '\\' : '/';
@@ -132,7 +135,8 @@ export function buildConductorIntegrationTarget(
 	const runSuffix = runId.replace(/^conductor-run-/, '').slice(-8);
 	const branchName = `codex/conductor-integrate-${groupSlug}-${runSuffix}`;
 	const repoParent = repoRoot.replace(/[\\/][^\\/]+$/, '');
-	const worktreePath = `${repoParent}${separator}${repoName}-conductor-integrate-${groupSlug}-${runSuffix}`;
+	const targetBasePath = (worktreeBasePath || repoParent).replace(/[\\/]+$/, '');
+	const worktreePath = `${targetBasePath}${separator}${repoName}-conductor-integrate-${groupSlug}-${runSuffix}`;
 
 	return { branchName, worktreePath };
 }

@@ -1,4 +1,9 @@
 import type { ConductorTask, ConductorTaskPriority, Session } from '../types';
+import { CONDUCTOR_MAX_WORKER_FOLLOW_UP_TASKS } from '../../shared/conductorLimits';
+import {
+	buildConductorNativeSubmissionInstruction,
+	type ConductorWorkToolInput,
+} from '../../shared/conductorNativeTools';
 
 export interface ConductorWorkerFollowUpDraft {
 	title: string;
@@ -71,7 +76,8 @@ export function buildConductorWorkerPrompt(
 	groupName: string,
 	templateSession: Session,
 	task: ConductorTask,
-	dependencyTitles: string[]
+	dependencyTitles: string[],
+	revisionRequest?: string | null
 ): string {
 	const acceptanceCriteria =
 		task.acceptanceCriteria.length > 0
@@ -85,6 +91,9 @@ export function buildConductorWorkerPrompt(
 		dependencyTitles.length > 0
 			? dependencyTitles.map((title) => `- ${title}`).join('\n')
 			: '- No task dependencies.';
+	const revisionLines = revisionRequest?.trim()
+		? `\nRevision guidance:\n- ${revisionRequest.trim()}\n`
+		: '';
 
 	return `You are executing one Conductor task for the Maestro group "${groupName}".
 
@@ -104,6 +113,8 @@ ${acceptanceCriteria}
 Dependencies already completed:
 ${dependencyLines}
 
+${revisionLines}
+
 Expected scope:
 ${scopeLines}
 
@@ -111,9 +122,12 @@ Instructions:
 - Perform the task in the repository if you can complete it safely.
 - Keep changes scoped to the task.
 - If you cannot complete it, explain the blocker clearly.
-- You may suggest follow-up subtasks when useful, but do not invent more than 3.
+- Suggest follow-up subtasks only for genuinely separate net-new work, not for polish needed to finish this same task.
+- Do not invent more than ${CONDUCTOR_MAX_WORKER_FOLLOW_UP_TASKS} follow-up subtasks.
 
-Return ONLY valid JSON with this exact shape:
+${buildConductorNativeSubmissionInstruction('worker')}
+
+If you need the JSON fallback, return ONLY valid JSON with this exact shape:
 {
   "outcome": "completed | blocked",
   "summary": "short outcome summary",
@@ -131,6 +145,22 @@ Return ONLY valid JSON with this exact shape:
 
 export function parseConductorWorkerResponse(text: string): ConductorWorkerResult {
 	const parsed = JSON.parse(extractJsonBlock(text)) as RawWorkerResponse;
+	return normalizeConductorWorkerResult(parsed);
+}
+
+export function parseConductorWorkerSubmission(
+	submission: ConductorWorkToolInput
+): ConductorWorkerResult {
+	return normalizeConductorWorkerResult(submission);
+}
+
+function normalizeConductorWorkerResult(parsed: {
+	outcome?: unknown;
+	summary?: unknown;
+	changedPaths?: unknown;
+	followUpTasks?: unknown;
+	blockedReason?: unknown;
+}): ConductorWorkerResult {
 	const outcome = parsed.outcome === 'blocked' ? 'blocked' : 'completed';
 	const followUpTasks = Array.isArray(parsed.followUpTasks)
 		? parsed.followUpTasks
@@ -148,6 +178,7 @@ export function parseConductorWorkerResponse(text: string): ConductorWorkerResul
 					};
 				})
 				.filter((task): task is ConductorWorkerFollowUpDraft => Boolean(task))
+				.slice(0, CONDUCTOR_MAX_WORKER_FOLLOW_UP_TASKS)
 		: [];
 
 	return {

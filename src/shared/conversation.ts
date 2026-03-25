@@ -62,6 +62,8 @@ export interface ConversationTurnRequest {
 	sessionCustomContextWindow?: number;
 	sessionReasoningEffort?: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 	querySource?: 'user' | 'auto';
+	preferLiveRuntime?: boolean;
+	conductorNativeResultTools?: boolean;
 	tabId?: string;
 	sessionSshRemoteConfig?: {
 		enabled: boolean;

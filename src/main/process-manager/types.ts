@@ -63,6 +63,7 @@ export interface ProcessConfig {
 	demoCapture?: DemoCaptureRequest;
 	demoCaptureContext?: DemoTurnContextRecord;
 	conversationRuntime?: ConversationRuntimeKind;
+	conductorNativeResultTools?: boolean;
 }
 
 export interface CodexAppServerState {

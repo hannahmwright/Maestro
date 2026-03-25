@@ -167,9 +167,11 @@ export type ConductorTaskStatus =
 	| 'planning'
 	| 'ready'
 	| 'running'
+	| 'needs_revision'
 	| 'needs_input'
 	| 'blocked'
 	| 'needs_review'
+	| 'needs_proof'
 	| 'cancelled'
 	| 'done';
 
@@ -178,6 +180,19 @@ export type ConductorAgentRole = 'planner' | 'worker' | 'reviewer';
 export type ConductorProviderAgent = Exclude<ToolType, 'terminal'>;
 export type ConductorProviderChoice = ConductorProviderAgent | 'workspace-lead';
 export type ConductorProviderRouteKey = 'default' | 'ui' | 'backend';
+export type ConductorTaskCompletionProofStatus =
+	| 'missing'
+	| 'capturing'
+	| 'captured'
+	| 'approved'
+	| 'rejected';
+export type ConductorTaskAttentionKind =
+	| 'blocked'
+	| 'review_changes'
+	| 'clarification'
+	| 'external_dependency'
+	| 'operator_decision';
+
 export interface ConductorProviderRoute {
 	primary: ConductorProviderChoice;
 	fallback?: ConductorProviderAgent | null;
@@ -202,6 +217,49 @@ export interface ConductorSessionMetadata {
 	createdAt: number;
 }
 
+export interface ConductorTaskAttentionRequest {
+	id: string;
+	status: 'open' | 'resolved';
+	kind: ConductorTaskAttentionKind;
+	summary: string;
+	requestedAction: string;
+	requestedByRole: ConductorAgentRole | 'system';
+	requestedBySessionId?: string;
+	suggestedResponse?: string;
+	response?: string;
+	runId?: string;
+	createdAt: number;
+	updatedAt: number;
+	resolvedAt?: number;
+}
+
+export interface ConductorTaskAgentHistoryEntry {
+	id: string;
+	role: ConductorAgentRole;
+	sessionId: string;
+	sessionName?: string;
+	runId?: string;
+	createdAt: number;
+}
+
+export interface ConductorTaskCompletionProofRequirement {
+	required: boolean;
+	requireVideo: boolean;
+	minScreenshots: number;
+}
+
+export interface ConductorTaskCompletionProof {
+	status: ConductorTaskCompletionProofStatus;
+	demoId?: string;
+	captureRunId?: string;
+	screenshotCount?: number;
+	videoArtifactId?: string;
+	requestedAt?: number;
+	capturedAt?: number;
+	approvedAt?: number;
+	rejectedAt?: number;
+}
+
 export type ConductorView =
 	| {
 			scope: 'home';
@@ -216,6 +274,8 @@ export interface Conductor {
 	status: ConductorStatus;
 	resourceProfile: ConductorResourceProfile;
 	autoExecuteOnPlanCreation?: boolean;
+	isPaused?: boolean;
+	holdReason?: string | null;
 	keepConductorAgentSessions?: boolean;
 	providerRouting?: ConductorProviderRouting;
 	validationCommand?: string;
@@ -238,6 +298,10 @@ export interface ConductorTask {
 	scopePaths: string[];
 	changedPaths?: string[];
 	source: ConductorTaskSource;
+	attentionRequest?: ConductorTaskAttentionRequest | null;
+	completionProofRequirement?: ConductorTaskCompletionProofRequirement;
+	completionProof?: ConductorTaskCompletionProof;
+	agentHistory?: ConductorTaskAgentHistoryEntry[];
 	plannerSessionId?: string;
 	plannerSessionName?: string;
 	workerSessionId?: string;
@@ -260,7 +324,9 @@ export interface ConductorRunEvent {
 		| 'execution_started'
 		| 'task_started'
 		| 'task_completed'
+		| 'task_needs_revision'
 		| 'task_needs_input'
+		| 'task_needs_proof'
 		| 'task_blocked'
 		| 'task_cancelled'
 		| 'execution_completed'

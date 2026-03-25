@@ -300,14 +300,14 @@ export class DemoArtifactService {
 	}
 
 	private normalizeDomain(value: string | null | undefined): string | null {
-		if (!value || !value.trim()) {
+		const sanitizedValue = this.sanitizeUrlLikeValue(value);
+		if (!sanitizedValue) {
 			return null;
 		}
 		try {
-			return new URL(value).hostname.toLowerCase();
+			return new URL(sanitizedValue).hostname.toLowerCase();
 		} catch {
-			return value
-				.trim()
+			return sanitizedValue
 				.toLowerCase()
 				.replace(/^https?:\/\//, '')
 				.replace(/\/.*$/, '')
@@ -321,6 +321,34 @@ export class DemoArtifactService {
 			return null;
 		}
 		return normalized.replace(/^www\./, '');
+	}
+
+	private normalizeComparablePath(value: string | null | undefined): string | null {
+		const sanitizedValue = this.sanitizeUrlLikeValue(value);
+		if (!sanitizedValue) {
+			return null;
+		}
+		try {
+			const pathname = new URL(sanitizedValue).pathname || '/';
+			return pathname.replace(/\/+$/, '') || '/';
+		} catch {
+			return null;
+		}
+	}
+
+	private isLikelyAuthUrl(value: string | null | undefined): boolean {
+		const sanitizedValue = this.sanitizeUrlLikeValue(value);
+		if (!sanitizedValue) {
+			return false;
+		}
+		return /(login|sign-?in|auth|oauth|sso)/i.test(sanitizedValue);
+	}
+
+	private sanitizeUrlLikeValue(value: string | null | undefined): string | null {
+		if (!value || !value.trim()) {
+			return null;
+		}
+		return value.trim().replace(/[.,;!?]+$/, '') || null;
 	}
 
 	private inferCaptureSource(event: DemoCaptureEvent): DemoCaptureSource {
@@ -1586,10 +1614,31 @@ export class DemoArtifactService {
 			captureRun.requestedTarget?.url || captureRun.requestedTarget?.domain || null
 		);
 		const comparableObservedDomain = this.normalizeComparableDomain(captureRun.observedUrl);
+		const comparableRequestedPath = this.normalizeComparablePath(
+			captureRun.requestedTarget?.url || null
+		);
+		const comparableObservedPath = this.normalizeComparablePath(captureRun.observedUrl);
 		const authTargetReached =
 			typeof event.authTargetReached === 'boolean'
 				? event.authTargetReached
 				: captureRun.authTargetReached;
+		const requestedAuthTarget = this.isLikelyAuthUrl(captureRun.requestedTarget?.url || null);
+		const matchedRequestedAuthTarget =
+			requestedAuthTarget &&
+			Boolean(captureRun.observedUrl) &&
+			this.isLikelyAuthUrl(captureRun.observedUrl) &&
+			(!comparableRequestedDomain ||
+				!comparableObservedDomain ||
+				comparableRequestedDomain === comparableObservedDomain) &&
+			(!comparableRequestedPath ||
+				!comparableObservedPath ||
+				comparableRequestedPath === comparableObservedPath);
+		const normalizedAuthTargetReached =
+			typeof event.authTargetReached === 'boolean'
+				? event.authTargetReached
+				: requestedAuthTarget
+					? matchedRequestedAuthTarget
+					: authTargetReached;
 
 		if (requestedDomain && !observedDomain) {
 			return {
@@ -1611,11 +1660,11 @@ export class DemoArtifactService {
 				verificationStatus: 'failed',
 				failureReason: 'wrong_target',
 				requirementSatisfied: false,
-				authTargetReached,
+				authTargetReached: normalizedAuthTargetReached,
 			};
 		}
 
-		if (requestedDomain && authTargetReached === false) {
+		if (requestedDomain && normalizedAuthTargetReached === false) {
 			return {
 				status: 'failed',
 				verificationStatus: 'failed',
@@ -1630,7 +1679,7 @@ export class DemoArtifactService {
 			verificationStatus: 'verified',
 			failureReason: null,
 			requirementSatisfied: true,
-			authTargetReached,
+			authTargetReached: normalizedAuthTargetReached,
 		};
 	}
 

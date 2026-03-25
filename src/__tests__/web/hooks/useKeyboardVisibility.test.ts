@@ -116,9 +116,12 @@ describe('useKeyboardVisibility', () => {
 	});
 
 	it('clears stale keyboard offset when the viewport returns to its baseline', async () => {
-		const viewport = createMockViewport({ height: 780, offsetTop: 0 });
+		const viewport = createMockViewport({ height: 844, offsetTop: 0 });
 		setVisualViewport(viewport);
 		window.innerHeight = 844;
+		const input = document.createElement('textarea');
+		document.body.appendChild(input);
+		input.focus();
 
 		const { result } = renderHook(() => useKeyboardVisibility());
 
@@ -131,11 +134,46 @@ describe('useKeyboardVisibility', () => {
 		});
 
 		await waitFor(() => {
-			expect(result.current.keyboardOffset).toBe(260);
+			expect(result.current.keyboardOffset).toBe(324);
 			expect(result.current.isKeyboardVisible).toBe(true);
 		});
 
 		act(() => {
+			viewport.height = 844;
+			viewport.emit('resize');
+		});
+
+		await waitFor(() => {
+			expect(result.current.keyboardOffset).toBe(0);
+			expect(result.current.isKeyboardVisible).toBe(false);
+		});
+
+		input.remove();
+	});
+
+	it('resets the keyboard offset when focus leaves editable elements', async () => {
+		const viewport = createMockViewport({ height: 780, offsetTop: 0 });
+		setVisualViewport(viewport);
+		window.innerHeight = 844;
+
+		const input = document.createElement('textarea');
+		document.body.appendChild(input);
+		input.focus();
+
+		const { result } = renderHook(() => useKeyboardVisibility());
+
+		act(() => {
+			viewport.height = 520;
+			viewport.emit('resize');
+		});
+
+		await waitFor(() => {
+			expect(result.current.keyboardOffset).toBe(324);
+			expect(result.current.isKeyboardVisible).toBe(true);
+		});
+
+		act(() => {
+			input.blur();
 			viewport.height = 780;
 			viewport.emit('resize');
 		});
@@ -144,5 +182,7 @@ describe('useKeyboardVisibility', () => {
 			expect(result.current.keyboardOffset).toBe(0);
 			expect(result.current.isKeyboardVisible).toBe(false);
 		});
+
+		input.remove();
 	});
 });
