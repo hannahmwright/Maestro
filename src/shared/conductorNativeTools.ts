@@ -41,7 +41,10 @@ const conductorPlannerTaskInputSchema: z.ZodType<{
 		acceptanceCriteria: z.array(z.string().trim().min(1)).default([]),
 		dependsOn: z.array(z.string().trim().min(1)).default([]),
 		scopePaths: z.array(z.string().trim().min(1)).default([]),
-		subtasks: z.array(conductorPlannerTaskInputSchema).max(CONDUCTOR_MAX_PLAN_SUBTASKS_PER_PARENT).default([]),
+		subtasks: z
+			.array(conductorPlannerTaskInputSchema)
+			.max(CONDUCTOR_MAX_PLAN_SUBTASKS_PER_PARENT)
+			.default([]),
 	})
 );
 
@@ -49,6 +52,16 @@ const conductorFollowUpTaskInputSchema = z.object({
 	title: z.string().trim().min(1),
 	description: z.string().trim().default(''),
 	priority: conductorPrioritySchema.default('medium'),
+});
+
+const conductorEvidenceItemInputSchema = z.object({
+	kind: z.enum(['demo', 'file', 'url', 'note']).default('note'),
+	label: z.string().trim().min(1),
+	summary: z.string().trim().optional(),
+	path: z.string().trim().optional(),
+	url: z.string().trim().optional(),
+	demoId: z.string().trim().optional(),
+	captureRunId: z.string().trim().optional(),
 });
 
 export const conductorPlanToolInputShape = {
@@ -60,6 +73,7 @@ export const conductorWorkToolInputShape = {
 	outcome: z.enum(['completed', 'blocked']),
 	summary: z.string().trim().min(1),
 	changedPaths: z.array(z.string().trim().min(1)).default([]),
+	evidence: z.array(conductorEvidenceItemInputSchema).default([]),
 	followUpTasks: z
 		.array(conductorFollowUpTaskInputSchema)
 		.max(CONDUCTOR_MAX_WORKER_FOLLOW_UP_TASKS)

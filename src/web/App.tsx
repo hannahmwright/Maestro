@@ -608,9 +608,7 @@ export function App() {
 					<ThemeProvider
 						theme={appearancePreference === 'system' ? desktopTheme || undefined : undefined}
 						useDevicePreference={appearancePreference === 'system'}
-						forcedColorScheme={
-							appearancePreference === 'system' ? undefined : appearancePreference
-						}
+						forcedColorScheme={appearancePreference === 'system' ? undefined : appearancePreference}
 					>
 						{hasServiceWorkerUpdate && (
 							<BuildToast

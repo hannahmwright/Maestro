@@ -630,7 +630,7 @@ describe('DemoArtifactService', () => {
 			text: 'Saved proof to output/playwright/path-demo.png after the browser finished loading.',
 			sourceLogId: 'log-path-1',
 			projectRoots: [tempDir],
-			demoCaptureRequested: true,
+			demoCaptureRequested: false,
 		});
 
 		expect(card?.status).toBe('legacy_unverified');
@@ -642,7 +642,10 @@ describe('DemoArtifactService', () => {
 	});
 
 	it('harvests raw Maestro demo event lines from log text', async () => {
-		const screenshotPath = await writeArtifactFile('output/playwright/event-demo.png', createPngBuffer());
+		const screenshotPath = await writeArtifactFile(
+			'output/playwright/event-demo.png',
+			createPngBuffer()
+		);
 		const { service } = createService();
 		await service.initialize();
 
@@ -657,7 +660,7 @@ describe('DemoArtifactService', () => {
 			].join('\n'),
 			sourceLogId: 'log-event-1',
 			projectRoots: [tempDir],
-			demoCaptureRequested: true,
+			demoCaptureRequested: false,
 		});
 
 		expect(card?.status).toBe('legacy_unverified');

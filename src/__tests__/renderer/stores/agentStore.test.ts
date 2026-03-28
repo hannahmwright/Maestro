@@ -113,6 +113,20 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
+vi.mock('../../../renderer/services/conversation', () => ({
+	conversationService: {
+		sendTurn: vi.fn(async (payload: unknown) => {
+			await mockSpawn(payload);
+			return {
+				success: true,
+				pid: 123,
+				runtimeKind: 'batch',
+				steerMode: 'none',
+			};
+		}),
+	},
+}));
+
 // Mock prompts
 vi.mock('../../../prompts', () => ({
 	maestroSystemPrompt: 'Mock system prompt for {{CWD}}',

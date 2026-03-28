@@ -149,7 +149,8 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 			if (visualOrder.length === 0) return;
 
 			const currentActiveId =
-				activeGroupChatId || (sidebarThreadTargets.length > 0 ? activeSidebarThreadTargetId : activeSessionId);
+				activeGroupChatId ||
+				(sidebarThreadTargets.length > 0 ? activeSidebarThreadTargetId : activeSessionId);
 			const currentIsGroupChat = activeGroupChatId !== null;
 			const currentIsThread = !currentIsGroupChat && sidebarThreadTargets.length > 0;
 

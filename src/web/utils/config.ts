@@ -67,6 +67,36 @@ export function hasInjectedMaestroConfig(): boolean {
 	return typeof window !== 'undefined' && !!window.__MAESTRO_CONFIG__;
 }
 
+function normalizeApiEndpoint(endpoint: string, apiBase: string): string {
+	const trimmedEndpoint = endpoint.trim();
+	const absoluteCandidate =
+		trimmedEndpoint.startsWith('/http://') || trimmedEndpoint.startsWith('/https://')
+			? trimmedEndpoint.slice(1)
+			: trimmedEndpoint;
+
+	if (/^https?:\/\//i.test(absoluteCandidate)) {
+		try {
+			const parsed = new URL(absoluteCandidate);
+			const normalizedPath = `${parsed.pathname}${parsed.search}`;
+			if (normalizedPath) {
+				return normalizedPath;
+			}
+		} catch {
+			// Fall through to the original endpoint handling below.
+		}
+	}
+
+	if (trimmedEndpoint.startsWith(apiBase)) {
+		return trimmedEndpoint;
+	}
+
+	if (trimmedEndpoint.startsWith('/api/')) {
+		return trimmedEndpoint;
+	}
+
+	return trimmedEndpoint.startsWith('/') ? trimmedEndpoint : `/${trimmedEndpoint}`;
+}
+
 /**
  * Check if we're in dashboard mode (viewing all sessions)
  */
@@ -96,8 +126,11 @@ export function getCurrentSessionId(): string | null {
 export function buildApiUrl(endpoint: string): string {
 	const config = getMaestroConfig();
 	const base = config.apiBase.endsWith('/') ? config.apiBase.slice(0, -1) : config.apiBase;
-	const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-	return `${window.location.origin}${base}${path}`;
+	const normalizedEndpoint = normalizeApiEndpoint(endpoint, base);
+	if (normalizedEndpoint.startsWith(base) || normalizedEndpoint.startsWith('/api/')) {
+		return `${window.location.origin}${normalizedEndpoint}`;
+	}
+	return `${window.location.origin}${base}${normalizedEndpoint}`;
 }
 
 /**

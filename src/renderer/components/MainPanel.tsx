@@ -608,7 +608,8 @@ export const MainPanel = React.memo(
 			const workspace = workspaceId
 				? groups.find((candidate) => candidate.id === workspaceId) || null
 				: null;
-			const projectRoot = activeThread?.projectRoot || activeSession.projectRoot || activeSession.cwd;
+			const projectRoot =
+				activeThread?.projectRoot || activeSession.projectRoot || activeSession.cwd;
 
 			return {
 				name: workspace?.name || getWorkspaceDisplayName(projectRoot),
@@ -642,7 +643,7 @@ export const MainPanel = React.memo(
 			return orderedProviders;
 		}, [activeSession?.toolType]);
 		const activeProviderUsageSnapshot = activeSession?.toolType
-			? providerUsageSnapshots[activeSession.toolType] ?? null
+			? (providerUsageSnapshots[activeSession.toolType] ?? null)
 			: null;
 		const activeProviderUsagePercent = activeProviderUsageSnapshot?.usedPercent ?? null;
 		const loadProviderUsageSnapshot = useCallback(
@@ -814,7 +815,12 @@ export const MainPanel = React.memo(
 				isActive = false;
 				window.clearInterval(intervalId);
 			};
-		}, [activeSession?.id, activeSession?.inputMode, activeSession?.toolType, loadProviderUsageSnapshot]);
+		}, [
+			activeSession?.id,
+			activeSession?.inputMode,
+			activeSession?.toolType,
+			loadProviderUsageSnapshot,
+		]);
 
 		useEffect(() => {
 			if (!isProviderUsagePopoverOpen) {
@@ -1694,10 +1700,7 @@ export const MainPanel = React.memo(
 																						<div
 																							className="text-xs font-mono font-bold shrink-0"
 																							style={{
-																								color: getContextColor(
-																									window.usedPercent,
-																									theme
-																								),
+																								color: getContextColor(window.usedPercent, theme),
 																							}}
 																						>
 																							{window.usedPercent}%

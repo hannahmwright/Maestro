@@ -58,6 +58,48 @@ describe('conductorRuntime', () => {
 		expect(result.allowed).toBe(true);
 	});
 
+	it('degrades low-memory launches to one worker instead of hard-blocking', () => {
+		const result = evaluateConductorResourceGate('aggressive', {
+			cpuCount: 10,
+			loadAverage: [1, 1, 1],
+			freeMemoryMB: 625,
+			availableMemoryMB: 625,
+			totalMemoryMB: 16384,
+		});
+
+		expect(result.allowed).toBe(true);
+		expect(result.maxWorkers).toBe(1);
+		expect(result.message).toContain('limiting this run to one worker');
+	});
+
+	it('still blocks when memory is below the hard launch floor', () => {
+		const result = evaluateConductorResourceGate('aggressive', {
+			cpuCount: 10,
+			loadAverage: [1, 1, 1],
+			freeMemoryMB: 384,
+			availableMemoryMB: 384,
+			totalMemoryMB: 16384,
+		});
+
+		expect(result.allowed).toBe(false);
+		expect(result.maxWorkers).toBe(4);
+		expect(result.message).toContain('512 MB floor');
+	});
+
+	it('degrades high-load runs to one worker instead of holding the whole lane', () => {
+		const result = evaluateConductorResourceGate('aggressive', {
+			cpuCount: 10,
+			loadAverage: [13, 8, 4],
+			freeMemoryMB: 4096,
+			availableMemoryMB: 4096,
+			totalMemoryMB: 16384,
+		});
+
+		expect(result.allowed).toBe(true);
+		expect(result.maxWorkers).toBe(1);
+		expect(result.message).toContain('System load is currently high');
+	});
+
 	it('treats overlapping scope paths as conflicting', () => {
 		expect(
 			tasksConflict(

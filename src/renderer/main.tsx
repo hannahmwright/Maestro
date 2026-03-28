@@ -12,6 +12,25 @@ import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
 import './index.css';
 
+const HMR_FORCE_RELOAD_PREFIXES = [
+	'/App.tsx',
+	'/stores/',
+	'/hooks/session/',
+	'/hooks/remote/',
+	'/components/ConductorPanel.tsx',
+	'/components/conductor/',
+];
+
+interface ViteHotUpdatePayload {
+	updates: Array<{
+		path: string;
+	}>;
+}
+
+interface ViteHotModule {
+	on(event: 'vite:beforeUpdate', callback: (payload: ViteHotUpdatePayload) => void): void;
+}
+
 // Initialize Sentry for renderer process
 // Uses IPCMode.Classic in main process to avoid "sentry-ipc://" protocol conflicts
 // See: https://github.com/getsentry/sentry-electron/issues/661
@@ -95,3 +114,21 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 		</ErrorBoundary>
 	</React.StrictMode>
 );
+
+const viteHot = (import.meta as ImportMeta & { hot?: ViteHotModule }).hot;
+
+if (viteHot) {
+	viteHot.on('vite:beforeUpdate', (payload) => {
+		const shouldForceReload = payload.updates.some((update) =>
+			HMR_FORCE_RELOAD_PREFIXES.some((prefix) => update.path.startsWith(prefix))
+		);
+		if (!shouldForceReload) {
+			return;
+		}
+
+		logger.info('Forcing full renderer reload for broad HMR update', 'HMR', {
+			updates: payload.updates.map((update) => update.path),
+		});
+		window.location.reload();
+	});
+}

@@ -63,12 +63,37 @@ function createTask(): ConductorTask {
 
 describe('conductorReviewer', () => {
 	it('builds a reviewer prompt with acceptance criteria and changed paths', () => {
-		const prompt = buildConductorReviewerPrompt('Maestro', createTemplateSession(), createTask());
+		const prompt = buildConductorReviewerPrompt('Maestro', createTemplateSession(), {
+			...createTask(),
+			evidence: [
+				{
+					kind: 'file',
+					label: 'Updated review lane implementation',
+					path: 'src/renderer/components/ConductorPanel.tsx',
+					summary: 'Execution now routes completed tasks into QA.',
+				},
+			],
+		});
 
 		expect(prompt).toContain('Implement review lane');
 		expect(prompt).toContain('Completed tasks require review before done.');
 		expect(prompt).toContain('src/renderer/components/ConductorPanel.tsx');
+		expect(prompt).toContain('Updated review lane implementation');
 		expect(prompt).toContain('submit_conductor_review');
+	});
+
+	it('warns reviewers not to treat demo-runtime metadata as browser proof', () => {
+		const prompt = buildConductorReviewerPrompt('Maestro', createTemplateSession(), {
+			...createTask(),
+			title: 'Open WRAL homepage',
+			description: 'Launch a browser session and navigate to https://www.wral.com.',
+			acceptanceCriteria: ['The WRAL homepage is visibly rendered.'],
+			changedPaths: [],
+		});
+
+		expect(prompt).toContain('.maestro/demo-runtime/contexts/*.json');
+		expect(prompt).toContain('output/playwright/');
+		expect(prompt).toContain('concrete proof in the workspace');
 	});
 
 	it('parses approved reviewer output', () => {

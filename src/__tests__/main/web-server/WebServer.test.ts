@@ -65,4 +65,18 @@ describe('WebServer message handler bridge', () => {
 			);
 		});
 	});
+
+	it('redirects malformed absolute app requests back into the stable route scope', async () => {
+		server.setGetHistoryCallback(() => []);
+		await (server as any).setupMiddleware();
+		(server as any).setupRoutes();
+
+		const response = await server.getServer().inject({
+			method: 'GET',
+			url: '/http://192.168.1.103:47123/app/api/history?sessionId=session-123',
+		});
+
+		expect(response.statusCode).toBe(307);
+		expect(response.headers.location).toBe('/app/api/history?sessionId=session-123');
+	});
 });

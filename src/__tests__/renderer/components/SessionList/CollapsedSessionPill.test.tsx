@@ -1,21 +1,30 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SVGProps } from 'react';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CollapsedSessionPill } from '../../../../renderer/components/SessionList/CollapsedSessionPill';
-import type { Session, Theme } from '../../../../renderer/types';
+import type { Session, Theme, Thread } from '../../../../renderer/types';
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+vi.mock('lucide-react', () => ({
+	Loader2: (props: SVGProps<SVGSVGElement>) => <svg data-testid="loader2" {...props} />,
+	Folder: () => <svg data-testid="folder-icon" />,
+	GitBranch: () => <svg data-testid="git-icon" />,
+	Bot: () => <svg data-testid="bot-icon" />,
+	Clock: () => <svg data-testid="clock-icon" />,
+	Server: () => <svg data-testid="server-icon" />,
+}));
 
 const mockTheme: Theme = {
-	name: 'test',
+	id: 'test-theme',
+	name: 'Test Theme',
+	mode: 'dark',
 	colors: {
 		bgMain: '#1a1a2e',
 		bgSidebar: '#16213e',
-		bgInput: '#0f3460',
+		bgActivity: '#0f3460',
 		textMain: '#e0e0e0',
 		textDim: '#888888',
 		accent: '#e94560',
+		accentForeground: '#ffffff',
 		border: '#333333',
 		error: '#ff4444',
 		success: '#00cc66',
@@ -23,17 +32,16 @@ const mockTheme: Theme = {
 	},
 } as Theme;
 
-let idCounter = 0;
 function makeSession(overrides: Partial<Session> = {}): Session {
-	idCounter++;
 	return {
-		id: `s${idCounter}`,
-		name: `Session ${idCounter}`,
+		id: 'session-1',
+		runtimeId: 'runtime-1',
+		name: 'Session 1',
 		toolType: 'claude-code',
 		state: 'idle',
-		cwd: '/tmp',
-		fullPath: '/tmp',
-		projectRoot: '/tmp',
+		cwd: '/tmp/project',
+		fullPath: '/tmp/project',
+		projectRoot: '/tmp/project',
 		aiLogs: [],
 		shellLogs: [],
 		workLog: [],
@@ -48,12 +56,46 @@ function makeSession(overrides: Partial<Session> = {}): Session {
 		fileTree: [],
 		fileExplorerExpanded: [],
 		fileExplorerScrollPos: 0,
+		activeTimeMs: 0,
+		aiTabs: [
+			{
+				id: 'tab-1',
+				name: null,
+				logs: [],
+				state: 'idle',
+				hasUnread: false,
+			} as any,
+		],
+		activeTabId: 'tab-1',
+		closedTabHistory: [],
 		...overrides,
 	} as Session;
 }
 
-function createDefaultProps(overrides: Partial<Parameters<typeof CollapsedSessionPill>[0]> = {}) {
+function makeThread(overrides: Partial<Thread> = {}): Thread {
 	return {
+		id: 'thread-1',
+		workspaceId: 'workspace-1',
+		sessionId: 'session-1',
+		runtimeId: 'runtime-1',
+		tabId: 'tab-1',
+		title: 'Main Thread',
+		agentId: 'claude-code',
+		projectRoot: '/tmp/project',
+		pinned: false,
+		archived: false,
+		isOpen: true,
+		createdAt: 1,
+		lastUsedAt: 1,
+		...overrides,
+	};
+}
+
+function createDefaultProps(
+	overrides: Partial<React.ComponentProps<typeof CollapsedSessionPill>> = {}
+) {
+	return {
+		thread: makeThread(),
 		session: makeSession(),
 		keyPrefix: 'test',
 		theme: mockTheme,
@@ -62,155 +104,76 @@ function createDefaultProps(overrides: Partial<Parameters<typeof CollapsedSessio
 		contextWarningYellowThreshold: 70,
 		contextWarningRedThreshold: 90,
 		getFileCount: vi.fn(() => 0),
-		getWorktreeChildren: vi.fn(() => [] as Session[]),
-		setActiveSessionId: vi.fn(),
+		displayName: 'Main Thread',
+		onSelect: vi.fn(),
 		...overrides,
 	};
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe('CollapsedSessionPill', () => {
-	beforeEach(() => {
-		idCounter = 0;
-	});
-
-	it('renders a single pill segment for a session without worktrees', () => {
+	it('renders a selectable segment and tooltip content', () => {
 		const props = createDefaultProps();
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		// Should have the outer pill container
-		const pillContainer = container.firstElementChild;
-		expect(pillContainer).toBeTruthy();
-		// One segment (no worktrees)
-		const segments = pillContainer!.children;
-		expect(segments.length).toBe(1);
-	});
-
-	it('renders multiple segments for sessions with worktree children', () => {
-		const parent = makeSession({ id: 'parent' });
-		const child1 = makeSession({ id: 'child1' });
-		const child2 = makeSession({ id: 'child2' });
-
-		const props = createDefaultProps({
-			session: parent,
-			getWorktreeChildren: vi.fn(() => [child1, child2]),
-		});
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segments = container.firstElementChild!.children;
-		expect(segments.length).toBe(3); // parent + 2 children
-	});
-
-	it('calls setActiveSessionId when a segment is clicked', () => {
-		const session = makeSession({ id: 'test-session' });
-		const setActiveSessionId = vi.fn();
-		const props = createDefaultProps({ session, setActiveSessionId });
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild!;
-		fireEvent.click(segment);
-
-		expect(setActiveSessionId).toHaveBeenCalledWith('test-session');
-	});
-
-	it('stops event propagation on click', () => {
-		const props = createDefaultProps();
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild!;
-		const clickEvent = new MouseEvent('click', { bubbles: true });
-		const stopPropagationSpy = vi.spyOn(clickEvent, 'stopPropagation');
-
-		segment.dispatchEvent(clickEvent);
-		expect(stopPropagationSpy).toHaveBeenCalled();
-	});
-
-	it('shows awaiting-input indicator when session has unread tabs', () => {
-		const session = makeSession({
-			aiTabs: [{ hasUnread: true } as any],
-		});
-		const props = createDefaultProps({ session });
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild!;
-		const awaitingDot = segment.querySelector('[title="Awaiting your input"]');
-		expect(awaitingDot).toBeTruthy();
-	});
-
-	it('shows spinner when session is in active batch', () => {
-		const session = makeSession({ id: 'batch-session' });
-		const props = createDefaultProps({
-			session,
-			activeBatchSessionIds: ['batch-session'],
-		});
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const spinner = container.querySelector('[title="Agent is working"] .animate-spin');
-		expect(spinner).toBeTruthy();
-	});
-
-	it('renders neutral idle segment style for claude-code sessions without agentSessionId', () => {
-		const session = makeSession({
-			toolType: 'claude-code',
-			agentSessionId: undefined,
-		});
-		const props = createDefaultProps({ session });
-
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segment = container.firstElementChild!.firstElementChild! as HTMLElement;
-		expect(segment.style.border).toContain('1px solid');
-		expect(segment.style.backgroundColor).not.toBe('transparent');
-	});
-
-	it('renders tooltip content within each segment', () => {
-		const session = makeSession({ name: 'My Test Agent' });
-		const props = createDefaultProps({ session });
-
 		render(<CollapsedSessionPill {...props} />);
 
-		// The tooltip content should include the session name
-		expect(screen.getByText('My Test Agent')).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Switch to Main Thread' })).toBeInTheDocument();
+		expect(screen.getByText('Main Thread')).toBeInTheDocument();
 	});
 
-	it('shows awaiting-input indicator on any segment with unread tabs', () => {
-		const parent = makeSession({ id: 'p1', aiTabs: [{ hasUnread: true } as any] });
-		const child = makeSession({ id: 'c1', aiTabs: [{ hasUnread: true } as any] });
+	it('calls onSelect and stops propagation on click', () => {
+		const parentClick = vi.fn();
+		const props = createDefaultProps();
+		render(
+			<div onClick={parentClick}>
+				<CollapsedSessionPill {...props} />
+			</div>
+		);
 
-		const props = createDefaultProps({
-			session: parent,
-			getWorktreeChildren: vi.fn(() => [child]),
-		});
+		fireEvent.click(screen.getByRole('button', { name: 'Switch to Main Thread' }));
 
-		const { container } = render(<CollapsedSessionPill {...props} />);
-
-		const segments = container.firstElementChild!.children;
-		const firstSegment = segments[0];
-		const firstAwaitingDot = firstSegment.querySelector('[title="Awaiting your input"]');
-		expect(firstAwaitingDot).toBeTruthy();
+		expect(props.onSelect).toHaveBeenCalledTimes(1);
+		expect(parentClick).not.toHaveBeenCalled();
 	});
 
-	it('uses gap between segments only when there are worktrees', () => {
-		// Without worktrees
-		const props1 = createDefaultProps();
-		const { container: c1 } = render(<CollapsedSessionPill {...props1} />);
-		expect((c1.firstElementChild as HTMLElement).style.gap).toBe('0');
-
-		// With worktrees
-		const parent = makeSession({ id: 'p2' });
-		const child = makeSession({ id: 'c2' });
-		const props2 = createDefaultProps({
-			session: parent,
-			getWorktreeChildren: vi.fn(() => [child]),
+	it('shows the awaiting-input indicator when the thread tab has unread content', () => {
+		const session = makeSession({
+			aiTabs: [{ id: 'tab-1', logs: [], state: 'idle', hasUnread: true } as any],
 		});
-		const { container: c2 } = render(<CollapsedSessionPill {...props2} />);
-		expect((c2.firstElementChild as HTMLElement).style.gap).toBe('1px');
+		const props = createDefaultProps({ session });
+		render(<CollapsedSessionPill {...props} />);
+
+		expect(screen.getByTitle('Awaiting your input')).toBeInTheDocument();
+	});
+
+	it('falls back to the active tab when the thread has no tabId', () => {
+		const session = makeSession({
+			activeTabId: 'tab-2',
+			aiTabs: [
+				{ id: 'tab-1', logs: [], state: 'idle', hasUnread: false } as any,
+				{ id: 'tab-2', logs: [], state: 'idle', hasUnread: true } as any,
+			],
+		});
+		const thread = makeThread({ tabId: undefined });
+		const props = createDefaultProps({ session, thread });
+		render(<CollapsedSessionPill {...props} />);
+
+		expect(screen.getByTitle('Awaiting your input')).toBeInTheDocument();
+	});
+
+	it('shows a spinner when the target thread tab is busy', () => {
+		const session = makeSession({
+			aiTabs: [{ id: 'tab-1', logs: [], state: 'busy', hasUnread: false } as any],
+		});
+		const props = createDefaultProps({ session });
+		render(<CollapsedSessionPill {...props} />);
+
+		expect(screen.getByTitle('Agent is working')).toBeInTheDocument();
+		expect(screen.getByTestId('loader2')).toHaveClass('animate-spin');
+	});
+
+	it('shows a spinner when the session is in an active batch', () => {
+		const props = createDefaultProps({ activeBatchSessionIds: ['session-1'] });
+		render(<CollapsedSessionPill {...props} />);
+
+		expect(screen.getByTitle('Agent is working')).toBeInTheDocument();
 	});
 });

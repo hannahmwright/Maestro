@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { ConductorRun, ConductorTask } from '../../shared/types';
-import { repairLegacyConductorTasks } from '../../shared/conductorTasks';
+import {
+	canConductorTaskAutoApproveCompletionProof,
+	getEffectiveConductorTaskAttentionRequest,
+	getConductorTaskVisibleAttention,
+	hasConductorTaskConcreteEvidence,
+	repairLegacyConductorTasks,
+	requiresConductorTaskExplicitEvidence,
+} from '../../shared/conductorTasks';
 
 function buildTask(overrides: Partial<ConductorTask>): ConductorTask {
 	return {
@@ -136,5 +143,104 @@ describe('repairLegacyConductorTasks', () => {
 		const repaired = repairLegacyConductorTasks([child], [run]);
 
 		expect(repaired[0].status).toBe('needs_revision');
+	});
+});
+
+describe('Conductor evidence helpers', () => {
+	it('requires explicit evidence for browser-style tasks', () => {
+		const task = buildTask({
+			title: 'Open WRAL homepage',
+			description: 'Launch a browser session and navigate to https://www.wral.com.',
+			acceptanceCriteria: ['The browser loads the WRAL homepage.'],
+		});
+
+		expect(requiresConductorTaskExplicitEvidence(task)).toBe(true);
+	});
+
+	it('does not require explicit evidence for ordinary code tasks by default', () => {
+		const task = buildTask({
+			title: 'Refactor reducer',
+			description: 'Simplify the reducer state transitions.',
+			acceptanceCriteria: ['Tests still pass.'],
+		});
+
+		expect(requiresConductorTaskExplicitEvidence(task)).toBe(false);
+	});
+
+	it('recognizes concrete evidence from demo, file, or url items', () => {
+		const task = buildTask({
+			evidence: [
+				{
+					kind: 'demo',
+					label: 'Captured WRAL navigation',
+					demoId: 'demo-1',
+					captureRunId: 'capture-1',
+					url: 'https://www.wral.com',
+				},
+			],
+		});
+
+		expect(hasConductorTaskConcreteEvidence(task)).toBe(true);
+	});
+
+	it('allows captured proof to be auto-approved on the happy path', () => {
+		const task = buildTask({
+			completionProofRequirement: {
+				required: true,
+				requireVideo: true,
+				minScreenshots: 1,
+			},
+			completionProof: {
+				status: 'captured',
+				demoId: 'demo-1',
+				captureRunId: 'capture-1',
+				screenshotCount: 2,
+				videoArtifactId: 'video-1',
+			},
+		});
+
+		expect(canConductorTaskAutoApproveCompletionProof(task)).toBe(true);
+	});
+});
+
+describe('Conductor live attention resolution', () => {
+	it('preserves legacy fallback by default for older blocked tasks', () => {
+		const task = buildTask({
+			id: 'task-legacy',
+			status: 'blocked',
+		});
+		const run = buildRun({
+			taskIds: ['task-legacy'],
+			summary: 'Need the staging API key before this can continue.',
+		});
+
+		expect(getEffectiveConductorTaskAttentionRequest(task, [run])?.requestedAction).toContain(
+			'Need the staging API key'
+		);
+	});
+
+	it('lets live views opt out of reconstructed legacy attention', () => {
+		const task = buildTask({
+			id: 'task-legacy',
+			status: 'blocked',
+		});
+		const run = buildRun({
+			taskIds: ['task-legacy'],
+			summary: 'Need the staging API key before this can continue.',
+		});
+
+		expect(
+			getEffectiveConductorTaskAttentionRequest(task, [run], {
+				allowLegacyFallback: false,
+			})
+		).toBeNull();
+		expect(
+			getConductorTaskVisibleAttention(
+				task,
+				new Map(),
+				[run],
+				{ allowLegacyFallback: false }
+			)
+		).toBeNull();
 	});
 });

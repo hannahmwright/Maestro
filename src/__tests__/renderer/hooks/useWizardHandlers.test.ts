@@ -2022,7 +2022,8 @@ describe('useWizardHandlers', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'error',
-					title: 'Agent Creation Failed',
+					title: 'Thread Creation Failed',
+					message: 'Duplicate session',
 				})
 			);
 			consoleSpy.mockRestore();

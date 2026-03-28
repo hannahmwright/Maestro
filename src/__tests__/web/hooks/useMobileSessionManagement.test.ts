@@ -312,7 +312,32 @@ describe('useMobileSessionManagement', () => {
 		fetchMock.mockClear();
 
 		act(() => {
-			result.current.handleNewTab();
+			result.current.setSessions([
+				createSession({
+					aiTabs: [
+						{
+							id: 'tab-1',
+							agentSessionId: null,
+							name: 'Tab 1',
+							starred: false,
+							inputValue: '',
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+						{
+							id: 'pending-tab-1',
+							agentSessionId: null,
+							name: null,
+							starred: false,
+							inputValue: '',
+							createdAt: Date.now(),
+							state: 'idle',
+						},
+					],
+					activeTabId: 'pending-tab-1',
+				}),
+			]);
+			result.current.handleSelectSessionTab('session-1', 'pending-tab-1');
 		});
 
 		await act(async () => {

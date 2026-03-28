@@ -878,9 +878,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 				const normalizedIds = Array.from(
 					new Set(
 						agentIds.filter(
-							(
-								id
-							): id is 'codex' | 'claude-code' | 'opencode' | 'factory-droid' =>
+							(id): id is 'codex' | 'claude-code' | 'opencode' | 'factory-droid' =>
 								typeof id === 'string' &&
 								(id === 'codex' ||
 									id === 'claude-code' ||
@@ -899,7 +897,9 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 					throw new Error(`SSH remote not found: ${sshRemoteId}`);
 				}
 
-				const agentDetector = sshConfig ? null : requireDependency(getAgentDetector, 'Agent detector');
+				const agentDetector = sshConfig
+					? null
+					: requireDependency(getAgentDetector, 'Agent detector');
 
 				return Promise.all(
 					normalizedIds.map(async (agentId) => {

@@ -24,7 +24,8 @@ export interface ConversationHandlerDependencies {
 }
 
 export function registerConversationHandlers(deps: ConversationHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } = deps;
+	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
+		deps;
 
 	const getConversationManager = (): ConversationManager => {
 		const processManager = getProcessManager();
@@ -36,9 +37,11 @@ export function registerConversationHandlers(deps: ConversationHandlerDependenci
 			throw new Error('Agent detector unavailable');
 		}
 
-		const existingManager = (processManager as ProcessManager & {
-			conversationManager?: ConversationManager;
-		}).conversationManager;
+		const existingManager = (
+			processManager as ProcessManager & {
+				conversationManager?: ConversationManager;
+			}
+		).conversationManager;
 		if (existingManager) {
 			return existingManager;
 		}
@@ -59,8 +62,9 @@ export function registerConversationHandlers(deps: ConversationHandlerDependenci
 					options
 				),
 		});
-		(processManager as ProcessManager & { conversationManager?: ConversationManager }).conversationManager =
-			conversationManager;
+		(
+			processManager as ProcessManager & { conversationManager?: ConversationManager }
+		).conversationManager = conversationManager;
 		conversationManager.on('conversation-event', (sessionId, event) => {
 			const mainWindow = getMainWindow();
 			if (isWebContentsAvailable(mainWindow)) {
@@ -81,8 +85,7 @@ export function registerConversationHandlers(deps: ConversationHandlerDependenci
 					remoteId: string | null;
 				};
 				querySource?: 'user' | 'auto';
-			}
-			): Promise<ConversationCapabilities> => getConversationManager().getCapabilities(request)
+			}): Promise<ConversationCapabilities> => getConversationManager().getCapabilities(request)
 		)
 	);
 

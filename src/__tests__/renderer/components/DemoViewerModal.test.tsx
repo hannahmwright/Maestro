@@ -85,7 +85,9 @@ describe('DemoViewerModal', () => {
 		vi.restoreAllMocks();
 
 		getDemo.mockResolvedValue(mockDemo);
-		loadArtifact.mockImplementation(async (artifactId: string) => `data:image/png;base64,${artifactId}`);
+		loadArtifact.mockImplementation(
+			async (artifactId: string) => `data:image/png;base64,${artifactId}`
+		);
 		getArtifactFileInfo.mockResolvedValue(null);
 		exportArtifact.mockResolvedValue({ success: true });
 		saveFile.mockResolvedValue('/tmp/saved-demo.png');

@@ -859,65 +859,65 @@ function SessionListInner(props: SessionListProps) {
 			.filter((workspace) => !isHiddenConductorWorkspace(workspace))
 			.filter(matchesWorkspace)
 			.map((workspace) => {
-			const workspaceThreads = threads
-				.filter(
+				const workspaceThreads = threads
+					.filter(
+						(thread) =>
+							thread.workspaceId === workspace.id &&
+							topLevelSessionsByRuntimeId.has(getRuntimeIdForThread(thread))
+					)
+					.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a));
+				const workspaceSessionIds = new Set(
+					workspaceThreads.map((thread) => getRuntimeIdForThread(thread))
+				);
+				const workspaceSessions = topLevelSessions.filter((session) =>
+					workspaceSessionIds.has(getRuntimeIdForSession(session))
+				);
+				const statusSession = workspaceSessions[0] || null;
+				const unreadCount = workspaceSessions.reduce(
+					(count, session) => count + (session.aiTabs?.some((tab) => tab.hasUnread) ? 1 : 0),
+					0
+				);
+				const hasBusy = workspaceSessions.some(
+					(session) => session.state === 'busy' || activeBatchSessionIds.includes(session.id)
+				);
+				const openThreads = workspaceThreads.filter((thread) => !thread.archived && thread.isOpen);
+				const recentCandidateThreads = workspaceThreads
+					.filter((thread) => !thread.archived)
+					.slice(0, 5);
+				const excludedIds = new Set([
+					...openThreads.map((thread) => thread.id),
+					...workspaceThreads.filter((thread) => thread.pinned).map((thread) => thread.id),
+				]);
+				const recentVisibleThreads = recentCandidateThreads.filter(
+					(thread) => !excludedIds.has(thread.id)
+				);
+				const recentCandidateIds = new Set(recentCandidateThreads.map((thread) => thread.id));
+				const recentVisibleIds = new Set(recentVisibleThreads.map((thread) => thread.id));
+				const olderThreads = workspaceThreads.filter(
 					(thread) =>
-						thread.workspaceId === workspace.id &&
-						topLevelSessionsByRuntimeId.has(getRuntimeIdForThread(thread))
-				)
-				.sort((a, b) => getThreadRecentTimestamp(b) - getThreadRecentTimestamp(a));
-			const workspaceSessionIds = new Set(
-				workspaceThreads.map((thread) => getRuntimeIdForThread(thread))
-			);
-			const workspaceSessions = topLevelSessions.filter((session) =>
-				workspaceSessionIds.has(getRuntimeIdForSession(session))
-			);
-			const statusSession = workspaceSessions[0] || null;
-			const unreadCount = workspaceSessions.reduce(
-				(count, session) => count + (session.aiTabs?.some((tab) => tab.hasUnread) ? 1 : 0),
-				0
-			);
-			const hasBusy = workspaceSessions.some(
-				(session) => session.state === 'busy' || activeBatchSessionIds.includes(session.id)
-			);
-			const openThreads = workspaceThreads.filter((thread) => !thread.archived && thread.isOpen);
-			const recentCandidateThreads = workspaceThreads
-				.filter((thread) => !thread.archived)
-				.slice(0, 5);
-			const excludedIds = new Set([
-				...openThreads.map((thread) => thread.id),
-				...workspaceThreads.filter((thread) => thread.pinned).map((thread) => thread.id),
-			]);
-			const recentVisibleThreads = recentCandidateThreads.filter(
-				(thread) => !excludedIds.has(thread.id)
-			);
-			const recentCandidateIds = new Set(recentCandidateThreads.map((thread) => thread.id));
-			const recentVisibleIds = new Set(recentVisibleThreads.map((thread) => thread.id));
-			const olderThreads = workspaceThreads.filter(
-				(thread) =>
-					!thread.archived &&
-					!excludedIds.has(thread.id) &&
-					!recentVisibleIds.has(thread.id) &&
-					!recentCandidateIds.has(thread.id)
-			);
-			const archivedThreads = workspaceThreads.filter((thread) => thread.archived);
-			return {
-				workspace,
-				threads: workspaceThreads,
-				openThreads,
-				recentThreads: recentVisibleThreads,
-				olderThreads,
-				archivedThreads,
-				statusSession,
-				unreadCount,
-				hasBusy,
-				defaultAgentId: workspaceThreads[0]?.agentId,
-				sortKey: Math.max(
-					workspace.lastUsedAt || 0,
-					workspaceThreads[0] ? getThreadRecentTimestamp(workspaceThreads[0]) : 0
-				),
-				hasPinned: workspaceThreads.some((thread) => thread.pinned),
-			};
+						!thread.archived &&
+						!excludedIds.has(thread.id) &&
+						!recentVisibleIds.has(thread.id) &&
+						!recentCandidateIds.has(thread.id)
+				);
+				const archivedThreads = workspaceThreads.filter((thread) => thread.archived);
+				return {
+					workspace,
+					threads: workspaceThreads,
+					openThreads,
+					recentThreads: recentVisibleThreads,
+					olderThreads,
+					archivedThreads,
+					statusSession,
+					unreadCount,
+					hasBusy,
+					defaultAgentId: workspaceThreads[0]?.agentId,
+					sortKey: Math.max(
+						workspace.lastUsedAt || 0,
+						workspaceThreads[0] ? getThreadRecentTimestamp(workspaceThreads[0]) : 0
+					),
+					hasPinned: workspaceThreads.some((thread) => thread.pinned),
+				};
 			});
 
 		return withStats.sort((a, b) => {

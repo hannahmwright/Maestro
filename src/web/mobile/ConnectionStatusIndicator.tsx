@@ -194,7 +194,7 @@ export function ConnectionStatusIndicator({
 
 			<button
 				type="button"
-				onClick={(error || statusConfig.subMessage) ? handleToggleDetails : undefined}
+				onClick={error || statusConfig.subMessage ? handleToggleDetails : undefined}
 				disabled={!error && !statusConfig.subMessage}
 				aria-expanded={showDetails}
 				style={{

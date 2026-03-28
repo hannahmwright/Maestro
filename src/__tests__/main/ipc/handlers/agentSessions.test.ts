@@ -7,7 +7,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
-import { registerAgentSessionsHandlers } from '../../../../main/ipc/handlers/agentSessions';
+import fs from 'fs/promises';
+import os from 'os';
+import path from 'path';
+import {
+	registerAgentSessionsHandlers,
+	__agentSessionsTestables,
+} from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
 
 // Mock electron's ipcMain
@@ -464,6 +470,77 @@ describe('agentSessions IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual(['claude-code', 'opencode']);
+		});
+	});
+});
+
+describe('agentSessions recoverable discovery helpers', () => {
+	describe('parseClaudeSessionPreview', () => {
+		it('should extract recoverable metadata from a head chunk', () => {
+			const preview = __agentSessionsTestables.parseClaudeSessionPreview(
+				[
+					JSON.stringify({
+						cwd: '/tmp/project',
+						gitBranch: 'main',
+						slug: 'hello-world',
+						timestamp: '2026-03-26T20:00:00.000Z',
+						message: { role: 'user', content: 'Build the feature' },
+					}),
+					JSON.stringify({
+						timestamp: '2026-03-26T20:00:02.000Z',
+						message: { role: 'assistant', content: 'On it.' },
+					}),
+				].join('\n')
+			);
+
+			expect(preview).toEqual({
+				projectPath: '/tmp/project',
+				firstUserMessage: 'Build the feature',
+				gitBranch: 'main',
+				slug: 'hello-world',
+				firstTimestamp: Date.parse('2026-03-26T20:00:00.000Z'),
+				conversationMessageCount: 2,
+			});
+		});
+
+		it('should return null when the preview has no usable conversation', () => {
+			const preview = __agentSessionsTestables.parseClaudeSessionPreview(
+				JSON.stringify({ cwd: '/tmp/project', timestamp: '2026-03-26T20:00:00.000Z' })
+			);
+
+			expect(preview).toBeNull();
+		});
+	});
+
+	describe('collectRecentClaudeSessionFiles', () => {
+		it('should sort by mtime descending and cap the scan set', async () => {
+			const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'maestro-agent-sessions-'));
+			try {
+				const projectDir = path.join(tempRoot, 'project-a');
+				await fs.mkdir(projectDir, { recursive: true });
+
+				for (let index = 0; index < 110; index += 1) {
+					const filePath = path.join(projectDir, `session-${index}.jsonl`);
+					await fs.writeFile(
+						filePath,
+						JSON.stringify({
+							cwd: '/tmp/project-a',
+							timestamp: '2026-03-26T20:00:00.000Z',
+							message: { role: 'user', content: `msg-${index}` },
+						})
+					);
+					const mtime = new Date(1_700_000_000_000 + index * 1000);
+					await fs.utimes(filePath, mtime, mtime);
+				}
+
+				const files = await __agentSessionsTestables.collectRecentClaudeSessionFiles(tempRoot);
+
+				expect(files).toHaveLength(96);
+				expect(files[0]?.sessionId).toBe('session-109');
+				expect(files.at(-1)?.sessionId).toBe('session-14');
+			} finally {
+				await fs.rm(tempRoot, { recursive: true, force: true });
+			}
 		});
 	});
 });

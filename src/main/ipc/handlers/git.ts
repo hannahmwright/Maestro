@@ -33,6 +33,14 @@ import {
 import { readDirRemote } from '../../utils/remote-fs';
 
 const LOG_CONTEXT = '[Git]';
+const GIT_IS_REPO_CACHE_TTL_MS = 5000;
+const WORKTREE_CANDIDATE_RECHECK_MS = 5000;
+
+interface BooleanCacheEntry {
+	value?: boolean;
+	expiresAt: number;
+	promise?: Promise<boolean>;
+}
 
 /**
  * Dependencies for Git handlers
@@ -68,6 +76,79 @@ function getSshRemoteById(sshRemoteId?: string): SshRemoteConfig | null {
 // Worktree directory watchers keyed by session ID
 const worktreeWatchers = new Map<string, FSWatcher>();
 const worktreeWatchDebounceTimers = new Map<string, NodeJS.Timeout>();
+const gitIsRepoCache = new Map<string, BooleanCacheEntry>();
+const recentWorktreeCandidateChecks = new Map<string, number>();
+const inFlightWorktreeSetupRequests = new Map<string, Promise<unknown>>();
+
+function buildGitProbeCacheKey(
+	cwd: string,
+	sshRemoteId?: string,
+	remoteCwd?: string
+): string {
+	return `${cwd}::${sshRemoteId || ''}::${remoteCwd || ''}`;
+}
+
+function buildWorktreeSetupRequestKey(
+	mainRepoCwd: string,
+	worktreePath: string,
+	branchName: string,
+	sshRemoteId?: string
+): string {
+	return [
+		sshRemoteId || 'local',
+		path.resolve(mainRepoCwd),
+		path.resolve(worktreePath),
+		branchName,
+	].join('::');
+}
+
+async function getCachedIsRepoResult(input: {
+	cwd: string;
+	sshRemoteId?: string;
+	sshRemote: SshRemoteConfig | null;
+	effectiveRemoteCwd?: string;
+}): Promise<boolean> {
+	const cacheKey = buildGitProbeCacheKey(
+		input.cwd,
+		input.sshRemoteId,
+		input.effectiveRemoteCwd
+	);
+	const now = Date.now();
+	const existing = gitIsRepoCache.get(cacheKey);
+	if (existing) {
+		if (existing.value !== undefined && existing.expiresAt > now) {
+			return existing.value;
+		}
+		if (existing.promise) {
+			return existing.promise;
+		}
+	}
+
+	const promise = execGit(
+		['rev-parse', '--is-inside-work-tree'],
+		input.cwd,
+		input.sshRemote,
+		input.effectiveRemoteCwd
+	)
+		.then((result) => {
+			const value = result.exitCode === 0;
+			gitIsRepoCache.set(cacheKey, {
+				value,
+				expiresAt: Date.now() + GIT_IS_REPO_CACHE_TTL_MS,
+			});
+			return value;
+		})
+		.catch((error) => {
+			gitIsRepoCache.delete(cacheKey);
+			throw error;
+		});
+
+	gitIsRepoCache.set(cacheKey, {
+		expiresAt: now + GIT_IS_REPO_CACHE_TTL_MS,
+		promise,
+	});
+	return promise;
+}
 
 /** Helper to create handler options with Git context */
 const handlerOpts = (operation: string, logSuccess = false): CreateHandlerOptions => ({
@@ -129,13 +210,12 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = getSshRemoteById(sshRemoteId);
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
-				const result = await execGit(
-					['rev-parse', '--is-inside-work-tree'],
+				return getCachedIsRepoResult({
 					cwd,
+					sshRemoteId,
 					sshRemote,
-					effectiveRemoteCwd
-				);
-				return result.exitCode === 0;
+					effectiveRemoteCwd,
+				});
 			}
 		)
 	);
@@ -144,12 +224,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		'git:initializeRepo',
 		withIpcErrorLogging(
 			handlerOpts('initializeRepo'),
-			async (
-				cwd: string,
-				createInitialCommit = true,
-				sshRemoteId?: string,
-				remoteCwd?: string
-			) => {
+			async (cwd: string, createInitialCommit = true, sshRemoteId?: string, remoteCwd?: string) => {
 				const sshRemote = getSshRemoteById(sshRemoteId);
 				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 
@@ -168,7 +243,8 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					if (addResult.exitCode !== 0) {
 						return {
 							success: false,
-							error: addResult.stderr || addResult.stdout || 'Failed to stage files for initial commit.',
+							error:
+								addResult.stderr || addResult.stdout || 'Failed to stage files for initial commit.',
 						};
 					}
 
@@ -634,171 +710,169 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				branchName: string,
 				sshRemoteId?: string
 			) => {
-				// SSH remote: dispatch to remote git operations
-				if (sshRemoteId) {
-					const sshConfig = getSshRemoteById(sshRemoteId);
-					if (!sshConfig) {
-						throw new Error(`SSH remote not found: ${sshRemoteId}`);
-					}
-					logger.debug(
-						`${LOG_CONTEXT} worktreeSetup via SSH: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
-						LOG_CONTEXT
-					);
-					const result = await worktreeSetupRemote(
-						mainRepoCwd,
-						worktreePath,
-						branchName,
-						sshConfig
-					);
-					if (!result.success) {
-						throw new Error(result.error || 'Remote worktreeSetup failed');
-					}
-					return result.data;
-				}
-
-				// Local execution (existing code)
-				logger.debug(
-					`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
-					LOG_CONTEXT
+				const requestKey = buildWorktreeSetupRequestKey(
+					mainRepoCwd,
+					worktreePath,
+					branchName,
+					sshRemoteId
 				);
-
-				// Resolve paths to absolute for proper comparison
-				const resolvedMainRepo = path.resolve(mainRepoCwd);
-				const resolvedWorktree = path.resolve(worktreePath);
-				logger.debug(
-					`Resolved paths: ${JSON.stringify({ resolvedMainRepo, resolvedWorktree })}`,
-					LOG_CONTEXT
-				);
-
-				// Check if worktree path is inside the main repo (nested worktree)
-				// This can cause issues because git and Claude Code search upward for .git
-				// and may resolve to the parent repo instead of the worktree
-				if (resolvedWorktree.startsWith(resolvedMainRepo + path.sep)) {
-					return {
-						success: false,
-						error:
-							'Worktree path cannot be inside the main repository. Please use a sibling directory (e.g., ../my-worktree) instead.',
-					};
+				const existingRequest = inFlightWorktreeSetupRequests.get(requestKey);
+				if (existingRequest) {
+					return existingRequest;
 				}
 
-				// First check if the worktree path already exists
-				let pathExists = true;
-				try {
-					await fs.access(resolvedWorktree);
-					logger.debug(`Path exists: ${resolvedWorktree}`, LOG_CONTEXT);
-				} catch {
-					pathExists = false;
-					logger.debug(`Path does not exist: ${resolvedWorktree}`, LOG_CONTEXT);
-				}
-
-				if (pathExists) {
-					// Check if it's already a worktree of this repo
-					const worktreeInfoResult = await execFileNoThrow(
-						'git',
-						['rev-parse', '--is-inside-work-tree'],
-						resolvedWorktree
-					);
-					logger.debug(
-						`is-inside-work-tree result: ${JSON.stringify(worktreeInfoResult)}`,
-						LOG_CONTEXT
-					);
-					if (worktreeInfoResult.exitCode !== 0) {
-						// Path exists but isn't a git repo - check if it's empty and can be removed
-						const dirContents = await fs.readdir(resolvedWorktree);
-						logger.debug(`Directory contents: ${JSON.stringify(dirContents)}`, LOG_CONTEXT);
-						if (dirContents.length === 0) {
-							// Empty directory - remove it so we can create the worktree
-							logger.debug(`Removing empty directory`, LOG_CONTEXT);
-							await fs.rmdir(resolvedWorktree);
-							pathExists = false;
-						} else {
-							logger.debug(`Directory not empty, returning error`, LOG_CONTEXT);
-							return {
-								success: false,
-								error: 'Path exists but is not a git worktree or repository (and is not empty)',
-							};
+				const request = (async () => {
+					// SSH remote: dispatch to remote git operations
+					if (sshRemoteId) {
+						const sshConfig = getSshRemoteById(sshRemoteId);
+						if (!sshConfig) {
+							throw new Error(`SSH remote not found: ${sshRemoteId}`);
 						}
-					}
-				}
-
-				if (pathExists) {
-					// Get the common dir to check if it's the same repo (parallel)
-					const [gitCommonDirResult, mainGitDirResult] = await Promise.all([
-						execFileNoThrow('git', ['rev-parse', '--git-common-dir'], resolvedWorktree),
-						execFileNoThrow('git', ['rev-parse', '--git-dir'], resolvedMainRepo),
-					]);
-
-					if (gitCommonDirResult.exitCode === 0 && mainGitDirResult.exitCode === 0) {
-						const worktreeCommonDir = path.resolve(
-							resolvedWorktree,
-							gitCommonDirResult.stdout.trim()
+						logger.debug(
+							`${LOG_CONTEXT} worktreeSetup via SSH: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
+							LOG_CONTEXT
 						);
-						const mainGitDir = path.resolve(resolvedMainRepo, mainGitDirResult.stdout.trim());
+						const result = await worktreeSetupRemote(
+							mainRepoCwd,
+							worktreePath,
+							branchName,
+							sshConfig
+						);
+						if (!result.success) {
+							throw new Error(result.error || 'Remote worktreeSetup failed');
+						}
+						return result.data;
+					}
 
-						// Normalize paths for comparison
-						const normalizedWorktreeCommon = path.normalize(worktreeCommonDir);
-						const normalizedMainGit = path.normalize(mainGitDir);
+					logger.debug(
+						`worktreeSetup called with: ${JSON.stringify({ mainRepoCwd, worktreePath, branchName })}`,
+						LOG_CONTEXT
+					);
 
-						if (normalizedWorktreeCommon !== normalizedMainGit) {
-							return { success: false, error: 'Worktree path belongs to a different repository' };
+					const resolvedMainRepo = path.resolve(mainRepoCwd);
+					const resolvedWorktree = path.resolve(worktreePath);
+					logger.debug(
+						`Resolved paths: ${JSON.stringify({ resolvedMainRepo, resolvedWorktree })}`,
+						LOG_CONTEXT
+					);
+
+					if (resolvedWorktree.startsWith(resolvedMainRepo + path.sep)) {
+						return {
+							success: false,
+							error:
+								'Worktree path cannot be inside the main repository. Please use a sibling directory (e.g., ../my-worktree) instead.',
+						};
+					}
+
+					let pathExists = true;
+					try {
+						await fs.access(resolvedWorktree);
+						logger.debug(`Path exists: ${resolvedWorktree}`, LOG_CONTEXT);
+					} catch {
+						pathExists = false;
+						logger.debug(`Path does not exist: ${resolvedWorktree}`, LOG_CONTEXT);
+					}
+
+					if (pathExists) {
+						const worktreeInfoResult = await execFileNoThrow(
+							'git',
+							['rev-parse', '--is-inside-work-tree'],
+							resolvedWorktree
+						);
+						logger.debug(
+							`is-inside-work-tree result: ${JSON.stringify(worktreeInfoResult)}`,
+							LOG_CONTEXT
+						);
+						if (worktreeInfoResult.exitCode !== 0) {
+							const dirContents = await fs.readdir(resolvedWorktree);
+							logger.debug(`Directory contents: ${JSON.stringify(dirContents)}`, LOG_CONTEXT);
+							if (dirContents.length === 0) {
+								logger.debug(`Removing empty directory`, LOG_CONTEXT);
+								await fs.rmdir(resolvedWorktree);
+								pathExists = false;
+							} else {
+								logger.debug(`Directory not empty, returning error`, LOG_CONTEXT);
+								return {
+									success: false,
+									error: 'Path exists but is not a git worktree or repository (and is not empty)',
+								};
+							}
 						}
 					}
 
-					// Get current branch in the existing worktree
-					const currentBranchResult = await execFileNoThrow(
+					if (pathExists) {
+						const [gitCommonDirResult, mainGitDirResult] = await Promise.all([
+							execFileNoThrow('git', ['rev-parse', '--git-common-dir'], resolvedWorktree),
+							execFileNoThrow('git', ['rev-parse', '--git-dir'], resolvedMainRepo),
+						]);
+
+						if (gitCommonDirResult.exitCode === 0 && mainGitDirResult.exitCode === 0) {
+							const worktreeCommonDir = path.resolve(
+								resolvedWorktree,
+								gitCommonDirResult.stdout.trim()
+							);
+							const mainGitDir = path.resolve(resolvedMainRepo, mainGitDirResult.stdout.trim());
+							const normalizedWorktreeCommon = path.normalize(worktreeCommonDir);
+							const normalizedMainGit = path.normalize(mainGitDir);
+
+							if (normalizedWorktreeCommon !== normalizedMainGit) {
+								return { success: false, error: 'Worktree path belongs to a different repository' };
+							}
+						}
+
+						const currentBranchResult = await execFileNoThrow(
+							'git',
+							['rev-parse', '--abbrev-ref', 'HEAD'],
+							worktreePath
+						);
+						const currentBranch =
+							currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
+
+						return {
+							success: true,
+							created: false,
+							currentBranch,
+							requestedBranch: branchName,
+							branchMismatch: currentBranch !== branchName && branchName !== '',
+						};
+					}
+
+					const branchExistsResult = await execFileNoThrow(
 						'git',
-						['rev-parse', '--abbrev-ref', 'HEAD'],
-						worktreePath
+						['rev-parse', '--verify', branchName],
+						mainRepoCwd
 					);
-					const currentBranch =
-						currentBranchResult.exitCode === 0 ? currentBranchResult.stdout.trim() : '';
+					const branchExists = branchExistsResult.exitCode === 0;
+
+					const createResult = branchExists
+						? await execFileNoThrow(
+								'git',
+								['worktree', 'add', worktreePath, branchName],
+								mainRepoCwd
+							)
+						: await execFileNoThrow(
+								'git',
+								['worktree', 'add', '-b', branchName, worktreePath],
+								mainRepoCwd
+							);
+
+					if (createResult.exitCode !== 0) {
+						return { success: false, error: createResult.stderr || 'Failed to create worktree' };
+					}
 
 					return {
 						success: true,
-						created: false,
-						currentBranch,
+						created: true,
+						currentBranch: branchName,
 						requestedBranch: branchName,
-						branchMismatch: currentBranch !== branchName && branchName !== '',
+						branchMismatch: false,
 					};
-				}
+				})().finally(() => {
+					inFlightWorktreeSetupRequests.delete(requestKey);
+				});
 
-				// Worktree doesn't exist, create it
-				// First check if the branch exists
-				const branchExistsResult = await execFileNoThrow(
-					'git',
-					['rev-parse', '--verify', branchName],
-					mainRepoCwd
-				);
-				const branchExists = branchExistsResult.exitCode === 0;
-
-				let createResult;
-				if (branchExists) {
-					// Branch exists, just add worktree pointing to it
-					createResult = await execFileNoThrow(
-						'git',
-						['worktree', 'add', worktreePath, branchName],
-						mainRepoCwd
-					);
-				} else {
-					// Branch doesn't exist, create it with -b flag
-					createResult = await execFileNoThrow(
-						'git',
-						['worktree', 'add', '-b', branchName, worktreePath],
-						mainRepoCwd
-					);
-				}
-
-				if (createResult.exitCode !== 0) {
-					return { success: false, error: createResult.stderr || 'Failed to create worktree' };
-				}
-
-				return {
-					success: true,
-					created: true,
-					currentBranch: branchName,
-					requestedBranch: branchName,
-					branchMismatch: false,
-				};
+				inFlightWorktreeSetupRequests.set(requestKey, request);
+				return request;
 			}
 		)
 	);
@@ -1418,6 +1492,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					watcher.on('addDir', async (dirPath: string) => {
 						// Skip the root directory itself
 						if (dirPath === worktreePath) return;
+
+						const candidateKey = path.resolve(dirPath);
+						const lastCheckedAt = recentWorktreeCandidateChecks.get(candidateKey) || 0;
+						if (Date.now() - lastCheckedAt < WORKTREE_CANDIDATE_RECHECK_MS) {
+							return;
+						}
+						recentWorktreeCandidateChecks.set(candidateKey, Date.now());
 
 						// Debounce to avoid flooding with events
 						const existingTimer = worktreeWatchDebounceTimers.get(sessionId);

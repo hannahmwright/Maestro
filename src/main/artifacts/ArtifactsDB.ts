@@ -143,7 +143,11 @@ export class ArtifactsDB {
 			);
 			CREATE INDEX IF NOT EXISTS idx_demo_steps_demo ON demo_steps(demo_id, order_index ASC);
 		`);
-		this.ensureColumn('capture_runs', 'turn_id', `ALTER TABLE capture_runs ADD COLUMN turn_id TEXT`);
+		this.ensureColumn(
+			'capture_runs',
+			'turn_id',
+			`ALTER TABLE capture_runs ADD COLUMN turn_id TEXT`
+		);
 		this.ensureColumn(
 			'capture_runs',
 			'turn_token',
@@ -169,7 +173,11 @@ export class ArtifactsDB {
 			'capture_source',
 			`ALTER TABLE capture_runs ADD COLUMN capture_source TEXT NOT NULL DEFAULT 'legacy_stdout'`
 		);
-		this.ensureColumn('capture_runs', 'provider', `ALTER TABLE capture_runs ADD COLUMN provider TEXT`);
+		this.ensureColumn(
+			'capture_runs',
+			'provider',
+			`ALTER TABLE capture_runs ADD COLUMN provider TEXT`
+		);
 		this.ensureColumn('capture_runs', 'model', `ALTER TABLE capture_runs ADD COLUMN model TEXT`);
 		this.ensureColumn(
 			'capture_runs',
@@ -214,9 +222,9 @@ export class ArtifactsDB {
 	}
 
 	private ensureColumn(tableName: string, columnName: string, sql: string): void {
-		const columns = this.database
-			.prepare(`PRAGMA table_info(${tableName})`)
-			.all() as Array<{ name?: string }>;
+		const columns = this.database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+			name?: string;
+		}>;
 		if (columns.some((column) => column.name === columnName)) {
 			return;
 		}

@@ -12,10 +12,7 @@ interface ConductorUpdatesPanelProps {
 	maxBodyHeight?: number;
 }
 
-function getToneColor(
-	theme: Theme,
-	tone: ConductorOrchestratorUpdate['tone']
-): string {
+function getToneColor(theme: Theme, tone: ConductorOrchestratorUpdate['tone']): string {
 	switch (tone) {
 		case 'success':
 			return theme.colors.success;
@@ -73,40 +70,37 @@ export function ConductorUpdatesPanel({
 				}}
 			>
 				<MessageSquareText className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-				<span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
+				<span
+					className="text-[11px] font-semibold uppercase tracking-wider"
+					style={{ color: theme.colors.textDim }}
+				>
 					Updates
 				</span>
 				{planningSummary && (
-					<span className="ml-auto text-[11px] truncate max-w-[50%]" style={{ color: theme.colors.textDim }}>
+					<span
+						className="ml-auto text-[11px] truncate max-w-[50%]"
+						style={{ color: theme.colors.textDim }}
+					>
 						{planningSummary}
 					</span>
 				)}
 			</div>
 
 			{/* Scrollable body */}
-			<div
-				className="overflow-y-auto scrollbar-thin"
-				style={{ maxHeight: maxBodyHeight || 340 }}
-			>
+			<div className="overflow-y-auto scrollbar-thin" style={{ maxHeight: maxBodyHeight || 340 }}>
 				{updates.length > 0 ? (
 					<div className="divide-y" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
 						{updates.map((update) => {
 							const color = getToneColor(theme, update.tone);
 							return (
-								<div
-									key={update.id}
-									className="px-3 py-2 hover:bg-white/[0.02] transition-colors"
-								>
+								<div key={update.id} className="px-3 py-2 hover:bg-white/[0.02] transition-colors">
 									{/* Top row: badge + task + time */}
 									<div className="flex items-center gap-1.5 min-w-0">
 										<span
 											className="w-1.5 h-1.5 rounded-full shrink-0"
 											style={{ backgroundColor: color }}
 										/>
-										<span
-											className="text-[11px] font-medium shrink-0"
-											style={{ color }}
-										>
+										<span className="text-[11px] font-medium shrink-0" style={{ color }}>
 											{update.badge}
 										</span>
 										{update.taskId && update.taskTitle && (
@@ -119,7 +113,10 @@ export function ConductorUpdatesPanel({
 												{update.taskTitle}
 											</button>
 										)}
-										<span className="ml-auto text-[10px] shrink-0" style={{ color: theme.colors.textDim }}>
+										<span
+											className="ml-auto text-[10px] shrink-0"
+											style={{ color: theme.colors.textDim }}
+										>
 											{formatRelativeTime(update.createdAt)}
 										</span>
 									</div>

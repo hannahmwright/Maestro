@@ -33,6 +33,10 @@ export interface ConductorTaskQaFailureState {
 	lastFailureEvent: ConductorRunEvent | null;
 }
 
+export interface ConductorTaskAttentionResolutionOptions {
+	allowLegacyFallback?: boolean;
+}
+
 export const CONDUCTOR_QA_QUARANTINE_FAILURE_COUNT = 3;
 export const CONDUCTOR_COMPLETION_PROOF_ATTENTION_ID_PREFIX = 'completion-proof-attention-';
 
@@ -43,10 +47,11 @@ const DEFAULT_CONDUCTOR_TASK_COMPLETION_PROOF_REQUIREMENT: ConductorTaskCompleti
 		minScreenshots: 1,
 	};
 
-const CONDUCTOR_QA_MALFORMED_RESPONSE_PATTERN =
-	/(not valid json|did not return a json object)/i;
+const CONDUCTOR_QA_MALFORMED_RESPONSE_PATTERN = /(not valid json|did not return a json object)/i;
 const CONDUCTOR_PROVIDER_LIMIT_PATTERN =
 	/(you(?:'|’)ve hit your limit|resets?\s+\d|quota|rate limit|out of credits|no credits|subscription.*exhausted)/i;
+const CONDUCTOR_EXPLICIT_EVIDENCE_PATTERN =
+	/\b(browser|navigate|navigation|homepage|page load|website|web page|url|playwright|screenshot|video|demo)\b/i;
 
 export function buildDefaultConductorTaskCompletionProofRequirement(): ConductorTaskCompletionProofRequirement {
 	return { ...DEFAULT_CONDUCTOR_TASK_COMPLETION_PROOF_REQUIREMENT };
@@ -58,6 +63,18 @@ export function buildDefaultConductorTaskCompletionProof(
 	return {
 		status: 'missing',
 		requestedAt,
+	};
+}
+
+export function applyConductorTaskUpdates(
+	task: ConductorTask,
+	updates: Partial<ConductorTask>,
+	updatedAt = Date.now()
+): ConductorTask {
+	return {
+		...task,
+		...updates,
+		updatedAt,
 	};
 }
 
@@ -73,12 +90,38 @@ export function hasConductorTaskApprovedCompletionProof(task: ConductorTask): bo
 	return task.completionProof?.status === 'approved';
 }
 
+export function canConductorTaskAutoApproveCompletionProof(task: ConductorTask): boolean {
+	if (!requiresConductorTaskCompletionProof(task)) {
+		return false;
+	}
+
+	return task.completionProof?.status === 'captured';
+}
+
+export function requiresConductorTaskExplicitEvidence(task: ConductorTask): boolean {
+	if (requiresConductorTaskCompletionProof(task)) {
+		return true;
+	}
+
+	return CONDUCTOR_EXPLICIT_EVIDENCE_PATTERN.test(
+		[task.title, task.description, ...(task.acceptanceCriteria || [])].join('\n')
+	);
+}
+
+export function hasConductorTaskConcreteEvidence(task: ConductorTask): boolean {
+	return (task.evidence || []).some(
+		(item) =>
+			item.kind === 'demo' ||
+			item.kind === 'file' ||
+			item.kind === 'url' ||
+			Boolean(item.path || item.url || item.demoId || item.captureRunId)
+	);
+}
+
 export function isConductorCompletionProofAttentionRequestId(
 	attentionRequestId?: string | null
 ): boolean {
-	return Boolean(
-		attentionRequestId?.startsWith(CONDUCTOR_COMPLETION_PROOF_ATTENTION_ID_PREFIX)
-	);
+	return Boolean(attentionRequestId?.startsWith(CONDUCTOR_COMPLETION_PROOF_ATTENTION_ID_PREFIX));
 }
 
 function getConductorCompletionProofRequestedAction(task: ConductorTask): string {
@@ -105,7 +148,10 @@ function getConductorCompletionProofRequestedAction(task: ConductorTask): string
 function getConductorCompletionProofAttentionRequest(
 	task: ConductorTask
 ): ConductorTaskAttentionRequest | null {
-	if (!requiresConductorTaskCompletionProof(task) || hasConductorTaskApprovedCompletionProof(task)) {
+	if (
+		!requiresConductorTaskCompletionProof(task) ||
+		hasConductorTaskApprovedCompletionProof(task)
+	) {
 		return null;
 	}
 
@@ -186,15 +232,11 @@ function isReviewOwnedAttention(
 
 	return Boolean(
 		attentionRequest?.status === 'open' &&
-			(attentionRequest.requestedByRole === 'reviewer' ||
-				attentionRequest.kind === 'review_changes')
+		(attentionRequest.requestedByRole === 'reviewer' || attentionRequest.kind === 'review_changes')
 	);
 }
 
-function isLegacyReviewRequestedChangeEvent(
-	task: ConductorTask,
-	runs: ConductorRun[]
-): boolean {
+function isLegacyReviewRequestedChangeEvent(task: ConductorTask, runs: ConductorRun[]): boolean {
 	return runs
 		.filter((run) => run.taskIds.includes(task.id))
 		.some((run) =>
@@ -210,9 +252,10 @@ function isLegacyReviewRequestedChangeEvent(
 export function isConductorTaskOperatorActionRequired(
 	task: ConductorTask,
 	childTasksByParentId: Map<string, ConductorTask[]>,
-	runs: ConductorRun[]
+	runs: ConductorRun[],
+	options?: ConductorTaskAttentionResolutionOptions
 ): boolean {
-	const attentionRequest = getEffectiveConductorTaskAttentionRequest(task, runs);
+	const attentionRequest = getEffectiveConductorTaskAttentionRequest(task, runs, options);
 	if (attentionRequest?.status !== 'open') {
 		return false;
 	}
@@ -226,14 +269,15 @@ export function isConductorTaskOperatorActionRequired(
 export function isConductorTaskAgentRevision(
 	task: ConductorTask,
 	childTasksByParentId: Map<string, ConductorTask[]>,
-	runs: ConductorRun[]
+	runs: ConductorRun[],
+	options?: ConductorTaskAttentionResolutionOptions
 ): boolean {
 	if (task.status === 'needs_revision') {
 		return true;
 	}
 
 	return isReviewOwnedAttention(
-		getEffectiveConductorTaskAttentionRequest(task, runs),
+		getEffectiveConductorTaskAttentionRequest(task, runs, options),
 		getConductorTaskOpenFollowUps(task, childTasksByParentId)
 	);
 }
@@ -241,7 +285,8 @@ export function isConductorTaskAgentRevision(
 export function isConductorTaskRunnableByAgent(
 	task: ConductorTask,
 	childTasksByParentId: Map<string, ConductorTask[]>,
-	runs: ConductorRun[]
+	runs: ConductorRun[],
+	options?: ConductorTaskAttentionResolutionOptions
 ): boolean {
 	if (
 		task.status === 'planning' ||
@@ -265,7 +310,7 @@ export function isConductorTaskRunnableByAgent(
 		return true;
 	}
 
-	const attentionRequest = getEffectiveConductorTaskAttentionRequest(task, runs);
+	const attentionRequest = getEffectiveConductorTaskAttentionRequest(task, runs, options);
 	const followUpTasks = getConductorTaskOpenFollowUps(task, childTasksByParentId);
 	return isReviewOwnedAttention(attentionRequest, followUpTasks);
 }
@@ -395,7 +440,8 @@ export function getConductorTaskQaFailureState(
 
 export function getEffectiveConductorTaskAttentionRequest(
 	task: ConductorTask,
-	runs: ConductorRun[]
+	runs: ConductorRun[],
+	options?: ConductorTaskAttentionResolutionOptions
 ): ConductorTaskAttentionRequest | null {
 	const completionProofAttention = getConductorCompletionProofAttentionRequest(task);
 	if (completionProofAttention) {
@@ -407,6 +453,10 @@ export function getEffectiveConductorTaskAttentionRequest(
 	}
 
 	if (task.status !== 'needs_input' && task.status !== 'blocked') {
+		return null;
+	}
+
+	if (options?.allowLegacyFallback === false) {
 		return null;
 	}
 
@@ -489,10 +539,7 @@ export function getEffectiveConductorTaskAttentionRequest(
 	};
 }
 
-export function hasConductorTaskAttentionEvent(
-	task: ConductorTask,
-	runs: ConductorRun[]
-): boolean {
+export function hasConductorTaskAttentionEvent(task: ConductorTask, runs: ConductorRun[]): boolean {
 	return runs
 		.filter((run) => run.taskIds.includes(task.id))
 		.some((run) =>
@@ -539,14 +586,15 @@ export function getConductorTaskOpenFollowUps(
 export function getConductorTaskAttentionBlockers(
 	task: ConductorTask,
 	childTasksByParentId: Map<string, ConductorTask[]>,
-	runs: ConductorRun[]
+	runs: ConductorRun[],
+	options?: ConductorTaskAttentionResolutionOptions
 ): ConductorTaskAttentionBlocker[] {
 	const childTasks = (childTasksByParentId.get(task.id) || []).filter(
 		(childTask) => !isConductorTaskDormantFollowUp(childTask)
 	);
 	return childTasks
 		.map((childTask) => {
-			const attentionRequest = getEffectiveConductorTaskAttentionRequest(childTask, runs);
+			const attentionRequest = getEffectiveConductorTaskAttentionRequest(childTask, runs, options);
 			const followUpTasks = getConductorTaskOpenFollowUps(childTask, childTasksByParentId);
 			return {
 				task: childTask,
@@ -569,9 +617,10 @@ export function getConductorTaskAttentionBlockers(
 export function getConductorTaskVisibleAttention(
 	task: ConductorTask,
 	childTasksByParentId: Map<string, ConductorTask[]>,
-	runs: ConductorRun[]
+	runs: ConductorRun[],
+	options?: ConductorTaskAttentionResolutionOptions
 ): ConductorTaskVisibleAttention | null {
-	const ownAttention = getEffectiveConductorTaskAttentionRequest(task, runs);
+	const ownAttention = getEffectiveConductorTaskAttentionRequest(task, runs, options);
 	if (ownAttention?.status === 'open') {
 		return {
 			task,
@@ -580,11 +629,11 @@ export function getConductorTaskVisibleAttention(
 		};
 	}
 
-	const blockers = getConductorTaskAttentionBlockers(task, childTasksByParentId, runs);
+	const blockers = getConductorTaskAttentionBlockers(task, childTasksByParentId, runs, options);
 	const operatorBlocker = blockers.find(
 		({ task: blockerTask, attentionRequest }) =>
 			attentionRequest?.status === 'open' &&
-			isConductorTaskOperatorActionRequired(blockerTask, childTasksByParentId, runs)
+			isConductorTaskOperatorActionRequired(blockerTask, childTasksByParentId, runs, options)
 	);
 	if (operatorBlocker?.attentionRequest) {
 		return {
@@ -710,7 +759,8 @@ export function repairLegacyConductorTasks(
 export function getConductorTaskRollupStatus(
 	task: ConductorTask,
 	childTasksByParentId: Map<string, ConductorTask[]>,
-	runs: ConductorRun[] = []
+	runs: ConductorRun[] = [],
+	options?: ConductorTaskAttentionResolutionOptions
 ): ConductorTaskStatus {
 	const childTasks = (childTasksByParentId.get(task.id) || []).filter(
 		(childTask) => !isConductorTaskDormantFollowUp(childTask)
@@ -718,9 +768,10 @@ export function getConductorTaskRollupStatus(
 	const taskNeedsOperatorAttention = isConductorTaskOperatorActionRequired(
 		task,
 		childTasksByParentId,
-		runs
+		runs,
+		options
 	);
-	const taskNeedsRevision = isConductorTaskAgentRevision(task, childTasksByParentId, runs);
+	const taskNeedsRevision = isConductorTaskAgentRevision(task, childTasksByParentId, runs, options);
 	if (childTasks.length === 0) {
 		if (getConductorTaskQaFailureState(task, runs).isQuarantined) {
 			return 'blocked';
@@ -737,7 +788,9 @@ export function getConductorTaskRollupStatus(
 		return task.status;
 	}
 
-	const openChildren = childTasks.filter((childTask) => !isConductorTaskTerminalStatus(childTask.status));
+	const openChildren = childTasks.filter(
+		(childTask) => !isConductorTaskTerminalStatus(childTask.status)
+	);
 	if (openChildren.length === 0) {
 		return task.status === 'cancelled' ? 'cancelled' : 'done';
 	}
@@ -761,7 +814,8 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'needs_proof'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) ===
+				'needs_proof'
 		)
 	) {
 		return 'needs_proof';
@@ -769,7 +823,8 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'needs_input'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) ===
+				'needs_input'
 		)
 	) {
 		return 'needs_input';
@@ -780,7 +835,8 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'needs_revision'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) ===
+				'needs_revision'
 		)
 	) {
 		return 'needs_revision';
@@ -788,7 +844,8 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'needs_review'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) ===
+				'needs_review'
 		)
 	) {
 		return 'needs_review';
@@ -796,7 +853,8 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'running'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) ===
+				'running'
 		)
 	) {
 		return 'running';
@@ -804,7 +862,8 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'planning'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) ===
+				'planning'
 		)
 	) {
 		return 'planning';
@@ -812,7 +871,7 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'ready'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) === 'ready'
 		)
 	) {
 		return 'ready';
@@ -820,7 +879,7 @@ export function getConductorTaskRollupStatus(
 	if (
 		openChildren.some(
 			(childTask) =>
-				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs) === 'draft'
+				getConductorTaskRollupStatus(childTask, childTasksByParentId, runs, options) === 'draft'
 		)
 	) {
 		return 'draft';

@@ -551,6 +551,15 @@ type ConductorTaskData = {
 		approvedAt?: number;
 		rejectedAt?: number;
 	};
+	evidence?: Array<{
+		kind: 'demo' | 'file' | 'url' | 'note';
+		label: string;
+		summary?: string;
+		path?: string;
+		url?: string;
+		demoId?: string;
+		captureRunId?: string;
+	}>;
 	agentHistory?: Array<{
 		id: string;
 		role: 'planner' | 'worker' | 'reviewer';
@@ -1012,6 +1021,7 @@ interface MaestroAPI {
 					attentionRequest?: ConductorTaskData['attentionRequest'];
 					completionProofRequirement?: ConductorTaskData['completionProofRequirement'];
 					completionProof?: ConductorTaskData['completionProof'];
+					evidence?: ConductorTaskData['evidence'];
 					status?:
 						| 'draft'
 						| 'planning'
@@ -1033,6 +1043,13 @@ interface MaestroAPI {
 			callback: (taskId: string, responseChannel: string) => void
 		) => () => void;
 		sendRemoteDeleteConductorTaskResponse: (responseChannel: string, success: boolean) => void;
+		onRemoteOpenConductorWorkspace: (
+			callback: (groupId: string, responseChannel: string) => void
+		) => () => void;
+		sendRemoteOpenConductorWorkspaceResponse: (
+			responseChannel: string,
+			success: boolean
+		) => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onTaskTriageStarted: (
@@ -2378,9 +2395,7 @@ interface MaestroAPI {
 		listSessionDemos: (sessionId: string, tabId?: string | null) => Promise<DemoCard[]>;
 		getDemo: (demoId: string) => Promise<DemoDetail | null>;
 		loadArtifact: (artifactId: string) => Promise<string | null>;
-		getArtifactFileInfo: (
-			artifactId: string
-		) => Promise<{
+		getArtifactFileInfo: (artifactId: string) => Promise<{
 			id: string;
 			path: string;
 			url: string;

@@ -9,10 +9,7 @@ interface MobileUpdatesPanelProps {
 	onAskUpdate: (update: ConductorOrchestratorUpdate) => void;
 }
 
-function getToneColor(
-	colors: ThemeColors,
-	tone: ConductorOrchestratorUpdate['tone']
-): string {
+function getToneColor(colors: ThemeColors, tone: ConductorOrchestratorUpdate['tone']): string {
 	switch (tone) {
 		case 'success':
 			return colors.success;
@@ -117,10 +114,7 @@ export function MobileUpdatesPanel({
 									key={update.id}
 									style={{
 										padding: '10px 14px',
-										borderTop:
-											index > 0
-												? '1px solid rgba(255,255,255,0.05)'
-												: 'none',
+										borderTop: index > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none',
 									}}
 								>
 									{/* Top row: dot + badge + task + time */}

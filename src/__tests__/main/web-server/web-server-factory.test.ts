@@ -52,6 +52,7 @@ vi.mock('../../../main/web-server/WebServer', () => ({
 		setCreateConductorTaskCallback = vi.fn();
 		setUpdateConductorTaskCallback = vi.fn();
 		setDeleteConductorTaskCallback = vi.fn();
+		setOpenConductorWorkspaceCallback = vi.fn();
 
 		constructor(port: number) {
 			this.port = port;
@@ -191,6 +192,7 @@ describe('web-server-factory', () => {
 		expect(server.setCreateConductorTaskCallback).toHaveBeenCalled();
 		expect(server.setUpdateConductorTaskCallback).toHaveBeenCalled();
 		expect(server.setDeleteConductorTaskCallback).toHaveBeenCalled();
+		expect(server.setOpenConductorWorkspaceCallback).toHaveBeenCalled();
 	});
 
 	it('maps stored sessions to web session data with group metadata', async () => {

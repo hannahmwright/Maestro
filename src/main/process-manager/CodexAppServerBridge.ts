@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, statSync } from 'fs';
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import path from 'path';
@@ -140,6 +141,53 @@ function buildAppServerArgs(config: ProcessConfig): string[] {
 		'ws://127.0.0.1:0',
 		...(config.conductorNativeResultTools ? buildConductorResultServerConfigArgs() : []),
 	];
+}
+
+function dedupeResolvedPaths(paths: string[]): string[] {
+	return [...new Set(paths.map((candidate) => path.resolve(candidate)))];
+}
+
+function readTrimmedFile(candidatePath: string): string | null {
+	try {
+		return readFileSync(candidatePath, 'utf8').trim();
+	} catch {
+		return null;
+	}
+}
+
+export function getCodexWorkspaceWriteRoots(cwd: string): string[] {
+	const roots = [cwd];
+	const gitEntryPath = path.join(cwd, '.git');
+
+	if (!existsSync(gitEntryPath)) {
+		return dedupeResolvedPaths(roots);
+	}
+
+	try {
+		const gitEntryStats = statSync(gitEntryPath);
+		if (gitEntryStats.isDirectory()) {
+			roots.push(gitEntryPath);
+			return dedupeResolvedPaths(roots);
+		}
+	} catch {
+		return dedupeResolvedPaths(roots);
+	}
+
+	const gitEntryContents = readTrimmedFile(gitEntryPath);
+	const gitDirMatch = gitEntryContents?.match(/^gitdir:\s*(.+)$/im);
+	if (!gitDirMatch) {
+		return dedupeResolvedPaths(roots);
+	}
+
+	const gitDirPath = path.resolve(cwd, gitDirMatch[1].trim());
+	roots.push(gitDirPath);
+
+	const commonDirContents = readTrimmedFile(path.join(gitDirPath, 'commondir'));
+	if (commonDirContents) {
+		roots.push(path.resolve(gitDirPath, commonDirContents));
+	}
+
+	return dedupeResolvedPaths(roots);
 }
 
 export class CodexAppServerBridge {
@@ -1489,7 +1537,7 @@ export class CodexAppServerBridge {
 						}
 					: {
 							type: 'workspaceWrite',
-							writableRoots: [config.cwd],
+							writableRoots: getCodexWorkspaceWriteRoots(config.cwd),
 							networkAccess: true,
 						}
 				: {

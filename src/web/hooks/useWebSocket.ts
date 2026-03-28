@@ -828,10 +828,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
 					case 'new_thread_result': {
 						const newThreadMsg = message as NewThreadResultMessage;
-						handlersRef.current?.onNewThreadResult?.(
-							newThreadMsg.sessionId,
-							newThreadMsg.success
-						);
+						handlersRef.current?.onNewThreadResult?.(newThreadMsg.sessionId, newThreadMsg.success);
 						break;
 					}
 

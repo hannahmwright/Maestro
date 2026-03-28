@@ -353,7 +353,8 @@ describe('useSessionCrud', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'error',
-					title: 'Agent Creation Failed',
+					title: 'Thread Creation Failed',
+					message: 'Duplicate session',
 				})
 			);
 		});
@@ -798,7 +799,7 @@ describe('useSessionCrud', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'success',
-					title: 'Group Removed',
+					title: 'Workspace Removed',
 					message: expect.stringContaining('Toast Group'),
 				})
 			);

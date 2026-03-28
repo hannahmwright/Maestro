@@ -465,6 +465,50 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.shellLogs).toEqual(shellLogs);
 	});
 
+	it('compacts conductor helper sessions on restore', async () => {
+		const session = createMockSession({
+			aiTabs: [
+				{
+					id: 'tab-1',
+					agentSessionId: null,
+					name: null,
+					state: 'busy' as const,
+					logs: [{ id: 'log-1', timestamp: 1, source: 'ai' as const, text: 'hello' }],
+					starred: false,
+					inputValue: 'draft',
+					stagedImages: ['data:image/png;base64,abc'],
+					createdAt: Date.now(),
+				},
+			],
+			shellLogs: [{ id: 'shell-1', timestamp: 2, source: 'stdout' as const, text: 'shell' }],
+			aiLogs: [{ id: 'ai-1', timestamp: 3, source: 'system' as const, text: 'old' }] as any,
+			workLog: [{ id: 'work-1', title: 'Work', description: 'desc', timestamp: 4 }],
+			executionQueue: [
+				{ id: 'queued-1', timestamp: 5, tabId: 'tab-1', type: 'message', text: 'hello' } as any,
+			],
+			conductorMetadata: {
+				isConductorSession: true,
+				groupId: 'group-1',
+				role: 'worker',
+				createdAt: Date.now(),
+			},
+		});
+		const { result } = renderHook(() => useSessionRestoration());
+
+		let restored: Session;
+		await act(async () => {
+			restored = await result.current.restoreSession(session);
+		});
+
+		expect(restored!.aiTabs[0].logs).toEqual([]);
+		expect(restored!.aiTabs[0].inputValue).toBe('');
+		expect(restored!.aiTabs[0].stagedImages).toEqual([]);
+		expect(restored!.shellLogs).toEqual([]);
+		expect(restored!.aiLogs).toEqual([]);
+		expect(restored!.workLog).toEqual([]);
+		expect(restored!.executionQueue).toEqual([]);
+	});
+
 	it('clears deprecated aiLogs', async () => {
 		const session = createMockSession({
 			aiLogs: [{ id: 'x', timestamp: 1, source: 'system' as const, text: 'old' }] as any,

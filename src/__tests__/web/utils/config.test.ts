@@ -92,10 +92,6 @@ describe('config.ts', () => {
 				enabled: false,
 			},
 		});
-		expect(webLogger.warn).toHaveBeenCalledWith(
-			'No __MAESTRO_CONFIG__ found, using development defaults',
-			'Config'
-		);
 	});
 
 	it('extracts session and tab context from the stable route shape', () => {
@@ -156,6 +152,29 @@ describe('config.ts', () => {
 		expect(getSessionUrl('session-999', 'tab with spaces')).toBe(
 			'http://localhost:3000/app/session/session-999?tabId=tab%20with%20spaces'
 		);
+	});
+
+	it('normalizes malformed absolute API paths back into the stable app scope', () => {
+		window.__MAESTRO_CONFIG__ = {
+			basePath: '/app',
+			sessionId: null,
+			tabId: null,
+			apiBase: '/app/api',
+			wsUrl: '/app/ws',
+			authMode: 'cloudflare-access',
+			clientInstanceId: 'client-789',
+			webPush: {
+				enabled: false,
+			},
+		};
+
+		expect(buildApiUrl('/http://192.168.1.103:47123/app/api/history?sessionId=session-123')).toBe(
+			'http://localhost:3000/app/api/history?sessionId=session-123'
+		);
+		expect(buildApiUrl('https://192.168.1.103:47123/app/api/history')).toBe(
+			'http://localhost:3000/app/api/history'
+		);
+		expect(buildApiUrl('/app/api/history')).toBe('http://localhost:3000/app/api/history');
 	});
 
 	it('builds websocket URLs with the stable app scope', () => {

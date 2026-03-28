@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import type { SidebarNavTarget, SidebarThreadTarget } from '../../../renderer/types';
 
 /**
  * Reset the Zustand store to initial state between tests.
@@ -18,6 +19,8 @@ function resetStore() {
 		preFilterActiveTabId: null,
 		preTerminalFileTabId: null,
 		selectedSidebarIndex: 0,
+		sidebarThreadTargets: [],
+		sidebarNavTargets: [],
 		flashNotification: null,
 		successFlashNotification: null,
 		outputSearchOpen: false,
@@ -193,6 +196,72 @@ describe('uiStore', () => {
 			useUIStore.getState().setSelectedSidebarIndex(3);
 			useUIStore.getState().setSelectedSidebarIndex((prev) => prev + 1);
 			expect(useUIStore.getState().selectedSidebarIndex).toBe(4);
+		});
+
+		it('ignores sidebar thread target updates when entries are unchanged by value', () => {
+			const threadTargets: SidebarThreadTarget[] = [
+				{
+					id: 'target-1',
+					threadId: 'thread-1',
+					sessionId: 'session-1',
+					runtimeId: 'runtime-1',
+					workspaceId: 'workspace-1',
+					tabId: 'tab-1',
+				},
+			];
+
+			useUIStore.getState().setSidebarThreadTargets(threadTargets);
+			const firstArray = useUIStore.getState().sidebarThreadTargets;
+
+			useUIStore.getState().setSidebarThreadTargets([
+				{
+					id: 'target-1',
+					threadId: 'thread-1',
+					sessionId: 'session-1',
+					runtimeId: 'runtime-1',
+					workspaceId: 'workspace-1',
+					tabId: 'tab-1',
+				},
+			]);
+
+			expect(useUIStore.getState().sidebarThreadTargets).toBe(firstArray);
+		});
+
+		it('ignores sidebar nav target updates when entries are unchanged by value', () => {
+			const navTargets: SidebarNavTarget[] = [
+				{
+					type: 'thread',
+					id: 'target-1',
+					thread: {
+						id: 'target-1',
+						threadId: 'thread-1',
+						sessionId: 'session-1',
+						runtimeId: 'runtime-1',
+						workspaceId: 'workspace-1',
+						tabId: 'tab-1',
+					},
+				},
+			];
+
+			useUIStore.getState().setSidebarNavTargets(navTargets);
+			const firstArray = useUIStore.getState().sidebarNavTargets;
+
+			useUIStore.getState().setSidebarNavTargets([
+				{
+					type: 'thread',
+					id: 'target-1',
+					thread: {
+						id: 'target-1',
+						threadId: 'thread-1',
+						sessionId: 'session-1',
+						runtimeId: 'runtime-1',
+						workspaceId: 'workspace-1',
+						tabId: 'tab-1',
+					},
+				},
+			]);
+
+			expect(useUIStore.getState().sidebarNavTargets).toBe(firstArray);
 		});
 	});
 

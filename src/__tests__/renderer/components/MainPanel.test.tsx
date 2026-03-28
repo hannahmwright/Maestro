@@ -636,7 +636,9 @@ describe('MainPanel', () => {
 			render(<MainPanel {...defaultProps} isMobileLandscape={true} />);
 
 			// Header should not be visible
-			expect(screen.queryByText('Test Session', { selector: '.header-session-name' })).not.toBeInTheDocument();
+			expect(
+				screen.queryByText('Test Session', { selector: '.header-session-name' })
+			).not.toBeInTheDocument();
 			expect(screen.queryByTestId('thread-bar')).not.toBeInTheDocument();
 		});
 
@@ -957,55 +959,57 @@ describe('MainPanel', () => {
 		});
 
 		it('should show other provider subscription statuses in the popover', async () => {
-			vi.mocked(window.maestro.agents.getProviderUsage).mockImplementation(async (agentId: string) => {
-				if (agentId === 'codex') {
-					return {
-						provider: 'codex',
-						usedPercent: 38,
-						resetsAt: 1_700_000_000,
-						label: 'Codex subscription',
-						planType: 'Pro',
-						accountType: 'Personal',
-						source: 'codex-app-server',
-						confidence: 'high',
-						fetchedAt: Date.now(),
-						windows: [
-							{
-								id: 'codex-5h',
-								label: 'Current 5h window',
-								usedPercent: 38,
-								resetsAt: 1_700_000_000,
-								windowDurationMins: 300,
-							},
-						],
-					};
-				}
+			vi.mocked(window.maestro.agents.getProviderUsage).mockImplementation(
+				async (agentId: string) => {
+					if (agentId === 'codex') {
+						return {
+							provider: 'codex',
+							usedPercent: 38,
+							resetsAt: 1_700_000_000,
+							label: 'Codex subscription',
+							planType: 'Pro',
+							accountType: 'Personal',
+							source: 'codex-app-server',
+							confidence: 'high',
+							fetchedAt: Date.now(),
+							windows: [
+								{
+									id: 'codex-5h',
+									label: 'Current 5h window',
+									usedPercent: 38,
+									resetsAt: 1_700_000_000,
+									windowDurationMins: 300,
+								},
+							],
+						};
+					}
 
-				if (agentId === 'claude-code') {
-					return {
-						provider: 'claude-code',
-						usedPercent: 81,
-						resetsAt: 1_700_100_000,
-						label: 'Claude subscription',
-						planType: 'Max',
-						accountType: 'Team',
-						source: 'claude-oauth-usage',
-						confidence: 'high',
-						fetchedAt: Date.now(),
-						windows: [
-							{
-								id: 'claude-weekly',
-								label: 'Weekly allowance',
-								usedPercent: 81,
-								resetsAt: 1_700_100_000,
-								windowDurationMins: 10080,
-							},
-						],
-					};
-				}
+					if (agentId === 'claude-code') {
+						return {
+							provider: 'claude-code',
+							usedPercent: 81,
+							resetsAt: 1_700_100_000,
+							label: 'Claude subscription',
+							planType: 'Max',
+							accountType: 'Team',
+							source: 'claude-oauth-usage',
+							confidence: 'high',
+							fetchedAt: Date.now(),
+							windows: [
+								{
+									id: 'claude-weekly',
+									label: 'Weekly allowance',
+									usedPercent: 81,
+									resetsAt: 1_700_100_000,
+									windowDurationMins: 10080,
+								},
+							],
+						};
+					}
 
-				return null;
-			});
+					return null;
+				}
+			);
 
 			const session = createSession({ toolType: 'codex' });
 			render(<MainPanel {...defaultProps} activeSession={session} />);

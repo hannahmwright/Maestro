@@ -21,6 +21,7 @@ import type {
 
 // Import the exported functions directly
 import { countUnfinishedTasks, uncheckAllTasks, useBatchProcessor } from '../../../renderer/hooks';
+import { clearGitMetadataCache } from '../../../renderer/services/git';
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 
 // Mock notifyToast so we can verify toast notifications
@@ -624,6 +625,8 @@ describe('useBatchProcessor hook', () => {
 	let mockCreatePR: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
+		clearGitMetadataCache();
+
 		// Reset mocks
 		mockOnUpdateSession = vi.fn();
 		mockOnSpawnAgent = vi.fn().mockResolvedValue({

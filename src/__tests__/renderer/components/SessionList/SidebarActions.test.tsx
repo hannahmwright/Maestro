@@ -22,44 +22,47 @@ const mockTheme: Theme = {
 
 const defaultShortcuts = {
 	toggleSidebar: { keys: ['Cmd', 'B'], label: 'Toggle Sidebar' },
+	openWizard: { keys: ['Cmd', 'Shift', 'N'], label: 'New Project' },
 } as any;
 
 function createProps(overrides: Partial<Parameters<typeof SidebarActions>[0]> = {}) {
 	return {
 		theme: mockTheme,
 		leftSidebarOpen: true,
+		leftSidebarHidden: false,
 		hasNoSessions: false,
 		shortcuts: defaultShortcuts,
 		openWizard: vi.fn(),
 		setLeftSidebarOpen: vi.fn(),
+		setLeftSidebarHidden: vi.fn(),
 		...overrides,
 	};
 }
 
 describe('SidebarActions', () => {
-	it('renders collapse button and New Agent when sidebar is open', () => {
+	it('renders collapse button and New Project when sidebar is open', () => {
 		render(<SidebarActions {...createProps()} />);
 
-		expect(screen.getByText('New Agent')).toBeTruthy();
+		expect(screen.getByText('New Project')).toBeTruthy();
 	});
 
-	it('hides New Agent when sidebar is collapsed', () => {
+	it('hides New Project when sidebar is collapsed', () => {
 		render(<SidebarActions {...createProps({ leftSidebarOpen: false })} />);
 
-		expect(screen.queryByText('New Agent')).toBeNull();
+		expect(screen.queryByText('New Project')).toBeNull();
 	});
 
-	it('hides New Agent when openWizard is undefined', () => {
+	it('hides New Project when openWizard is undefined', () => {
 		render(<SidebarActions {...createProps({ openWizard: undefined })} />);
 
-		expect(screen.queryByText('New Agent')).toBeNull();
+		expect(screen.queryByText('New Project')).toBeNull();
 	});
 
-	it('calls openWizard when New Agent is clicked', () => {
+	it('calls openWizard when New Project is clicked', () => {
 		const openWizard = vi.fn();
 		render(<SidebarActions {...createProps({ openWizard })} />);
 
-		fireEvent.click(screen.getByText('New Agent'));
+		fireEvent.click(screen.getByText('New Project'));
 		expect(openWizard).toHaveBeenCalledOnce();
 	});
 
@@ -97,5 +100,13 @@ describe('SidebarActions', () => {
 		const expandBtn = screen.getByTitle(/Expand Sidebar/);
 		fireEvent.click(expandBtn);
 		expect(setLeftSidebarOpen).toHaveBeenCalledWith(true);
+	});
+
+	it('hides the sidebar when the hide button is clicked', () => {
+		const setLeftSidebarHidden = vi.fn();
+		render(<SidebarActions {...createProps({ setLeftSidebarHidden })} />);
+
+		fireEvent.click(screen.getByTitle('Hide Sidebar'));
+		expect(setLeftSidebarHidden).toHaveBeenCalledWith(true);
 	});
 });

@@ -447,7 +447,7 @@ describe('useTabHandlers', () => {
 		it('handleFileTabEditContentChange updates saved content when provided', () => {
 			const aiTab = createMockAITab({ id: 'ai-1' });
 			const fileTab = createMockFileTab({ id: 'file-1', content: 'old' });
-			setupSessionWithTabs([aiTab], [fileTab]);
+			setupSessionWithTabs([aiTab], [fileTab], undefined, fileTab.id);
 
 			const { result } = renderHook(() => useTabHandlers());
 			act(() => {
@@ -1002,7 +1002,7 @@ describe('useTabHandlers', () => {
 				editContent: 'unsaved',
 				lastModified: 1000,
 			});
-			setupSessionWithTabs([aiTab], [fileTab]);
+			setupSessionWithTabs([aiTab], [fileTab], undefined, fileTab.id);
 
 			vi.mocked(window.maestro.fs.readFile).mockResolvedValueOnce('new content from disk');
 			vi.mocked(window.maestro.fs.stat).mockResolvedValueOnce({

@@ -356,8 +356,8 @@ export function evaluateCompletionState(
 			: requestedAuthTarget
 				? matchedRequestedAuthTarget
 				: observedUrl
-				? !isLikelyAuthUrl(observedUrl)
-				: null;
+					? !isLikelyAuthUrl(observedUrl)
+					: null;
 	const isLocalObservedTarget =
 		observedDomain === 'localhost' ||
 		observedDomain === '127.0.0.1' ||

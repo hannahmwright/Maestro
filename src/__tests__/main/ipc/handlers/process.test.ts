@@ -471,7 +471,7 @@ describe('process IPC handlers', () => {
 						MAESTRO_DEMO_CAPTURE: '1',
 						MAESTRO_DEMO_EVENT_PREFIX,
 						MAESTRO_DEMO_RUN_ID: expect.any(String),
-						MAESTRO_DEMO_OUTPUT_DIR: 'output/playwright',
+						MAESTRO_DEMO_OUTPUT_DIR: '/test/output/playwright',
 					}),
 				})
 			);

@@ -402,7 +402,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// Get agent capabilities for conditional feature rendering
 	const { hasCapability } = useAgentCapabilities(session.toolType);
 	const allSessions = useSessionStore((state) => state.sessions);
-	const currentThread = useSessionStore((state) => findActiveThreadForSession(state.threads, session));
+	const currentThread = useSessionStore((state) =>
+		findActiveThreadForSession(state.threads, session)
+	);
 	const updateThread = useSessionStore((state) => state.updateThread);
 	const { agents: availableAgents } = useAvailableAgents(session.toolType, allSessions);
 
@@ -443,8 +445,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const isBusyAiTab = session.inputMode === 'ai' && activeTab?.state === 'busy';
 	const showBusyDraftActions = isBusyAiTab && hasComposerDraft;
 	const showTrailingComposerActions = showBusyDraftActions || !isBusyAiTab;
-	const busyPrimaryLabel =
-		activeTab?.steerMode === 'true-steer' ? 'Steer' : 'Steer (Interrupt)';
+	const busyPrimaryLabel = activeTab?.steerMode === 'true-steer' ? 'Steer' : 'Steer (Interrupt)';
 	const busyDraftHint = 'AI thinking... type to steer or queue next';
 	const toggleDemoCapture = React.useCallback(() => {
 		if (session.inputMode !== 'ai' || !activeTab) return;
@@ -632,11 +633,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		}
 
 		await loadModels(false);
-	}, [canChooseModelBeforeFirstMessage, loadModels, loadProviderModels, modelMenuOpen, supportsModelSelection]);
+	}, [
+		canChooseModelBeforeFirstMessage,
+		loadModels,
+		loadProviderModels,
+		modelMenuOpen,
+		supportsModelSelection,
+	]);
 	const applyProviderSelection = React.useCallback(
 		(nextToolType: Session['toolType'], nextModel?: string) => {
 			const trimmedModel = nextModel?.trim() || undefined;
-			if (nextToolType === session.toolType && (trimmedModel || undefined) === session.customModel) {
+			if (
+				nextToolType === session.toolType &&
+				(trimmedModel || undefined) === session.customModel
+			) {
 				setModelMenuOpen(false);
 				return;
 			}
@@ -1576,7 +1586,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 																			<span>{group.providerLabel}</span>
 																		</div>
 																		{group.options.map((option) => {
-																			const normalizedOptionModel = normalizeModelLabel(option.modelId);
+																			const normalizedOptionModel = normalizeModelLabel(
+																				option.modelId
+																			);
 																			const normalizedCurrentModel = normalizeModelLabel(
 																				session.customModel
 																			);

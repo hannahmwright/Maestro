@@ -26,6 +26,7 @@ export type {
 	ConductorTaskCompletionProofStatus,
 	ConductorTaskCompletionProofRequirement,
 	ConductorTaskCompletionProof,
+	ConductorTaskEvidenceItem,
 	ConductorAgentRole,
 	ConductorTaskAttentionRequest,
 	ConductorTaskAgentHistoryEntry,
@@ -72,6 +73,7 @@ import type {
 	ConductorTaskCompletionProofStatus,
 	ConductorTaskCompletionProofRequirement,
 	ConductorTaskCompletionProof,
+	ConductorTaskEvidenceItem,
 	ConductorAgentRole,
 	ConductorTaskAttentionRequest,
 	ConductorTaskAgentHistoryEntry,
@@ -701,6 +703,14 @@ export interface Session {
 	// Agent session ID for conversation continuity
 	// DEPRECATED: Use aiTabs[activeIndex].agentSessionId instead
 	agentSessionId?: string;
+	// Lazy provider-history hydration state for recovered archived sessions.
+	// Allows startup to restore lightweight thread stubs, then fetch full transcript on open.
+	providerHistoryHydration?: {
+		status: 'stub' | 'loading' | 'loaded' | 'error';
+		agentId: ToolType;
+		projectPath: string;
+		agentSessionId: string;
+	};
 	// Pending jump path for /jump command (relative path within file tree)
 	pendingJumpPath?: string;
 	// Custom status message for the thinking indicator (e.g., "Agent is synopsizing...")

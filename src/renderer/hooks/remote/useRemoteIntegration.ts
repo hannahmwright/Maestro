@@ -4,6 +4,8 @@ import { createTab, closeTab } from '../../utils/tabHelpers';
 import { buildDefaultThreadName } from '../../utils/sessionValidation';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useConductorStore } from '../../stores/conductorStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
+import { buildConductorBoardTaskStatusPatch } from '../../services/conductorBoardControls';
 import { WEB_APP_BASE_PATH, type ResponseCompletedEvent } from '../../../shared/remote-web';
 import type { DemoCaptureRequest } from '../../../shared/demo-artifacts';
 
@@ -125,6 +127,38 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 		createNewSession,
 		interruptCurrentTurnRef,
 	} = deps;
+	const groups = useSessionStore((s) => s.groups);
+	const pendingConductorWorkspaceOpenRef = useRef<string | null>(null);
+
+	const openConductorWorkspace = (groupId: string): boolean => {
+		const nextView = {
+			scope: 'workspace' as const,
+			groupId,
+		};
+		useGroupChatStore.getState().setActiveGroupChatId(null);
+		const availableGroups = useSessionStore.getState().groups;
+		if (!availableGroups.some((group) => group.id === groupId)) {
+			pendingConductorWorkspaceOpenRef.current = groupId;
+			return false;
+		}
+
+		pendingConductorWorkspaceOpenRef.current = null;
+		const conductorStore = useConductorStore.getState();
+		const currentView = conductorStore.activeConductorView;
+		const isSameWorkspaceView =
+			currentView?.scope === 'workspace' && currentView.groupId === groupId;
+
+		if (isSameWorkspaceView) {
+			conductorStore.setActiveConductorView(null);
+			queueMicrotask(() => {
+				useConductorStore.getState().setActiveConductorView(nextView);
+			});
+		} else {
+			conductorStore.setActiveConductorView(nextView);
+		}
+
+		return true;
+	};
 
 	// Broadcast active session change to web clients
 	useEffect(() => {
@@ -132,6 +166,16 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			window.maestro.live.broadcastActiveSession(activeSessionId);
 		}
 	}, [activeSessionId, isLiveMode]);
+
+	useEffect(() => {
+		const pendingGroupId = pendingConductorWorkspaceOpenRef.current;
+		if (!pendingGroupId) {
+			return;
+		}
+
+		void groups;
+		openConductorWorkspace(pendingGroupId);
+	}, [groups]);
 
 	// Handle remote commands from web interface
 	// This allows web commands to go through the exact same code path as desktop commands
@@ -409,7 +453,8 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 					const activeTab =
 						sourceSession.aiTabs?.find((tab) => tab.id === sourceSession.activeTabId) ||
 						sourceSession.aiTabs?.[0];
-					const nextToolType = (options.toolType as typeof sourceSession.toolType) || sourceSession.toolType;
+					const nextToolType =
+						(options.toolType as typeof sourceSession.toolType) || sourceSession.toolType;
 					const nextModel =
 						options.model === undefined
 							? sourceSession.customModel || activeTab?.currentModel || undefined
@@ -437,18 +482,19 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							const updatedSessions = useSessionStore.getState().sessions;
 							const updatedSessionCount = useSessionStore.getState().sessions.length;
 							const createdSession =
-								updatedSessions.find((session) => !sessionsRef.current.some((candidate) => candidate.id === session.id)) ||
-								null;
+								updatedSessions.find(
+									(session) => !sessionsRef.current.some((candidate) => candidate.id === session.id)
+								) || null;
 							window.maestro.process.sendRemoteNewThreadResponse(
 								responseChannel,
 								createdSession
 									? {
-										success: true,
-										sessionId: createdSession.id,
-									}
+											success: true,
+											sessionId: createdSession.id,
+										}
 									: {
-										success: updatedSessionCount > currentSessionCount,
-									}
+											success: updatedSessionCount > currentSessionCount,
+										}
 							);
 						})
 						.catch((error) => {
@@ -626,10 +672,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 							);
 						})
 						.catch(() => {
-							window.maestro.process.sendRemoteCreateConductorTaskResponse(
-								responseChannel,
-								false
-							);
+							window.maestro.process.sendRemoteCreateConductorTaskResponse(responseChannel, false);
 						});
 				} catch (error) {
 					console.error('[Remote] Failed to create conductor task:', error);
@@ -644,14 +687,22 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						const conductorStore = useConductorStore.getState();
 						const existingTask = conductorStore.tasks.find((task) => task.id === taskId);
 						if (!existingTask) {
-							window.maestro.process.sendRemoteUpdateConductorTaskResponse(
-								responseChannel,
-								false
-							);
+							window.maestro.process.sendRemoteUpdateConductorTaskResponse(responseChannel, false);
 							return;
 						}
 
-						conductorStore.updateTask(taskId, updates);
+						const nextUpdates = updates.status
+							? {
+									...buildConductorBoardTaskStatusPatch({
+										task: existingTask,
+										nextStatus: updates.status,
+										currentAttention: updates.attentionRequest ?? existingTask.attentionRequest ?? null,
+									}),
+									...updates,
+								}
+							: updates;
+
+						conductorStore.updateTask(taskId, nextUpdates);
 						const snapshot = useConductorStore.getState();
 						void Promise.resolve(
 							window.maestro.conductors?.setAll({
@@ -686,10 +737,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						const conductorStore = useConductorStore.getState();
 						const existingTask = conductorStore.tasks.find((task) => task.id === taskId);
 						if (!existingTask) {
-							window.maestro.process.sendRemoteDeleteConductorTaskResponse(
-								responseChannel,
-								false
-							);
+							window.maestro.process.sendRemoteDeleteConductorTaskResponse(responseChannel, false);
 							return;
 						}
 
@@ -721,6 +769,25 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				}
 			) || (() => {});
 
+		const unsubscribeOpenConductorWorkspace =
+			window.maestro.process.onRemoteOpenConductorWorkspace?.(
+				(groupId: string, responseChannel: string) => {
+					try {
+						openConductorWorkspace(groupId);
+						window.maestro.process.sendRemoteOpenConductorWorkspaceResponse(
+							responseChannel,
+							true
+						);
+					} catch (error) {
+						console.error('[Remote] Failed to open conductor workspace:', error);
+						window.maestro.process.sendRemoteOpenConductorWorkspaceResponse(
+							responseChannel,
+							false
+						);
+					}
+				}
+			) || (() => {});
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
@@ -736,6 +803,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			unsubscribeCreateConductorTask();
 			unsubscribeUpdateConductorTask();
 			unsubscribeDeleteConductorTask();
+			unsubscribeOpenConductorWorkspace();
 		};
 	}, [
 		sessionsRef,
@@ -844,17 +912,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 						hasUnread: tab.hasUnread,
 						inputValue: tab.inputValue,
 						usageStats: tab.usageStats,
-							createdAt: tab.createdAt,
-							state: tab.state,
-							thinkingStartTime: tab.thinkingStartTime,
-							currentModel: tab.currentModel || null,
-							runtimeKind: tab.runtimeKind || 'batch',
-							steerMode: tab.steerMode || 'none',
-							activeTurnId: tab.activeTurnId || null,
-							pendingSteer: tab.pendingSteer || null,
-							steerStatus: tab.steerStatus || 'idle',
-							lastCheckpointAt: tab.lastCheckpointAt || null,
-						}));
+						createdAt: tab.createdAt,
+						state: tab.state,
+						thinkingStartTime: tab.thinkingStartTime,
+						currentModel: tab.currentModel || null,
+						runtimeKind: tab.runtimeKind || 'batch',
+						steerMode: tab.steerMode || 'none',
+						activeTurnId: tab.activeTurnId || null,
+						pendingSteer: tab.pendingSteer || null,
+						steerStatus: tab.steerStatus || 'idle',
+						lastCheckpointAt: tab.lastCheckpointAt || null,
+					}));
 
 					window.maestro.web.broadcastTabsChange(session.id, tabsForBroadcast, current.activeTabId);
 

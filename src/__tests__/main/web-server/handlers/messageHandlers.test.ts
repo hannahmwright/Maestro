@@ -138,6 +138,7 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'Hello Claude!',
 					'ai',
+					'default',
 					undefined,
 					undefined,
 					undefined,
@@ -163,6 +164,7 @@ describe('WebSocketMessageHandler', () => {
 					'session-1',
 					'ls -la',
 					'terminal',
+					'default',
 					undefined,
 					undefined,
 					undefined,
@@ -171,8 +173,9 @@ describe('WebSocketMessageHandler', () => {
 			});
 		});
 
-		it('should reject command when session is busy', () => {
+		it('should return unsuccessful command_result when session is busy', async () => {
 			(callbacks.getSessionDetail as any).mockReturnValue({ state: 'busy', inputMode: 'ai' });
+			(callbacks.executeCommand as any).mockResolvedValue(false);
 
 			handler.handleMessage(client, {
 				type: 'send_command',
@@ -180,10 +183,22 @@ describe('WebSocketMessageHandler', () => {
 				command: 'test',
 			});
 
+			await vi.waitFor(() => {
+				expect(callbacks.executeCommand).toHaveBeenCalledWith(
+					'session-1',
+					'test',
+					undefined,
+					'default',
+					undefined,
+					undefined,
+					undefined,
+					undefined
+				);
+			});
+
 			const response = JSON.parse((client.socket.send as any).mock.calls[0][0]);
-			expect(response.type).toBe('error');
-			expect(response.message).toContain('busy');
-			expect(callbacks.executeCommand).not.toHaveBeenCalled();
+			expect(response.type).toBe('command_result');
+			expect(response.success).toBe(false);
 		});
 
 		it('should reject command when session not found', () => {

@@ -63,7 +63,10 @@ export async function registerServiceWorker(
 	}
 
 	if (!hasInjectedMaestroConfig()) {
-		webLogger.debug('Skipping service worker registration in standalone web dev mode', 'ServiceWorker');
+		webLogger.debug(
+			'Skipping service worker registration in standalone web dev mode',
+			'ServiceWorker'
+		);
 		return undefined;
 	}
 

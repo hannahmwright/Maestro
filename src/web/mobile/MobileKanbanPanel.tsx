@@ -31,6 +31,7 @@ import {
 	buildWorkspaceSummaries,
 	groupTasksByLane,
 	MOBILE_CONDUCTOR_COLUMNS,
+	MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS,
 	MOBILE_CONDUCTOR_PRIORITY_LABELS,
 	MOBILE_CONDUCTOR_STATUS_LABELS,
 	PASTEL_STATUS_TONES,
@@ -51,7 +52,10 @@ import {
 } from '../../shared/conductorTasks';
 import { buildConductorOrchestratorUpdates } from '../../shared/conductorUpdates';
 import type { ConductorOrchestratorUpdate } from '../../shared/conductorUpdates';
-import type { ConductorOrchestratorAction, ConductorOrchestratorContext } from '../../shared/conductorOrchestrator';
+import type {
+	ConductorOrchestratorAction,
+	ConductorOrchestratorContext,
+} from '../../shared/conductorOrchestrator';
 import { resolveConductorRosterIdentity } from '../../shared/conductorRoster';
 import type { ConductorProviderAgent } from '../../shared/types';
 import { MobileTeamPanel, type MobileTeamMember } from './MobileTeamPanel';
@@ -280,7 +284,8 @@ export function MobileKanbanPanel({
 	const [responseDrafts, setResponseDrafts] = useState<Record<string, string>>({});
 	const [activeLaneIndex, setActiveLaneIndex] = useState(0);
 	const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>('board');
-	const [orchestratorContext, setOrchestratorContext] = useState<ConductorOrchestratorContext | null>(null);
+	const [orchestratorContext, setOrchestratorContext] =
+		useState<ConductorOrchestratorContext | null>(null);
 	const [isEditingTask, setIsEditingTask] = useState(false);
 	const [selectedTaskProofDemo, setSelectedTaskProofDemo] = useState<DemoDetail | null>(null);
 
@@ -298,10 +303,18 @@ export function MobileKanbanPanel({
 	}, [scope, tasks]);
 	const childTaskMap = useMemo(() => buildConductorChildTaskMap(visibleTasks), [visibleTasks]);
 	const visibleAttentionByTaskId = useMemo(() => {
-		const entries = visibleTasks.map((task) => [
-			task.id,
-			getConductorTaskVisibleAttention(task, childTaskMap, runs),
-		] as const);
+		const entries = visibleTasks.map(
+			(task) =>
+				[
+					task.id,
+					getConductorTaskVisibleAttention(
+						task,
+						childTaskMap,
+						runs,
+						MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+					),
+				] as const
+		);
 		return new Map(entries);
 	}, [childTaskMap, runs, visibleTasks]);
 	const laneGroups = useMemo(() => groupTasksByLane(visibleTasks, runs), [runs, visibleTasks]);
@@ -334,11 +347,21 @@ export function MobileKanbanPanel({
 	);
 	const selectedTaskRolledUpStatus = useMemo(
 		() =>
-			selectedTask ? getConductorTaskRollupStatus(selectedTask, childTaskMap, runs) : null,
+			selectedTask
+				? getConductorTaskRollupStatus(
+						selectedTask,
+						childTaskMap,
+						runs,
+						MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+					)
+				: null,
 		[childTaskMap, runs, selectedTask]
 	);
 	const selectedTaskProofDisplayState = useMemo(
-		() => (selectedTask ? getCompletionProofDisplayState(selectedTask, selectedTaskRolledUpStatus) : null),
+		() =>
+			selectedTask
+				? getCompletionProofDisplayState(selectedTask, selectedTaskRolledUpStatus)
+				: null,
 		[selectedTask, selectedTaskRolledUpStatus]
 	);
 	const selectedTaskChildren = useMemo(
@@ -351,11 +374,19 @@ export function MobileKanbanPanel({
 	);
 	const selectedTaskAttentionBlockers = useMemo(
 		() =>
-			selectedTask ? getConductorTaskAttentionBlockers(selectedTask, childTaskMap, runs) : [],
+			selectedTask
+				? getConductorTaskAttentionBlockers(
+						selectedTask,
+						childTaskMap,
+						runs,
+						MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+					)
+				: [],
 		[childTaskMap, runs, selectedTask]
 	);
 	const selectedTaskEffectiveAttention = useMemo(
-		() => (selectedTask ? visibleAttentionByTaskId.get(selectedTask.id)?.attentionRequest || null : null),
+		() =>
+			selectedTask ? visibleAttentionByTaskId.get(selectedTask.id)?.attentionRequest || null : null,
 		[selectedTask, visibleAttentionByTaskId]
 	);
 	const selectedTaskAttentionTarget = useMemo(
@@ -368,7 +399,12 @@ export function MobileKanbanPanel({
 				? (() => {
 						const visibleAttention = visibleAttentionByTaskId.get(selectedTask.id);
 						return visibleAttention
-							? isConductorTaskOperatorActionRequired(visibleAttention.task, childTaskMap, runs)
+							? isConductorTaskOperatorActionRequired(
+									visibleAttention.task,
+									childTaskMap,
+									runs,
+									MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+								)
 							: false;
 					})()
 				: false,
@@ -424,10 +460,16 @@ export function MobileKanbanPanel({
 			const visibleAttention = visibleAttentionByTaskId.get(task.id) ?? null;
 			const operatorAttentionMessage =
 				visibleAttention &&
-				isConductorTaskOperatorActionRequired(visibleAttention.task, childTaskMap, runs)
+				isConductorTaskOperatorActionRequired(
+					visibleAttention.task,
+					childTaskMap,
+					runs,
+					MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+				)
 					? formatConductorOperatorMessage(visibleAttention.attentionRequest.requestedAction)
 					: null;
-			const firstFollowUpTitle = getConductorTaskOpenFollowUps(task, childTaskMap)[0]?.title ?? null;
+			const firstFollowUpTitle =
+				getConductorTaskOpenFollowUps(task, childTaskMap)[0]?.title ?? null;
 			return [
 				task.id,
 				{
@@ -452,9 +494,7 @@ export function MobileKanbanPanel({
 	const conductorTeamMembers = useMemo<MobileTeamMember[]>(() => {
 		if (scope?.type !== 'workspace') return [];
 
-		const groupSessions = sessions.filter(
-			(session) => session.groupId === scope.groupId
-		);
+		const groupSessions = sessions.filter((session) => session.groupId === scope.groupId);
 
 		const byKey = new Map<string, { member: MobileTeamMember; priority: number }>();
 
@@ -475,9 +515,24 @@ export function MobileKanbanPanel({
 		// Build from tasks' agent session refs
 		const taskSessionRefs = visibleTasks.flatMap((task) =>
 			[
-				{ role: 'worker', sessionId: task.workerSessionId, sessionName: task.workerSessionName, task },
-				{ role: 'planner', sessionId: task.plannerSessionId, sessionName: task.plannerSessionName, task },
-				{ role: 'reviewer', sessionId: task.reviewerSessionId, sessionName: task.reviewerSessionName, task },
+				{
+					role: 'worker',
+					sessionId: task.workerSessionId,
+					sessionName: task.workerSessionName,
+					task,
+				},
+				{
+					role: 'planner',
+					sessionId: task.plannerSessionId,
+					sessionName: task.plannerSessionName,
+					task,
+				},
+				{
+					role: 'reviewer',
+					sessionId: task.reviewerSessionId,
+					sessionName: task.reviewerSessionName,
+					task,
+				},
 			].filter((ref) => ref.sessionId)
 		);
 
@@ -486,16 +541,32 @@ export function MobileKanbanPanel({
 
 		for (const ref of taskSessionRefs) {
 			const liveSession = ref.sessionId ? sessionMap.get(ref.sessionId) : null;
-			const providerToolType = (liveSession?.toolType === 'terminal' ? 'claude-code' : liveSession?.toolType || 'claude-code') as ConductorProviderAgent;
-			const identity = resolveConductorRosterIdentity(providerToolType, ref.sessionName || ref.sessionId || '');
-			const parentTask = ref.task.parentTaskId ? tasksById.get(ref.task.parentTaskId) || ref.task : ref.task;
+			const providerToolType = (
+				liveSession?.toolType === 'terminal'
+					? 'claude-code'
+					: liveSession?.toolType || 'claude-code'
+			) as ConductorProviderAgent;
+			const identity = resolveConductorRosterIdentity(
+				providerToolType,
+				ref.sessionName || ref.sessionId || ''
+			);
+			const parentTask = ref.task.parentTaskId
+				? tasksById.get(ref.task.parentTaskId) || ref.task
+				: ref.task;
 			const topLevelTask = getTopLevelConductorTasks([parentTask])[0] || parentTask;
-			const rolledUpStatus = getConductorTaskRollupStatus(topLevelTask, childTaskMap, runs);
+			const rolledUpStatus = getConductorTaskRollupStatus(
+				topLevelTask,
+				childTaskMap,
+				runs,
+				MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+			);
 
 			const status: MobileTeamMember['status'] =
 				liveSession?.state === 'busy'
 					? 'working'
-					: ['needs_revision', 'needs_review', 'needs_input', 'needs_proof', 'blocked'].includes(rolledUpStatus)
+					: ['needs_revision', 'needs_review', 'needs_input', 'needs_proof', 'blocked'].includes(
+								rolledUpStatus
+						  )
 						? 'waiting'
 						: 'idle';
 			const isWorking = liveSession?.state === 'busy';
@@ -788,7 +859,11 @@ export function MobileKanbanPanel({
 	};
 
 	const handleApproveCompletionProof = async () => {
-		if (!selectedTask || !selectedTaskProofDisplayState || selectedTaskProofDisplayState.status !== 'captured') {
+		if (
+			!selectedTask ||
+			!selectedTaskProofDisplayState ||
+			selectedTaskProofDisplayState.status !== 'captured'
+		) {
 			return;
 		}
 
@@ -815,7 +890,11 @@ export function MobileKanbanPanel({
 		const sessionRefs = [
 			{ role: 'planner', sessionId: task.plannerSessionId, sessionName: task.plannerSessionName },
 			{ role: 'worker', sessionId: task.workerSessionId, sessionName: task.workerSessionName },
-			{ role: 'reviewer', sessionId: task.reviewerSessionId, sessionName: task.reviewerSessionName },
+			{
+				role: 'reviewer',
+				sessionId: task.reviewerSessionId,
+				sessionName: task.reviewerSessionName,
+			},
 		].flatMap((entry) =>
 			entry.sessionId
 				? [{ role: entry.role, sessionId: entry.sessionId, sessionName: entry.sessionName }]
@@ -882,14 +961,27 @@ export function MobileKanbanPanel({
 					{/* Top row: back + title + actions */}
 					<div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
 						{scope.type === 'workspace' ? (
-							<button type="button" onClick={onOpenHome} style={{ ...buttonStyle, width: '36px', height: '36px', padding: 0 }}>
+							<button
+								type="button"
+								onClick={onOpenHome}
+								style={{ ...buttonStyle, width: '36px', height: '36px', padding: 0 }}
+							>
 								<ArrowLeft size={15} />
 							</button>
 						) : (
 							<LayoutGrid size={16} color={colors.accent} style={{ flexShrink: 0 }} />
 						)}
 						<div style={{ minWidth: 0, flex: 1 }}>
-							<div style={{ fontSize: '15px', fontWeight: 700, color: colors.textMain, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+							<div
+								style={{
+									fontSize: '15px',
+									fontWeight: 700,
+									color: colors.textMain,
+									whiteSpace: 'nowrap',
+									overflow: 'hidden',
+									textOverflow: 'ellipsis',
+								}}
+							>
 								{scope.type === 'home'
 									? 'Kanban'
 									: `${activeGroup?.emoji || '📂'} ${activeGroup?.name || 'Workspace'}`}
@@ -900,20 +992,39 @@ export function MobileKanbanPanel({
 								<button
 									type="button"
 									onClick={() => openOrchestratorChat({ scope: 'board' })}
-									style={{ ...buttonStyle, width: '36px', height: '36px', padding: 0, background: `${colors.accent}14`, border: `1px solid ${colors.accent}28`, color: colors.accent }}
+									style={{
+										...buttonStyle,
+										width: '36px',
+										height: '36px',
+										padding: 0,
+										background: `${colors.accent}14`,
+										border: `1px solid ${colors.accent}28`,
+										color: colors.accent,
+									}}
 								>
 									<MessageCircle size={15} />
 								</button>
 								<button
 									type="button"
 									onClick={handleStartCreate}
-									style={{ ...buttonStyle, height: '36px', padding: '0 12px', background: `${colors.accent}20`, border: `1px solid ${colors.accent}32`, color: colors.accent }}
+									style={{
+										...buttonStyle,
+										height: '36px',
+										padding: '0 12px',
+										background: `${colors.accent}20`,
+										border: `1px solid ${colors.accent}32`,
+										color: colors.accent,
+									}}
 								>
 									<Plus size={14} />
 								</button>
 							</>
 						)}
-						<button type="button" onClick={onClose} style={{ ...buttonStyle, width: '36px', height: '36px', padding: 0 }}>
+						<button
+							type="button"
+							onClick={onClose}
+							style={{ ...buttonStyle, width: '36px', height: '36px', padding: 0 }}
+						>
 							<X size={14} />
 						</button>
 					</div>
@@ -945,7 +1056,9 @@ export function MobileKanbanPanel({
 
 					{/* Hold reason (if any) */}
 					{scope.type === 'workspace' && holdReason && (
-						<div style={{ fontSize: '11px', color: colors.warning, lineHeight: 1.4, padding: '0 2px' }}>
+						<div
+							style={{ fontSize: '11px', color: colors.warning, lineHeight: 1.4, padding: '0 2px' }}
+						>
 							{holdReason}
 						</div>
 					)}
@@ -959,11 +1072,17 @@ export function MobileKanbanPanel({
 								borderBottom: '1px solid rgba(255,255,255,0.06)',
 							}}
 						>
-							{([
+							{[
 								{ key: 'board' as const, label: 'Board' },
-								{ key: 'team' as const, label: `Team${conductorTeamMembers.length > 0 ? ` (${conductorTeamMembers.filter((m) => m.status === 'working' || m.status === 'waiting' || m.status === 'error').length})` : ''}` },
-								{ key: 'updates' as const, label: `Updates${orchestratorUpdates.length > 0 ? ` (${orchestratorUpdates.length})` : ''}` },
-							]).map((tab) => {
+								{
+									key: 'team' as const,
+									label: `Team${conductorTeamMembers.length > 0 ? ` (${conductorTeamMembers.filter((m) => m.status === 'working' || m.status === 'waiting' || m.status === 'error').length})` : ''}`,
+								},
+								{
+									key: 'updates' as const,
+									label: `Updates${orchestratorUpdates.length > 0 ? ` (${orchestratorUpdates.length})` : ''}`,
+								},
+							].map((tab) => {
 								const isSelected = workspaceTab === tab.key;
 								return (
 									<button
@@ -1018,7 +1137,9 @@ export function MobileKanbanPanel({
 											padding: '8px 12px',
 											borderRadius: '12px 12px 0 0',
 											border: 'none',
-											borderBottom: isActive ? `2px solid ${group.lane.color}` : '2px solid transparent',
+											borderBottom: isActive
+												? `2px solid ${group.lane.color}`
+												: '2px solid transparent',
 											background: isActive ? `${group.lane.color}14` : 'transparent',
 											color: isActive ? group.lane.color : colors.textDim,
 											fontSize: '12px',
@@ -1106,13 +1227,16 @@ export function MobileKanbanPanel({
 											cursor: 'pointer',
 										}}
 									>
-										<span style={{ fontSize: '18px', flexShrink: 0 }}>{summary.group.emoji || '📂'}</span>
+										<span style={{ fontSize: '18px', flexShrink: 0 }}>
+											{summary.group.emoji || '📂'}
+										</span>
 										<div style={{ minWidth: 0, flex: 1 }}>
 											<div style={{ fontSize: '13px', fontWeight: 700, color: colors.textMain }}>
 												{summary.group.name}
 											</div>
 											<div style={{ fontSize: '11px', color: colors.textDim, marginTop: '2px' }}>
-												{summary.openCount} open · {summary.runningCount} running · {summary.attentionCount} attention · {summary.doneCount} done
+												{summary.openCount} open · {summary.runningCount} running ·{' '}
+												{summary.attentionCount} attention · {summary.doneCount} done
 											</div>
 										</div>
 										<ArrowUpRight size={14} color={colors.textDim} style={{ flexShrink: 0 }} />
@@ -1123,140 +1247,178 @@ export function MobileKanbanPanel({
 					)}
 
 					{isLoading && (
-						<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '24px 0', color: colors.textDim, fontSize: '13px' }}>
+						<div
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								justifyContent: 'center',
+								gap: '8px',
+								padding: '24px 0',
+								color: colors.textDim,
+								fontSize: '13px',
+							}}
+						>
 							<Loader2 size={16} className="animate-spin" />
 							Loading kanban…
 						</div>
 					)}
 
 					{error && !isLoading && (
-						<div style={{ padding: '12px', borderRadius: '14px', color: colors.error, fontSize: '13px', background: `${colors.error}12`, border: `1px solid ${colors.error}24` }}>
+						<div
+							style={{
+								padding: '12px',
+								borderRadius: '14px',
+								color: colors.error,
+								fontSize: '13px',
+								background: `${colors.error}12`,
+								border: `1px solid ${colors.error}24`,
+							}}
+						>
 							{error}
 						</div>
 					)}
 
 					{/* Workspace view: single active lane (board tab) */}
-					{!isLoading && scope.type === 'workspace' && workspaceTab === 'board' && (() => {
-						const activeLane = laneGroups[activeLaneIndex];
-						if (!activeLane) return null;
-						const { lane, tasks: laneTasks, statusCounts } = activeLane;
-						const subStatusChips = Object.entries(statusCounts)
-							.map(([s, c]) => `${c} ${MOBILE_CONDUCTOR_STATUS_LABELS[s as ConductorTaskStatus]}`)
-							.join(' · ');
+					{!isLoading &&
+						scope.type === 'workspace' &&
+						workspaceTab === 'board' &&
+						(() => {
+							const activeLane = laneGroups[activeLaneIndex];
+							if (!activeLane) return null;
+							const { lane, tasks: laneTasks, statusCounts } = activeLane;
+							const subStatusChips = Object.entries(statusCounts)
+								.map(([s, c]) => `${c} ${MOBILE_CONDUCTOR_STATUS_LABELS[s as ConductorTaskStatus]}`)
+								.join(' · ');
 
-						return (
-							<>
-								{/* Sub-status summary for multi-status lanes */}
-								{lane.statuses.length > 1 && subStatusChips && (
-									<div style={{ fontSize: '11px', color: colors.textDim, padding: '0 2px' }}>
-										{subStatusChips}
-									</div>
-								)}
+							return (
+								<>
+									{/* Sub-status summary for multi-status lanes */}
+									{lane.statuses.length > 1 && subStatusChips && (
+										<div style={{ fontSize: '11px', color: colors.textDim, padding: '0 2px' }}>
+											{subStatusChips}
+										</div>
+									)}
 
-								{laneTasks.length === 0 ? (
-									<div
-										style={{
-											padding: '32px 16px',
-											textAlign: 'center',
-											fontSize: '13px',
-											color: colors.textDim,
-											lineHeight: 1.5,
-										}}
-									>
-										No tasks in {lane.label.toLowerCase()}.
-									</div>
-								) : (
-									laneTasks.map((task) => {
-										const meta = taskCardMetaById.get(task.id);
-										const taskProgress = meta?.progress ?? {
-											totalSubtasks: 0,
-											completedSubtasks: 0,
-											openSubtasks: 0,
-											completionRatio: 0,
-										};
-											const rolledUpStatus = getConductorTaskRollupStatus(task, childTaskMap, runs);
-											const statusTone = PASTEL_STATUS_TONES[rolledUpStatus] ?? PASTEL_STATUS_TONES.draft;
-											const proofDisplayState = getCompletionProofDisplayState(task, rolledUpStatus);
+									{laneTasks.length === 0 ? (
+										<div
+											style={{
+												padding: '32px 16px',
+												textAlign: 'center',
+												fontSize: '13px',
+												color: colors.textDim,
+												lineHeight: 1.5,
+											}}
+										>
+											No tasks in {lane.label.toLowerCase()}.
+										</div>
+									) : (
+										laneTasks.map((task) => {
+											const meta = taskCardMetaById.get(task.id);
+											const taskProgress = meta?.progress ?? {
+												totalSubtasks: 0,
+												completedSubtasks: 0,
+												openSubtasks: 0,
+												completionRatio: 0,
+											};
+											const rolledUpStatus = getConductorTaskRollupStatus(
+												task,
+												childTaskMap,
+												runs,
+												MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+											);
+											const statusTone =
+												PASTEL_STATUS_TONES[rolledUpStatus] ?? PASTEL_STATUS_TONES.draft;
+											const proofDisplayState = getCompletionProofDisplayState(
+												task,
+												rolledUpStatus
+											);
 											const attentionMessage =
 												meta?.operatorAttentionMessage ?? meta?.firstFollowUpTitle ?? null;
-										const needsAttention =
-											meta?.visibleAttention?.attentionRequest.status === 'open' ||
-											(rolledUpStatus === 'needs_revision' && Boolean(meta?.firstFollowUpTitle));
-										const secondaryText = needsAttention
-											? attentionMessage || 'Agents are handling review changes.'
-											: taskProgress.totalSubtasks > 0
-												? `${taskProgress.completedSubtasks}/${taskProgress.totalSubtasks} subtasks complete`
-												: task.description || null;
-										return (
-											<div
-												key={task.id}
-												role="button"
-												tabIndex={0}
-												onClick={() => handleTaskOpen(task)}
-												onKeyDown={(event) => {
-													if (event.key === 'Enter' || event.key === ' ') {
-														event.preventDefault();
-														handleTaskOpen(task);
-													}
-												}}
-												style={{
-													...taskCardStyle,
-													borderLeft: `3px solid ${statusTone.fg}`,
-												}}
-											>
-												<div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minWidth: 0 }}>
+											const needsAttention =
+												meta?.visibleAttention?.attentionRequest.status === 'open' ||
+												(rolledUpStatus === 'needs_revision' && Boolean(meta?.firstFollowUpTitle));
+											const secondaryText = needsAttention
+												? attentionMessage || 'Agents are handling review changes.'
+												: taskProgress.totalSubtasks > 0
+													? `${taskProgress.completedSubtasks}/${taskProgress.totalSubtasks} subtasks complete`
+													: task.description || null;
+											return (
+												<div
+													key={task.id}
+													role="button"
+													tabIndex={0}
+													onClick={() => handleTaskOpen(task)}
+													onKeyDown={(event) => {
+														if (event.key === 'Enter' || event.key === ' ') {
+															event.preventDefault();
+															handleTaskOpen(task);
+														}
+													}}
+													style={{
+														...taskCardStyle,
+														borderLeft: `3px solid ${statusTone.fg}`,
+													}}
+												>
 													<div
 														style={{
-															display: 'grid',
-															gridTemplateColumns: 'minmax(0, 1fr) auto',
-															alignItems: 'start',
-															columnGap: '10px',
+															display: 'flex',
+															flexDirection: 'column',
+															gap: '8px',
+															minWidth: 0,
 														}}
 													>
 														<div
 															style={{
-																fontSize: '13px',
-																fontWeight: 700,
-																color: colors.textMain,
-																minWidth: 0,
-																lineHeight: 1.35,
-																display: '-webkit-box',
-																WebkitLineClamp: 2,
-																WebkitBoxOrient: 'vertical',
-																overflow: 'hidden',
-																wordBreak: 'break-word',
+																display: 'grid',
+																gridTemplateColumns: 'minmax(0, 1fr) auto',
+																alignItems: 'start',
+																columnGap: '10px',
 															}}
 														>
-															{task.title}
+															<div
+																style={{
+																	fontSize: '13px',
+																	fontWeight: 700,
+																	color: colors.textMain,
+																	minWidth: 0,
+																	lineHeight: 1.35,
+																	display: '-webkit-box',
+																	WebkitLineClamp: 2,
+																	WebkitBoxOrient: 'vertical',
+																	overflow: 'hidden',
+																	wordBreak: 'break-word',
+																}}
+															>
+																{task.title}
+															</div>
+															<div
+																style={{
+																	padding: '4px 8px',
+																	borderRadius: '999px',
+																	background: 'rgba(255,255,255,0.08)',
+																	fontSize: '11px',
+																	fontWeight: 700,
+																	color: colors.textDim,
+																	flexShrink: 0,
+																	marginTop: '1px',
+																	alignSelf: 'start',
+																}}
+															>
+																{MOBILE_CONDUCTOR_PRIORITY_LABELS[task.priority]}
+															</div>
 														</div>
-														<div
-															style={{
-																padding: '4px 8px',
-																borderRadius: '999px',
-																background: 'rgba(255,255,255,0.08)',
-																fontSize: '11px',
-																fontWeight: 700,
-																color: colors.textDim,
-																flexShrink: 0,
-																marginTop: '1px',
-																alignSelf: 'start',
-															}}
-														>
-															{MOBILE_CONDUCTOR_PRIORITY_LABELS[task.priority]}
-														</div>
-													</div>
 														{secondaryText ? (
 															<div
-															style={{
-																fontSize: '11px',
-																color: needsAttention ? colors.warning : colors.textDim,
-																lineHeight: 1.4,
-																display: '-webkit-box',
-																WebkitLineClamp: 2,
-																WebkitBoxOrient: 'vertical',
-																overflow: 'hidden',
-																wordBreak: 'break-word',
-															}}
+																style={{
+																	fontSize: '11px',
+																	color: needsAttention ? colors.warning : colors.textDim,
+																	lineHeight: 1.4,
+																	display: '-webkit-box',
+																	WebkitLineClamp: 2,
+																	WebkitBoxOrient: 'vertical',
+																	overflow: 'hidden',
+																	wordBreak: 'break-word',
+																}}
 															>
 																{secondaryText}
 															</div>
@@ -1302,45 +1464,52 @@ export function MobileKanbanPanel({
 																) : null}
 															</div>
 														) : null}
-														<div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', paddingTop: '2px' }}>
-														{lane.statuses.length > 1 && (
+														<div
+															style={{
+																display: 'flex',
+																flexWrap: 'wrap',
+																gap: '6px',
+																paddingTop: '2px',
+															}}
+														>
+															{lane.statuses.length > 1 && (
+																<span
+																	style={{
+																		padding: '4px 8px',
+																		borderRadius: '999px',
+																		background: statusTone.bg,
+																		border: `1px solid ${statusTone.border}`,
+																		fontSize: '11px',
+																		fontWeight: 700,
+																		color: statusTone.fg,
+																	}}
+																>
+																	{MOBILE_CONDUCTOR_STATUS_LABELS[rolledUpStatus]}
+																</span>
+															)}
 															<span
 																style={{
 																	padding: '4px 8px',
 																	borderRadius: '999px',
-																	background: statusTone.bg,
-																	border: `1px solid ${statusTone.border}`,
+																	background: 'rgba(255,255,255,0.08)',
 																	fontSize: '11px',
-																	fontWeight: 700,
-																	color: statusTone.fg,
+																	fontWeight: 600,
+																	color: colors.textDim,
 																}}
 															>
-																{MOBILE_CONDUCTOR_STATUS_LABELS[rolledUpStatus]}
+																{meta?.updatedLabel || formatRelativeTime(task.updatedAt)}
 															</span>
-														)}
-														<span
-															style={{
-																padding: '4px 8px',
-																borderRadius: '999px',
-																background: 'rgba(255,255,255,0.08)',
-																fontSize: '11px',
-																fontWeight: 600,
-																color: colors.textDim,
-															}}
-														>
-															{meta?.updatedLabel || formatRelativeTime(task.updatedAt)}
-														</span>
+														</div>
 													</div>
 												</div>
-											</div>
-										);
-									})
-								)}
-							</>
-						);
-					})()}
+											);
+										})
+									)}
+								</>
+							);
+						})()}
 
-						{/* Workspace view: team tab */}
+					{/* Workspace view: team tab */}
 					{!isLoading && scope.type === 'workspace' && workspaceTab === 'team' && (
 						<>
 							<MobileTeamPanel
@@ -1392,7 +1561,9 @@ export function MobileKanbanPanel({
 						role="button"
 						tabIndex={-1}
 						onClick={handleCloseEditor}
-						onKeyDown={(e) => { if (e.key === 'Escape') handleCloseEditor(); }}
+						onKeyDown={(e) => {
+							if (e.key === 'Escape') handleCloseEditor();
+						}}
 						style={{
 							position: 'fixed',
 							inset: 0,
@@ -1422,12 +1593,30 @@ export function MobileKanbanPanel({
 						>
 							{/* ── Header row: close + title + status pill ── */}
 							<div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
-								<button type="button" onClick={handleCloseEditor} style={{ ...buttonStyle, width: '34px', height: '34px', padding: 0, flexShrink: 0 }}>
+								<button
+									type="button"
+									onClick={handleCloseEditor}
+									style={{
+										...buttonStyle,
+										width: '34px',
+										height: '34px',
+										padding: 0,
+										flexShrink: 0,
+									}}
+								>
 									<X size={14} />
 								</button>
 								<div style={{ minWidth: 0, flex: 1 }}>
 									{isCreatingTask ? (
-										<div style={{ fontSize: '10px', fontWeight: 700, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+										<div
+											style={{
+												fontSize: '10px',
+												fontWeight: 700,
+												color: colors.textDim,
+												textTransform: 'uppercase',
+												letterSpacing: '0.06em',
+											}}
+										>
 											New Task
 										</div>
 									) : null}
@@ -1444,7 +1633,9 @@ export function MobileKanbanPanel({
 											wordBreak: 'break-word',
 										}}
 									>
-										{isCreatingTask ? activeGroup?.name || 'Workspace' : selectedTask?.title || 'Task'}
+										{isCreatingTask
+											? activeGroup?.name || 'Workspace'
+											: selectedTask?.title || 'Task'}
 									</div>
 								</div>
 								{selectedTask && selectedTaskRolledUpStatus && (
@@ -1455,9 +1646,13 @@ export function MobileKanbanPanel({
 											fontSize: '11px',
 											fontWeight: 700,
 											flexShrink: 0,
-											background: (PASTEL_STATUS_TONES[selectedTaskRolledUpStatus] ?? PASTEL_STATUS_TONES.draft).bg,
+											background: (
+												PASTEL_STATUS_TONES[selectedTaskRolledUpStatus] ?? PASTEL_STATUS_TONES.draft
+											).bg,
 											border: `1px solid ${(PASTEL_STATUS_TONES[selectedTaskRolledUpStatus] ?? PASTEL_STATUS_TONES.draft).border}`,
-											color: (PASTEL_STATUS_TONES[selectedTaskRolledUpStatus] ?? PASTEL_STATUS_TONES.draft).fg,
+											color: (
+												PASTEL_STATUS_TONES[selectedTaskRolledUpStatus] ?? PASTEL_STATUS_TONES.draft
+											).fg,
 										}}
 									>
 										{MOBILE_CONDUCTOR_STATUS_LABELS[selectedTaskRolledUpStatus]}
@@ -1506,7 +1701,13 @@ export function MobileKanbanPanel({
 											lineHeight: 1.5,
 										}}
 									/>
-									<div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '8px' }}>
+									<div
+										style={{
+											display: 'grid',
+											gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+											gap: '8px',
+										}}
+									>
 										<select
 											value={editorDraft.status}
 											onChange={(event) =>
@@ -1610,8 +1811,8 @@ export function MobileKanbanPanel({
 									) : null}
 
 									{/* Progress bar */}
-										{selectedTaskProgress.totalSubtasks > 0 ? (
-											<div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+									{selectedTaskProgress.totalSubtasks > 0 ? (
+										<div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
 											<div
 												style={{
 													height: '5px',
@@ -1630,189 +1831,198 @@ export function MobileKanbanPanel({
 												/>
 											</div>
 											<div style={{ fontSize: '11px', color: colors.textDim }}>
-												{selectedTaskProgress.completedSubtasks}/{selectedTaskProgress.totalSubtasks} subtasks done
+												{selectedTaskProgress.completedSubtasks}/
+												{selectedTaskProgress.totalSubtasks} subtasks done
 												{selectedTaskProgress.openSubtasks > 0
 													? ` \u00b7 ${selectedTaskProgress.openSubtasks} open`
 													: ''}
 											</div>
-											</div>
-										) : null}
+										</div>
+									) : null}
 
-										{selectedTaskProofDisplayState ? (
+									{selectedTaskProofDisplayState ? (
+										<div
+											style={{
+												padding: '12px',
+												borderRadius: '16px',
+												background: `${proofToneByKey[selectedTaskProofDisplayState.tone]}10`,
+												border: `1px solid ${proofToneByKey[selectedTaskProofDisplayState.tone]}22`,
+												display: 'flex',
+												flexDirection: 'column',
+												gap: '10px',
+											}}
+										>
 											<div
 												style={{
-													padding: '12px',
-													borderRadius: '16px',
-													background: `${proofToneByKey[selectedTaskProofDisplayState.tone]}10`,
-													border: `1px solid ${proofToneByKey[selectedTaskProofDisplayState.tone]}22`,
 													display: 'flex',
-													flexDirection: 'column',
+													alignItems: 'flex-start',
+													justifyContent: 'space-between',
 													gap: '10px',
 												}}
 											>
-												<div
-													style={{
-														display: 'flex',
-														alignItems: 'flex-start',
-														justifyContent: 'space-between',
-														gap: '10px',
-													}}
-												>
-													<div style={{ minWidth: 0 }}>
-														<div
-															style={{
-																fontSize: '11px',
-																fontWeight: 700,
-																color: colors.textDim,
-																textTransform: 'uppercase',
-																letterSpacing: '0.06em',
-															}}
-														>
-															Completion Proof
-														</div>
-														<div
-															style={{
-																fontSize: '12px',
-																fontWeight: 700,
-																color: colors.textMain,
-																marginTop: '4px',
-															}}
-														>
-															{selectedTaskProofDisplayState.summary}
-														</div>
-													</div>
-													<span
-														style={{
-															padding: '4px 8px',
-															borderRadius: '999px',
-															background: `${proofToneByKey[selectedTaskProofDisplayState.tone]}14`,
-															border: `1px solid ${proofToneByKey[selectedTaskProofDisplayState.tone]}28`,
-															fontSize: '10px',
-															fontWeight: 700,
-															color: proofToneByKey[selectedTaskProofDisplayState.tone],
-															whiteSpace: 'nowrap',
-															flexShrink: 0,
-														}}
-													>
-														{selectedTaskProofDisplayState.label}
-													</span>
-												</div>
-												<div style={{ fontSize: '12px', color: colors.textDim, lineHeight: 1.45 }}>
-													{getCompletionProofRequirementSummary(selectedTask)}
-													{selectedTask.completionProof?.capturedAt
-														? ` Captured ${formatRelativeTime(selectedTask.completionProof.capturedAt)}.`
-														: ''}
-													{selectedTask.completionProof?.approvedAt
-														? ` Approved ${formatRelativeTime(selectedTask.completionProof.approvedAt)}.`
-														: ''}
-												</div>
-												{selectedTaskProofDemo ? (
-													<button
-														type="button"
-														onClick={() => onOpenDemo?.(selectedTaskProofDemo.demoId)}
-														style={{
-															padding: '12px',
-															borderRadius: '18px',
-															border: `1px solid ${colors.border}`,
-															background: `${colors.bgMain}cc`,
-															display: 'flex',
-															flexDirection: 'column',
-															gap: '10px',
-															textAlign: 'left',
-														}}
-													>
-														{selectedTaskProofPosterUrl ? (
-															<img
-																src={selectedTaskProofPosterUrl}
-																alt={selectedTaskProofDemo.title}
-																style={{
-																	width: '100%',
-																	borderRadius: '14px',
-																	border: `1px solid ${colors.border}`,
-																	display: 'block',
-																}}
-															/>
-														) : null}
-														<div style={{ fontSize: '15px', fontWeight: 700, color: colors.textMain }}>
-															{selectedTaskProofDemo.title}
-														</div>
-														{selectedTaskProofDemo.summary ? (
-															<div style={{ fontSize: '13px', color: colors.textDim }}>
-																{selectedTaskProofDemo.summary}
-															</div>
-														) : null}
-														<div
-															style={{
-																display: 'flex',
-																flexWrap: 'wrap',
-																gap: '8px',
-																fontSize: '12px',
-																color: colors.textDim,
-															}}
-														>
-															<span>{selectedTaskProofDemo.stepCount} steps</span>
-															{selectedTaskProofDemo.durationMs ? (
-																<span>{Math.round(selectedTaskProofDemo.durationMs / 1000)}s</span>
-															) : null}
-															<span>{selectedTaskProofDemo.status}</span>
-															<span>{COMPLETION_PROOF_STATUS_LABELS[selectedTaskProofDisplayState.status]}</span>
-														</div>
-													</button>
-												) : selectedTask.completionProof?.demoId ? (
+												<div style={{ minWidth: 0 }}>
 													<div
 														style={{
-															padding: '12px',
-															borderRadius: '14px',
-															background: 'rgba(255,255,255,0.05)',
-															border: '1px solid rgba(255,255,255,0.08)',
-															fontSize: '12px',
+															fontSize: '11px',
+															fontWeight: 700,
 															color: colors.textDim,
-															display: 'flex',
-															alignItems: 'center',
-															gap: '8px',
+															textTransform: 'uppercase',
+															letterSpacing: '0.06em',
 														}}
 													>
-														<Loader2 size={14} className="animate-spin" />
-														Loading proof preview…
+														Completion Proof
 													</div>
-												) : null}
-												<div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-													{selectedTask.completionProof?.demoId && onOpenDemo ? (
-														<button
-															type="button"
-															onClick={() => onOpenDemo(selectedTask.completionProof!.demoId!)}
-															style={{
-																...buttonStyle,
-																background: 'rgba(255,255,255,0.06)',
-																border: '1px solid rgba(255,255,255,0.10)',
-																color: colors.textMain,
-															}}
-														>
-															<PlayCircle size={14} />
-															Review proof
-														</button>
-													) : null}
-													{selectedTaskProofDisplayState.status === 'captured' ? (
-														<button
-															type="button"
-															onClick={() => void handleApproveCompletionProof()}
-															disabled={isSaving}
-															style={{
-																...buttonStyle,
-																background: `${colors.success}16`,
-																border: `1px solid ${colors.success}2c`,
-																color: colors.success,
-															}}
-														>
-															{isSaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-															Approve proof
-														</button>
-													) : null}
+													<div
+														style={{
+															fontSize: '12px',
+															fontWeight: 700,
+															color: colors.textMain,
+															marginTop: '4px',
+														}}
+													>
+														{selectedTaskProofDisplayState.summary}
+													</div>
 												</div>
+												<span
+													style={{
+														padding: '4px 8px',
+														borderRadius: '999px',
+														background: `${proofToneByKey[selectedTaskProofDisplayState.tone]}14`,
+														border: `1px solid ${proofToneByKey[selectedTaskProofDisplayState.tone]}28`,
+														fontSize: '10px',
+														fontWeight: 700,
+														color: proofToneByKey[selectedTaskProofDisplayState.tone],
+														whiteSpace: 'nowrap',
+														flexShrink: 0,
+													}}
+												>
+													{selectedTaskProofDisplayState.label}
+												</span>
 											</div>
-										) : null}
+											<div style={{ fontSize: '12px', color: colors.textDim, lineHeight: 1.45 }}>
+												{getCompletionProofRequirementSummary(selectedTask)}
+												{selectedTask.completionProof?.capturedAt
+													? ` Captured ${formatRelativeTime(selectedTask.completionProof.capturedAt)}.`
+													: ''}
+												{selectedTask.completionProof?.approvedAt
+													? ` Approved ${formatRelativeTime(selectedTask.completionProof.approvedAt)}.`
+													: ''}
+											</div>
+											{selectedTaskProofDemo ? (
+												<button
+													type="button"
+													onClick={() => onOpenDemo?.(selectedTaskProofDemo.demoId)}
+													style={{
+														padding: '12px',
+														borderRadius: '18px',
+														border: `1px solid ${colors.border}`,
+														background: `${colors.bgMain}cc`,
+														display: 'flex',
+														flexDirection: 'column',
+														gap: '10px',
+														textAlign: 'left',
+													}}
+												>
+													{selectedTaskProofPosterUrl ? (
+														<img
+															src={selectedTaskProofPosterUrl}
+															alt={selectedTaskProofDemo.title}
+															style={{
+																width: '100%',
+																borderRadius: '14px',
+																border: `1px solid ${colors.border}`,
+																display: 'block',
+															}}
+														/>
+													) : null}
+													<div
+														style={{ fontSize: '15px', fontWeight: 700, color: colors.textMain }}
+													>
+														{selectedTaskProofDemo.title}
+													</div>
+													{selectedTaskProofDemo.summary ? (
+														<div style={{ fontSize: '13px', color: colors.textDim }}>
+															{selectedTaskProofDemo.summary}
+														</div>
+													) : null}
+													<div
+														style={{
+															display: 'flex',
+															flexWrap: 'wrap',
+															gap: '8px',
+															fontSize: '12px',
+															color: colors.textDim,
+														}}
+													>
+														<span>{selectedTaskProofDemo.stepCount} steps</span>
+														{selectedTaskProofDemo.durationMs ? (
+															<span>{Math.round(selectedTaskProofDemo.durationMs / 1000)}s</span>
+														) : null}
+														<span>{selectedTaskProofDemo.status}</span>
+														<span>
+															{COMPLETION_PROOF_STATUS_LABELS[selectedTaskProofDisplayState.status]}
+														</span>
+													</div>
+												</button>
+											) : selectedTask.completionProof?.demoId ? (
+												<div
+													style={{
+														padding: '12px',
+														borderRadius: '14px',
+														background: 'rgba(255,255,255,0.05)',
+														border: '1px solid rgba(255,255,255,0.08)',
+														fontSize: '12px',
+														color: colors.textDim,
+														display: 'flex',
+														alignItems: 'center',
+														gap: '8px',
+													}}
+												>
+													<Loader2 size={14} className="animate-spin" />
+													Loading proof preview…
+												</div>
+											) : null}
+											<div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+												{selectedTask.completionProof?.demoId && onOpenDemo ? (
+													<button
+														type="button"
+														onClick={() => onOpenDemo(selectedTask.completionProof!.demoId!)}
+														style={{
+															...buttonStyle,
+															background: 'rgba(255,255,255,0.06)',
+															border: '1px solid rgba(255,255,255,0.10)',
+															color: colors.textMain,
+														}}
+													>
+														<PlayCircle size={14} />
+														Review proof
+													</button>
+												) : null}
+												{selectedTaskProofDisplayState.status === 'captured' ? (
+													<button
+														type="button"
+														onClick={() => void handleApproveCompletionProof()}
+														disabled={isSaving}
+														style={{
+															...buttonStyle,
+															background: `${colors.success}16`,
+															border: `1px solid ${colors.success}2c`,
+															color: colors.success,
+														}}
+													>
+														{isSaving ? (
+															<Loader2 size={14} className="animate-spin" />
+														) : (
+															<CheckCircle2 size={14} />
+														)}
+														Approve proof
+													</button>
+												) : null}
+											</div>
+										</div>
+									) : null}
 
-										{selectedTaskQaFailureState?.isQuarantined ? (
+									{selectedTaskQaFailureState?.isQuarantined ? (
 										<div
 											style={{
 												padding: '12px',
@@ -1828,7 +2038,10 @@ export function MobileKanbanPanel({
 												QA paused for this task
 											</div>
 											<div style={{ fontSize: '12px', color: colors.textMain, lineHeight: 1.45 }}>
-												Conductor stopped auto-retrying QA after {selectedTaskQaFailureState.malformedFailureCount} malformed reviewer response{selectedTaskQaFailureState.malformedFailureCount === 1 ? '' : 's'} so other ready work can continue.
+												Conductor stopped auto-retrying QA after{' '}
+												{selectedTaskQaFailureState.malformedFailureCount} malformed reviewer
+												response{selectedTaskQaFailureState.malformedFailureCount === 1 ? '' : 's'}{' '}
+												so other ready work can continue.
 											</div>
 											{selectedTaskQaFailureState.lastFailureEvent?.message ? (
 												<div style={{ fontSize: '12px', color: colors.textDim, lineHeight: 1.45 }}>
@@ -1838,11 +2051,16 @@ export function MobileKanbanPanel({
 										</div>
 									) : null}
 
-										{((selectedTaskEffectiveAttention?.status === 'open' ||
-											(selectedTaskOpenFollowUps.length > 0 &&
-												(selectedTask?.status === 'needs_revision' ||
-													isConductorTaskAgentRevision(selectedTask, childTaskMap, runs)))) &&
-											!(selectedTaskProofDisplayState && selectedTask?.status === 'needs_proof')) ? (
+									{(selectedTaskEffectiveAttention?.status === 'open' ||
+										(selectedTaskOpenFollowUps.length > 0 &&
+											(selectedTask?.status === 'needs_revision' ||
+												isConductorTaskAgentRevision(
+													selectedTask,
+													childTaskMap,
+													runs,
+													MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+												)))) &&
+									!(selectedTaskProofDisplayState && selectedTask?.status === 'needs_proof') ? (
 										<div
 											style={{
 												padding: '12px',
@@ -1914,11 +2132,23 @@ export function MobileKanbanPanel({
 																gap: '6px',
 															}}
 														>
-															<div style={{ fontSize: '12px', fontWeight: 700, color: colors.textMain }}>
+															<div
+																style={{
+																	fontSize: '12px',
+																	fontWeight: 700,
+																	color: colors.textMain,
+																}}
+															>
 																{followUpTask.title}
 															</div>
 															{followUpTask.description ? (
-																<div style={{ fontSize: '11px', color: colors.textDim, lineHeight: 1.45 }}>
+																<div
+																	style={{
+																		fontSize: '11px',
+																		color: colors.textDim,
+																		lineHeight: 1.45,
+																	}}
+																>
 																	{followUpTask.description}
 																</div>
 															) : null}
@@ -1926,7 +2156,8 @@ export function MobileKanbanPanel({
 													))}
 												</div>
 											) : null}
-											{selectedTaskNeedsOperatorAttention && selectedTask?.status !== 'needs_proof' ? (
+											{selectedTaskNeedsOperatorAttention &&
+											selectedTask?.status !== 'needs_proof' ? (
 												<>
 													<textarea
 														value={
@@ -1937,7 +2168,8 @@ export function MobileKanbanPanel({
 														onChange={(event) =>
 															setResponseDrafts((previous) => ({
 																...previous,
-																[(selectedTaskAttentionTarget || selectedTask).id]: event.target.value,
+																[(selectedTaskAttentionTarget || selectedTask).id]:
+																	event.target.value,
 															}))
 														}
 														placeholder="Write the clarification or answer the next agent run should use."
@@ -1989,115 +2221,157 @@ export function MobileKanbanPanel({
 												Nested tasks waiting
 											</div>
 											<div style={{ fontSize: '12px', color: colors.textMain, lineHeight: 1.45 }}>
-												This parent task is paused because subtasks were sent back with requested changes.
+												This parent task is paused because subtasks were sent back with requested
+												changes.
 											</div>
-											{selectedTaskAttentionBlockers.map(({ task: blockerTask, attentionRequest, followUpTasks }) => (
-												<div
-													key={blockerTask.id}
-													style={{
-														...mutedSurface,
-														borderRadius: '14px',
-														padding: '12px',
-														display: 'flex',
-														flexDirection: 'column',
-														gap: '8px',
-													}}
-												>
-													<button
-														type="button"
-														onClick={() => handleTaskOpen(blockerTask)}
+											{selectedTaskAttentionBlockers.map(
+												({ task: blockerTask, attentionRequest, followUpTasks }) => (
+													<div
+														key={blockerTask.id}
 														style={{
-															padding: 0,
-															background: 'transparent',
-															border: 0,
-															textAlign: 'left',
+															...mutedSurface,
+															borderRadius: '14px',
+															padding: '12px',
 															display: 'flex',
-															justifyContent: 'space-between',
-															gap: '10px',
-															alignItems: 'flex-start',
-															color: colors.textMain,
+															flexDirection: 'column',
+															gap: '8px',
 														}}
 													>
-														<span style={{ fontSize: '12px', fontWeight: 700 }}>{blockerTask.title}</span>
-														<span style={{ fontSize: '11px', color: colors.warning, flexShrink: 0 }}>
-															{MOBILE_CONDUCTOR_STATUS_LABELS[blockerTask.status]}
-														</span>
-													</button>
-													<div style={{ fontSize: '11px', color: colors.textDim, lineHeight: 1.45 }}>
-														{formatConductorOperatorMessage(attentionRequest?.requestedAction) ||
-															'This subtask is waiting for follow-up changes before it can continue.'}
-													</div>
-													{followUpTasks.length > 0 ? (
-														<div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-															<div
-																style={{
-																	fontSize: '11px',
-																	fontWeight: 700,
-																	color: colors.textDim,
-																	textTransform: 'uppercase',
-																	letterSpacing: '0.06em',
-																}}
+														<button
+															type="button"
+															onClick={() => handleTaskOpen(blockerTask)}
+															style={{
+																padding: 0,
+																background: 'transparent',
+																border: 0,
+																textAlign: 'left',
+																display: 'flex',
+																justifyContent: 'space-between',
+																gap: '10px',
+																alignItems: 'flex-start',
+																color: colors.textMain,
+															}}
+														>
+															<span style={{ fontSize: '12px', fontWeight: 700 }}>
+																{blockerTask.title}
+															</span>
+															<span
+																style={{ fontSize: '11px', color: colors.warning, flexShrink: 0 }}
 															>
-																Requested Changes
-															</div>
-															{followUpTasks.slice(0, 3).map((followUpTask) => (
-																<button
-																	key={followUpTask.id}
-																	type="button"
-																	onClick={() => handleTaskOpen(followUpTask)}
+																{MOBILE_CONDUCTOR_STATUS_LABELS[blockerTask.status]}
+															</span>
+														</button>
+														<div
+															style={{ fontSize: '11px', color: colors.textDim, lineHeight: 1.45 }}
+														>
+															{formatConductorOperatorMessage(attentionRequest?.requestedAction) ||
+																'This subtask is waiting for follow-up changes before it can continue.'}
+														</div>
+														{followUpTasks.length > 0 ? (
+															<div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+																<div
 																	style={{
-																		...mutedSurface,
-																		borderRadius: '12px',
-																		padding: '10px',
-																		textAlign: 'left',
-																		display: 'flex',
-																		flexDirection: 'column',
-																		gap: '4px',
+																		fontSize: '11px',
+																		fontWeight: 700,
+																		color: colors.textDim,
+																		textTransform: 'uppercase',
+																		letterSpacing: '0.06em',
 																	}}
 																>
-																	<div style={{ fontSize: '12px', fontWeight: 700, color: colors.textMain }}>
-																		{followUpTask.title}
-																	</div>
-																	{followUpTask.description ? (
-																		<div style={{ fontSize: '11px', color: colors.textDim, lineHeight: 1.45 }}>
-																			{followUpTask.description}
-																		</div>
-																	) : null}
-																</button>
-															))}
-															{followUpTasks.length > 3 ? (
-																<div style={{ fontSize: '11px', color: colors.textDim }}>
-																	+{followUpTasks.length - 3} more requested change{followUpTasks.length - 3 === 1 ? '' : 's'}
+																	Requested Changes
 																</div>
-															) : null}
-														</div>
-													) : null}
-												</div>
-											))}
+																{followUpTasks.slice(0, 3).map((followUpTask) => (
+																	<button
+																		key={followUpTask.id}
+																		type="button"
+																		onClick={() => handleTaskOpen(followUpTask)}
+																		style={{
+																			...mutedSurface,
+																			borderRadius: '12px',
+																			padding: '10px',
+																			textAlign: 'left',
+																			display: 'flex',
+																			flexDirection: 'column',
+																			gap: '4px',
+																		}}
+																	>
+																		<div
+																			style={{
+																				fontSize: '12px',
+																				fontWeight: 700,
+																				color: colors.textMain,
+																			}}
+																		>
+																			{followUpTask.title}
+																		</div>
+																		{followUpTask.description ? (
+																			<div
+																				style={{
+																					fontSize: '11px',
+																					color: colors.textDim,
+																					lineHeight: 1.45,
+																				}}
+																			>
+																				{followUpTask.description}
+																			</div>
+																		) : null}
+																	</button>
+																))}
+																{followUpTasks.length > 3 ? (
+																	<div style={{ fontSize: '11px', color: colors.textDim }}>
+																		+{followUpTasks.length - 3} more requested change
+																		{followUpTasks.length - 3 === 1 ? '' : 's'}
+																	</div>
+																) : null}
+															</div>
+														) : null}
+													</div>
+												)
+											)}
 										</div>
 									) : null}
 
 									{getTaskAgentLinks(selectedTask).length > 0 ? (
 										<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-											<div style={{ fontSize: '11px', fontWeight: 700, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+											<div
+												style={{
+													fontSize: '11px',
+													fontWeight: 700,
+													color: colors.textDim,
+													textTransform: 'uppercase',
+													letterSpacing: '0.06em',
+												}}
+											>
 												Agents
 											</div>
 											<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
 												{getTaskAgentLinks(selectedTask).map((entry) => {
-													const roleTones: Record<string, { bg: string; border: string; fg: string }> = {
+													const roleTones: Record<
+														string,
+														{ bg: string; border: string; fg: string }
+													> = {
 														planner: { bg: '#60a5fa1a', border: '#60a5fa3d', fg: '#60a5fa' },
 														worker: { bg: '#a78bfa1a', border: '#a78bfa3d', fg: '#a78bfa' },
 														reviewer: { bg: '#22d3ee1a', border: '#22d3ee3d', fg: '#22d3ee' },
 													};
 													const tone = roleTones[entry.role] ?? roleTones.worker;
 													const liveSession = sessions.find((s) => s.id === entry.sessionId);
-													const providerToolType = (liveSession?.toolType === 'terminal' ? 'claude-code' : liveSession?.toolType || 'claude-code') as ConductorProviderAgent;
-													const identity = resolveConductorRosterIdentity(providerToolType, entry.sessionName || entry.sessionId || '');
+													const providerToolType = (
+														liveSession?.toolType === 'terminal'
+															? 'claude-code'
+															: liveSession?.toolType || 'claude-code'
+													) as ConductorProviderAgent;
+													const identity = resolveConductorRosterIdentity(
+														providerToolType,
+														entry.sessionName || entry.sessionId || ''
+													);
 													return (
 														<button
 															key={`${entry.role}-${entry.sessionId}`}
 															type="button"
-															onClick={() => entry.sessionId && onOpenAgentSession?.(entry.sessionId)}
+															onClick={() =>
+																entry.sessionId && onOpenAgentSession?.(entry.sessionId)
+															}
 															disabled={!entry.sessionId || !onOpenAgentSession}
 															style={{
 																...buttonStyle,
@@ -2109,26 +2383,42 @@ export function MobileKanbanPanel({
 																gap: '8px',
 															}}
 														>
-															<span style={{
-																padding: '2px 8px',
-																borderRadius: '999px',
-																fontSize: '10px',
-																fontWeight: 700,
-																textTransform: 'uppercase',
-																letterSpacing: '0.04em',
-																background: tone.bg,
-																border: `1px solid ${tone.border}`,
-																color: tone.fg,
-																whiteSpace: 'nowrap',
-																flexShrink: 0,
-															}}>
+															<span
+																style={{
+																	padding: '2px 8px',
+																	borderRadius: '999px',
+																	fontSize: '10px',
+																	fontWeight: 700,
+																	textTransform: 'uppercase',
+																	letterSpacing: '0.04em',
+																	background: tone.bg,
+																	border: `1px solid ${tone.border}`,
+																	color: tone.fg,
+																	whiteSpace: 'nowrap',
+																	flexShrink: 0,
+																}}
+															>
 																{entry.role}
 															</span>
-															<span style={{ fontSize: '14px', flexShrink: 0 }}>{identity.emoji}</span>
-															<span style={{ fontWeight: 600, color: colors.textMain, fontSize: '12px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+															<span style={{ fontSize: '14px', flexShrink: 0 }}>
+																{identity.emoji}
+															</span>
+															<span
+																style={{
+																	fontWeight: 600,
+																	color: colors.textMain,
+																	fontSize: '12px',
+																	overflow: 'hidden',
+																	textOverflow: 'ellipsis',
+																	whiteSpace: 'nowrap',
+																}}
+															>
 																{identity.name}
 															</span>
-															<ArrowUpRight size={13} style={{ marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }} />
+															<ArrowUpRight
+																size={13}
+																style={{ marginLeft: 'auto', flexShrink: 0, opacity: 0.5 }}
+															/>
 														</button>
 													);
 												})}
@@ -2138,7 +2428,15 @@ export function MobileKanbanPanel({
 
 									{selectedTaskChildren.length > 0 ? (
 										<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-											<div style={{ fontSize: '11px', fontWeight: 700, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+											<div
+												style={{
+													fontSize: '11px',
+													fontWeight: 700,
+													color: colors.textDim,
+													textTransform: 'uppercase',
+													letterSpacing: '0.06em',
+												}}
+											>
 												Nested Tasks
 											</div>
 											<div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -2159,13 +2457,25 @@ export function MobileKanbanPanel({
 														}}
 													>
 														<div style={{ minWidth: 0, flex: 1 }}>
-															<div style={{ fontSize: '12px', fontWeight: 700, color: colors.textMain }}>
+															<div
+																style={{
+																	fontSize: '12px',
+																	fontWeight: 700,
+																	color: colors.textMain,
+																}}
+															>
 																{childTask.title}
 															</div>
 														</div>
 														{(() => {
-															const childRolledUp = getConductorTaskRollupStatus(childTask, childTaskMap, runs);
-															const childTone = PASTEL_STATUS_TONES[childRolledUp] ?? PASTEL_STATUS_TONES.draft;
+															const childRolledUp = getConductorTaskRollupStatus(
+																childTask,
+																childTaskMap,
+																runs,
+																MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+															);
+															const childTone =
+																PASTEL_STATUS_TONES[childRolledUp] ?? PASTEL_STATUS_TONES.draft;
 															return (
 																<span
 																	style={{
@@ -2184,7 +2494,11 @@ export function MobileKanbanPanel({
 																</span>
 															);
 														})()}
-														<ArrowUpRight size={14} color={colors.textDim} style={{ flexShrink: 0 }} />
+														<ArrowUpRight
+															size={14}
+															color={colors.textDim}
+															style={{ flexShrink: 0 }}
+														/>
 													</button>
 												))}
 											</div>
@@ -2203,7 +2517,15 @@ export function MobileKanbanPanel({
 												...mutedSurface,
 											}}
 										>
-											<div style={{ fontSize: '11px', fontWeight: 700, color: colors.textDim, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+											<div
+												style={{
+													fontSize: '11px',
+													fontWeight: 700,
+													color: colors.textDim,
+													textTransform: 'uppercase',
+													letterSpacing: '0.06em',
+												}}
+											>
 												Edit Task
 											</div>
 											<input
@@ -2244,7 +2566,13 @@ export function MobileKanbanPanel({
 													lineHeight: 1.5,
 												}}
 											/>
-											<div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px' }}>
+											<div
+												style={{
+													display: 'grid',
+													gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+													gap: '6px',
+												}}
+											>
 												<select
 													value={editorDraft.status}
 													onChange={(event) =>
@@ -2309,7 +2637,10 @@ export function MobileKanbanPanel({
 												</button>
 												<button
 													type="button"
-													onClick={() => { void handleSave(); setIsEditingTask(false); }}
+													onClick={() => {
+														void handleSave();
+														setIsEditingTask(false);
+													}}
 													disabled={!editorDraft.title.trim() || isSaving}
 													style={{
 														...buttonStyle,

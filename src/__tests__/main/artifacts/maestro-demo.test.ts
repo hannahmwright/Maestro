@@ -37,6 +37,47 @@ describe('maestro-demo CLI', () => {
 		outputDir: tempDir,
 	});
 
+	async function writePwcliStub(): Promise<string> {
+		const stubPath = path.join(tempDir, 'pwcli-stub.sh');
+		await fs.writeFile(
+			stubPath,
+			`#!/bin/sh
+cmd="$1"
+shift
+filename=""
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--filename)
+			filename="$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+	esac
+done
+
+case "$cmd" in
+	video-start)
+		exit 0
+		;;
+	screenshot|video-stop)
+		mkdir -p "$(dirname "$filename")"
+		printf 'artifact' > "$filename"
+		exit 0
+		;;
+	*)
+		exit 1
+		;;
+esac
+`,
+			'utf8'
+		);
+		await fs.chmod(stubPath, 0o755);
+		process.env.PWCLI = stubPath;
+		return stubPath;
+	}
+
 	async function writeContext(overrides: Record<string, unknown> = {}): Promise<void> {
 		await fs.writeFile(
 			contextFilePath,
@@ -205,19 +246,31 @@ await page.evaluate('() => (location.href)');
 	});
 
 	it('emits a completed event after a verified artifact is attached', async () => {
+		await writePwcliStub();
+
 		expect(await runCli(['begin'])).toBe(0);
 		expect(
 			await runCli([
-				'attach-image',
-				'--path',
-				path.join(tempDir, 'demo.png'),
+				'step',
+				'--title',
+				'Example Products',
 				'--observed-url',
 				'https://example.com/products',
 				'--observed-title',
 				'Example Products',
 			])
 		).toBe(0);
-		expect(await runCli(['complete', '--summary', 'Done.'])).toBe(0);
+		expect(
+			await runCli([
+				'complete',
+				'--summary',
+				'Done.',
+				'--observed-url',
+				'https://example.com/products',
+				'--observed-title',
+				'Example Products',
+			])
+		).toBe(0);
 
 		const stdout = stdoutSpy.mock.calls.map((call) => String(call[0])).join('');
 		expect(stdout).toContain(MAESTRO_DEMO_EVENT_PREFIX);
@@ -225,27 +278,22 @@ await page.evaluate('() => (location.href)');
 		expect(stdout).toContain('"observedUrl":"https://example.com/products"');
 
 		const savedState = JSON.parse(await fs.readFile(stateFilePath, 'utf8'));
-		expect(savedState.artifactCount).toBe(1);
+		expect(savedState.artifactCount).toBe(2);
 		expect(savedState.imageCount).toBe(1);
+		expect(savedState.videoCount).toBe(1);
 	});
 
 	it('normalizes relative artifact paths before emitting demo events', async () => {
+		await writePwcliStub();
 		const originalCwd = process.cwd();
 		const workspaceDir = path.join(tempDir, 'workspace');
 		await fs.mkdir(workspaceDir, { recursive: true });
+		await writeContext({ outputDir: 'output/playwright' });
 		process.chdir(workspaceDir);
 
 		try {
 			expect(await runCli(['begin'])).toBe(0);
-			expect(
-				await runCli([
-					'step',
-					'--title',
-					'Relative path step',
-					'--path',
-					'output/playwright/example-com.png',
-				])
-			).toBe(0);
+			expect(await runCli(['step', '--title', 'Relative path step'])).toBe(0);
 		} finally {
 			process.chdir(originalCwd);
 		}
@@ -253,13 +301,18 @@ await page.evaluate('() => (location.href)');
 		const stdout = stdoutSpy.mock.calls.map((call) => String(call[0])).join('');
 		const stepLine = stdout
 			.split('\n')
-			.find((line) => line.startsWith(MAESTRO_DEMO_EVENT_PREFIX) && line.includes('"type":"step_created"'));
+			.find(
+				(line) =>
+					line.startsWith(MAESTRO_DEMO_EVENT_PREFIX) && line.includes('"type":"step_created"')
+			);
 		expect(stepLine).toBeTruthy();
-		const stepEvent = JSON.parse(
-			stepLine!.slice(MAESTRO_DEMO_EVENT_PREFIX.length).trim()
-		) as { path?: string };
+		const stepEvent = JSON.parse(stepLine!.slice(MAESTRO_DEMO_EVENT_PREFIX.length).trim()) as {
+			path?: string;
+		};
 		const workspaceRealpath = await fs.realpath(workspaceDir);
-		expect(stepEvent.path).toBe(path.join(workspaceRealpath, 'output/playwright/example-com.png'));
+		expect(stepEvent.path).toBe(
+			path.join(workspaceRealpath, 'output/playwright', '01-relative-path-step.png')
+		);
 	});
 
 	it('fails complete with a non-zero exit when no artifacts were captured', async () => {

@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 import type Store from 'electron-store';
+import fs from 'fs/promises';
 import type { ClaudeSessionOriginsData } from '../../../main/storage/claude-session-storage';
 import {
 	AgentSessionStorage,
@@ -15,6 +16,30 @@ import {
 	clearStorageRegistry,
 } from '../../../main/agents';
 import type { ToolType } from '../../../shared/types';
+
+const sessionStoragePaths = vi.hoisted(() => ({
+	homeDir: `/tmp/maestro-session-storage-home-${process.pid}`,
+	userDataDir: `/tmp/maestro-session-storage-user-data-${process.pid}`,
+}));
+
+vi.mock('os', async () => {
+	const actual = await vi.importActual<typeof import('os')>('os');
+	return {
+		...actual,
+		default: {
+			tmpdir: () => '/tmp',
+			homedir: () => sessionStoragePaths.homeDir,
+		},
+		homedir: () => sessionStoragePaths.homeDir,
+		tmpdir: () => '/tmp',
+	};
+});
+
+vi.mock('electron', () => ({
+	app: {
+		getPath: vi.fn(() => sessionStoragePaths.userDataDir),
+	},
+}));
 
 // Mock storage implementation for testing
 class MockSessionStorage implements AgentSessionStorage {
@@ -66,6 +91,17 @@ class MockSessionStorage implements AgentSessionStorage {
 }
 
 describe('agent-session-storage', () => {
+	beforeAll(async () => {
+		await fs.rm(sessionStoragePaths.homeDir, { recursive: true, force: true });
+		await fs.rm(sessionStoragePaths.userDataDir, { recursive: true, force: true });
+		await fs.mkdir(sessionStoragePaths.userDataDir, { recursive: true });
+	});
+
+	afterAll(async () => {
+		await fs.rm(sessionStoragePaths.homeDir, { recursive: true, force: true });
+		await fs.rm(sessionStoragePaths.userDataDir, { recursive: true, force: true });
+	});
+
 	beforeEach(() => {
 		clearStorageRegistry();
 	});

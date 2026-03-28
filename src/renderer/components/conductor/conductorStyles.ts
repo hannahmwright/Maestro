@@ -107,18 +107,21 @@ export function getGlassPillStyle(
 
 // ── Pastel status tones ─────────────────────────────────────────────
 
-export const PASTEL_STATUS_TONES: Record<ConductorTaskStatus, { fg: string; bg: string; border: string }> = {
-	draft:        { fg: '#b0b8c4', bg: '#b0b8c41a', border: '#b0b8c43d' },     // soft gray
-	planning:     { fg: '#a78bfa', bg: '#a78bfa1a', border: '#a78bfa3d' },     // lavender
-	ready:        { fg: '#60a5fa', bg: '#60a5fa1a', border: '#60a5fa3d' },     // sky blue
-	running:      { fg: '#818cf8', bg: '#818cf81a', border: '#818cf83d' },     // periwinkle
-	needs_revision: { fg: '#fbbf24', bg: '#fbbf241a', border: '#fbbf243d' },   // buttercup
-	needs_input:  { fg: '#fb7185', bg: '#fb71851a', border: '#fb71853d' },     // rose
-	needs_proof:  { fg: '#14b8a6', bg: '#14b8a61a', border: '#14b8a63d' },     // teal
-	blocked:      { fg: '#fb923c', bg: '#fb923c1a', border: '#fb923c3d' },     // peach
-	needs_review: { fg: '#22d3ee', bg: '#22d3ee1a', border: '#22d3ee3d' },     // aqua
-	cancelled:    { fg: '#94a3b8', bg: '#94a3b81a', border: '#94a3b83d' },     // slate
-	done:         { fg: '#22c55e', bg: '#22c55e1a', border: '#22c55e3d' },     // green
+export const PASTEL_STATUS_TONES: Record<
+	ConductorTaskStatus,
+	{ fg: string; bg: string; border: string }
+> = {
+	draft: { fg: '#b0b8c4', bg: '#b0b8c41a', border: '#b0b8c43d' }, // soft gray
+	planning: { fg: '#a78bfa', bg: '#a78bfa1a', border: '#a78bfa3d' }, // lavender
+	ready: { fg: '#60a5fa', bg: '#60a5fa1a', border: '#60a5fa3d' }, // sky blue
+	running: { fg: '#818cf8', bg: '#818cf81a', border: '#818cf83d' }, // periwinkle
+	needs_revision: { fg: '#fbbf24', bg: '#fbbf241a', border: '#fbbf243d' }, // buttercup
+	needs_input: { fg: '#fb7185', bg: '#fb71851a', border: '#fb71853d' }, // rose
+	needs_proof: { fg: '#14b8a6', bg: '#14b8a61a', border: '#14b8a63d' }, // teal
+	blocked: { fg: '#fb923c', bg: '#fb923c1a', border: '#fb923c3d' }, // peach
+	needs_review: { fg: '#22d3ee', bg: '#22d3ee1a', border: '#22d3ee3d' }, // aqua
+	cancelled: { fg: '#94a3b8', bg: '#94a3b81a', border: '#94a3b83d' }, // slate
+	done: { fg: '#22c55e', bg: '#22c55e1a', border: '#22c55e3d' }, // green
 };
 
 export function getTaskStatusTone(
@@ -162,7 +165,11 @@ export function getTaskPriorityTone(
 
 // ── Simpler aliases (used by ConductorHomePanel) ────────────────────
 
-export function getHomePanelStyle(theme: Theme, tint = 'rgba(255,255,255,0.06)', border = 'rgba(255,255,255,0.08)'): CSSProperties {
+export function getHomePanelStyle(
+	theme: Theme,
+	tint = 'rgba(255,255,255,0.06)',
+	border = 'rgba(255,255,255,0.08)'
+): CSSProperties {
 	return {
 		background: `linear-gradient(180deg, ${tint} 0%, rgba(255,255,255,0.02) 100%)`,
 		backgroundColor: theme.colors.bgSidebar,

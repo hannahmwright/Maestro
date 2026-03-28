@@ -32,16 +32,20 @@ export function evaluateConductorResourceGate(
 	snapshot?: ConductorResourceSnapshot | null
 ): ConductorResourceGateResult {
 	const cores = Math.max(1, snapshot?.cpuCount || navigator.hardwareConcurrency || 1);
-	const maxWorkers =
+	const preferredMaxWorkers =
 		profile === 'aggressive'
 			? Math.max(1, Math.min(4, Math.floor(cores / 2)))
 			: profile === 'balanced'
 				? Math.max(1, Math.min(2, Math.floor(cores / 2)))
 				: 1;
+	let maxWorkers = preferredMaxWorkers;
 
 	const freeMemoryMB = snapshot?.availableMemoryMB ?? snapshot?.freeMemoryMB ?? null;
 	const oneMinuteLoad = snapshot?.loadAverage?.[0] ?? null;
-	const minFreeMemoryMB = profile === 'conservative' ? 6144 : profile === 'balanced' ? 4096 : 3072;
+	const hardMinFreeMemoryMB = 512;
+	const preferredMinFreeMemoryMB =
+		profile === 'aggressive' ? 3072 : profile === 'balanced' ? 2048 : 1024;
+	const pressureNotes: string[] = [];
 
 	if (cores <= 1 && profile !== 'conservative') {
 		return {
@@ -52,24 +56,33 @@ export function evaluateConductorResourceGate(
 		};
 	}
 
-	if (freeMemoryMB !== null && freeMemoryMB < minFreeMemoryMB) {
+	if (freeMemoryMB !== null && freeMemoryMB < hardMinFreeMemoryMB) {
 		return {
 			allowed: false,
 			maxWorkers,
-			message: `Available memory is below the ${minFreeMemoryMB} MB threshold for the ${profile} profile.`,
+			message: `Available memory is below the ${hardMinFreeMemoryMB} MB floor for Conductor launches.`,
 		};
 	}
 
-	if (oneMinuteLoad !== null && oneMinuteLoad > cores * 1.25 && profile !== 'conservative') {
-		return {
-			allowed: false,
-			maxWorkers,
-			message:
-				'System load is currently high. Conductor is holding new work until the machine settles.',
-		};
+	if (freeMemoryMB !== null && freeMemoryMB < preferredMinFreeMemoryMB) {
+		maxWorkers = 1;
+		pressureNotes.push(
+			`Available memory is below the preferred ${preferredMinFreeMemoryMB} MB target for the ${profile} profile, so Conductor is limiting this run to one worker.`
+		);
 	}
 
-	return { allowed: true, maxWorkers };
+	if (oneMinuteLoad !== null && oneMinuteLoad > cores * 1.25 && maxWorkers > 1) {
+		maxWorkers = 1;
+		pressureNotes.push(
+			'System load is currently high, so Conductor is limiting this run to one worker until the machine settles.'
+		);
+	}
+
+	return {
+		allowed: true,
+		maxWorkers,
+		message: pressureNotes.length > 0 ? pressureNotes.join(' ') : undefined,
+	};
 }
 
 function normalizeScope(scopePath: string): string {

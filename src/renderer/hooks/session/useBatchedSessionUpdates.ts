@@ -16,6 +16,12 @@
 import { useRef, useCallback, useEffect, useMemo } from 'react';
 import type { Session, SessionState, UsageStats, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
+import {
+	appendConductorHelperText,
+	capConductorHelperLogs,
+	isConductorHelperSession,
+	truncateConductorHelperText,
+} from '../../services/conductorSessionLogPolicy';
 
 // Default flush interval in milliseconds (imperceptible to users)
 export const DEFAULT_BATCH_FLUSH_INTERVAL = 150;
@@ -158,6 +164,7 @@ export function useBatchedSessionUpdates(
 
 				anyChanged = true;
 				let updatedSession = { ...session };
+				const isConductorHelper = isConductorHelperSession(session);
 
 				// Apply log accumulations
 				if (acc.logAccumulators.size > 0) {
@@ -233,19 +240,26 @@ export function useBatchedSessionUpdates(
 									updatedLogs = [...existingLogs];
 									updatedLogs[updatedLogs.length - 1] = {
 										...lastLog,
-										text: lastLog.text + logData.data,
+										text: isConductorHelper
+											? appendConductorHelperText(lastLog.text, logData.data)
+											: lastLog.text + logData.data,
 									};
 								} else {
 									const newLog: LogEntry = {
 										id: generateId(),
 										timestamp: logData.timestamp,
 										source: logSource,
-										text: logData.data,
+										text: isConductorHelper
+											? truncateConductorHelperText(logData.data)
+											: logData.data,
 									};
 									updatedLogs = [...existingLogs, newLog];
 								}
 
-								return { ...tab, logs: updatedLogs };
+								return {
+									...tab,
+									logs: isConductorHelper ? capConductorHelperLogs(updatedLogs) : updatedLogs,
+								};
 							}),
 						};
 					}
@@ -262,14 +276,18 @@ export function useBatchedSessionUpdates(
 							if (shouldGroup) {
 								shellLogs[shellLogs.length - 1] = {
 									...lastLog,
-									text: lastLog.text + shellStdout,
+									text: isConductorHelper
+										? appendConductorHelperText(lastLog.text, shellStdout)
+										: lastLog.text + shellStdout,
 								};
 							} else {
 								shellLogs.push({
 									id: generateId(),
 									timestamp: shellStdoutTimestamp || Date.now(),
 									source: 'stdout',
-									text: shellStdout,
+									text: isConductorHelper
+										? truncateConductorHelperText(shellStdout)
+										: shellStdout,
 								});
 							}
 						}
@@ -282,19 +300,26 @@ export function useBatchedSessionUpdates(
 							if (shouldGroup) {
 								shellLogs[shellLogs.length - 1] = {
 									...lastLog,
-									text: lastLog.text + shellStderr,
+									text: isConductorHelper
+										? appendConductorHelperText(lastLog.text, shellStderr)
+										: lastLog.text + shellStderr,
 								};
 							} else {
 								shellLogs.push({
 									id: generateId(),
 									timestamp: shellStderrTimestamp || Date.now(),
 									source: 'stderr',
-									text: shellStderr,
+									text: isConductorHelper
+										? truncateConductorHelperText(shellStderr)
+										: shellStderr,
 								});
 							}
 						}
 
-						updatedSession = { ...updatedSession, shellLogs };
+						updatedSession = {
+							...updatedSession,
+							shellLogs: isConductorHelper ? capConductorHelperLogs(shellLogs) : shellLogs,
+						};
 					}
 				}
 

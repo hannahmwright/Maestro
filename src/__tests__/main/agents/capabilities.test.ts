@@ -258,8 +258,12 @@ describe('agent-capabilities', () => {
 				'supportsStreamJsonInput',
 				'supportsResultMessages',
 				'supportsModelSelection',
+				'supportsQueueWhileBusy',
+				'supportsLiveRuntime',
+				'supportsLiveRuntimeOverSsh',
 				'requiresPromptToStart',
 				'supportsThinkingDisplay',
+				'supportsTrueSteer',
 				'supportsContextMerge',
 				'supportsContextExport',
 			];

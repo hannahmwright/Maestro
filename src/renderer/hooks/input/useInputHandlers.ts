@@ -399,7 +399,11 @@ export function useInputHandlers(deps: UseInputHandlersDeps): UseInputHandlersRe
 	// useInputProcessing (processes and sends input)
 	// ====================================================================
 
-	const { processInput, queueInput, processInputRef: _hookProcessInputRef } = useInputProcessing({
+	const {
+		processInput,
+		queueInput,
+		processInputRef: _hookProcessInputRef,
+	} = useInputProcessing({
 		activeSession,
 		activeSessionId,
 		setSessions,

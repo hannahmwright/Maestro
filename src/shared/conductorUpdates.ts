@@ -110,7 +110,11 @@ function buildSummary(
 		case 'execution_started':
 			return { badge: 'Progress', summary: 'Started working through the next tasks.', detail };
 		case 'task_started':
-			return { badge: 'Assigned', summary: 'Assigned to a teammate.', detail: taskTitle ? undefined : detail };
+			return {
+				badge: 'Assigned',
+				summary: 'Assigned to a teammate.',
+				detail: taskTitle ? undefined : detail,
+			};
 		case 'task_completed':
 			return { badge: 'Progress', summary: 'Moved to QA.', detail: taskTitle ? undefined : detail };
 		case 'task_needs_revision':
@@ -156,7 +160,11 @@ function buildSummary(
 		case 'validation_failed':
 			return { badge: 'Validation', summary: 'Validation failed.', detail };
 		case 'cleanup_completed':
-			return { badge: 'Cleanup', summary: 'Cleaned up helper workspaces.', detail: taskTitle ? undefined : detail };
+			return {
+				badge: 'Cleanup',
+				summary: 'Cleaned up helper workspaces.',
+				detail: taskTitle ? undefined : detail,
+			};
 		case 'pr_created':
 			return { badge: 'PR', summary: 'Opened a PR.', detail };
 		default:

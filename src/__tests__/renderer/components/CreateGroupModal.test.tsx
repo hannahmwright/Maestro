@@ -1,8 +1,8 @@
 /**
  * Tests for CreateGroupModal component
  *
- * CreateGroupModal allows users to create new session groups with:
- * - Custom group name (uppercased on save)
+ * CreateGroupModal allows users to create new workspaces with:
+ * - Custom workspace name
  * - Custom emoji icon selection
  * - Layer stack integration for modal management
  * - Input focus management and keyboard navigation
@@ -120,13 +120,13 @@ describe('CreateGroupModal', () => {
 
 			const dialog = screen.getByRole('dialog');
 			expect(dialog).toHaveAttribute('aria-modal', 'true');
-			expect(dialog).toHaveAttribute('aria-label', 'Create New Group');
+			expect(dialog).toHaveAttribute('aria-label', 'Create New Workspace');
 		});
 
 		it('renders header with title', () => {
 			renderModal();
 
-			expect(screen.getByText('Create New Group')).toBeInTheDocument();
+			expect(screen.getByText('Create New Workspace')).toBeInTheDocument();
 		});
 
 		it('renders close button in header', () => {
@@ -141,10 +141,10 @@ describe('CreateGroupModal', () => {
 			expect(screen.getByText('Icon')).toBeInTheDocument();
 		});
 
-		it('renders Group Name label', () => {
+		it('renders Workspace Name label', () => {
 			renderModal();
 
-			expect(screen.getByText('Group Name')).toBeInTheDocument();
+			expect(screen.getByText('Workspace Name')).toBeInTheDocument();
 		});
 
 		it('renders emoji button with default emoji 📂', () => {
@@ -156,7 +156,7 @@ describe('CreateGroupModal', () => {
 		it('renders input with placeholder', () => {
 			renderModal();
 
-			expect(screen.getByPlaceholderText('Enter group name...')).toBeInTheDocument();
+			expect(screen.getByPlaceholderText('Enter workspace name...')).toBeInTheDocument();
 		});
 
 		it('renders Cancel button', () => {
@@ -217,7 +217,7 @@ describe('CreateGroupModal', () => {
 		it('focuses input after delay on mount', async () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 
 			// Advance timers to trigger focus
 			act(() => {
@@ -240,34 +240,34 @@ describe('CreateGroupModal', () => {
 		});
 	});
 
-	describe('Group name input', () => {
+	describe('Workspace name input', () => {
 		it('updates value on change', async () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
-			fireEvent.change(input, { target: { value: 'My New Group' } });
+			const input = screen.getByPlaceholderText('Enter workspace name...');
+			fireEvent.change(input, { target: { value: 'My New Workspace' } });
 
-			expect(input).toHaveValue('My New Group');
+			expect(input).toHaveValue('My New Workspace');
 		});
 
 		it('applies theme color to input text', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			expect(input).toHaveStyle({ color: theme.colors.textMain });
 		});
 
 		it('applies border color to input', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			expect(input).toHaveStyle({ borderColor: theme.colors.border });
 		});
 
 		it('triggers create on Enter key', async () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test Group' } });
 			fireEvent.keyDown(input, { key: 'Enter' });
 
@@ -278,7 +278,7 @@ describe('CreateGroupModal', () => {
 		it('does not create on Enter with empty name', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.keyDown(input, { key: 'Enter' });
 
 			expect(setGroups).not.toHaveBeenCalled();
@@ -288,7 +288,7 @@ describe('CreateGroupModal', () => {
 		it('does not create on other keys', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test' } });
 			fireEvent.keyDown(input, { key: 'a' });
 			fireEvent.keyDown(input, { key: 'Tab' });
@@ -300,7 +300,7 @@ describe('CreateGroupModal', () => {
 		it('prevents default on Enter key', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test' } });
 
 			const event = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true });
@@ -368,7 +368,7 @@ describe('CreateGroupModal', () => {
 		it('is disabled when name is only whitespace', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: '   ' } });
 
 			const createButton = screen.getByRole('button', { name: 'Create' });
@@ -378,7 +378,7 @@ describe('CreateGroupModal', () => {
 		it('is enabled when name has content', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test' } });
 
 			const createButton = screen.getByRole('button', { name: 'Create' });
@@ -405,17 +405,17 @@ describe('CreateGroupModal', () => {
 	});
 
 	describe('Create group action', () => {
-		it('creates group with uppercased name', () => {
+		it('creates group with the entered name', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'my test group' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 			expect(setGroups).toHaveBeenCalledWith([
 				...groups,
 				expect.objectContaining({
-					name: 'MY TEST GROUP',
+					name: 'my test group',
 				}),
 			]);
 		});
@@ -423,14 +423,14 @@ describe('CreateGroupModal', () => {
 		it('creates group with trimmed name', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: '  Test Group  ' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 			expect(setGroups).toHaveBeenCalledWith([
 				...groups,
 				expect.objectContaining({
-					name: 'TEST GROUP',
+					name: 'Test Group',
 				}),
 			]);
 		});
@@ -442,7 +442,7 @@ describe('CreateGroupModal', () => {
 			fireEvent.click(screen.getByText('📂'));
 			fireEvent.click(screen.getByTestId('select-emoji-🚀'));
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Rockets' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -459,7 +459,7 @@ describe('CreateGroupModal', () => {
 
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -474,7 +474,7 @@ describe('CreateGroupModal', () => {
 		it('creates group with collapsed: false', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -493,7 +493,7 @@ describe('CreateGroupModal', () => {
 			fireEvent.click(screen.getByText('📂'));
 			fireEvent.click(screen.getByTestId('select-emoji-🎸'));
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Rock Band' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 			expect(onClose).toHaveBeenCalled();
@@ -502,7 +502,7 @@ describe('CreateGroupModal', () => {
 		it('calls onClose after creation', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -594,7 +594,7 @@ describe('CreateGroupModal', () => {
 			fireEvent.click(screen.getByText('📂'));
 			fireEvent.click(screen.getByTestId('select-emoji-🎸'));
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			expect(document.activeElement).toBe(input);
 		});
 
@@ -801,14 +801,14 @@ describe('CreateGroupModal', () => {
 		it('handles special characters in group name', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test & <Group> "Name"' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 			expect(setGroups).toHaveBeenCalledWith([
 				...groups,
 				expect.objectContaining({
-					name: 'TEST & <GROUP> "NAME"',
+					name: 'Test & <Group> "Name"',
 				}),
 			]);
 		});
@@ -816,14 +816,14 @@ describe('CreateGroupModal', () => {
 		it('handles unicode in group name', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'テスト Group 🎵' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 			expect(setGroups).toHaveBeenCalledWith([
 				...groups,
 				expect.objectContaining({
-					name: 'テスト GROUP 🎵',
+					name: 'テスト Group 🎵',
 				}),
 			]);
 		});
@@ -832,7 +832,7 @@ describe('CreateGroupModal', () => {
 			renderModal();
 
 			const longName = 'A'.repeat(200);
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: longName } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
@@ -847,13 +847,13 @@ describe('CreateGroupModal', () => {
 		it('handles empty groups array', () => {
 			renderModal({ groups: [] });
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'First Group' } });
 			fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
 			expect(setGroups).toHaveBeenCalledWith([
 				expect.objectContaining({
-					name: 'FIRST GROUP',
+					name: 'First Group',
 				}),
 			]);
 		});
@@ -861,7 +861,7 @@ describe('CreateGroupModal', () => {
 		it('handles rapid create clicks', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			fireEvent.change(input, { target: { value: 'Test' } });
 
 			const createButton = screen.getByRole('button', { name: 'Create' });
@@ -879,7 +879,7 @@ describe('CreateGroupModal', () => {
 			renderModal();
 
 			const heading = screen.getByRole('heading', { level: 2 });
-			expect(heading).toHaveTextContent('Create New Group');
+			expect(heading).toHaveTextContent('Create New Workspace');
 		});
 
 		it('has proper button labels', () => {
@@ -893,14 +893,14 @@ describe('CreateGroupModal', () => {
 		it('has proper input labeling', () => {
 			renderModal();
 
-			const label = screen.getByText('Group Name');
+			const label = screen.getByText('Workspace Name');
 			expect(label).toHaveClass('uppercase');
 		});
 
 		it('input can receive focus', () => {
 			renderModal();
 
-			const input = screen.getByPlaceholderText('Enter group name...');
+			const input = screen.getByPlaceholderText('Enter workspace name...');
 			// Verify the input is focusable (it has autoFocus in JSX which triggers focus via setTimeout)
 			input.focus();
 			expect(document.activeElement).toBe(input);

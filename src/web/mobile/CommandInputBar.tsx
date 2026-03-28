@@ -509,10 +509,9 @@ export function CommandInputBar({
 						? 40
 						: 40
 			: MIN_INPUT_HEIGHT;
-	const compactMaxTextareaHeight =
-		usesStableInFlowAiComposer
-			? MAX_TEXTAREA_HEIGHT
-			: isMobilePhone && inputMode === 'ai' && !isExpanded
+	const compactMaxTextareaHeight = usesStableInFlowAiComposer
+		? MAX_TEXTAREA_HEIGHT
+		: isMobilePhone && inputMode === 'ai' && !isExpanded
 			? COMPACT_MOBILE_MAX_TEXTAREA_HEIGHT
 			: MAX_TEXTAREA_HEIGHT;
 	const composerSurfaceStyle: React.CSSProperties = {
@@ -1774,8 +1773,7 @@ export function CommandInputBar({
 					: colors.bgMain,
 				backdropFilter: isKeyboardVisible || !isFixedLayout ? 'none' : 'blur(18px)',
 				WebkitBackdropFilter: isKeyboardVisible || !isFixedLayout ? 'none' : 'blur(18px)',
-				borderTop:
-					isKeyboardVisible && isFixedLayout ? 'none' : `1px solid ${colors.border}22`,
+				borderTop: isKeyboardVisible && isFixedLayout ? 'none' : `1px solid ${colors.border}22`,
 				// Smooth transition when keyboard appears/disappears
 				transition:
 					isKeyboardVisible || !isFixedLayout
@@ -2232,20 +2230,14 @@ export function CommandInputBar({
 						maxWidth: '100%',
 						overflow: 'visible',
 						margin: isFixedLayout ? '0 12px' : '0',
-						borderRadius: isFixedLayout
-							? isIdleCompactAiComposer
-								? '26px'
-								: '22px'
-							: '0',
-						background:
-							isFixedLayout
-								? 'linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.78) 100%)'
-								: colors.bgMain,
+						borderRadius: isFixedLayout ? (isIdleCompactAiComposer ? '26px' : '22px') : '0',
+						background: isFixedLayout
+							? 'linear-gradient(180deg, rgba(255, 255, 255, 0.86) 0%, rgba(255, 255, 255, 0.78) 100%)'
+							: colors.bgMain,
 						border: isFixedLayout ? '1px solid rgba(148, 163, 184, 0.26)' : 'none',
-						boxShadow:
-							isFixedLayout
-								? '0 -12px 28px rgba(15, 23, 42, 0.16), 0 8px 20px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.42)'
-								: 'none',
+						boxShadow: isFixedLayout
+							? '0 -12px 28px rgba(15, 23, 42, 0.16), 0 8px 20px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.42)'
+							: 'none',
 						...activeComposerSurfaceStyle,
 					}}
 				>
@@ -2552,67 +2544,66 @@ export function CommandInputBar({
 								/>
 							)}
 
-									{inputMode === 'ai' &&
-										(showInlineModelSelector ||
-											showBusyInlineStopButton ||
-											showInlineVoiceAction ||
-											showInlineSendAction ||
-											showVoiceReviewAction ||
-											showVoiceSendAction ||
-											showInFlowDualInlineActions) && (
-											<div
-												style={{
-													position: 'absolute',
-													right: showInFlowDualInlineActions ? '10px' : '8px',
-													top: showInFlowDualInlineActions ? 'auto' : '50%',
-													bottom: showInFlowDualInlineActions ? '10px' : 'auto',
-													transform: showInFlowDualInlineActions ? 'none' : 'translateY(-50%)',
-													display: 'flex',
-													flexDirection: showInFlowDualInlineActions ? 'row' : 'column',
-													alignItems: 'center',
-													justifyContent: 'center',
-													width: showInFlowDualInlineActions ? 'auto' : '34px',
-													gap:
-														showInFlowDualInlineActions
-															? '8px'
-															: showInlineModelSelector || showVoiceReviewAction
-																? '6px'
-																: '0',
-												}}
-											>
-												{showInFlowDualInlineActions ? (
-													<>
-														{voiceSupported && (
-															<VoiceInputButton
-																isListening={isListening}
-																isRequesting={voiceState === 'requesting'}
-																isTranscribing={isTranscribing}
-																statusText={voiceStatusText}
-																onToggle={handleVoiceToggle}
-																disabled={isDisabled || isTranscribing}
-																variant="inline"
-															/>
-														)}
-														<SendInterruptButton
-															sendButtonRef={inlineSendButtonRef}
-															isInterruptMode={false}
-															isSendDisabled={isDisabled || isTranscribing || !hasDraft}
-															onInterrupt={handleInterrupt}
-															onSend={() => {
-																if (showBusyControls) {
-																	handleBusyDraftSendAction('inline');
-																	return;
-																}
-																submitDraft('default', getDefaultSubmitOptions());
-															}}
-															variant="inline"
-															sendAriaLabel="Send message"
-														/>
-													</>
-												) : showVoiceReviewAction ? (
-													<SendInterruptButton
-														isInterruptMode
-														isSendDisabled={false}
+							{inputMode === 'ai' &&
+								(showInlineModelSelector ||
+									showBusyInlineStopButton ||
+									showInlineVoiceAction ||
+									showInlineSendAction ||
+									showVoiceReviewAction ||
+									showVoiceSendAction ||
+									showInFlowDualInlineActions) && (
+									<div
+										style={{
+											position: 'absolute',
+											right: showInFlowDualInlineActions ? '10px' : '8px',
+											top: showInFlowDualInlineActions ? 'auto' : '50%',
+											bottom: showInFlowDualInlineActions ? '10px' : 'auto',
+											transform: showInFlowDualInlineActions ? 'none' : 'translateY(-50%)',
+											display: 'flex',
+											flexDirection: showInFlowDualInlineActions ? 'row' : 'column',
+											alignItems: 'center',
+											justifyContent: 'center',
+											width: showInFlowDualInlineActions ? 'auto' : '34px',
+											gap: showInFlowDualInlineActions
+												? '8px'
+												: showInlineModelSelector || showVoiceReviewAction
+													? '6px'
+													: '0',
+										}}
+									>
+										{showInFlowDualInlineActions ? (
+											<>
+												{voiceSupported && (
+													<VoiceInputButton
+														isListening={isListening}
+														isRequesting={voiceState === 'requesting'}
+														isTranscribing={isTranscribing}
+														statusText={voiceStatusText}
+														onToggle={handleVoiceToggle}
+														disabled={isDisabled || isTranscribing}
+														variant="inline"
+													/>
+												)}
+												<SendInterruptButton
+													sendButtonRef={inlineSendButtonRef}
+													isInterruptMode={false}
+													isSendDisabled={isDisabled || isTranscribing || !hasDraft}
+													onInterrupt={handleInterrupt}
+													onSend={() => {
+														if (showBusyControls) {
+															handleBusyDraftSendAction('inline');
+															return;
+														}
+														submitDraft('default', getDefaultSubmitOptions());
+													}}
+													variant="inline"
+													sendAriaLabel="Send message"
+												/>
+											</>
+										) : showVoiceReviewAction ? (
+											<SendInterruptButton
+												isInterruptMode
+												isSendDisabled={false}
 												onInterrupt={stopVoiceInput}
 												variant="inline"
 												interruptAriaLabel="Stop recording and review transcript"

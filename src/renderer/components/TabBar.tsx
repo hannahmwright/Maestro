@@ -2083,9 +2083,7 @@ function TabBarInner({
 												onClick={() => setMailFilterMode(option.id)}
 												className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded text-left transition-all"
 												style={{
-													backgroundColor: isSelected
-														? `${theme.colors.accent}25`
-														: 'transparent',
+													backgroundColor: isSelected ? `${theme.colors.accent}25` : 'transparent',
 													color: isSelected ? theme.colors.accent : theme.colors.textMain,
 												}}
 												title={

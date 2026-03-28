@@ -140,11 +140,12 @@ describe('Git IPC handlers', () => {
 	});
 
 	describe('registration', () => {
-		it('should register all 28 git handlers', () => {
+		it('should register all git handlers', () => {
 			const expectedChannels = [
 				'git:status',
 				'git:diff',
 				'git:isRepo',
+				'git:initializeRepo',
 				'git:numstat',
 				'git:branch',
 				'git:remote',
@@ -172,7 +173,7 @@ describe('Git IPC handlers', () => {
 				'git:createGist',
 			];
 
-			expect(handlers.size).toBe(28);
+			expect(handlers.size).toBe(expectedChannels.length);
 			for (const channel of expectedChannels) {
 				expect(handlers.has(channel)).toBe(true);
 			}
@@ -390,6 +391,22 @@ index 1234567..abcdefg 100644
 			const result = await handler!({} as any, '/some/path');
 
 			expect(result).toBe(false);
+		});
+
+		it('should cache repeated repo checks for the same path', async () => {
+			vi.mocked(execFile.execFileNoThrow).mockResolvedValue({
+				stdout: 'true\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:isRepo');
+			const first = await handler!({} as any, '/cached/git/repo');
+			const second = await handler!({} as any, '/cached/git/repo');
+
+			expect(first).toBe(true);
+			expect(second).toBe(true);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(1);
 		});
 	});
 
@@ -2382,6 +2399,59 @@ export function Component() {
 				error: "fatal: 'feature-branch' is already checked out at '/other/path'",
 			});
 		});
+
+		it('dedupes concurrent worktree setup requests for the same branch and path', async () => {
+			const fsPromises = await import('fs/promises');
+			vi.mocked(fsPromises.default.access).mockRejectedValue(new Error('ENOENT'));
+
+			let resolveCreate: ((value: execFile.ExecResult) => void) | null = null;
+			vi.mocked(execFile.execFileNoThrow)
+				.mockResolvedValueOnce({
+					stdout: '',
+					stderr: 'fatal: Needed a single revision',
+					exitCode: 128,
+				})
+				.mockImplementationOnce(
+					() =>
+						new Promise((resolve) => {
+							resolveCreate = resolve;
+						})
+				);
+
+			const handler = handlers.get('git:worktreeSetup');
+			const first = handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+			const second = handler!(
+				{} as any,
+				'/main/repo',
+				'/worktrees/feature',
+				'feature-branch'
+			);
+
+			await Promise.resolve();
+			await Promise.resolve();
+			expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(2);
+			resolveCreate?.({
+				stdout: "Preparing worktree (new branch 'feature-branch')",
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const [firstResult, secondResult] = await Promise.all([first, second]);
+			expect(firstResult).toEqual({
+				success: true,
+				created: true,
+				currentBranch: 'feature-branch',
+				requestedBranch: 'feature-branch',
+				branchMismatch: false,
+			});
+			expect(secondResult).toEqual(firstResult);
+			expect(execFile.execFileNoThrow).toHaveBeenCalledTimes(2);
+		});
 	});
 
 	describe('git:worktreeCheckout', () => {
@@ -4283,6 +4353,73 @@ branch refs/heads/bugfix-123
 
 			// Only the last directory should be processed due to debouncing
 			expect(checkedPaths).toEqual(['/parent/worktrees/dir3']);
+
+			vi.useRealTimers();
+		});
+
+		it('should debounce duplicate worktree candidate checks for the same directory', async () => {
+			vi.useFakeTimers();
+
+			vi.mocked(mockFs.access).mockResolvedValue(undefined);
+
+			let addDirCallback: Function | undefined;
+			const mockWatcher = {
+				on: vi.fn((event: string, cb: Function) => {
+					if (event === 'addDir') {
+						addDirCallback = cb;
+					}
+					return mockWatcher;
+				}),
+				close: vi.fn().mockResolvedValue(undefined),
+			};
+			vi.mocked(mockChokidar.watch).mockReturnValue(mockWatcher as any);
+
+			const mockWindow = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				webContents: {
+					send: vi.fn(),
+					isDestroyed: vi.fn().mockReturnValue(false),
+				},
+			};
+			const { BrowserWindow } = await import('electron');
+			vi.mocked(BrowserWindow.getAllWindows).mockReturnValue([mockWindow] as any);
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (cmd, args, cwd) => {
+				if (args?.includes('--is-inside-work-tree')) {
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--show-toplevel')) {
+					return { stdout: String(cwd), stderr: '', exitCode: 0 };
+				}
+				if (args?.includes('--abbrev-ref')) {
+					return { stdout: 'feature-branch\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:watchWorktreeDirectory');
+			await handler!({} as any, 'session-dedupe', '/parent/worktrees');
+
+			await addDirCallback!('/parent/worktrees/repeated-worktree');
+			await addDirCallback!('/parent/worktrees/repeated-worktree');
+
+			await vi.advanceTimersByTimeAsync(600);
+
+			expect(execFile.execFileNoThrow).toHaveBeenCalledWith(
+				'git',
+				['rev-parse', '--is-inside-work-tree'],
+				'/parent/worktrees/repeated-worktree'
+			);
+			expect(
+				vi
+					.mocked(execFile.execFileNoThrow)
+					.mock.calls.filter(
+						([, args, cwd]) =>
+							Array.isArray(args) &&
+							args.includes('--is-inside-work-tree') &&
+							cwd === '/parent/worktrees/repeated-worktree'
+					)
+			).toHaveLength(1);
 
 			vi.useRealTimers();
 		});

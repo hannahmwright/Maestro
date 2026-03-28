@@ -587,9 +587,10 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 	const [demo, setDemo] = useState<DemoDetail | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
-	const [mediaViewer, setMediaViewer] = useState<{ items: MobileDemoMediaItem[]; index: number } | null>(
-		null
-	);
+	const [mediaViewer, setMediaViewer] = useState<{
+		items: MobileDemoMediaItem[];
+		index: number;
+	} | null>(null);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -633,7 +634,9 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 		() => Boolean(demo?.steps.some((step) => step.screenshotArtifact?.id)),
 		[demo]
 	);
-	const showPosterHero = Boolean(!videoUrl && posterUrl && demo?.posterArtifact?.id && !hasStepScreenshots);
+	const showPosterHero = Boolean(
+		!videoUrl && posterUrl && demo?.posterArtifact?.id && !hasStepScreenshots
+	);
 
 	const imageItems = useMemo(() => {
 		if (!demo) {
@@ -822,26 +825,26 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 					{error && <div style={{ color: colors.error }}>{error}</div>}
 					{demo && (
 						<>
-								{videoItem ? (
-									<div style={{ position: 'relative' }}>
-										<video
-											controls
-											preload="metadata"
+							{videoItem ? (
+								<div style={{ position: 'relative' }}>
+									<video
+										controls
+										preload="metadata"
 										poster={posterUrl || undefined}
 										src={videoUrl || undefined}
 										style={{
 											width: '100%',
 											borderRadius: '20px',
-												background: '#020617',
-												border: `1px solid ${colors.border}`,
-											}}
-										/>
-										<button
-											type="button"
-											onClick={openVideoViewer}
-											style={{
-												position: 'absolute',
-												right: '14px',
+											background: '#020617',
+											border: `1px solid ${colors.border}`,
+										}}
+									/>
+									<button
+										type="button"
+										onClick={openVideoViewer}
+										style={{
+											position: 'absolute',
+											right: '14px',
 											bottom: '14px',
 											display: 'inline-flex',
 											alignItems: 'center',
@@ -849,17 +852,17 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 											padding: '7px 10px',
 											borderRadius: '999px',
 											background: 'rgba(15, 23, 42, 0.72)',
-												color: '#fff',
-												fontSize: '12px',
-												fontWeight: 700,
-												cursor: 'pointer',
-											}}
-										>
-											<Expand size={14} />
-											Open full screen
-										</button>
-									</div>
-								) : showPosterHero ? (
+											color: '#fff',
+											fontSize: '12px',
+											fontWeight: 700,
+											cursor: 'pointer',
+										}}
+									>
+										<Expand size={14} />
+										Open full screen
+									</button>
+								</div>
+							) : showPosterHero ? (
 								<button
 									type="button"
 									onClick={() => openImageGallery(demo.posterArtifact!.id)}
@@ -870,11 +873,11 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 										background: 'transparent',
 										cursor: 'pointer',
 									}}
-									>
-										<img
-											src={posterUrl || undefined}
-											alt={demo.title}
-											style={{
+								>
+									<img
+										src={posterUrl || undefined}
+										alt={demo.title}
+										style={{
 											width: '100%',
 											borderRadius: '20px',
 											border: `1px solid ${colors.border}`,
@@ -950,9 +953,7 @@ export function MobileDemoViewer({ demoId, onClose }: MobileDemoViewerProps) {
 											{step.description && (
 												<div style={{ fontSize: '13px', lineHeight: 1.5 }}>{step.description}</div>
 											)}
-											{screenshotUrl &&
-												screenshotArtifactId &&
-												!shouldHideDuplicateScreenshot && (
+											{screenshotUrl && screenshotArtifactId && !shouldHideDuplicateScreenshot && (
 												<button
 													type="button"
 													onClick={() => openImageGallery(screenshotArtifactId)}

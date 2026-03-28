@@ -131,6 +131,7 @@ export interface ApiRouteCallbacks {
 	}) => Promise<boolean>;
 	updateConductorTask: (taskId: string, updates: UpdateConductorTaskInput) => Promise<boolean>;
 	deleteConductorTask: (taskId: string) => Promise<boolean>;
+	openConductorWorkspace: (groupId: string) => Promise<boolean>;
 }
 
 /**
@@ -605,6 +606,42 @@ export class ApiRoutes {
 
 				const { taskId } = request.params as { taskId: string };
 				const success = await this.callbacks.deleteConductorTask(taskId);
+				return reply.code(success ? 200 : 500).send({
+					success,
+					timestamp: Date.now(),
+				});
+			}
+		);
+
+		server.post(
+			`${WEB_APP_API_BASE_PATH}/conductor/workspaces/:groupId/open`,
+			{
+				config: {
+					rateLimit: {
+						max: this.rateLimitConfig.maxPost,
+						timeWindow: this.rateLimitConfig.timeWindow,
+					},
+				},
+			},
+			async (request, reply) => {
+				if (!this.callbacks.openConductorWorkspace) {
+					return reply.code(503).send({
+						error: 'Service Unavailable',
+						message: 'Conductor workspace opening is not configured',
+						timestamp: Date.now(),
+					});
+				}
+
+				const { groupId } = request.params as { groupId: string };
+				if (!groupId) {
+					return reply.code(400).send({
+						error: 'Bad Request',
+						message: 'groupId is required',
+						timestamp: Date.now(),
+					});
+				}
+
+				const success = await this.callbacks.openConductorWorkspace(groupId);
 				return reply.code(success ? 200 : 500).send({
 					success,
 					timestamp: Date.now(),
@@ -1251,9 +1288,7 @@ export class ApiRoutes {
 			},
 			async (request, reply) => {
 				const { id } = request.params as { id: string };
-				const body = request.body as
-					| { toolType?: string; model?: string | null }
-					| undefined;
+				const body = request.body as { toolType?: string; model?: string | null } | undefined;
 				const nextToolType =
 					body?.toolType === 'codex' ||
 					body?.toolType === 'claude-code' ||

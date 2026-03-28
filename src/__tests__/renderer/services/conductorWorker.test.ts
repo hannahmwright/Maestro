@@ -77,6 +77,14 @@ describe('conductorWorker', () => {
 	"outcome": "completed",
 	"summary": "Execution lane added.",
 	"changedPaths": ["src/renderer/components/ConductorPanel.tsx"],
+	"evidence": [
+		{
+			"kind": "file",
+			"label": "Updated Conductor panel",
+			"path": "src/renderer/components/ConductorPanel.tsx",
+			"summary": "Execution lane wiring is now present."
+		}
+	],
 	"followUpTasks": [
 		{
 			"title": "Add worktree isolation",
@@ -88,6 +96,14 @@ describe('conductorWorker', () => {
 `);
 
 		expect(parsed.outcome).toBe('completed');
+		expect(parsed.evidence).toEqual([
+			{
+				kind: 'file',
+				label: 'Updated Conductor panel',
+				path: 'src/renderer/components/ConductorPanel.tsx',
+				summary: 'Execution lane wiring is now present.',
+			},
+		]);
 		expect(parsed.followUpTasks).toHaveLength(1);
 		expect(parsed.followUpTasks[0]).toMatchObject({
 			title: 'Add worktree isolation',
@@ -108,6 +124,17 @@ describe('conductorWorker', () => {
 
 		expect(parsed.outcome).toBe('blocked');
 		expect(parsed.blockedReason).toBe('Missing auth token.');
+	});
+
+	it('ignores noisy JSON before the final worker result', () => {
+		const parsed = parseConductorWorkerResponse(`
+__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","title":"Example.com","summary":"Opened example.com"}
+{"outcome":"completed","summary":"Opened https://example.com successfully.","changedPaths":[],"followUpTasks":[]}
+`);
+
+		expect(parsed.outcome).toBe('completed');
+		expect(parsed.summary).toBe('Opened https://example.com successfully.');
+		expect(parsed.evidence).toEqual([]);
 	});
 
 	it('caps worker follow-up tasks to keep execution from snowballing', () => {

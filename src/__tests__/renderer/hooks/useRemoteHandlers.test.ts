@@ -34,6 +34,20 @@ vi.mock('../../../renderer/services/git', () => ({
 	},
 }));
 
+vi.mock('../../../renderer/services/conversation', () => ({
+	conversationService: {
+		sendTurn: vi.fn(async (payload: unknown) => {
+			await (window as any).maestro.process.spawn(payload);
+			return {
+				success: true,
+				pid: 123,
+				runtimeKind: 'batch',
+				steerMode: 'none',
+			};
+		}),
+	},
+}));
+
 vi.mock('../../../renderer/utils/tabHelpers', () => ({
 	getActiveTab: vi.fn((session: Session) => {
 		if (!session?.aiTabs?.length) return null;
@@ -135,6 +149,10 @@ beforeEach(() => {
 			}),
 		},
 	};
+	(globalThis as any).fetch = vi.fn().mockResolvedValue({
+		ok: true,
+		json: vi.fn().mockResolvedValue({}),
+	});
 
 	// Spy on addEventListener/removeEventListener for event listener tests
 	vi.spyOn(window, 'addEventListener');

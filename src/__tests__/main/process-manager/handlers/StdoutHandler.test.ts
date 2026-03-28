@@ -187,8 +187,7 @@ describe('StdoutHandler', () => {
 					content: [
 						{
 							type: 'tool_result',
-							content:
-								'__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1"}',
+							content: '__MAESTRO_DEMO_EVENT__ {"type":"capture_completed","runId":"run-1"}',
 						},
 					],
 				},

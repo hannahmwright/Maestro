@@ -838,6 +838,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			requestRendererBooleanResponse('remote:deleteConductorTask', 'deleteConductorTask', [taskId])
 		);
 
+		server.setOpenConductorWorkspaceCallback(async (groupId) =>
+			requestRendererBooleanResponse('remote:openConductorWorkspace', 'openConductorWorkspace', [
+				groupId,
+			])
+		);
+
 		// Set up callback for web server to write commands to sessions
 		// Note: Process IDs have -ai or -terminal suffix based on session's inputMode
 		server.setWriteToSessionCallback((sessionId: string, data: string) => {
@@ -1179,7 +1185,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 						return;
 					}
 
-					mainWindow.webContents.send('remote:newThread', sessionId, options || {}, responseChannel);
+					mainWindow.webContents.send(
+						'remote:newThread',
+						sessionId,
+						options || {},
+						responseChannel
+					);
 
 					const timeoutId = setTimeout(() => {
 						if (resolved) return;

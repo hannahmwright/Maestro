@@ -130,7 +130,7 @@ describe('RenameSessionModal', () => {
 				</TestWrapper>
 			);
 
-			expect(screen.getByText('Rename Agent')).toBeInTheDocument();
+			expect(screen.getByText('Rename Thread')).toBeInTheDocument();
 		});
 
 		it('renders input with current value', () => {
@@ -205,7 +205,7 @@ describe('RenameSessionModal', () => {
 
 			const dialog = screen.getByRole('dialog');
 			expect(dialog).toHaveAttribute('aria-modal', 'true');
-			expect(dialog).toHaveAttribute('aria-label', 'Rename Agent');
+			expect(dialog).toHaveAttribute('aria-label', 'Rename Thread');
 		});
 
 		it('shows placeholder text', () => {
@@ -224,7 +224,7 @@ describe('RenameSessionModal', () => {
 			);
 
 			const input = screen.getByRole('textbox');
-			expect(input).toHaveAttribute('placeholder', 'Enter agent name...');
+			expect(input).toHaveAttribute('placeholder', 'Enter thread title...');
 		});
 	});
 
@@ -672,7 +672,7 @@ describe('RenameSessionModal', () => {
 				</TestWrapper>
 			);
 
-			const title = screen.getByText('Rename Agent');
+			const title = screen.getByText('Rename Thread');
 			expect(title).toHaveStyle({
 				color: mockTheme.colors.textMain,
 			});

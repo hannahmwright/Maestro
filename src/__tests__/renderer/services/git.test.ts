@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { gitService } from '../../../renderer/services/git';
+import { clearGitMetadataCache, gitService } from '../../../renderer/services/git';
 
 // Mock the window.maestro.git object
 const mockGit = {
@@ -21,6 +21,7 @@ const mockGit = {
 // Setup mock before each test
 beforeEach(() => {
 	vi.clearAllMocks();
+	clearGitMetadataCache();
 
 	// Ensure window.maestro.git is mocked
 	(window as any).maestro = {

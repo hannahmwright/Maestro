@@ -158,9 +158,7 @@ export function NewInstanceModal({
 	);
 	const derivedThreadName = useMemo(
 		() =>
-			selectedAgent
-				? buildDefaultThreadName(selectedAgent as ToolType, existingSessions)
-				: '',
+			selectedAgent ? buildDefaultThreadName(selectedAgent as ToolType, existingSessions) : '',
 		[selectedAgent, existingSessions]
 	);
 
@@ -169,11 +167,14 @@ export function NewInstanceModal({
 		window.maestro.fs.homeDir().then(setHomeDir);
 	}, []);
 
-	const handleWorkingDirChange = React.useCallback((value: string) => {
-		if (fixedWorkingDir) return;
-		setWorkingDir(value);
-		setDirectoryWarningAcknowledged(false);
-	}, [fixedWorkingDir]);
+	const handleWorkingDirChange = React.useCallback(
+		(value: string) => {
+			if (fixedWorkingDir) return;
+			setWorkingDir(value);
+			setDirectoryWarningAcknowledged(false);
+		},
+		[fixedWorkingDir]
+	);
 
 	// Validate session uniqueness
 	const validation = useMemo(() => {
@@ -183,7 +184,14 @@ export function NewInstanceModal({
 			return { valid: true }; // Don't show errors until fields are filled
 		}
 		return validateNewSession(name, expandedDir, selectedAgent as ToolType, existingSessions);
-	}, [instanceName, effectiveWorkingDir, selectedAgent, existingSessions, isThreadMode, derivedThreadName]);
+	}, [
+		instanceName,
+		effectiveWorkingDir,
+		selectedAgent,
+		existingSessions,
+		isThreadMode,
+		derivedThreadName,
+	]);
 
 	// Check if SSH remote is enabled for the selected agent or pending config
 	// When no agent is selected, check the _pending_ config (user may select SSH before choosing agent)
@@ -359,7 +367,8 @@ export function NewInstanceModal({
 			} else if (!sshRemoteId) {
 				// Only auto-select on initial load, not on SSH remote re-detection
 				const preferredAgent =
-					(defaultAgentId && detectedAgents.find((a: AgentConfig) => a.id === defaultAgentId && !a.hidden)) ||
+					(defaultAgentId &&
+						detectedAgents.find((a: AgentConfig) => a.id === defaultAgentId && !a.hidden)) ||
 					detectedAgents.find((a: AgentConfig) => a.available && !a.hidden) ||
 					detectedAgents.find((a: AgentConfig) => !a.hidden);
 				if (preferredAgent) {
@@ -762,7 +771,10 @@ export function NewInstanceModal({
 									<div className="grid grid-cols-2 gap-2">
 										{threadProviders.map((agent, index) => {
 											const isSelected = selectedAgent === agent.id;
-											const brandColor = getProviderBrandColor(agent.id as ToolType, theme.colors.textMain);
+											const brandColor = getProviderBrandColor(
+												agent.id as ToolType,
+												theme.colors.textMain
+											);
 
 											return (
 												<button
@@ -842,7 +854,10 @@ export function NewInstanceModal({
 											borderColor: theme.colors.error,
 										}}
 									>
-										<AlertTriangle className="w-10 h-10 mb-3" style={{ color: theme.colors.error }} />
+										<AlertTriangle
+											className="w-10 h-10 mb-3"
+											style={{ color: theme.colors.error }}
+										/>
 										<h4
 											className="text-base font-semibold mb-2"
 											style={{ color: theme.colors.textMain }}
@@ -1201,8 +1216,8 @@ export function NewInstanceModal({
 											fixedWorkingDir
 												? 'Workspace directory is fixed for this thread'
 												: isSshEnabled
-												? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
-												: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
+													? `Folder picker unavailable for SSH remote${sshRemoteHost ? ` (${sshRemoteHost})` : ''}. Enter the remote path manually.`
+													: `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
 										}
 									>
 										<Folder className="w-5 h-5" />
@@ -1229,7 +1244,9 @@ export function NewInstanceModal({
 									) : remotePathValidation.error ? (
 										<>
 											<X className="w-3.5 h-3.5" style={{ color: theme.colors.error }} />
-											<span style={{ color: theme.colors.error }}>{remotePathValidation.error}</span>
+											<span style={{ color: theme.colors.error }}>
+												{remotePathValidation.error}
+											</span>
 										</>
 									) : null}
 								</div>

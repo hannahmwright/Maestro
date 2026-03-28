@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
+import { logger } from './logger';
 
 const execFileAsync = promisify(execFile);
 
@@ -12,6 +13,18 @@ export interface ExecOptions {
 
 // Maximum buffer size for command output (10MB)
 const EXEC_MAX_BUFFER = 10 * 1024 * 1024;
+const DEV_SPAWN_TRACE_WINDOW_MS = 1000;
+const DEV_SPAWN_TRACE_THRESHOLD = 20;
+const devSpawnTraceCounts = new Map<string, { count: number; timer: ReturnType<typeof setTimeout> }>();
+const GIT_WORKTREE_PROBE_CACHE_TTL_MS = 5000;
+
+interface ExecResultCacheEntry {
+	value?: ExecResult;
+	expiresAt: number;
+	promise?: Promise<ExecResult>;
+}
+
+const gitWorktreeProbeCache = new Map<string, ExecResultCacheEntry>();
 
 export interface ExecResult {
 	stdout: string;
@@ -22,6 +35,61 @@ export interface ExecResult {
 	 * - A string error code ('ENOENT', 'EPERM', 'EACCES', etc.) when the process couldn't be spawned
 	 */
 	exitCode: number | string;
+}
+
+function traceDevExecCommand(command: string, args: string[], cwd?: string): void {
+	if (process.env.NODE_ENV !== 'development') {
+		return;
+	}
+
+	const key = `${command} ${args.join(' ')}`.trim();
+	const existing = devSpawnTraceCounts.get(key);
+	if (existing) {
+		existing.count += 1;
+		return;
+	}
+
+	const timer = setTimeout(() => {
+		const snapshot = devSpawnTraceCounts.get(key);
+		if (!snapshot) {
+			return;
+		}
+		devSpawnTraceCounts.delete(key);
+		if (snapshot.count < DEV_SPAWN_TRACE_THRESHOLD) {
+			return;
+		}
+
+		logger.warn('[ExecFile] Hot command loop detected', '[ExecFile]', {
+			command,
+			args,
+			cwd,
+			count: snapshot.count,
+			windowMs: DEV_SPAWN_TRACE_WINDOW_MS,
+		});
+	}, DEV_SPAWN_TRACE_WINDOW_MS);
+
+	devSpawnTraceCounts.set(key, { count: 1, timer });
+}
+
+function shouldCacheExecResult(command: string, args: string[], cwd?: string): boolean {
+	if (command !== 'git' || !cwd || args[0] !== 'rev-parse') {
+		return false;
+	}
+
+	if (args.length === 2) {
+		return [
+			'--is-inside-work-tree',
+			'--git-dir',
+			'--git-common-dir',
+			'--show-toplevel',
+		].includes(args[1]);
+	}
+
+	return args.length === 3 && args[1] === '--abbrev-ref' && args[2] === 'HEAD';
+}
+
+function buildExecResultCacheKey(command: string, args: string[], cwd?: string): string {
+	return `${command}::${cwd || ''}::${args.join('\u0000')}`;
 }
 
 /**
@@ -111,45 +179,86 @@ export async function execFileNoThrow(
 		return execFileWithInput(command, args, cwd, input, timeout);
 	}
 
-	try {
-		// On Windows, some commands need shell execution
-		// This is safe because we're executing a specific file path, not user input
-		const isWindows = process.platform === 'win32';
-		const useShell = isWindows && needsWindowsShell(command);
-
-		const { stdout, stderr } = await execFileAsync(command, args, {
-			cwd,
-			env,
-			encoding: 'utf8',
-			maxBuffer: EXEC_MAX_BUFFER,
-			shell: useShell,
-			timeout,
-		});
-
-		return {
-			stdout,
-			stderr,
-			exitCode: 0,
-		};
-	} catch (error: any) {
-		// execFile throws on non-zero exit codes
-		// Use ?? instead of || to correctly handle exit code 0 (which is falsy but valid)
-
-		// When execFile kills a process due to timeout, error.killed is true and
-		// error.code is undefined (process didn't exit normally). We surface this
-		// as 'ETIMEDOUT' so callers (e.g., remote-fs retry logic) can detect it.
-		// Note: maxBuffer kills also set error.killed, but those have
-		// error.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', so we exclude them.
-		const isTimeout = timeout && error.killed && !error.code;
-
-		return {
-			stdout: error.stdout || '',
-			stderr: isTimeout
-				? `${error.stderr || ''}\nETIMEDOUT: process timed out after ${timeout}ms`
-				: error.stderr || error.message || '',
-			exitCode: isTimeout ? 'ETIMEDOUT' : (error.code ?? 1),
-		};
+	const shouldUseCache =
+		!env && !timeout && shouldCacheExecResult(command, args, cwd);
+	const cacheKey = shouldUseCache ? buildExecResultCacheKey(command, args, cwd) : null;
+	if (cacheKey) {
+		const now = Date.now();
+		const existing = gitWorktreeProbeCache.get(cacheKey);
+		if (existing) {
+			if (existing.value && existing.expiresAt > now) {
+				return existing.value;
+			}
+			if (existing.promise) {
+				return existing.promise;
+			}
+		}
 	}
+
+	const execute = async (): Promise<ExecResult> => {
+		try {
+			traceDevExecCommand(command, args, cwd);
+			// On Windows, some commands need shell execution
+			// This is safe because we're executing a specific file path, not user input
+			const isWindows = process.platform === 'win32';
+			const useShell = isWindows && needsWindowsShell(command);
+
+			const { stdout, stderr } = await execFileAsync(command, args, {
+				cwd,
+				env,
+				encoding: 'utf8',
+				maxBuffer: EXEC_MAX_BUFFER,
+				shell: useShell,
+				timeout,
+			});
+
+			return {
+				stdout,
+				stderr,
+				exitCode: 0,
+			};
+		} catch (error: any) {
+			// execFile throws on non-zero exit codes
+			// Use ?? instead of || to correctly handle exit code 0 (which is falsy but valid)
+
+			// When execFile kills a process due to timeout, error.killed is true and
+			// error.code is undefined (process didn't exit normally). We surface this
+			// as 'ETIMEDOUT' so callers (e.g., remote-fs retry logic) can detect it.
+			// Note: maxBuffer kills also set error.killed, but those have
+			// error.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', so we exclude them.
+			const isTimeout = timeout && error.killed && !error.code;
+
+			return {
+				stdout: error.stdout || '',
+				stderr: isTimeout
+					? `${error.stderr || ''}\nETIMEDOUT: process timed out after ${timeout}ms`
+					: error.stderr || error.message || '',
+				exitCode: isTimeout ? 'ETIMEDOUT' : (error.code ?? 1),
+			};
+		}
+	};
+
+	if (cacheKey) {
+		const promise = execute()
+			.then((result) => {
+				gitWorktreeProbeCache.set(cacheKey, {
+					value: result,
+					expiresAt: Date.now() + GIT_WORKTREE_PROBE_CACHE_TTL_MS,
+				});
+				return result;
+			})
+			.catch((error) => {
+				gitWorktreeProbeCache.delete(cacheKey);
+				throw error;
+			});
+		gitWorktreeProbeCache.set(cacheKey, {
+			expiresAt: Date.now() + GIT_WORKTREE_PROBE_CACHE_TTL_MS,
+			promise,
+		});
+		return promise;
+	}
+
+	return execute();
 }
 
 /**
@@ -164,6 +273,7 @@ async function execFileWithInput(
 	timeout?: number
 ): Promise<ExecResult> {
 	return new Promise((resolve) => {
+		traceDevExecCommand(command, args, cwd);
 		const isWindows = process.platform === 'win32';
 		const useShell = isWindows && needsWindowsShell(command);
 

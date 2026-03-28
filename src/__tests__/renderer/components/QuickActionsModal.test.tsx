@@ -164,6 +164,7 @@ const createDefaultProps = (
 	setRenameGroupId: vi.fn(),
 	setRenameGroupValue: vi.fn(),
 	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupProjectRoot: vi.fn(),
 	setCreateGroupModalOpen: vi.fn(),
 	setLeftSidebarOpen: vi.fn(),
 	setRightPanelOpen: vi.fn(),
@@ -1073,30 +1074,31 @@ describe('QuickActionsModal', () => {
 			});
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.getByText('Rename Group')).toBeInTheDocument();
+			expect(screen.getByText('Edit Workspace')).toBeInTheDocument();
 		});
 
 		it('does not render Rename Group when session has no group', () => {
 			const props = createDefaultProps();
 			render(<QuickActionsModal {...props} />);
 
-			expect(screen.queryByText('Rename Group')).not.toBeInTheDocument();
+			expect(screen.queryByText('Edit Workspace')).not.toBeInTheDocument();
 		});
 
 		it('handles Rename Group action', () => {
 			const session = createMockSession({ groupId: 'group-1' });
-			const group = createMockGroup();
+			const group = createMockGroup({ projectRoot: '/home/user/project' } as Group);
 			const props = createDefaultProps({
 				sessions: [session],
 				groups: [group],
 			});
 			render(<QuickActionsModal {...props} />);
 
-			fireEvent.click(screen.getByText('Rename Group'));
+			fireEvent.click(screen.getByText('Edit Workspace'));
 
 			expect(props.setRenameGroupId).toHaveBeenCalledWith('group-1');
 			expect(props.setRenameGroupValue).toHaveBeenCalledWith('Test Group');
 			expect(props.setRenameGroupEmoji).toHaveBeenCalledWith('📁');
+			expect(props.setRenameGroupProjectRoot).toHaveBeenCalledWith('/home/user/project');
 			expect(props.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
 		});

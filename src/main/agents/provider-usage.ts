@@ -223,7 +223,12 @@ function normalizeClaudeUsageSnapshot(
 	const windows = [
 		normalizeClaudeUsageWindow('five_hour', 'Current 5h window', response.five_hour, 300),
 		normalizeClaudeUsageWindow('seven_day', 'Weekly allowance', response.seven_day, 10080),
-		normalizeClaudeUsageWindow('seven_day_sonnet', 'Weekly Sonnet', response.seven_day_sonnet, 10080),
+		normalizeClaudeUsageWindow(
+			'seven_day_sonnet',
+			'Weekly Sonnet',
+			response.seven_day_sonnet,
+			10080
+		),
 		normalizeClaudeUsageWindow('seven_day_opus', 'Weekly Opus', response.seven_day_opus, 10080),
 		normalizeClaudeUsageWindow(
 			'seven_day_oauth_apps',
@@ -231,7 +236,12 @@ function normalizeClaudeUsageSnapshot(
 			response.seven_day_oauth_apps,
 			10080
 		),
-		normalizeClaudeUsageWindow('seven_day_cowork', 'Weekly Cowork', response.seven_day_cowork, 10080),
+		normalizeClaudeUsageWindow(
+			'seven_day_cowork',
+			'Weekly Cowork',
+			response.seven_day_cowork,
+			10080
+		),
 	].filter((window): window is ProviderUsageWindow => Boolean(window));
 	const primaryWindow = windows[0] ?? null;
 
@@ -339,7 +349,12 @@ function normalizeCodexUsageSnapshot(
 	const planType = accountPlanType ?? snapshotPlanType;
 	const primaryWindow = selectedSnapshot?.primary ?? selectedSnapshot?.secondary ?? null;
 	const windows = [
-		normalizeCodexRateLimitWindow('primary', 'Primary', selectedSnapshot?.primary, selectedSnapshot),
+		normalizeCodexRateLimitWindow(
+			'primary',
+			'Primary',
+			selectedSnapshot?.primary,
+			selectedSnapshot
+		),
 		normalizeCodexRateLimitWindow(
 			'secondary',
 			'Secondary',
@@ -455,11 +470,7 @@ export class ProviderUsageService {
 		options: UsageRequestOptions = {}
 	): Promise<ProviderUsageSnapshot | null> {
 		const retryBlockedUntil = this.blockedUntil.get(provider);
-		if (
-			retryBlockedUntil &&
-			retryBlockedUntil > Date.now() &&
-			!options.forceRefresh
-		) {
+		if (retryBlockedUntil && retryBlockedUntil > Date.now() && !options.forceRefresh) {
 			return this.cache.get(provider)?.snapshot ?? null;
 		}
 
@@ -714,13 +725,28 @@ export class ProviderUsageService {
 			const child = spawn(command, ['app-server', '--listen', 'ws://127.0.0.1:0'], {
 				env,
 				shell: process.platform === 'win32' ? needsWindowsShell(command) : false,
-				stdio: ['ignore', 'ignore', 'pipe'],
+				stdio: ['ignore', 'pipe', 'pipe'],
 			});
 
-			let stderrBuffer = '';
+			let startupOutputBuffer = '';
+			let discoveredWsUrl: string | null = null;
+			let websocketOpened = false;
+			let initializeAcknowledged = false;
 			let ws: WebSocket | null = null;
 			let settled = false;
 			const pendingRequests = new Map<string, PendingRequest>();
+
+			const trimStartupOutput = (text: string): string =>
+				text.length > 4096 ? text.slice(text.length - 4096) : text;
+
+			let startupTimeout: ReturnType<typeof setTimeout> | undefined;
+
+			const clearStartupTimeout = () => {
+				if (startupTimeout) {
+					clearTimeout(startupTimeout);
+					startupTimeout = undefined;
+				}
+			};
 
 			const cleanup = () => {
 				for (const pending of pendingRequests.values()) {
@@ -749,19 +775,28 @@ export class ProviderUsageService {
 					return;
 				}
 				settled = true;
-				clearTimeout(startupTimeout);
+				clearStartupTimeout();
 				cleanup();
 				resolve(snapshot);
 			};
 
 			const fail = (error: unknown) => {
+				const stage = initializeAcknowledged
+					? 'awaiting-usage-responses'
+					: websocketOpened
+						? 'awaiting-initialize-ack'
+						: discoveredWsUrl
+							? 'awaiting-websocket-open'
+							: 'awaiting-listening-url';
 				logger.warn('Failed to fetch Codex provider usage', LOG_CONTEXT, {
 					error: String(error),
+					stage,
+					startupOutput: startupOutputBuffer || undefined,
 				});
 				finish(null);
 			};
 
-			const startupTimeout = setTimeout(() => {
+			startupTimeout = setTimeout(() => {
 				fail(new Error('Timed out waiting for Codex app-server usage endpoint.'));
 			}, STARTUP_TIMEOUT_MS);
 
@@ -769,7 +804,12 @@ export class ProviderUsageService {
 				socket.send(JSON.stringify(payload));
 			};
 
-			const requestJson = (socket: WebSocket, id: string, method: string): Promise<JsonRpcMessage> =>
+			const requestJson = (
+				socket: WebSocket,
+				id: string,
+				method: string,
+				params: Record<string, unknown> = {}
+			): Promise<JsonRpcMessage> =>
 				new Promise((requestResolve, requestReject) => {
 					const timeout = setTimeout(() => {
 						pendingRequests.delete(id);
@@ -785,6 +825,7 @@ export class ProviderUsageService {
 					sendJson(socket, {
 						id,
 						method,
+						params,
 					});
 				});
 
@@ -793,9 +834,11 @@ export class ProviderUsageService {
 					return;
 				}
 
+				discoveredWsUrl = wsUrl;
 				ws = new WebSocket(wsUrl);
 
 				ws.on('open', () => {
+					websocketOpened = true;
 					sendJson(ws!, {
 						id: 'initialize',
 						method: 'initialize',
@@ -833,6 +876,8 @@ export class ProviderUsageService {
 					}
 
 					if (messageId === 'initialize') {
+						initializeAcknowledged = true;
+						clearStartupTimeout();
 						sendJson(ws!, { method: 'initialized' });
 						Promise.all([
 							requestJson(ws!, 'account', 'account/read'),
@@ -854,18 +899,16 @@ export class ProviderUsageService {
 				});
 			};
 
-			child.stderr?.on('data', (chunk: Buffer | string) => {
-				stderrBuffer += chunk.toString();
-				const lines = stderrBuffer.split(/\r?\n/);
-				stderrBuffer = lines.pop() || '';
-
-				for (const line of lines) {
-					const listeningMatch = line.match(LISTENING_URL_RE);
-					if (listeningMatch) {
-						connectWebSocket(listeningMatch[1]);
-					}
+			const consumeStartupOutput = (chunk: Buffer | string) => {
+				startupOutputBuffer = trimStartupOutput(startupOutputBuffer + chunk.toString());
+				const listeningMatch = startupOutputBuffer.match(LISTENING_URL_RE);
+				if (listeningMatch) {
+					connectWebSocket(listeningMatch[1]);
 				}
-			});
+			};
+
+			child.stdout?.on('data', consumeStartupOutput);
+			child.stderr?.on('data', consumeStartupOutput);
 
 			child.on('error', (error) => {
 				fail(error);

@@ -29,13 +29,15 @@ function createMockChildProcess() {
 }
 
 // Mock child_process before imports - wrap in function to avoid hoisting issues
-vi.mock('child_process', async (importOriginal) => {
-	const actual = await importOriginal<typeof import('child_process')>();
+vi.mock('child_process', async () => {
+	const actual = await vi.importActual<typeof import('child_process')>('child_process');
 	return {
 		...actual,
+		execFile: actual.execFile,
 		spawn: (...args: unknown[]) => mockSpawn(...args),
 		default: {
-			...actual,
+			...(actual.default ?? {}),
+			execFile: actual.execFile,
 			spawn: (...args: unknown[]) => mockSpawn(...args),
 		},
 	};
@@ -87,6 +89,10 @@ vi.mock('../../../../main/process-manager/utils/streamJsonBuilder', () => ({
 vi.mock('../../../../main/process-manager/utils/shellEscape', () => ({
 	escapeArgsForShell: vi.fn((args) => args),
 	isPowerShellShell: vi.fn(() => false),
+}));
+
+vi.mock('../../../../main/utils/execFile', () => ({
+	execFileNoThrow: vi.fn(),
 }));
 
 // ── Imports (after mocks) ──────────────────────────────────────────────────

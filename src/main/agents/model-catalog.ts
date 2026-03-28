@@ -1,4 +1,7 @@
-import type { AgentModelCatalogGroup, AgentModelCatalogOption } from '../../shared/agent-model-catalog';
+import type {
+	AgentModelCatalogGroup,
+	AgentModelCatalogOption,
+} from '../../shared/agent-model-catalog';
 import type { ToolType } from '../../shared/types';
 import type { AgentCapabilities } from './capabilities';
 import { AGENT_DEFINITIONS } from './definitions';

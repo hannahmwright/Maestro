@@ -30,6 +30,68 @@ export interface GitNumstat {
 	}>;
 }
 
+const GIT_METADATA_CACHE_TTL_MS = 1500;
+
+interface GitMetadataCacheEntry<T> {
+	value?: T;
+	expiresAt: number;
+	promise?: Promise<T>;
+}
+
+const gitMetadataCache = {
+	isRepo: new Map<string, GitMetadataCacheEntry<boolean>>(),
+	status: new Map<string, GitMetadataCacheEntry<GitStatus>>(),
+	branches: new Map<string, GitMetadataCacheEntry<string[]>>(),
+	tags: new Map<string, GitMetadataCacheEntry<string[]>>(),
+};
+
+export function clearGitMetadataCache(): void {
+	for (const cache of Object.values(gitMetadataCache)) {
+		cache.clear();
+	}
+}
+
+function buildGitMetadataCacheKey(cwd: string, sshRemoteId?: string): string {
+	return `${cwd}::${sshRemoteId || ''}`;
+}
+
+async function getCachedGitMetadata<T>(
+	cache: Map<string, GitMetadataCacheEntry<T>>,
+	key: string,
+	load: () => Promise<T>
+): Promise<T> {
+	const now = Date.now();
+	const existing = cache.get(key);
+	if (existing) {
+		if (existing.value !== undefined && existing.expiresAt > now) {
+			return existing.value;
+		}
+
+		if (existing.promise) {
+			return existing.promise;
+		}
+	}
+
+	const promise = load()
+		.then((value) => {
+			cache.set(key, {
+				value,
+				expiresAt: Date.now() + GIT_METADATA_CACHE_TTL_MS,
+			});
+			return value;
+		})
+		.catch((error) => {
+			cache.delete(key);
+			throw error;
+		});
+
+	cache.set(key, {
+		expiresAt: now + GIT_METADATA_CACHE_TTL_MS,
+		promise,
+	});
+	return promise;
+}
+
 /**
  * All git service methods support SSH remote execution via optional sshRemoteId parameter.
  * When sshRemoteId is provided, operations execute on the remote host via SSH.
@@ -41,11 +103,16 @@ export const gitService = {
 	 * @param sshRemoteId Optional SSH remote ID for remote execution
 	 */
 	async isRepo(cwd: string, sshRemoteId?: string): Promise<boolean> {
-		return createIpcMethod({
-			call: () => window.maestro.git.isRepo(cwd, sshRemoteId),
-			errorContext: 'Git isRepo',
-			defaultValue: false,
-		});
+		return getCachedGitMetadata(
+			gitMetadataCache.isRepo,
+			buildGitMetadataCacheKey(cwd, sshRemoteId),
+			() =>
+				createIpcMethod({
+					call: () => window.maestro.git.isRepo(cwd, sshRemoteId),
+					errorContext: 'Git isRepo',
+					defaultValue: false,
+				})
+		);
 	},
 
 	/**
@@ -54,21 +121,26 @@ export const gitService = {
 	 * @param sshRemoteId Optional SSH remote ID for remote execution
 	 */
 	async getStatus(cwd: string, sshRemoteId?: string): Promise<GitStatus> {
-		return createIpcMethod({
-			call: async () => {
-				const [statusResult, branchResult] = await Promise.all([
-					window.maestro.git.status(cwd, sshRemoteId),
-					window.maestro.git.branch(cwd, sshRemoteId),
-				]);
+		return getCachedGitMetadata(
+			gitMetadataCache.status,
+			buildGitMetadataCacheKey(cwd, sshRemoteId),
+			() =>
+				createIpcMethod({
+					call: async () => {
+						const [statusResult, branchResult] = await Promise.all([
+							window.maestro.git.status(cwd, sshRemoteId),
+							window.maestro.git.branch(cwd, sshRemoteId),
+						]);
 
-				const files = parseGitStatusPorcelain(statusResult.stdout || '');
-				const branch = branchResult.stdout?.trim() || undefined;
+						const files = parseGitStatusPorcelain(statusResult.stdout || '');
+						const branch = branchResult.stdout?.trim() || undefined;
 
-				return { files, branch };
-			},
-			errorContext: 'Git status',
-			defaultValue: { files: [], branch: undefined },
-		});
+						return { files, branch };
+					},
+					errorContext: 'Git status',
+					defaultValue: { files: [], branch: undefined },
+				})
+		);
 	},
 
 	/**
@@ -136,14 +208,19 @@ export const gitService = {
 	 * @param sshRemoteId Optional SSH remote ID for remote execution
 	 */
 	async getBranches(cwd: string, sshRemoteId?: string): Promise<string[]> {
-		return createIpcMethod({
-			call: async () => {
-				const result = await window.maestro.git.branches(cwd, sshRemoteId);
-				return result.branches || [];
-			},
-			errorContext: 'Git branches',
-			defaultValue: [],
-		});
+		return getCachedGitMetadata(
+			gitMetadataCache.branches,
+			buildGitMetadataCacheKey(cwd, sshRemoteId),
+			() =>
+				createIpcMethod({
+					call: async () => {
+						const result = await window.maestro.git.branches(cwd, sshRemoteId);
+						return result.branches || [];
+					},
+					errorContext: 'Git branches',
+					defaultValue: [],
+				})
+		);
 	},
 
 	/**
@@ -152,13 +229,18 @@ export const gitService = {
 	 * @param sshRemoteId Optional SSH remote ID for remote execution
 	 */
 	async getTags(cwd: string, sshRemoteId?: string): Promise<string[]> {
-		return createIpcMethod({
-			call: async () => {
-				const result = await window.maestro.git.tags(cwd, sshRemoteId);
-				return result.tags || [];
-			},
-			errorContext: 'Git tags',
-			defaultValue: [],
-		});
+		return getCachedGitMetadata(
+			gitMetadataCache.tags,
+			buildGitMetadataCacheKey(cwd, sshRemoteId),
+			() =>
+				createIpcMethod({
+					call: async () => {
+						const result = await window.maestro.git.tags(cwd, sshRemoteId);
+						return result.tags || [];
+					},
+					errorContext: 'Git tags',
+					defaultValue: [],
+				})
+		);
 	},
 };

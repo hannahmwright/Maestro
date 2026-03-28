@@ -126,9 +126,7 @@ function getInteractionBadge(
 		return {
 			kind: 'queued',
 			title:
-				entry.delivered || entry.deliveryState === 'delivered'
-					? 'Queued next sent'
-					: 'Queued next',
+				entry.delivered || entry.deliveryState === 'delivered' ? 'Queued next sent' : 'Queued next',
 			color: colors.textDim,
 			background: `${colors.textDim}12`,
 			border: `${colors.textDim}22`,
@@ -276,7 +274,8 @@ export const MessageHistory = memo(function MessageHistory({
 					}
 					return {
 						key: entry.id || `${entry.timestamp}-${index}`,
-						label: (entry.text || entry.content || '').replace(/\s+/g, ' ').trim() || 'Untitled turn',
+						label:
+							(entry.text || entry.content || '').replace(/\s+/g, ' ').trim() || 'Untitled turn',
 					};
 				})
 				.filter((entry): entry is { key: string; label: string } => Boolean(entry)),
@@ -291,10 +290,7 @@ export const MessageHistory = memo(function MessageHistory({
 			return userTurnMarkers;
 		}
 
-		const anchors = [
-			userTurnMarkers[0],
-			...userTurnMarkers.slice(-5),
-		];
+		const anchors = [userTurnMarkers[0], ...userTurnMarkers.slice(-5)];
 		const seen = new Set<string>();
 		return anchors.filter((marker) => {
 			if (seen.has(marker.key)) {
@@ -543,8 +539,7 @@ export const MessageHistory = memo(function MessageHistory({
 		const containerRect = container.getBoundingClientRect();
 		const targetRect = targetElement.getBoundingClientRect();
 		const topPadding = 14;
-		const nextScrollTop =
-			container.scrollTop + (targetRect.top - containerRect.top) - topPadding;
+		const nextScrollTop = container.scrollTop + (targetRect.top - containerRect.top) - topPadding;
 		container.scrollTop = Math.max(0, nextScrollTop);
 	}, []);
 

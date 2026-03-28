@@ -15,7 +15,7 @@
  * Reads from: sessionStore, modalStore, uiStore
  */
 
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { Session, AITab } from '../../types';
 import type { ToolType } from '../../../shared/types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
@@ -108,6 +108,42 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const conductors = useConductorStore(selectConductors);
 	const conductorTasks = useConductorStore(selectConductorTasks);
 	const conductorRuns = useConductorStore(selectConductorRuns);
+	const groupsPersistenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const conductorPersistenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const latestGroupsRef = useRef(groups);
+	const latestConductorStateRef = useRef({
+		conductors,
+		tasks: conductorTasks,
+		runs: conductorRuns,
+	});
+	latestGroupsRef.current = groups;
+	latestConductorStateRef.current = {
+		conductors,
+		tasks: conductorTasks,
+		runs: conductorRuns,
+	};
+
+	const flushGroupPersistence = useCallback(() => {
+		if (!initialLoadComplete) {
+			return;
+		}
+		if (groupsPersistenceTimerRef.current) {
+			clearTimeout(groupsPersistenceTimerRef.current);
+			groupsPersistenceTimerRef.current = null;
+		}
+		window.maestro.groups.setAll(latestGroupsRef.current);
+	}, [initialLoadComplete]);
+
+	const flushConductorPersistence = useCallback(() => {
+		if (!initialLoadComplete || !window.maestro.conductors) {
+			return;
+		}
+		if (conductorPersistenceTimerRef.current) {
+			clearTimeout(conductorPersistenceTimerRef.current);
+			conductorPersistenceTimerRef.current = null;
+		}
+		window.maestro.conductors.setAll(latestConductorStateRef.current);
+	}, [initialLoadComplete]);
 
 	// ====================================================================
 	// Callbacks
@@ -456,22 +492,70 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	// Effects
 	// ====================================================================
 
-	// Persist groups directly (groups change infrequently, no need to debounce)
+	// Persist groups with a short debounce. Group metadata can still update rapidly
+	// while thread reconciliation is catching up during active sessions.
 	useEffect(() => {
-		if (initialLoadComplete) {
-			window.maestro.groups.setAll(groups);
+		if (!initialLoadComplete) {
+			return;
 		}
-	}, [groups, initialLoadComplete]);
+
+		if (groupsPersistenceTimerRef.current) {
+			clearTimeout(groupsPersistenceTimerRef.current);
+		}
+
+		groupsPersistenceTimerRef.current = setTimeout(() => {
+			flushGroupPersistence();
+		}, 300);
+
+		return () => {
+			if (groupsPersistenceTimerRef.current) {
+				clearTimeout(groupsPersistenceTimerRef.current);
+				groupsPersistenceTimerRef.current = null;
+			}
+		};
+	}, [flushGroupPersistence, groups, initialLoadComplete]);
 
 	useEffect(() => {
-		if (initialLoadComplete && window.maestro.conductors) {
-			window.maestro.conductors.setAll({
-				conductors,
-				tasks: conductorTasks,
-				runs: conductorRuns,
-			});
+		if (!initialLoadComplete || !window.maestro.conductors) {
+			return;
 		}
-	}, [conductors, conductorTasks, conductorRuns, initialLoadComplete]);
+
+		if (conductorPersistenceTimerRef.current) {
+			clearTimeout(conductorPersistenceTimerRef.current);
+		}
+
+		conductorPersistenceTimerRef.current = setTimeout(() => {
+			flushConductorPersistence();
+		}, 300);
+
+		return () => {
+			if (conductorPersistenceTimerRef.current) {
+				clearTimeout(conductorPersistenceTimerRef.current);
+				conductorPersistenceTimerRef.current = null;
+			}
+		};
+	}, [
+		conductorTasks,
+		conductorRuns,
+		conductors,
+		flushConductorPersistence,
+		initialLoadComplete,
+	]);
+
+	useEffect(() => {
+		const handleBeforeUnload = () => {
+			flushGroupPersistence();
+			flushConductorPersistence();
+		};
+
+		window.addEventListener('beforeunload', handleBeforeUnload);
+
+		return () => {
+			window.removeEventListener('beforeunload', handleBeforeUnload);
+			flushGroupPersistence();
+			flushConductorPersistence();
+		};
+	}, [flushConductorPersistence, flushGroupPersistence]);
 
 	// Track navigation history when session or AI tab changes
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);

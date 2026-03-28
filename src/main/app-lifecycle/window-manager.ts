@@ -148,18 +148,24 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 			// Load the app
 			if (isDevelopment) {
-				// Install React DevTools extension in development mode
-				import('electron-devtools-installer')
-					.then(({ default: installExtension, REACT_DEVELOPER_TOOLS }) => {
-						installExtension(REACT_DEVELOPER_TOOLS)
-							.then(() => logger.info('React DevTools extension installed', 'Window'))
-							.catch((err: Error) =>
-								logger.warn(`Failed to install React DevTools: ${err.message}`, 'Window')
-							);
-					})
-					.catch((err: Error) =>
-						logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
+				if (process.env.MAESTRO_ENABLE_REACT_DEVTOOLS === 'true') {
+					import('electron-devtools-installer')
+						.then(({ default: installExtension, REACT_DEVELOPER_TOOLS }) => {
+							installExtension(REACT_DEVELOPER_TOOLS)
+								.then(() => logger.info('React DevTools extension installed', 'Window'))
+								.catch((err: Error) =>
+									logger.warn(`Failed to install React DevTools: ${err.message}`, 'Window')
+								);
+						})
+						.catch((err: Error) =>
+							logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
+						);
+				} else {
+					logger.info(
+						'React DevTools auto-install is disabled in development. Set MAESTRO_ENABLE_REACT_DEVTOOLS=true to opt in.',
+						'Window'
 					);
+				}
 
 				mainWindow.loadURL(devServerUrl);
 				// DevTools can be opened via Command-K menu instead of automatically on startup

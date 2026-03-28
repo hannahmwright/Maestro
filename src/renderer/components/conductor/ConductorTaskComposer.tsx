@@ -145,7 +145,8 @@ export function ConductorTaskComposer({
 						<span>
 							<div style={{ color: theme.colors.textMain }}>Require proof before Complete</div>
 							<div className="mt-1 text-xs leading-5" style={{ color: theme.colors.textDim }}>
-								Top-level tasks can require a screen recording plus screenshots before they move into Done.
+								Top-level tasks can require a screen recording plus screenshots before they move
+								into Done.
 							</div>
 						</span>
 					</label>

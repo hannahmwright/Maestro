@@ -17,6 +17,7 @@ const mockMaestro = {
 		onData: vi.fn(() => vi.fn()),
 		onExit: vi.fn(() => vi.fn()),
 		onThinkingChunk: vi.fn(() => vi.fn()),
+		onAssistantStream: vi.fn(() => vi.fn()),
 		onToolExecution: vi.fn(() => vi.fn()),
 	},
 };
@@ -244,10 +245,10 @@ describe('inlineWizardConversation', () => {
 			await messagePromise;
 		});
 
-		it('should not set up onToolExecution listener when callback is not provided', async () => {
-			const mockAgent = {
-				id: 'claude-code',
-				available: true,
+			it('should not set up onToolExecution listener when callback is not provided', async () => {
+				const mockAgent = {
+					id: 'claude-code',
+					available: true,
 				command: 'claude',
 				args: [],
 			};
@@ -275,12 +276,53 @@ describe('inlineWizardConversation', () => {
 			expect(mockMaestro.process.onToolExecution).not.toHaveBeenCalled();
 
 			// Clean up
-			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
-			exitCallback(session.sessionId, 0);
+				const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+				exitCallback(session.sessionId, 0);
 
-			await messagePromise;
+				await messagePromise;
+			});
+
+			it('should parse Codex final answers from assistant-stream events when raw output is empty', async () => {
+				const mockAgent = {
+					id: 'codex',
+					available: true,
+					command: 'codex',
+					args: [],
+				};
+				mockMaestro.agents.get.mockResolvedValue(mockAgent);
+				mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+				const session = await startInlineWizardConversation({
+					agentType: 'codex',
+					directoryPath: '/test/project',
+					projectName: 'Test Project',
+					mode: 'new',
+				});
+
+				const messagePromise = sendWizardMessage(session, 'Hello', []);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+
+				expect(mockMaestro.process.onAssistantStream).toHaveBeenCalled();
+
+				const assistantStreamCallback = mockMaestro.process.onAssistantStream.mock.calls[0][0];
+				assistantStreamCallback(session.sessionId, {
+					mode: 'replace',
+					text: '{"confidence":20,"ready":false,"message":"Need one more constraint."}',
+				});
+				assistantStreamCallback(session.sessionId, { mode: 'commit' });
+
+				const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+				exitCallback(session.sessionId, 0);
+
+				const result = await messagePromise;
+				expect(result.success).toBe(true);
+				expect(result.response).toEqual({
+					confidence: 20,
+					ready: false,
+					message: 'Need one more constraint.',
+				});
+			});
 		});
-	});
 
 	describe('activity-based timeout', () => {
 		afterEach(() => {

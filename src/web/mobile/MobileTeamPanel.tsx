@@ -107,9 +107,7 @@ export function MobileTeamPanel({
 								textAlign: 'center',
 								background: 'transparent',
 								border: 'none',
-								borderBottom: isSelected
-									? `2px solid ${colors.accent}`
-									: '2px solid transparent',
+								borderBottom: isSelected ? `2px solid ${colors.accent}` : '2px solid transparent',
 								color: isSelected ? colors.textMain : colors.textDim,
 								cursor: 'pointer',
 								position: 'relative',
@@ -137,9 +135,7 @@ export function MobileTeamPanel({
 									textAlign: 'left',
 									background: 'transparent',
 									border: 'none',
-									borderTop: index > 0
-										? '1px solid rgba(255,255,255,0.05)'
-										: 'none',
+									borderTop: index > 0 ? '1px solid rgba(255,255,255,0.05)' : 'none',
 									cursor: 'pointer',
 									display: 'flex',
 									alignItems: 'center',

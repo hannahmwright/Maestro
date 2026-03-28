@@ -14,9 +14,19 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { Session, Thread } from '../../types';
+import {
+	compactConductorHelperSession,
+	isConductorHelperSession,
+} from '../../services/conductorSessionLogPolicy';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
+const MAX_PERSISTED_SESSION_LOGS = 100;
+const MAX_PERSISTED_WORK_LOG_ITEMS = 50;
+const EMPTY_THREADS: Thread[] = [];
+
+const capTail = <T>(items: T[], maxItems: number): T[] =>
+	items.length > maxItems ? items.slice(-maxItems) : items;
 
 /**
  * Prepare a session for persistence by:
@@ -40,6 +50,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	if (!session.aiTabs || session.aiTabs.length === 0) {
 		return session;
 	}
+
+	const isConductorHelper = isConductorHelperSession(session);
 
 	// Filter out tabs with active wizard state - incomplete wizards should not persist
 	// When a wizard completes, wizardState is cleared (set to undefined) and the tab
@@ -67,10 +79,9 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	// Truncate logs and reset runtime state in each tab
 	const truncatedTabs = tabsToProcess.map((tab) => ({
 		...tab,
-		logs:
-			tab.logs.length > MAX_PERSISTED_LOGS_PER_TAB
-				? tab.logs.slice(-MAX_PERSISTED_LOGS_PER_TAB)
-				: tab.logs,
+		logs: isConductorHelper ? [] : capTail(tab.logs, MAX_PERSISTED_LOGS_PER_TAB),
+		inputValue: isConductorHelper ? '' : tab.inputValue,
+		stagedImages: isConductorHelper ? [] : tab.stagedImages,
 		// Reset runtime-only tab state - processes don't survive app restart
 		state: 'idle' as const,
 		thinkingStartTime: undefined,
@@ -96,8 +107,11 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const activeTabExists = truncatedTabs.some((tab) => tab.id === session.activeTabId);
 	const newActiveTabId = activeTabExists ? session.activeTabId : truncatedTabs[0]?.id;
 
-	return {
+	return compactConductorHelperSession({
 		...sessionWithoutRuntimeFields,
+		aiLogs: capTail(session.aiLogs, MAX_PERSISTED_SESSION_LOGS),
+		shellLogs: capTail(session.shellLogs, MAX_PERSISTED_SESSION_LOGS),
+		workLog: capTail(session.workLog, MAX_PERSISTED_WORK_LOG_ITEMS),
 		aiTabs: truncatedTabs,
 		activeTabId: newActiveTabId,
 		// Reset runtime-only session state - processes don't survive app restart
@@ -107,6 +121,9 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		currentCycleTokens: undefined,
 		currentCycleBytes: undefined,
 		statusMessage: undefined,
+		// Queued work should not survive restart because the backing processes are gone
+		// and queued payloads can contain large message/image blobs.
+		executionQueue: [],
 		// Clear runtime SSH state - these are populated from process:ssh-remote event after each spawn
 		// They represent the state of the LAST spawn, not configuration. On app restart,
 		// they'll be repopulated based on sessionSshRemoteConfig when the agent next spawns.
@@ -131,7 +148,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		// Type assertion: this function deliberately strips runtime-only and cache
 		// fields from Session for persistence. The resulting object is a valid
 		// persisted session but missing non-persisted fields.
-	} as unknown as Session;
+	} as unknown as Session);
 };
 
 export interface UseDebouncedPersistenceReturn {
@@ -144,20 +161,49 @@ export interface UseDebouncedPersistenceReturn {
 /** Default debounce delay in milliseconds */
 export const DEFAULT_DEBOUNCE_DELAY = 2000;
 
+type InitialLoadCompleteRef = React.MutableRefObject<boolean>;
+
 /**
  * Hook that debounces session persistence to reduce disk writes.
  *
  * @param sessions - Array of sessions to persist
+ * @param threads - Threads to persist alongside sessions
  * @param initialLoadComplete - Ref indicating if initial load is done (prevents persisting on mount)
  * @param delay - Debounce delay in milliseconds (default 2000)
  * @returns Object with isPending state and flushNow function
  */
 export function useDebouncedPersistence(
 	sessions: Session[],
+	initialLoadComplete: InitialLoadCompleteRef,
+	delay?: number
+): UseDebouncedPersistenceReturn;
+
+export function useDebouncedPersistence(
+	sessions: Session[],
 	threads: Thread[],
-	initialLoadComplete: React.MutableRefObject<boolean>,
+	initialLoadComplete: InitialLoadCompleteRef,
+	delay?: number
+): UseDebouncedPersistenceReturn;
+
+export function useDebouncedPersistence(
+	sessions: Session[],
+	threadsOrInitialLoadComplete: Thread[] | InitialLoadCompleteRef,
+	initialLoadCompleteOrDelay?: InitialLoadCompleteRef | number,
 	delay: number = DEFAULT_DEBOUNCE_DELAY
 ): UseDebouncedPersistenceReturn {
+	const threads = Array.isArray(threadsOrInitialLoadComplete)
+		? threadsOrInitialLoadComplete
+		: EMPTY_THREADS;
+	const initialLoadComplete = Array.isArray(threadsOrInitialLoadComplete)
+		? (initialLoadCompleteOrDelay as InitialLoadCompleteRef | undefined)
+		: threadsOrInitialLoadComplete;
+	const resolvedDelay =
+		typeof initialLoadCompleteOrDelay === 'number' ? initialLoadCompleteOrDelay : delay;
+
+	if (!initialLoadComplete) {
+		throw new Error('useDebouncedPersistence requires an initialLoadComplete ref');
+	}
+
 	// Track if there are pending changes
 	const [isPending, setIsPending] = useState(false);
 
@@ -184,7 +230,7 @@ export function useDebouncedPersistence(
 		try {
 			const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
 			window.maestro.sessions.setAll(sessionsForPersistence);
-			window.maestro.threads.setAll(threadsRef.current);
+			window.maestro.threads?.setAll?.(threadsRef.current);
 			setIsPending(false);
 		} finally {
 			flushingRef.current = false;
@@ -233,7 +279,7 @@ export function useDebouncedPersistence(
 		timerRef.current = setTimeout(() => {
 			persistSessions();
 			timerRef.current = null;
-		}, delay);
+		}, resolvedDelay);
 
 		// Cleanup on unmount or when sessions change
 		return () => {
@@ -241,7 +287,7 @@ export function useDebouncedPersistence(
 				clearTimeout(timerRef.current);
 			}
 		};
-	}, [sessions, threads, delay, initialLoadComplete, persistSessions]);
+	}, [sessions, threads, resolvedDelay, initialLoadComplete, persistSessions]);
 
 	// Flush on unmount to prevent data loss
 	useEffect(() => {
@@ -256,7 +302,7 @@ export function useDebouncedPersistence(
 			if (initialLoadComplete.current) {
 				const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
 				window.maestro.sessions.setAll(sessionsForPersistence);
-				window.maestro.threads.setAll(threadsRef.current);
+				window.maestro.threads?.setAll?.(threadsRef.current);
 			}
 		};
 	}, []);
@@ -283,7 +329,7 @@ export function useDebouncedPersistence(
 				// Synchronous flush for beforeunload
 				const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
 				window.maestro.sessions.setAll(sessionsForPersistence);
-				window.maestro.threads.setAll(threadsRef.current);
+				window.maestro.threads?.setAll?.(threadsRef.current);
 			}
 		};
 

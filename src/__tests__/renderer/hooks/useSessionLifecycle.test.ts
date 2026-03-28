@@ -1054,6 +1054,14 @@ describe('useSessionLifecycle', () => {
 	// ======================================================================
 
 	describe('groups persistence effect', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
 		it('persists groups when initialLoadComplete is true', () => {
 			const groups = [{ id: 'g1', name: 'Group 1', emoji: '', collapsed: false }];
 			useSessionStore.setState({
@@ -1064,6 +1072,10 @@ describe('useSessionLifecycle', () => {
 			});
 
 			renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
 
 			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups);
 		});
@@ -1093,6 +1105,10 @@ describe('useSessionLifecycle', () => {
 
 			renderHook(() => useSessionLifecycle(createDeps()));
 
+			act(() => {
+				vi.advanceTimersByTime(300);
+			});
+
 			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups1);
 
 			const groups2 = [
@@ -1102,6 +1118,10 @@ describe('useSessionLifecycle', () => {
 
 			act(() => {
 				useSessionStore.setState({ groups: groups2 });
+			});
+
+			act(() => {
+				vi.advanceTimersByTime(300);
 			});
 
 			expect(window.maestro.groups.setAll).toHaveBeenCalledWith(groups2);

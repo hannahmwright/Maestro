@@ -374,6 +374,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -391,6 +392,7 @@ describe('CallbackRegistry', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});
@@ -405,6 +407,7 @@ describe('CallbackRegistry', () => {
 				'session-5',
 				'explain this code',
 				'ai',
+				undefined,
 				undefined,
 				undefined,
 				undefined,

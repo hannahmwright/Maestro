@@ -315,9 +315,7 @@ function SwipeableThreadRow({
 									width: '26px',
 									height: '26px',
 									borderRadius: '999px',
-									backgroundColor: isActive
-										? `${colors.accent}10`
-										: 'rgba(255, 255, 255, 0.06)',
+									backgroundColor: isActive ? `${colors.accent}10` : 'rgba(255, 255, 255, 0.06)',
 									border: '1px solid rgba(255, 255, 255, 0.06)',
 									fontSize: '15px',
 									lineHeight: 1,
@@ -436,7 +434,9 @@ export function MobileNavigationDrawer({
 	const workspaceSections = useMemo((): WorkspaceSection[] => {
 		const grouped = new Map<string, WorkspaceSection>();
 
-		for (const session of sessions.filter((candidate) => !isHiddenConductorWorkspaceSession(candidate))) {
+		for (const session of sessions.filter(
+			(candidate) => !isHiddenConductorWorkspaceSession(candidate)
+		)) {
 			const workspaceId = session.groupId || 'ungrouped';
 			const sessionActivityAt = getSessionActivityTimestamp(session);
 			const existingGroup = grouped.get(workspaceId);

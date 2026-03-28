@@ -229,7 +229,11 @@ const defaultUpdateSession = useSessionStore.getState().updateSession;
 describe('InputArea', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		useSessionStore.setState({ updateSession: defaultUpdateSession, sessions: [], threads: [] } as any);
+		useSessionStore.setState({
+			updateSession: defaultUpdateSession,
+			sessions: [],
+			threads: [],
+		} as any);
 	});
 
 	afterEach(() => {

@@ -194,6 +194,8 @@ import { useTabStore } from './stores/tabStore';
 import { useFileExplorerStore } from './stores/fileExplorerStore';
 import type { UserInputRequest, UserInputResponse } from '../shared/user-input-requests';
 import {
+	equalWorkspaceGroups,
+	equalWorkspaceThreads,
 	findActiveThreadForSession,
 	reconcileThreadsWithSessions,
 	reconcileWorkspacesWithThreads,
@@ -784,7 +786,7 @@ function MaestroConsoleInner() {
 		if (!initialLoadComplete.current) return;
 		setThreads((prev) => {
 			const next = reconcileThreadsWithSessions(prev, useSessionStore.getState().sessions);
-			return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+			return equalWorkspaceThreads(next, prev) ? prev : next;
 		});
 	}, [sessions, initialLoadComplete, setThreads]);
 
@@ -792,7 +794,7 @@ function MaestroConsoleInner() {
 		if (!initialLoadComplete.current) return;
 		setGroups((prev) => {
 			const next = reconcileWorkspacesWithThreads(prev, useSessionStore.getState().threads);
-			return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
+			return equalWorkspaceGroups(next, prev) ? prev : next;
 		});
 	}, [threads, initialLoadComplete, setGroups]);
 
@@ -1686,11 +1688,12 @@ function MaestroConsoleInner() {
 		if (!activeSession) return null;
 		const activeThread = findActiveThreadForSession(threads, activeSession);
 		if (!activeThread) return null;
-		return sidebarNavTargets.find(
-			(target) =>
-				target.type === 'workspace' &&
-				target.workspace.workspaceId === activeThread.workspaceId
-		)?.id || null;
+		return (
+			sidebarNavTargets.find(
+				(target) =>
+					target.type === 'workspace' && target.workspace.workspaceId === activeThread.workspaceId
+			)?.id || null
+		);
 	}, [activeConductorView, activeSession, activeSidebarThreadTargetId, sidebarNavTargets, threads]);
 
 	// --- SESSION SORTING ---
@@ -1940,14 +1943,7 @@ function MaestroConsoleInner() {
 				},
 			]);
 		}
-	}, [
-		activeSession,
-		defaultSaveToHistory,
-		defaultShowThinking,
-		sessions,
-		setSessions,
-		setThreads,
-	]);
+	}, [activeSession, defaultSaveToHistory, defaultShowThinking, sessions, setSessions, setThreads]);
 
 	// Remote integration hook - handles web interface communication
 	useRemoteIntegration({

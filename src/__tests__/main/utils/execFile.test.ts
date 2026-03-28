@@ -199,6 +199,33 @@ describe('execFile.ts', () => {
 					exitCode: 0,
 				});
 			});
+
+			it('should cache repeated git worktree probes for the same cwd', async () => {
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						if (callback) {
+							callback(null, 'true\n', '');
+						}
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const first = await execFileNoThrow(
+					'git',
+					['rev-parse', '--is-inside-work-tree'],
+					'/cached/worktree'
+				);
+				const second = await execFileNoThrow(
+					'git',
+					['rev-parse', '--is-inside-work-tree'],
+					'/cached/worktree'
+				);
+
+				expect(first.exitCode).toBe(0);
+				expect(second.exitCode).toBe(0);
+				expect(mockExecFile).toHaveBeenCalledTimes(1);
+			});
 		});
 
 		describe('error handling', () => {

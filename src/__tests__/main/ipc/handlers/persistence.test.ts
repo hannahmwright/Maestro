@@ -144,6 +144,8 @@ describe('persistence IPC handlers', () => {
 				'sessions:setAll',
 				'groups:getAll',
 				'groups:setAll',
+				'threads:getAll',
+				'threads:setAll',
 				'conductors:getAll',
 				'conductors:setAll',
 				'cli:getActivity',

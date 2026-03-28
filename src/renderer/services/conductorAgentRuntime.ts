@@ -1,4 +1,5 @@
 import type {
+	AITab,
 	AgentError,
 	ConductorAgentRole,
 	ConductorProviderAgent,
@@ -38,6 +39,7 @@ export interface ConductorAgentRunOptions {
 	parentSession: Session;
 	role: ConductorAgentRole;
 	prompt: string;
+	providerOverride?: ConductorProviderAgent;
 	cwd?: string;
 	branch?: string | null;
 	taskTitle?: string;
@@ -63,6 +65,27 @@ export interface ConductorAgentRunResult {
 	structuredSubmission?: ConductorStructuredSubmission;
 	demoCard?: DemoCard;
 }
+
+export interface ResolvedConductorProviderConfig {
+	toolType: ConductorProviderAgent;
+	callsign: string;
+	routedFrom?: ConductorProviderAgent;
+	reason?: string;
+	sessionCustomPath?: string;
+	sessionCustomArgs?: string;
+	sessionCustomEnvVars?: Record<string, string>;
+	sessionCustomModel?: string;
+	sessionCustomContextWindow?: number;
+	sessionSshRemoteConfig?: Session['sessionSshRemoteConfig'];
+}
+
+interface ConductorExecutionMode {
+	dispatchKind: 'conversation' | 'spawn';
+	requireNativeStructuredSubmission: boolean;
+}
+
+const CLAUDE_CONDUCTOR_PLANNER_ALLOWED_TOOLS = ['Read', 'Glob', 'Grep', 'LS'] as const;
+const MAX_CONDUCTOR_RAW_OUTPUT_CHARS = 200_000;
 
 export class ConductorAgentRunError extends Error {
 	demoCard?: DemoCard;
@@ -176,23 +199,17 @@ function getRoleLabel(role: ConductorAgentRole): string {
 	}
 }
 
-export function detectConductorProviderRoute(
-	input: {
-		taskTitle?: string;
-		taskDescription?: string;
-		scopePaths?: string[];
-		providerRouteHint?: ConductorProviderRouteKey;
-	}
-): ConductorProviderRouteKey {
+export function detectConductorProviderRoute(input: {
+	taskTitle?: string;
+	taskDescription?: string;
+	scopePaths?: string[];
+	providerRouteHint?: ConductorProviderRouteKey;
+}): ConductorProviderRouteKey {
 	if (input.providerRouteHint) {
 		return input.providerRouteHint;
 	}
 
-	const haystack = [
-		input.taskTitle || '',
-		input.taskDescription || '',
-		...(input.scopePaths || []),
-	]
+	const haystack = [input.taskTitle || '', input.taskDescription || '', ...(input.scopePaths || [])]
 		.join(' ')
 		.toLowerCase();
 
@@ -226,7 +243,19 @@ function isProviderNearLimit(
 		return { nearLimit: false };
 	}
 
-	if (snapshot.credits && !snapshot.credits.unlimited && !snapshot.credits.hasCredits) {
+	const creditsLookExhausted =
+		Boolean(snapshot.credits) &&
+		snapshot.credits?.unlimited !== true &&
+		snapshot.credits?.hasCredits === false;
+	const hasWindowCapacitySignal =
+		snapshot.usedPercent !== null || (snapshot.windows?.length || 0) > 0;
+	const shouldTrustCreditExhaustion =
+		snapshot.accountType !== 'chatgpt' || !hasWindowCapacitySignal;
+
+	// ChatGPT-backed Codex accounts can report a zero credit balance while still exposing
+	// active rate-limit windows. In that case, trust the window telemetry instead of
+	// pausing Conductor immediately.
+	if (creditsLookExhausted && shouldTrustCreditExhaustion) {
 		return {
 			nearLimit: true,
 			reason: `${getProviderDisplayName(snapshot.provider)} credits are exhausted.`,
@@ -244,7 +273,9 @@ function isProviderNearLimit(
 }
 
 function getConductorProviderRouting(groupId: string): ConductorProviderRouting {
-	const conductor = useConductorStore.getState().conductors.find((candidate) => candidate.groupId === groupId);
+	const conductor = useConductorStore
+		.getState()
+		.conductors.find((candidate) => candidate.groupId === groupId);
 	return (
 		conductor?.providerRouting || {
 			default: { primary: 'workspace-lead', fallback: null },
@@ -263,19 +294,24 @@ async function chooseConductorProvider(
 		'role' | 'taskTitle' | 'taskDescription' | 'scopePaths' | 'providerRouteHint'
 	>
 ): Promise<{
-		toolType: ConductorProviderAgent;
-		callsign: string;
-		routedFrom?: ConductorProviderAgent;
-		reason?: string;
-	}> {
+	toolType: ConductorProviderAgent;
+	callsign: string;
+	routedFrom?: ConductorProviderAgent;
+	reason?: string;
+}> {
 	const groupId = parentSession.groupId || parentSession.workspaceId || '';
 	const routing = getConductorProviderRouting(groupId);
 	const routeKey = detectConductorProviderRoute(options);
 	const route = routing[routeKey];
-	const parentToolType = parentSession.toolType === 'terminal' ? 'claude-code' : parentSession.toolType;
+	const parentToolType =
+		parentSession.toolType === 'terminal' ? 'claude-code' : parentSession.toolType;
 	const primary =
 		route.primary === 'workspace-lead' ? (parentToolType as ConductorProviderAgent) : route.primary;
-	const candidates = [primary, route.fallback, routeKey !== 'default' ? routing.default.fallback : null].filter(
+	const candidates = [
+		primary,
+		route.fallback,
+		routeKey !== 'default' ? routing.default.fallback : null,
+	].filter(
 		(candidate, index, all): candidate is ConductorProviderAgent =>
 			Boolean(candidate) && all.indexOf(candidate) === index
 	);
@@ -324,6 +360,29 @@ async function chooseConductorProvider(
 	};
 }
 
+export async function resolveConductorProviderConfig(
+	parentSession: Session,
+	options: Pick<
+		ConductorAgentRunOptions,
+		'role' | 'taskTitle' | 'taskDescription' | 'scopePaths' | 'providerRouteHint'
+	>
+): Promise<ResolvedConductorProviderConfig> {
+	const selectedProvider = await chooseConductorProvider(parentSession, options);
+	const useParentOverrides = selectedProvider.toolType === parentSession.toolType;
+
+	return {
+		...selectedProvider,
+		sessionCustomPath: useParentOverrides ? parentSession.customPath : undefined,
+		sessionCustomArgs: useParentOverrides ? parentSession.customArgs : undefined,
+		sessionCustomEnvVars: useParentOverrides ? parentSession.customEnvVars : undefined,
+		sessionCustomModel: useParentOverrides ? parentSession.customModel : undefined,
+		sessionCustomContextWindow: useParentOverrides
+			? parentSession.customContextWindow
+			: undefined,
+		sessionSshRemoteConfig: parentSession.sessionSshRemoteConfig,
+	};
+}
+
 function buildConductorSessionName(
 	role: ConductorAgentRole,
 	toolType: ConductorProviderAgent,
@@ -339,7 +398,9 @@ function buildConductorSessionName(
 }
 
 function getLatestAssistantResponse(sessionId: string, tabId: string): string | null {
-	const session = useSessionStore.getState().sessions.find((candidate) => candidate.id === sessionId);
+	const session = useSessionStore
+		.getState()
+		.sessions.find((candidate) => candidate.id === sessionId);
 	const tab = session?.aiTabs.find((candidate) => candidate.id === tabId);
 	const assistantLog = [...(tab?.logs || [])].reverse().find((entry) => entry.source === 'ai');
 	return assistantLog?.text?.trim() || null;
@@ -441,6 +502,27 @@ export function extractConductorAgentResponse(toolType: ToolType, output: string
 	return output.trim();
 }
 
+export function appendConductorTurnOutput(
+	existing: string,
+	chunk: string,
+	maxChars: number = MAX_CONDUCTOR_RAW_OUTPUT_CHARS
+): string {
+	if (!chunk) {
+		return existing;
+	}
+
+	if (maxChars <= 0) {
+		return '';
+	}
+
+	const combined = existing + chunk;
+	if (combined.length <= maxChars) {
+		return combined;
+	}
+
+	return combined.slice(-maxChars);
+}
+
 async function createConductorChildSession(
 	parentSession: Session,
 	options: {
@@ -502,6 +584,13 @@ async function createConductorChildSession(
 }
 
 async function buildEffectivePrompt(session: Session, prompt: string): Promise<string> {
+	// Conductor planners need a strict prompt contract. Reusing the normal
+	// agent system prompt can inject unrelated "write a plan file/playbook"
+	// behavior that conflicts with the planner tool/JSON submission flow.
+	if (session.conductorMetadata?.isConductorSession && session.conductorMetadata.role === 'planner') {
+		return prompt;
+	}
+
 	const activeTab = getActiveTab(session);
 	const conductorProfile = useSettingsStore.getState().conductorProfile;
 	let effectivePrompt = prompt;
@@ -540,6 +629,69 @@ async function buildEffectivePrompt(session: Session, prompt: string): Promise<s
 	return effectivePrompt;
 }
 
+function resolveConductorExecutionMode(input: {
+	toolType: ToolType;
+	isSshSession: boolean;
+	expectedSubmissionKind?: ConductorStructuredSubmissionKind;
+	demoCaptureEnabled: boolean;
+}): ConductorExecutionMode {
+	if (input.expectedSubmissionKind) {
+		return {
+			dispatchKind: 'spawn',
+			requireNativeStructuredSubmission: false,
+		};
+	}
+
+	if (
+		input.demoCaptureEnabled &&
+		!input.isSshSession &&
+		input.toolType === 'codex'
+	) {
+		return {
+			dispatchKind: 'conversation',
+			requireNativeStructuredSubmission: false,
+		};
+	}
+
+	return {
+		dispatchKind: 'spawn',
+		requireNativeStructuredSubmission: false,
+	};
+}
+
+export function buildConductorSpawnBaseArgs(input: {
+	agentArgs: string[];
+	toolType: ToolType;
+	readOnlyMode: boolean;
+	expectedSubmissionKind?: ConductorStructuredSubmissionKind;
+}): string[] {
+	const strippedArgs = input.readOnlyMode
+		? input.agentArgs.filter(
+				(arg) =>
+					arg !== '--dangerously-skip-permissions' &&
+					arg !== '--dangerously-bypass-approvals-and-sandbox'
+			)
+		: [...input.agentArgs];
+
+	if (
+		input.toolType !== 'claude-code' ||
+		!input.readOnlyMode ||
+		input.expectedSubmissionKind !== 'planner'
+	) {
+		return strippedArgs;
+	}
+
+	if (strippedArgs.includes('--allowedTools')) {
+		return strippedArgs;
+	}
+
+	return [
+		...strippedArgs,
+		'--allowedTools',
+		...CLAUDE_CONDUCTOR_PLANNER_ALLOWED_TOOLS,
+	];
+}
+
 export async function runConductorAgentTurn(
 	options: ConductorAgentRunOptions
 ): Promise<ConductorAgentRunResult> {
@@ -547,13 +699,22 @@ export async function runConductorAgentTurn(
 		throw new Error('Conductor needs an AI lead agent, not a terminal session.');
 	}
 
-	const selectedProvider = await chooseConductorProvider(options.parentSession, {
-		role: options.role,
-		taskTitle: options.taskTitle,
-		taskDescription: options.taskDescription,
-		scopePaths: options.scopePaths,
-		providerRouteHint: options.providerRouteHint,
-	});
+	const groupId = options.parentSession.groupId || options.parentSession.workspaceId || '';
+	const selectedProvider = options.providerOverride
+		? {
+				toolType: options.providerOverride,
+				callsign: buildConductorCallsign(
+					options.providerOverride,
+					`${groupId}:${options.role}:${options.providerOverride}:${options.taskTitle || options.taskDescription || 'general'}`
+				),
+			}
+		: await chooseConductorProvider(options.parentSession, {
+				role: options.role,
+				taskTitle: options.taskTitle,
+				taskDescription: options.taskDescription,
+				scopePaths: options.scopePaths,
+				providerRouteHint: options.providerRouteHint,
+			});
 	const session = await createConductorChildSession(options.parentSession, {
 		role: options.role,
 		toolType: selectedProvider.toolType,
@@ -588,14 +749,14 @@ export async function runConductorAgentTurn(
 					...candidate,
 					shellLogs: [
 						...candidate.shellLogs,
-							{
-								id: generateId(),
-								timestamp: Date.now(),
-								source: 'system',
-								text: `Conductor rerouted this ${getRoleLabel(options.role).toLowerCase()} from ${getProviderDisplayName(routedFrom)} to ${getProviderDisplayName(selectedProvider.toolType)}. ${selectedProvider.reason}`,
-							},
-						],
-					};
+						{
+							id: generateId(),
+							timestamp: Date.now(),
+							source: 'system',
+							text: `Conductor rerouted this ${getRoleLabel(options.role).toLowerCase()} from ${getProviderDisplayName(routedFrom)} to ${getProviderDisplayName(selectedProvider.toolType)}. ${selectedProvider.reason}`,
+						},
+					],
+				};
 			})
 		);
 	}
@@ -651,29 +812,27 @@ export async function runConductorAgentTurn(
 		effectivePrompt,
 		options.demoCapture?.enabled === true
 	);
-	const baseArgs =
-		options.readOnlyMode
-			? (agent.args || []).filter(
-					(arg) =>
-						arg !== '--dangerously-skip-permissions' &&
-						arg !== '--dangerously-bypass-approvals-and-sandbox'
-				)
-			: [...(agent.args || [])];
+	const baseArgs = buildConductorSpawnBaseArgs({
+		agentArgs: agent.args || [],
+		toolType: session.toolType,
+		readOnlyMode: options.readOnlyMode === true,
+		expectedSubmissionKind: options.expectedSubmissionKind,
+	});
 	const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
 		isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
 		supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
 	});
-	const useNativeStructuredSubmission =
-		Boolean(options.expectedSubmissionKind) && supportsNativeConductorToolSubmission(session.toolType);
-	const useConversationDispatch =
-		useNativeStructuredSubmission ||
-		(options.demoCapture?.enabled === true &&
-			!session.sshRemoteId &&
-			session.sessionSshRemoteConfig?.enabled !== true &&
-			session.toolType === 'codex');
+	const executionMode = resolveConductorExecutionMode({
+		toolType: session.toolType,
+		isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
+		expectedSubmissionKind: options.expectedSubmissionKind,
+		demoCaptureEnabled: options.demoCapture?.enabled === true,
+	});
 
 	return new Promise((resolve, reject) => {
+		const shouldBufferRawOutput = !executionMode.requireNativeStructuredSubmission;
 		let rawOutput = '';
+		let assistantStreamResponse = '';
 		let agentSessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let runtimeKind: ConversationRuntimeKind | undefined;
@@ -681,7 +840,83 @@ export async function runConductorAgentTurn(
 		let demoCard: DemoCard | undefined;
 		let agentError: AgentError | undefined;
 		let conversationFailureMessage: string | undefined;
+		let forcedFailureMessage: string | undefined;
 		let finalized = false;
+		let sawBusySession = false;
+		let sawTurnActivity = false;
+		let idleSessionTimer: number | undefined;
+		let toolMismatchTimer: number | undefined;
+		let sessionPollTimer: number | undefined;
+		const runningToolNamesById = new Map<string, string>();
+		let unsubscribeSessionStore = () => {};
+
+		const getRunningToolNamesFromTabLogs = (latestTab: AITab | undefined): string[] => {
+			if (!latestTab) {
+				return [];
+			}
+
+			const runningToolNames = new Map<string, string>();
+			for (const logEntry of latestTab.logs || []) {
+				if (logEntry.source !== 'tool') {
+					continue;
+				}
+
+				const toolState = (logEntry.metadata as { toolState?: Record<string, unknown> } | undefined)
+					?.toolState;
+				const toolId = String(toolState?.id || '').trim();
+				const toolStatus = String(toolState?.status || '').toLowerCase();
+				const toolName = String(logEntry.text || '').trim();
+				if (!toolId || !toolName) {
+					continue;
+				}
+
+				if (toolStatus === 'completed' || toolStatus === 'error') {
+					runningToolNames.delete(toolId);
+				} else if (toolStatus) {
+					runningToolNames.set(toolId, toolName);
+				}
+			}
+
+			return Array.from(new Set(runningToolNames.values()));
+		};
+
+		const getObservedRunningToolNames = (latestTab?: AITab | undefined): string[] => {
+			const names = new Set(runningToolNamesById.values());
+			for (const toolName of getRunningToolNamesFromTabLogs(latestTab)) {
+				names.add(toolName);
+			}
+			return Array.from(names);
+		};
+
+		const getObservedTab = (latestSession?: Session, preferredTabId?: string): AITab | undefined => {
+			const tabs = latestSession?.aiTabs || [];
+			if (tabs.length === 0) {
+				return undefined;
+			}
+
+			return tabs.find((candidate) => candidate.id === preferredTabId) || tabs[tabs.length - 1];
+		};
+
+		const clearIdleSessionTimer = () => {
+			if (typeof idleSessionTimer === 'number') {
+				window.clearTimeout(idleSessionTimer);
+				idleSessionTimer = undefined;
+			}
+		};
+
+		const clearToolMismatchTimer = () => {
+			if (typeof toolMismatchTimer === 'number') {
+				window.clearTimeout(toolMismatchTimer);
+				toolMismatchTimer = undefined;
+			}
+		};
+
+		const clearSessionPollTimer = () => {
+			if (typeof sessionPollTimer === 'number') {
+				window.clearInterval(sessionPollTimer);
+				sessionPollTimer = undefined;
+			}
+		};
 
 		const loadLatestDemoCard = async (): Promise<DemoCard | undefined> => {
 			if (options.demoCapture?.enabled !== true) {
@@ -696,19 +931,99 @@ export async function runConductorAgentTurn(
 			return demoCards[0] || demoCard;
 		};
 
-		const cleanup = () => {
+			const cleanup = () => {
 			unsubscribeData();
+			unsubscribeAssistantStream?.();
 			unsubscribeSessionId();
 			unsubscribeUsage();
+			unsubscribeSessionStore();
 			unsubscribeToolExecution?.();
 			unsubscribeDemoGenerated?.();
 			unsubscribeAgentError();
 			unsubscribeConversationEvent?.();
 			unsubscribeQueryComplete?.();
 			unsubscribeExit();
-		};
+				clearIdleSessionTimer();
+				clearToolMismatchTimer();
+				clearSessionPollTimer();
+			};
 
-		const finalizeRun = (completion: { exitCode?: number }) => {
+			const scheduleIdleFinalize = () => {
+				if (finalized || typeof idleSessionTimer === 'number') {
+					return;
+				}
+				idleSessionTimer = window.setTimeout(() => {
+					idleSessionTimer = undefined;
+					if (!finalized) {
+						finalizeRun({});
+					}
+				}, 750);
+			};
+
+			const getRunningToolSummary = (_latestSession?: Session, latestTab?: AITab) => {
+				const runningToolNames = getObservedRunningToolNames(latestTab);
+				return runningToolNames[0] || 'a tool';
+			};
+
+			const scheduleToolMismatchFailure = () => {
+				if (finalized || typeof toolMismatchTimer === 'number') {
+					return;
+				}
+
+				toolMismatchTimer = window.setTimeout(() => {
+					toolMismatchTimer = undefined;
+					if (finalized) {
+						return;
+					}
+
+					const latestSession = useSessionStore
+						.getState()
+						.sessions.find((candidate) => candidate.id === session.id);
+					const latestTab = getObservedTab(latestSession, activeTab.id);
+					if (!latestSession || !latestTab) {
+						return;
+					}
+
+					if (latestSession.state !== 'idle' || latestTab.state !== 'idle') {
+						return;
+					}
+
+					const runningToolNames = getObservedRunningToolNames(latestTab);
+					if (runningToolNames.length === 0) {
+						return;
+					}
+
+					forcedFailureMessage = `${session.name} became idle while ${getRunningToolSummary(
+						latestSession,
+						latestTab
+					)} was still running.`;
+					finalizeRun({});
+				}, 1500);
+			};
+
+			const markTurnActivity = () => {
+				sawTurnActivity = true;
+				clearIdleSessionTimer();
+				clearToolMismatchTimer();
+				const latestSession = useSessionStore
+					.getState()
+					.sessions.find((candidate) => candidate.id === session.id);
+				const latestTab = getObservedTab(latestSession, activeTab.id);
+				if (!latestSession || !latestTab) {
+					return;
+				}
+
+				const runningToolNames = getObservedRunningToolNames(latestTab);
+				if (latestSession.state === 'idle' && latestTab.state === 'idle') {
+					if (runningToolNames.length > 0) {
+						scheduleToolMismatchFailure();
+					} else {
+						scheduleIdleFinalize();
+					}
+				}
+			};
+
+			const finalizeRun = (completion: { exitCode?: number }) => {
 			if (finalized) {
 				return;
 			}
@@ -717,6 +1032,7 @@ export async function runConductorAgentTurn(
 
 			const response =
 				extractConductorAgentResponse(session.toolType, rawOutput) ||
+				assistantStreamResponse.trim() ||
 				getLatestAssistantResponse(session.id, activeTab.id) ||
 				'';
 
@@ -733,7 +1049,8 @@ export async function runConductorAgentTurn(
 					return;
 				}
 
-				if (agentError?.type === 'demo_capture_failed') {
+				const hasUsableAgentResult = Boolean(structuredSubmission) || response.trim().length > 0;
+				if (agentError?.type === 'demo_capture_failed' && !hasUsableAgentResult) {
 					reject(
 						new ConductorAgentRunError(agentError.message, {
 							demoCard: persistedDemoCard,
@@ -751,11 +1068,40 @@ export async function runConductorAgentTurn(
 					return;
 				}
 
-				if (useNativeStructuredSubmission && options.expectedSubmissionKind && !structuredSubmission) {
+				if (forcedFailureMessage) {
+					reject(
+						new ConductorAgentRunError(forcedFailureMessage, {
+							demoCard: persistedDemoCard,
+						})
+					);
+					return;
+				}
+
+				const allowPlannerTextFallback =
+					executionMode.requireNativeStructuredSubmission &&
+					options.expectedSubmissionKind === 'planner' &&
+					!structuredSubmission &&
+					response.trim().length > 0;
+
+				if (
+					executionMode.requireNativeStructuredSubmission &&
+					options.expectedSubmissionKind &&
+					!structuredSubmission &&
+					!allowPlannerTextFallback
+				) {
 					reject(
 						new ConductorAgentRunError(
-							response ||
-								`${session.name} finished without calling the required ${options.expectedSubmissionKind} Conductor result tool.`,
+							`${session.name} finished without calling the required ${options.expectedSubmissionKind} Conductor result tool.`,
+							{ demoCard: persistedDemoCard }
+						)
+					);
+					return;
+				}
+
+				if (options.expectedSubmissionKind && !structuredSubmission && response.trim().length === 0) {
+					reject(
+						new ConductorAgentRunError(
+							`${session.name} finished without returning a ${options.expectedSubmissionKind} result.`,
 							{ demoCard: persistedDemoCard }
 						)
 					);
@@ -776,36 +1122,87 @@ export async function runConductorAgentTurn(
 			})().catch((error) => reject(error));
 		};
 
-		const unsubscribeData = window.maestro.process.onData((sessionId, data) => {
-			if (sessionId === targetSessionId) {
-				rawOutput += data;
-			}
-		});
-		const unsubscribeSessionId = window.maestro.process.onSessionId((sessionId, capturedId) => {
-			if (sessionId === targetSessionId) {
-				agentSessionId = capturedId;
-			}
-		});
-		const unsubscribeUsage = window.maestro.process.onUsage((sessionId, nextUsageStats) => {
-			if (sessionId === targetSessionId) {
-				usageStats = nextUsageStats;
-			}
-		});
-		const unsubscribeToolExecution = window.maestro.process.onToolExecution?.((sessionId, toolEvent) => {
-			if (sessionId !== targetSessionId || !options.expectedSubmissionKind || structuredSubmission) {
-				return;
-			}
+			const unsubscribeData = window.maestro.process.onData((sessionId, data) => {
+				if (sessionId === targetSessionId) {
+					if (shouldBufferRawOutput) {
+						rawOutput = appendConductorTurnOutput(rawOutput, data);
+					}
+					markTurnActivity();
+				}
+			});
+			const unsubscribeAssistantStream = window.maestro.process.onAssistantStream?.(
+				(sessionId, event) => {
+					if (sessionId !== targetSessionId) {
+						return;
+					}
 
-			const parsedSubmission = parseConductorStructuredSubmissionFromToolExecution(
-				toolEvent.toolName,
-				toolEvent.state
+					switch (event.mode) {
+						case 'append':
+							assistantStreamResponse += event.text || '';
+							break;
+						case 'replace':
+							assistantStreamResponse = event.text || '';
+							break;
+						case 'discard':
+							assistantStreamResponse = '';
+							break;
+						case 'commit':
+						default:
+							break;
+					}
+
+					markTurnActivity();
+				}
 			);
-			if (!parsedSubmission || parsedSubmission.kind !== options.expectedSubmissionKind) {
-				return;
-			}
+			const unsubscribeSessionId = window.maestro.process.onSessionId((sessionId, capturedId) => {
+				if (sessionId === targetSessionId) {
+					agentSessionId = capturedId;
+					markTurnActivity();
+				}
+			});
+			const unsubscribeUsage = window.maestro.process.onUsage((sessionId, nextUsageStats) => {
+				if (sessionId === targetSessionId) {
+					usageStats = nextUsageStats;
+					markTurnActivity();
+				}
+			});
+			const unsubscribeToolExecution = window.maestro.process.onToolExecution?.(
+				(sessionId, toolEvent) => {
+					if (sessionId !== targetSessionId) {
+						return;
+					}
 
-			structuredSubmission = parsedSubmission;
-		});
+					const toolStatus = String(
+						(toolEvent.state as Record<string, unknown> | undefined)?.status || ''
+					).toLowerCase();
+					const toolId = String(
+						(toolEvent.state as Record<string, unknown> | undefined)?.id || ''
+					).trim();
+					if (toolId) {
+						if (toolStatus === 'completed' || toolStatus === 'error') {
+							runningToolNamesById.delete(toolId);
+						} else {
+							runningToolNamesById.set(toolId, toolEvent.toolName);
+						}
+					}
+
+					markTurnActivity();
+
+					if (!options.expectedSubmissionKind || structuredSubmission) {
+						return;
+					}
+
+				const parsedSubmission = parseConductorStructuredSubmissionFromToolExecution(
+					toolEvent.toolName,
+					toolEvent.state
+				);
+				if (!parsedSubmission || parsedSubmission.kind !== options.expectedSubmissionKind) {
+					return;
+				}
+
+				structuredSubmission = parsedSubmission;
+			}
+		);
 		const unsubscribeDemoGenerated = window.maestro.process.onDemoGenerated?.(
 			(baseSessionId, tabId, nextDemoCard) => {
 				if (baseSessionId === session.id && (tabId || null) === activeTab.id) {
@@ -813,21 +1210,26 @@ export async function runConductorAgentTurn(
 				}
 			}
 		);
-		const unsubscribeAgentError = window.maestro.process.onAgentError((sessionId, nextAgentError) => {
-			if (sessionId === targetSessionId) {
-				agentError = nextAgentError as AgentError;
-				if (nextAgentError.type === 'demo_capture_failed') {
-					finalizeRun({});
+			const unsubscribeAgentError = window.maestro.process.onAgentError(
+				(sessionId, nextAgentError) => {
+					if (sessionId === targetSessionId) {
+						agentError = nextAgentError as AgentError;
+						markTurnActivity();
+						if (nextAgentError.type === 'demo_capture_failed') {
+							finalizeRun({});
+						}
 				}
 			}
-		});
-		const unsubscribeConversationEvent = conversationService.onEvent((sessionId, event) => {
-			if (sessionId !== targetSessionId) {
-				return;
-			}
+		);
+			const unsubscribeConversationEvent = conversationService.onEvent((sessionId, event) => {
+				if (sessionId !== targetSessionId) {
+					return;
+				}
 
-			if (event.type === 'turn_failed') {
-				conversationFailureMessage = event.message;
+				markTurnActivity();
+
+				if (event.type === 'turn_failed') {
+					conversationFailureMessage = event.message;
 				finalizeRun({});
 				return;
 			}
@@ -840,14 +1242,15 @@ export async function runConductorAgentTurn(
 				finalizeRun({});
 			}
 		});
-		const unsubscribeQueryComplete = window.maestro.process.onQueryComplete?.(
-			(sessionId, queryData) => {
-				if (sessionId !== targetSessionId) {
-					return;
-				}
-				if ((queryData.tabId || activeTab.id) !== activeTab.id) {
-					return;
-				}
+			const unsubscribeQueryComplete = window.maestro.process.onQueryComplete?.(
+				(sessionId, queryData) => {
+					if (sessionId !== targetSessionId) {
+						return;
+					}
+					markTurnActivity();
+					if ((queryData.tabId || activeTab.id) !== activeTab.id) {
+						return;
+					}
 				finalizeRun({});
 			}
 		);
@@ -857,8 +1260,46 @@ export async function runConductorAgentTurn(
 			}
 			finalizeRun({ exitCode });
 		});
+			const syncSessionActivity = () => {
+				const latestSession = useSessionStore
+					.getState()
+					.sessions.find((candidate) => candidate.id === session.id);
+				const latestTab = getObservedTab(latestSession, activeTab.id);
+			if (!latestSession || !latestTab) {
+				return;
+			}
 
-		const spawnPromise = useConversationDispatch
+			const isBusy = latestSession.state === 'busy' || latestTab.state === 'busy';
+			if (isBusy) {
+				sawBusySession = true;
+				clearIdleSessionTimer();
+				clearToolMismatchTimer();
+				return;
+			}
+
+				const runningToolNames = getObservedRunningToolNames(latestTab);
+				if (
+					!finalized &&
+					(sawBusySession || sawTurnActivity) &&
+					latestSession.state === 'idle' &&
+					latestTab.state === 'idle'
+				) {
+					if (runningToolNames.length > 0) {
+						scheduleToolMismatchFailure();
+					} else {
+						scheduleIdleFinalize();
+					}
+				}
+			};
+		unsubscribeSessionStore = useSessionStore.subscribe(() => {
+			syncSessionActivity();
+		});
+		syncSessionActivity();
+		sessionPollTimer = window.setInterval(() => {
+			syncSessionActivity();
+		}, 500);
+
+		const spawnPromise = executionMode.dispatchKind === 'conversation'
 			? conversationService
 					.sendTurn({
 						sessionId: targetSessionId,
@@ -878,7 +1319,7 @@ export async function runConductorAgentTurn(
 						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 						querySource: 'auto',
 						preferLiveRuntime: true,
-						conductorNativeResultTools: useNativeStructuredSubmission,
+						conductorNativeResultTools: executionMode.requireNativeStructuredSubmission,
 						demoCapture: options.demoCapture,
 					})
 					.then((dispatchResult) => {
@@ -907,45 +1348,45 @@ export async function runConductorAgentTurn(
 				});
 
 		spawnPromise.catch((error) => {
-				if (!finalized) {
-					finalized = true;
-					cleanup();
-				}
+			if (!finalized) {
+				finalized = true;
+				cleanup();
+			}
 
-				useSessionStore.getState().setSessions((previous) =>
-					previous.map((candidate) => {
-						if (candidate.id !== session.id) {
-							return candidate;
-						}
+			useSessionStore.getState().setSessions((previous) =>
+				previous.map((candidate) => {
+					if (candidate.id !== session.id) {
+						return candidate;
+					}
 
-						return {
-							...candidate,
-							state: 'idle',
-							busySource: undefined,
-							thinkingStartTime: undefined,
-							aiTabs: candidate.aiTabs.map((tab) =>
-								tab.id === activeTab.id
-									? {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-											logs: [
-												...tab.logs,
-												{
-													id: generateId(),
-													timestamp: Date.now(),
-													source: 'system',
-													text: `Error: Failed to spawn Conductor agent - ${(error as Error).message}`,
-												},
-											],
-										}
-									: tab
-							),
-						};
-					})
-				);
+					return {
+						...candidate,
+						state: 'idle',
+						busySource: undefined,
+						thinkingStartTime: undefined,
+						aiTabs: candidate.aiTabs.map((tab) =>
+							tab.id === activeTab.id
+								? {
+										...tab,
+										state: 'idle' as const,
+										thinkingStartTime: undefined,
+										logs: [
+											...tab.logs,
+											{
+												id: generateId(),
+												timestamp: Date.now(),
+												source: 'system',
+												text: `Error: Failed to spawn Conductor agent - ${(error as Error).message}`,
+											},
+										],
+									}
+								: tab
+						),
+					};
+				})
+			);
 
-				reject(error);
-			});
+			reject(error);
+		});
 	});
 }

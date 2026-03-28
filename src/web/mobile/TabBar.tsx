@@ -56,8 +56,10 @@ export function TabBar({
 }: TabBarProps) {
 	const colors = useThemeColors();
 	const modelMenuRef = useRef<HTMLDivElement>(null);
-	const { scrollGuardProps: modelMenuScrollGuardProps, shouldIgnoreClick: shouldIgnoreModelMenuClick } =
-		useScrollTapGuard();
+	const {
+		scrollGuardProps: modelMenuScrollGuardProps,
+		shouldIgnoreClick: shouldIgnoreModelMenuClick,
+	} = useScrollTapGuard();
 	const [modelMenuOpen, setModelMenuOpen] = useState(false);
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [modelCatalogGroups, setModelCatalogGroups] = useState<AgentModelCatalogGroup[]>([]);
@@ -289,8 +291,7 @@ export function TabBar({
 							'0 12px 24px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
 						cursor: 'pointer',
 						transform: `translateY(${collapsedHandleOffset}px)`,
-						transition:
-							pullDistance > 0 ? 'none' : 'transform 180ms ease, box-shadow 180ms ease',
+						transition: pullDistance > 0 ? 'none' : 'transform 180ms ease, box-shadow 180ms ease',
 					}}
 				>
 					<span
@@ -340,8 +341,7 @@ export function TabBar({
 						'linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0.04) 100%)',
 					backdropFilter: 'blur(18px)',
 					WebkitBackdropFilter: 'blur(18px)',
-					boxShadow:
-						'0 14px 30px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+					boxShadow: '0 14px 30px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 				}}
 			>
 				<div
@@ -487,100 +487,98 @@ export function TabBar({
 									WebkitOverflowScrolling: 'touch',
 								}}
 							>
-								{canChooseProviderModels ? (
-									modelCatalogGroups.map((group) => {
-										const isCurrentProvider = group.provider === modelToolType;
-										const defaultSelected = isCurrentProvider && !normalizedCurrentModel;
+								{canChooseProviderModels
+									? modelCatalogGroups.map((group) => {
+											const isCurrentProvider = group.provider === modelToolType;
+											const defaultSelected = isCurrentProvider && !normalizedCurrentModel;
 
-										return (
-											<div
-												key={group.provider}
-												style={{
-													display: 'flex',
-													flexDirection: 'column',
-													gap: '6px',
-												}}
-											>
+											return (
 												<div
+													key={group.provider}
 													style={{
-														padding: '2px 4px 0',
-														fontSize: '11px',
-														fontWeight: 700,
-														color: colors.textDim,
+														display: 'flex',
+														flexDirection: 'column',
+														gap: '6px',
 													}}
 												>
-													{group.providerLabel}
-												</div>
-												{group.options.map((option) => {
-													const optionModel = normalizeModelLabel(option.modelId);
-													const isSelected = option.isDefault
-														? defaultSelected
-														: isCurrentProvider && optionModel === normalizedCurrentModel;
+													<div
+														style={{
+															padding: '2px 4px 0',
+															fontSize: '11px',
+															fontWeight: 700,
+															color: colors.textDim,
+														}}
+													>
+														{group.providerLabel}
+													</div>
+													{group.options.map((option) => {
+														const optionModel = normalizeModelLabel(option.modelId);
+														const isSelected = option.isDefault
+															? defaultSelected
+															: isCurrentProvider && optionModel === normalizedCurrentModel;
 
-													return (
-														<button
-															key={option.id}
-															type="button"
-															onClick={() =>
-																void handleSelectProviderModelInternal(
-																	group.provider,
-																	option.modelId || null
-																)
-															}
-															style={{
-																padding: '11px 12px',
-																borderRadius: '12px',
-																border: '1px solid rgba(255, 255, 255, 0.18)',
-																backgroundColor: isSelected
-																	? `${colors.accent}1f`
-																	: 'rgba(255, 255, 255, 0.62)',
-																color: isSelected ? colors.accent : colors.textMain,
-																fontSize: '13px',
-																fontWeight: 500,
-																textAlign: 'left',
-																cursor: 'pointer',
-																overflow: 'hidden',
-																textOverflow: 'ellipsis',
-																whiteSpace: 'nowrap',
-															}}
-														>
-															{option.label}
-														</button>
-													);
-												})}
-											</div>
-										);
-									})
-								) : (
-									selectableModels.map((model) => {
-										const isSelected = model === modelLabel;
-										return (
-											<button
-												key={model}
-												type="button"
-												onClick={() => void handleSelectModelInternal(model)}
-												style={{
-													padding: '11px 12px',
-													borderRadius: '12px',
-													border: '1px solid rgba(255, 255, 255, 0.18)',
-													backgroundColor: isSelected
-														? `${colors.accent}1f`
-														: 'rgba(255, 255, 255, 0.62)',
-													color: isSelected ? colors.accent : colors.textMain,
-													fontSize: '13px',
-													fontWeight: 500,
-													textAlign: 'left',
-													cursor: 'pointer',
-													overflow: 'hidden',
-													textOverflow: 'ellipsis',
-													whiteSpace: 'nowrap',
-												}}
-											>
-												{model}
-											</button>
-										);
-									})
-								)}
+														return (
+															<button
+																key={option.id}
+																type="button"
+																onClick={() =>
+																	void handleSelectProviderModelInternal(
+																		group.provider,
+																		option.modelId || null
+																	)
+																}
+																style={{
+																	padding: '11px 12px',
+																	borderRadius: '12px',
+																	border: '1px solid rgba(255, 255, 255, 0.18)',
+																	backgroundColor: isSelected
+																		? `${colors.accent}1f`
+																		: 'rgba(255, 255, 255, 0.62)',
+																	color: isSelected ? colors.accent : colors.textMain,
+																	fontSize: '13px',
+																	fontWeight: 500,
+																	textAlign: 'left',
+																	cursor: 'pointer',
+																	overflow: 'hidden',
+																	textOverflow: 'ellipsis',
+																	whiteSpace: 'nowrap',
+																}}
+															>
+																{option.label}
+															</button>
+														);
+													})}
+												</div>
+											);
+										})
+									: selectableModels.map((model) => {
+											const isSelected = model === modelLabel;
+											return (
+												<button
+													key={model}
+													type="button"
+													onClick={() => void handleSelectModelInternal(model)}
+													style={{
+														padding: '11px 12px',
+														borderRadius: '12px',
+														border: '1px solid rgba(255, 255, 255, 0.18)',
+														backgroundColor: isSelected
+															? `${colors.accent}1f`
+															: 'rgba(255, 255, 255, 0.62)',
+														color: isSelected ? colors.accent : colors.textMain,
+														fontSize: '13px',
+														fontWeight: 500,
+														textAlign: 'left',
+														cursor: 'pointer',
+														overflow: 'hidden',
+														textOverflow: 'ellipsis',
+														whiteSpace: 'nowrap',
+													}}
+												>
+													{model}
+												</button>
+											);
+										})}
 								{!loadingModels &&
 									((canChooseProviderModels && modelCatalogGroups.length === 0) ||
 										(!canChooseProviderModels && selectableModels.length === 0)) && (
@@ -620,8 +618,7 @@ export function TabBar({
 					color: colors.textMain,
 					cursor: 'pointer',
 					flexShrink: 0,
-					boxShadow:
-						'0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
+					boxShadow: '0 10px 22px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.06)',
 				}}
 			>
 				<svg

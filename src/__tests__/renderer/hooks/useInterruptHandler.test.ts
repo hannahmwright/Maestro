@@ -42,8 +42,10 @@ import type { Session, AITab } from '../../../renderer/types';
 // ============================================================================
 
 const mockMaestro = {
+	conversation: {
+		interruptTurn: vi.fn().mockResolvedValue(true),
+	},
 	process: {
-		interrupt: vi.fn().mockResolvedValue(undefined),
 		kill: vi.fn().mockResolvedValue(undefined),
 	},
 };
@@ -134,7 +136,7 @@ function createDeps(overrides: Partial<UseInterruptHandlerDeps> = {}): UseInterr
 beforeEach(() => {
 	idCounter = 0;
 	vi.clearAllMocks();
-	window.confirm = originalConfirm;
+	window.confirm = vi.fn().mockReturnValue(false);
 
 	useSessionStore.setState({
 		sessions: [],
@@ -165,7 +167,7 @@ describe('useInterruptHandler', () => {
 				await result.current.handleInterrupt();
 			});
 
-			expect(mockMaestro.process.interrupt).not.toHaveBeenCalled();
+			expect(mockMaestro.conversation.interruptTurn).not.toHaveBeenCalled();
 			expect(deps.cancelPendingSynopsis).not.toHaveBeenCalled();
 		});
 	});
@@ -195,7 +197,10 @@ describe('useInterruptHandler', () => {
 				await result.current.handleInterrupt();
 			});
 
-			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-ai-ai-tab-ai-1');
+			expect(mockMaestro.conversation.interruptTurn).toHaveBeenCalledWith(
+				'sess-ai-ai-tab-ai-1',
+				'claude-code'
+			);
 		});
 
 		it('cancels pending synopsis before interrupting', async () => {
@@ -220,7 +225,7 @@ describe('useInterruptHandler', () => {
 			expect(deps.cancelPendingSynopsis).toHaveBeenCalledWith('sess-syn');
 			// cancelPendingSynopsis should be called before interrupt
 			const synopsisCallOrder = (deps.cancelPendingSynopsis as any).mock.invocationCallOrder[0];
-			const interruptCallOrder = mockMaestro.process.interrupt.mock.invocationCallOrder[0];
+			const interruptCallOrder = mockMaestro.conversation.interruptTurn.mock.invocationCallOrder[0];
 			expect(synopsisCallOrder).toBeLessThan(interruptCallOrder);
 		});
 
@@ -256,7 +261,7 @@ describe('useInterruptHandler', () => {
 			expect(lastLog.text).toBe('Canceled by user');
 		});
 
-		it('clears thinking and tool logs from interrupted tab', async () => {
+		it('preserves trailing reasoning in a system snapshot when interrupted', async () => {
 			const tab = createTab({
 				id: 'tab-thinking',
 				state: 'busy',
@@ -264,7 +269,6 @@ describe('useInterruptHandler', () => {
 					{ id: 'log-1', timestamp: 1, source: 'user', text: 'Hello' },
 					{ id: 'log-2', timestamp: 2, source: 'thinking', text: 'Thinking...' },
 					{ id: 'log-3', timestamp: 3, source: 'tool', text: 'Running tool' },
-					{ id: 'log-4', timestamp: 4, source: 'ai', text: 'Response' },
 				],
 			});
 			const session = createSession({
@@ -291,8 +295,13 @@ describe('useInterruptHandler', () => {
 			expect(sources).not.toContain('thinking');
 			expect(sources).not.toContain('tool');
 			expect(sources).toContain('user');
-			expect(sources).toContain('ai');
-			expect(sources).toContain('system'); // "Canceled by user"
+			expect(sources.filter((source: string) => source === 'system')).toHaveLength(2);
+			expect(updatedTab.logs[1].metadata?.preservedReasoning).toMatchObject({
+				reason: 'interrupted',
+				thinkingCount: 1,
+				toolCount: 1,
+			});
+			expect(updatedTab.logs[2].text).toBe('Canceled by user');
 		});
 
 		it('sets session and tab state to idle', async () => {
@@ -382,7 +391,10 @@ describe('useInterruptHandler', () => {
 				await result.current.handleInterrupt();
 			});
 
-			expect(mockMaestro.process.interrupt).toHaveBeenCalledWith('sess-term-terminal');
+			expect(mockMaestro.conversation.interruptTurn).toHaveBeenCalledWith(
+				'sess-term-terminal',
+				'claude-code'
+			);
 		});
 
 		it('does not add "Canceled by user" log for terminal mode', async () => {
@@ -572,7 +584,7 @@ describe('useInterruptHandler', () => {
 	// ========================================================================
 	describe('force kill fallback', () => {
 		it('offers force kill when interrupt fails and user confirms', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
+			mockMaestro.conversation.interruptTurn.mockRejectedValueOnce(new Error('SIGINT failed'));
 			window.confirm = vi.fn().mockReturnValue(true);
 
 			const tab = createTab({ id: 'tab-kill', state: 'busy' });
@@ -602,7 +614,7 @@ describe('useInterruptHandler', () => {
 		});
 
 		it('does not kill when user declines force kill', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
+			mockMaestro.conversation.interruptTurn.mockRejectedValueOnce(new Error('SIGINT failed'));
 			window.confirm = vi.fn().mockReturnValue(false);
 
 			const tab = createTab({ id: 'tab-no-kill', state: 'busy' });
@@ -631,7 +643,7 @@ describe('useInterruptHandler', () => {
 		});
 
 		it('adds "Process forcefully terminated" log after force kill', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
+			mockMaestro.conversation.interruptTurn.mockRejectedValueOnce(new Error('SIGINT failed'));
 			window.confirm = vi.fn().mockReturnValue(true);
 
 			const tab = createTab({ id: 'tab-fk', state: 'busy' });
@@ -664,7 +676,7 @@ describe('useInterruptHandler', () => {
 		});
 
 		it('adds kill log to shell logs in terminal mode', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
+			mockMaestro.conversation.interruptTurn.mockRejectedValueOnce(new Error('SIGINT failed'));
 			window.confirm = vi.fn().mockReturnValue(true);
 
 			const session = createSession({
@@ -700,7 +712,7 @@ describe('useInterruptHandler', () => {
 	// ========================================================================
 	describe('kill error handling', () => {
 		it('adds error log when kill also fails in AI mode', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
+			mockMaestro.conversation.interruptTurn.mockRejectedValueOnce(new Error('SIGINT failed'));
 			mockMaestro.process.kill.mockRejectedValueOnce(new Error('Kill also failed'));
 			window.confirm = vi.fn().mockReturnValue(true);
 
@@ -738,7 +750,7 @@ describe('useInterruptHandler', () => {
 		});
 
 		it('adds error log to shell logs when kill fails in terminal mode', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('SIGINT failed'));
+			mockMaestro.conversation.interruptTurn.mockRejectedValueOnce(new Error('SIGINT failed'));
 			mockMaestro.process.kill.mockRejectedValueOnce(new Error('Kill failed too'));
 			window.confirm = vi.fn().mockReturnValue(true);
 
@@ -771,7 +783,7 @@ describe('useInterruptHandler', () => {
 		});
 
 		it('clears thinking/tool logs even when kill fails', async () => {
-			mockMaestro.process.interrupt.mockRejectedValueOnce(new Error('fail'));
+			mockMaestro.conversation.interruptTurn.mockRejectedValueOnce(new Error('fail'));
 			mockMaestro.process.kill.mockRejectedValueOnce(new Error('fail'));
 			window.confirm = vi.fn().mockReturnValue(true);
 

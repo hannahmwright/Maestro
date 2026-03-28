@@ -1,8 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import {
-	FolderKanban,
-	Search,
-} from 'lucide-react';
+import { FolderKanban, Search } from 'lucide-react';
 import type {
 	Theme,
 	Group,
@@ -31,6 +28,7 @@ interface ConductorHomePanelProps {
 type BacklogStatusFilter = 'all' | ConductorTaskStatus;
 type BacklogSourceFilter = 'all' | ConductorTask['source'];
 type BacklogSort = 'priority' | 'updated_desc' | 'updated_asc' | 'workspace' | 'title';
+const LIVE_CONDUCTOR_STATE_OPTIONS = { allowLegacyFallback: false } as const;
 
 const BOARD_COLUMNS: ConductorTaskStatus[] = [
 	'draft',
@@ -60,7 +58,6 @@ const STATUS_LABELS: Record<ConductorTaskStatus, string> = {
 	done: 'Done',
 };
 
-
 function formatRelativeTime(timestamp: number): string {
 	const elapsedMs = Date.now() - timestamp;
 	const minute = 60_000;
@@ -78,7 +75,6 @@ function formatRelativeTime(timestamp: number): string {
 	}
 	return `${Math.round(elapsedMs / day)}d ago`;
 }
-
 
 function getWorkspaceName(groupsById: Map<string, Group>, groupId: string): string {
 	return groupsById.get(groupId)?.name || 'Unknown workspace';
@@ -108,10 +104,18 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 	const groupsById = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
 	const childTasksByParentId = useMemo(() => buildConductorChildTaskMap(tasks), [tasks]);
 	const presentationStatusByTaskId = useMemo(() => {
-		const entries = tasks.map((task) => [
-			task.id,
-			getConductorTaskRollupStatus(task, childTasksByParentId, runs),
-		] as const);
+		const entries = tasks.map(
+			(task) =>
+				[
+					task.id,
+					getConductorTaskRollupStatus(
+						task,
+						childTasksByParentId,
+						runs,
+						LIVE_CONDUCTOR_STATE_OPTIONS
+					),
+				] as const
+		);
 		return new Map(entries);
 	}, [childTasksByParentId, runs, tasks]);
 	const workspaceOptions = useMemo(
@@ -181,7 +185,16 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 					}
 				}
 			});
-	}, [groupsById, presentationStatusByTaskId, sortMode, sourceFilter, statusFilter, taskSearch, tasks, workspaceFilter]);
+	}, [
+		groupsById,
+		presentationStatusByTaskId,
+		sortMode,
+		sourceFilter,
+		statusFilter,
+		taskSearch,
+		tasks,
+		workspaceFilter,
+	]);
 
 	const taskCounts = useMemo(
 		() => ({
@@ -194,19 +207,19 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 				const status = presentationStatusByTaskId.get(task.id) || task.status;
 				return status === 'running' || status === 'planning';
 			}).length,
-			attention: tasks.filter(
-				(task) => {
-					const status = presentationStatusByTaskId.get(task.id) || task.status;
-					return (
-						status === 'needs_input' ||
-						status === 'needs_proof' ||
-						status === 'needs_revision' ||
-						status === 'blocked' ||
-						status === 'needs_review'
-					);
-				}
+			attention: tasks.filter((task) => {
+				const status = presentationStatusByTaskId.get(task.id) || task.status;
+				return (
+					status === 'needs_input' ||
+					status === 'needs_proof' ||
+					status === 'needs_revision' ||
+					status === 'blocked' ||
+					status === 'needs_review'
+				);
+			}).length,
+			done: tasks.filter(
+				(task) => (presentationStatusByTaskId.get(task.id) || task.status) === 'done'
 			).length,
-			done: tasks.filter((task) => (presentationStatusByTaskId.get(task.id) || task.status) === 'done').length,
 		}),
 		[presentationStatusByTaskId, tasks]
 	);
@@ -236,9 +249,7 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 	}, [presentationStatusByTaskId, tasks]);
 
 	return (
-		<div
-			className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-5 py-4"
-		>
+		<div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-5 py-4">
 			<div className="max-w-[1600px] mx-auto space-y-4">
 				<div
 					className="flex items-center justify-between gap-4 pb-4"
@@ -260,10 +271,10 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 					</div>
 					<div className="flex items-center gap-1">
 						{[
-							{ label: 'Open', value: taskCounts.open, tone: '#60a5fa' },      // sky blue
-							{ label: 'Active', value: taskCounts.running, tone: '#818cf8' },   // periwinkle
+							{ label: 'Open', value: taskCounts.open, tone: '#60a5fa' }, // sky blue
+							{ label: 'Active', value: taskCounts.running, tone: '#818cf8' }, // periwinkle
 							{ label: 'Attention', value: taskCounts.attention, tone: '#fb923c' }, // peach
-							{ label: 'Done', value: taskCounts.done, tone: '#86efac' },        // mint
+							{ label: 'Done', value: taskCounts.done, tone: '#86efac' }, // mint
 						].map((stat) => (
 							<div
 								key={stat.label}
@@ -279,8 +290,13 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 										opacity: stat.value > 0 ? 1 : 0.3,
 									}}
 								/>
-								<span className="text-xs" style={{ color: theme.colors.textDim }}>{stat.label}</span>
-								<span className="text-xs font-semibold" style={{ color: stat.value > 0 ? stat.tone : theme.colors.textDim }}>
+								<span className="text-xs" style={{ color: theme.colors.textDim }}>
+									{stat.label}
+								</span>
+								<span
+									className="text-xs font-semibold"
+									style={{ color: stat.value > 0 ? stat.tone : theme.colors.textDim }}
+								>
 									{stat.value}
 								</span>
 							</div>
@@ -349,10 +365,11 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 												className="w-2.5 h-2.5 rounded-full shrink-0"
 												style={{ backgroundColor: lane.color }}
 											/>
-											<span style={{ color: theme.colors.textMain }}>
-												{lane.label}
-											</span>
-											<span className="font-semibold" style={{ color: laneCount > 0 ? lane.color : theme.colors.textDim }}>
+											<span style={{ color: theme.colors.textMain }}>{lane.label}</span>
+											<span
+												className="font-semibold"
+												style={{ color: laneCount > 0 ? lane.color : theme.colors.textDim }}
+											>
 												{laneCount}
 											</span>
 										</button>
@@ -374,8 +391,8 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 							<div ref={boardScrollRef} className="overflow-x-auto pb-2 scrollbar-thin">
 								<div className="flex gap-3">
 									{KANBAN_LANES.map((lane) => {
-										const laneTasks = filteredTasks.filter(
-											(task) => lane.statuses.includes(presentationStatusByTaskId.get(task.id) || task.status)
+										const laneTasks = filteredTasks.filter((task) =>
+											lane.statuses.includes(presentationStatusByTaskId.get(task.id) || task.status)
 										);
 										const subCounts = lane.statuses
 											.map((s) => {
@@ -402,10 +419,13 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 													style={{ backgroundColor: lane.color }}
 												/>
 												{/* Lane header */}
-												<div className="flex flex-col gap-1 px-3 py-2.5" style={{
-													backgroundColor: `${lane.color}0d`,
-													borderBottom: `1px solid ${lane.color}3d`,
-												}}>
+												<div
+													className="flex flex-col gap-1 px-3 py-2.5"
+													style={{
+														backgroundColor: `${lane.color}0d`,
+														borderBottom: `1px solid ${lane.color}3d`,
+													}}
+												>
 													<div className="flex items-center gap-2">
 														<span className="text-sm font-semibold" style={{ color: lane.color }}>
 															{lane.label}
@@ -429,7 +449,8 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 												{/* Cards */}
 												<div className="flex-1 p-2 space-y-2 overflow-y-auto scrollbar-thin">
 													{laneTasks.map((task) => {
-														const taskStatus = presentationStatusByTaskId.get(task.id) || task.status;
+														const taskStatus =
+															presentationStatusByTaskId.get(task.id) || task.status;
 														const priorityTone = getTaskPriorityTone(theme, task.priority);
 														const statusTone = getTaskStatusTone(theme, taskStatus);
 														return (
@@ -446,8 +467,12 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 																style={{
 																	backgroundColor: theme.colors.bgMain,
 																	border: `1px solid rgba(255,255,255,0.08)`,
-																	boxShadow: '0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
-																	borderLeft: lane.statuses.length > 1 ? `3px solid ${statusTone.fg}` : undefined,
+																	boxShadow:
+																		'0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08)',
+																	borderLeft:
+																		lane.statuses.length > 1
+																			? `3px solid ${statusTone.fg}`
+																			: undefined,
 																}}
 															>
 																{/* Priority accent - top bar */}
@@ -465,7 +490,10 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 																	{lane.statuses.length > 1 && (
 																		<span
 																			className="inline-block text-[11px] mt-1 px-1.5 py-0.5 rounded"
-																			style={{ backgroundColor: statusTone.bg, color: statusTone.fg }}
+																			style={{
+																				backgroundColor: statusTone.bg,
+																				color: statusTone.fg,
+																			}}
 																		>
 																			{STATUS_LABELS[taskStatus]}
 																		</span>
@@ -478,7 +506,10 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 																			{task.description}
 																		</p>
 																	)}
-																	<div className="flex items-center gap-2 mt-2 text-[11px]" style={{ color: theme.colors.textDim }}>
+																	<div
+																		className="flex items-center gap-2 mt-2 text-[11px]"
+																		style={{ color: theme.colors.textDim }}
+																	>
 																		<span
 																			className="px-1.5 py-0.5 rounded truncate"
 																			style={{
@@ -488,7 +519,9 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 																		>
 																			{getWorkspaceName(groupsById, task.groupId)}
 																		</span>
-																		<span className="shrink-0">{formatRelativeTime(task.updatedAt)}</span>
+																		<span className="shrink-0">
+																			{formatRelativeTime(task.updatedAt)}
+																		</span>
 																	</div>
 																</div>
 															</button>
@@ -530,18 +563,14 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 								) : (
 									workspaceOptions.map((workspace) => {
 										const workspaceTasks = tasks.filter((task) => task.groupId === workspace.id);
-										const runningCount = workspaceTasks.filter(
-											(task) => {
-												const status = presentationStatusByTaskId.get(task.id) || task.status;
-												return status === 'running' || status === 'planning';
-											}
-										).length;
-										const openCount = workspaceTasks.filter(
-											(task) => {
-												const status = presentationStatusByTaskId.get(task.id) || task.status;
-												return status !== 'done' && status !== 'cancelled';
-											}
-										).length;
+										const runningCount = workspaceTasks.filter((task) => {
+											const status = presentationStatusByTaskId.get(task.id) || task.status;
+											return status === 'running' || status === 'planning';
+										}).length;
+										const openCount = workspaceTasks.filter((task) => {
+											const status = presentationStatusByTaskId.get(task.id) || task.status;
+											return status !== 'done' && status !== 'cancelled';
+										}).length;
 										return (
 											<button
 												key={workspace.id}
@@ -563,7 +592,10 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 														{workspace.name}
 													</span>
 												</div>
-												<div className="flex items-center gap-2 shrink-0 text-xs" style={{ color: theme.colors.textDim }}>
+												<div
+													className="flex items-center gap-2 shrink-0 text-xs"
+													style={{ color: theme.colors.textDim }}
+												>
 													<span>{openCount} open</span>
 													{runningCount > 0 && (
 														<span
@@ -604,15 +636,13 @@ export function ConductorHomePanel({ theme }: ConductorHomePanelProps): JSX.Elem
 									</div>
 								) : (
 									latestEvents.map((event) => (
-										<div
-											key={event.id}
-											className="px-3 py-2 rounded-lg"
-										>
+										<div key={event.id} className="px-3 py-2 rounded-lg">
 											<div className="text-sm leading-5" style={{ color: theme.colors.textMain }}>
 												{event.message}
 											</div>
 											<div className="text-[11px] mt-1" style={{ color: theme.colors.textDim }}>
-												{getWorkspaceName(groupsById, event.groupId)} · {formatRelativeTime(event.createdAt)}
+												{getWorkspaceName(groupsById, event.groupId)} ·{' '}
+												{formatRelativeTime(event.createdAt)}
 											</div>
 										</div>
 									))

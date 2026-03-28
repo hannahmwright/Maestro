@@ -64,10 +64,22 @@ vi.mock('../../../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
 }));
 
-// Mock fs
-vi.mock('fs', () => ({
+const fsMocks = vi.hoisted(() => ({
 	existsSync: vi.fn(),
 }));
+
+// Mock fs
+vi.mock('fs', async () => {
+	const actual = await vi.importActual<typeof import('fs')>('fs');
+	return {
+		...actual,
+		existsSync: fsMocks.existsSync,
+		default: {
+			...actual,
+			existsSync: fsMocks.existsSync,
+		},
+	};
+});
 
 // Mock ssh-command-builder for remote model discovery tests
 vi.mock('../../../../main/utils/ssh-command-builder', () => ({
@@ -159,6 +171,8 @@ describe('agents IPC handlers', () => {
 				'agents:getCustomEnvVars',
 				'agents:getAllCustomEnvVars',
 				'agents:getModels',
+				'agents:getModelCatalog',
+				'agents:getProviderUsage',
 				'agents:discoverSlashCommands',
 			];
 

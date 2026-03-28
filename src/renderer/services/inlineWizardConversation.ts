@@ -9,8 +9,7 @@
  * this service exports stateless functions that work with the useInlineWizard hook's state.
  */
 
-import type { ToolType, ProcessConfig } from '../types';
-import type { InlineWizardMessage } from '../hooks/batch/useInlineWizard';
+import type { ToolType, ProcessConfig, WizardMessage } from '../types';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { getStdinFlags } from '../utils/spawnHelpers';
@@ -109,6 +108,10 @@ export interface InlineWizardConversationConfig {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID (overrides agent-level) */
 	sessionCustomModel?: string;
+	/** Custom context window size (overrides agent-level) */
+	sessionCustomContextWindow?: number;
+	/** Override the generated system prompt (used by Conductor discovery intake) */
+	systemPromptOverride?: string;
 }
 
 /**
@@ -141,6 +144,8 @@ export interface InlineWizardConversationSession {
 	sessionCustomEnvVars?: Record<string, string>;
 	/** Custom model ID */
 	sessionCustomModel?: string;
+	/** Custom context window size */
+	sessionCustomContextWindow?: number;
 }
 
 /**
@@ -196,6 +201,10 @@ function generateWizardSessionId(): string {
  * @returns The complete system prompt for the agent
  */
 export function generateInlineWizardPrompt(config: InlineWizardConversationConfig): string {
+	if (config.systemPromptOverride?.trim()) {
+		return config.systemPromptOverride.trim();
+	}
+
 	const { mode, projectName, directoryPath, goal, existingDocs, autoRunFolderPath } = config;
 
 	// Select the base prompt based on mode
@@ -294,6 +303,7 @@ export function startInlineWizardConversation(
 		sessionCustomArgs: config.sessionCustomArgs,
 		sessionCustomEnvVars: config.sessionCustomEnvVars,
 		sessionCustomModel: config.sessionCustomModel,
+		sessionCustomContextWindow: config.sessionCustomContextWindow,
 	};
 }
 
@@ -310,7 +320,7 @@ export function startInlineWizardConversation(
 function buildPromptWithContext(
 	session: InlineWizardConversationSession,
 	userMessage: string,
-	conversationHistory: InlineWizardMessage[]
+	conversationHistory: WizardMessage[]
 ): string {
 	const parts: string[] = [session.systemPrompt, ''];
 
@@ -362,6 +372,23 @@ export function parseWizardResponse(response: string): WizardResponse | null {
 	}
 
 	return null;
+}
+
+function applyAssistantStreamEvent(
+	currentText: string,
+	event: { mode: 'append' | 'replace' | 'commit' | 'discard'; text?: string }
+): string {
+	switch (event.mode) {
+		case 'append':
+			return currentText + (event.text || '');
+		case 'replace':
+			return event.text || '';
+		case 'discard':
+			return '';
+		case 'commit':
+		default:
+			return currentText;
+	}
 }
 
 /**
@@ -440,6 +467,20 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 			}
 			if (textParts.length > 0) {
 				return textParts.join('');
+			}
+		}
+
+		if (agentType === 'factory-droid') {
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === 'completion' && msg.finalText) {
+						return msg.finalText;
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
 			}
 		}
 
@@ -532,7 +573,7 @@ function buildArgsForAgent(agent: any): string[] {
 export async function sendWizardMessage(
 	session: InlineWizardConversationSession,
 	userMessage: string,
-	conversationHistory: InlineWizardMessage[],
+	conversationHistory: WizardMessage[],
 	callbacks?: ConversationCallbacks
 ): Promise<InlineWizardSendResult> {
 	if (!session.isActive) {
@@ -601,8 +642,10 @@ export async function sendWizardMessage(
 		// Spawn agent and collect output
 		const result = await new Promise<InlineWizardSendResult>((resolve) => {
 			let outputBuffer = '';
+			let assistantStreamText = '';
 			let dataListenerCleanup: (() => void) | undefined;
 			let exitListenerCleanup: (() => void) | undefined;
+			let assistantStreamListenerCleanup: (() => void) | undefined;
 
 			// Activity-based timeout: resets whenever the agent produces output.
 			// This prevents false timeouts on complex prompts where the agent is
@@ -661,22 +704,40 @@ export async function sendWizardMessage(
 					thinkingListenerCleanup();
 					thinkingListenerCleanup = undefined;
 				}
+				if (assistantStreamListenerCleanup) {
+					assistantStreamListenerCleanup();
+					assistantStreamListenerCleanup = undefined;
+				}
 				if (toolExecutionListenerCleanup) {
 					toolExecutionListenerCleanup();
 					toolExecutionListenerCleanup = undefined;
 				}
 			}
 
-			// Set up data listener
-			dataListenerCleanup = window.maestro.process.onData(
-				(receivedSessionId: string, data: string) => {
-					if (receivedSessionId === session.sessionId) {
-						outputBuffer += data;
-						resetTimeout();
-						callbacks?.onChunk?.(data);
+				// Set up data listener
+				dataListenerCleanup = window.maestro.process.onData(
+					(receivedSessionId: string, data: string) => {
+						if (receivedSessionId === session.sessionId) {
+							outputBuffer += data;
+							resetTimeout();
+							callbacks?.onChunk?.(data);
+						}
 					}
-				}
-			);
+				);
+
+				// Codex app-server emits final-answer text through assistant-stream events instead of raw
+				// process data, so capture that stream as an additional parse source for wizard turns.
+				assistantStreamListenerCleanup = window.maestro.process.onAssistantStream?.(
+					(
+						receivedSessionId: string,
+						event: { mode: 'append' | 'replace' | 'commit' | 'discard'; text?: string }
+					) => {
+						if (receivedSessionId === session.sessionId) {
+							resetTimeout();
+							assistantStreamText = applyAssistantStreamEvent(assistantStreamText, event);
+						}
+					}
+				);
 
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
@@ -724,22 +785,25 @@ export async function sendWizardMessage(
 			}
 
 			// Set up exit listener
-			exitListenerCleanup = window.maestro.process.onExit(
-				(receivedSessionId: string, code: number) => {
-					if (receivedSessionId === session.sessionId) {
-						clearTimeout(timeoutId);
-						cleanupListeners();
+				exitListenerCleanup = window.maestro.process.onExit(
+					(receivedSessionId: string, code: number) => {
+						if (receivedSessionId === session.sessionId) {
+							clearTimeout(timeoutId);
+							cleanupListeners();
 
-						// Extract the Claude agent session ID from output (for resume capability)
-						const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
+							// Extract the Claude agent session ID from output (for resume capability)
+							const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
 
-						if (code === 0) {
-							// Extract result from stream-json format
-							const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
-							const textToParse = extractedResult || outputBuffer;
+							if (code === 0) {
+								const assistantStreamResult = assistantStreamText.trim();
+								// Extract result from stream-json format
+								const extractedResult =
+									assistantStreamResult ||
+									extractResultFromStreamJson(outputBuffer, session.agentType);
+								const textToParse = extractedResult || outputBuffer;
 
-							// Parse the wizard response
-							const parsedResponse = parseWizardResponse(textToParse);
+								// Parse the wizard response
+								const parsedResponse = parseWizardResponse(textToParse);
 
 							if (parsedResponse) {
 								resolve({
@@ -756,17 +820,17 @@ export async function sendWizardMessage(
 									agentSessionId: agentSessionId || undefined,
 								});
 							}
-						} else {
-							resolve({
-								success: false,
-								error: `Agent exited with code ${code}`,
-								rawOutput: outputBuffer,
-								agentSessionId: agentSessionId || undefined,
-							});
+							} else {
+								resolve({
+									success: false,
+									error: `Agent exited with code ${code}`,
+									rawOutput: outputBuffer,
+									agentSessionId: agentSessionId || undefined,
+								});
+							}
 						}
 					}
-				}
-			);
+				);
 
 			// Use the agent's resolved path if available, falling back to command name or agent type
 			// This is critical for packaged Electron apps where PATH may not include agent locations
@@ -806,6 +870,7 @@ export async function sendWizardMessage(
 					sessionCustomArgs: session.sessionCustomArgs,
 					sessionCustomEnvVars: session.sessionCustomEnvVars,
 					sessionCustomModel: session.sessionCustomModel,
+					sessionCustomContextWindow: session.sessionCustomContextWindow,
 				} as ProcessConfig)
 				.then(() => {
 					callbacks?.onReceiving?.();

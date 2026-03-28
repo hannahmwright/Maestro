@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useRemoteIntegration } from '../../../renderer/hooks';
 import type { Session, AITab } from '../../../renderer/types';
+import { useConductorStore } from '../../../renderer/stores/conductorStore';
+import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 const createMockTab = (overrides: Partial<AITab> = {}): AITab => ({
 	id: 'tab-1',
@@ -73,6 +76,9 @@ describe('useRemoteIntegration', () => {
 		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
 		| undefined;
 	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
+	let onRemoteOpenConductorWorkspaceHandler:
+		| ((groupId: string, responseChannel: string) => void)
+		| undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -121,7 +127,12 @@ describe('useRemoteIntegration', () => {
 			onRemoteToggleBookmarkHandler = handler;
 			return () => {};
 		}),
+		onRemoteOpenConductorWorkspace: vi.fn().mockImplementation((handler) => {
+			onRemoteOpenConductorWorkspaceHandler = handler;
+			return () => {};
+		}),
 		sendRemoteNewTabResponse: vi.fn(),
+		sendRemoteOpenConductorWorkspaceResponse: vi.fn(),
 	};
 
 	const mockLive = {
@@ -150,6 +161,7 @@ describe('useRemoteIntegration', () => {
 		...window.maestro.history,
 		updateSessionName: vi.fn().mockResolvedValue(true),
 	};
+	const mockInterruptCurrentTurn = vi.fn().mockResolvedValue(undefined);
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -164,6 +176,19 @@ describe('useRemoteIntegration', () => {
 		onRemoteStarTabHandler = undefined;
 		onRemoteReorderTabHandler = undefined;
 		onRemoteToggleBookmarkHandler = undefined;
+		onRemoteOpenConductorWorkspaceHandler = undefined;
+		useConductorStore.setState({
+			conductors: [],
+			tasks: [],
+			runs: [],
+			activeConductorView: null,
+		} as any);
+		useSessionStore.setState({
+			groups: [],
+		} as any);
+		useGroupChatStore.setState({
+			activeGroupChatId: null,
+		} as any);
 
 		window.maestro = {
 			...originalMaestro,
@@ -207,6 +232,9 @@ describe('useRemoteIntegration', () => {
 			setActiveSessionId,
 			defaultSaveToHistory: true,
 			defaultShowThinking: 'off' as const,
+			performDeleteSession: vi.fn().mockResolvedValue(undefined),
+			createNewSession: vi.fn().mockResolvedValue(undefined),
+			interruptCurrentTurnRef: { current: mockInterruptCurrentTurn },
 		};
 	};
 
@@ -267,7 +295,7 @@ describe('useRemoteIntegration', () => {
 			dispatchEventSpy.mockRestore();
 		});
 
-		it('ignores command when session is busy', () => {
+		it('dispatches remote commands even when the session is busy', () => {
 			const session = createMockSession({ id: 'session-1', state: 'busy' });
 			const deps = createDeps({ sessions: [session] });
 			const dispatchEventSpy = vi.spyOn(window, 'dispatchEvent');
@@ -278,8 +306,13 @@ describe('useRemoteIntegration', () => {
 				onRemoteCommandHandler?.('session-1', 'test command', 'ai');
 			});
 
-			expect(deps.setActiveSessionId).not.toHaveBeenCalled();
-			expect(dispatchEventSpy).not.toHaveBeenCalled();
+			expect(deps.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(dispatchEventSpy).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'maestro:remoteCommand',
+					detail: { sessionId: 'session-1', command: 'test command', inputMode: 'ai' },
+				})
+			);
 
 			dispatchEventSpy.mockRestore();
 		});
@@ -417,8 +450,7 @@ describe('useRemoteIntegration', () => {
 				await onRemoteInterruptHandler?.('session-1');
 			});
 
-			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-ai');
-			expect(deps.setSessions).toHaveBeenCalled();
+			expect(mockInterruptCurrentTurn).toHaveBeenCalledWith('session-1');
 		});
 
 		it('ignores interrupt when session not found', async () => {
@@ -443,7 +475,7 @@ describe('useRemoteIntegration', () => {
 				await onRemoteInterruptHandler?.('session-1');
 			});
 
-			expect(mockProcess.interrupt).toHaveBeenCalledWith('session-1-terminal');
+			expect(mockInterruptCurrentTurn).toHaveBeenCalledWith('session-1');
 		});
 	});
 
@@ -653,6 +685,59 @@ describe('useRemoteIntegration', () => {
 			vi.advanceTimersByTime(1000);
 
 			expect(mockWeb.broadcastTabsChange).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('remote conductor workspace opening', () => {
+		it('opens the workspace immediately when the group is already restored', () => {
+			useSessionStore.setState({
+				groups: [{ id: 'group-1', name: 'Workspace', archived: false }],
+			} as any);
+			useGroupChatStore.getState().setActiveGroupChatId('group-chat-1');
+			const deps = createDeps();
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteOpenConductorWorkspaceHandler?.('group-1', 'response-channel-1');
+			});
+
+			expect(useConductorStore.getState().activeConductorView).toEqual({
+				scope: 'workspace',
+				groupId: 'group-1',
+			});
+			expect(useGroupChatStore.getState().activeGroupChatId).toBeNull();
+			expect(mockProcess.sendRemoteOpenConductorWorkspaceResponse).toHaveBeenCalledWith(
+				'response-channel-1',
+				true
+			);
+		});
+
+		it('replays a remote workspace open after groups finish restoring', () => {
+			const deps = createDeps();
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteOpenConductorWorkspaceHandler?.('group-1', 'response-channel-1');
+			});
+
+			expect(useConductorStore.getState().activeConductorView).toBeNull();
+
+			act(() => {
+				useSessionStore.setState({
+					groups: [{ id: 'group-1', name: 'Workspace', archived: false }],
+				} as any);
+			});
+
+			expect(useConductorStore.getState().activeConductorView).toEqual({
+				scope: 'workspace',
+				groupId: 'group-1',
+			});
+			expect(mockProcess.sendRemoteOpenConductorWorkspaceResponse).toHaveBeenCalledWith(
+				'response-channel-1',
+				true
+			);
 		});
 	});
 });

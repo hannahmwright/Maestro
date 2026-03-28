@@ -28,8 +28,10 @@ export { KANBAN_LANES, PASTEL_STATUS_TONES };
 export type { KanbanLane };
 
 export const MOBILE_CONDUCTOR_COLUMNS: ConductorTaskStatus[] = BOARD_COLUMNS;
+export const MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS = { allowLegacyFallback: false } as const;
 
-export const MOBILE_CONDUCTOR_STATUS_LABELS: Record<ConductorTaskStatus, string> = FRIENDLY_TASK_STATUS_LABELS;
+export const MOBILE_CONDUCTOR_STATUS_LABELS: Record<ConductorTaskStatus, string> =
+	FRIENDLY_TASK_STATUS_LABELS;
 
 export const MOBILE_CONDUCTOR_PRIORITY_LABELS: Record<ConductorTaskPriority, string> = {
 	low: 'Low',
@@ -83,7 +85,14 @@ export function groupTasksByStatus(
 	const childTaskMap = buildConductorChildTaskMap(tasks);
 
 	for (const task of sortConductorTasks(getTopLevelConductorTasks(tasks))) {
-		grouped[getConductorTaskRollupStatus(task, childTaskMap, runs)].push(task);
+		grouped[
+			getConductorTaskRollupStatus(
+				task,
+				childTaskMap,
+				runs,
+				MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+			)
+		].push(task);
 	}
 
 	return grouped;
@@ -95,10 +104,7 @@ export interface LaneGroup {
 	statusCounts: Record<string, number>;
 }
 
-export function groupTasksByLane(
-	tasks: ConductorTask[],
-	runs: ConductorRun[] = []
-): LaneGroup[] {
+export function groupTasksByLane(tasks: ConductorTask[], runs: ConductorRun[] = []): LaneGroup[] {
 	const byStatus = groupTasksByStatus(tasks, runs);
 	return KANBAN_LANES.map((lane) => {
 		const laneTasks = lane.statuses.flatMap((status) => byStatus[status] || []);
@@ -120,12 +126,13 @@ export function buildConductorMetrics(
 	const childTaskMap = buildConductorChildTaskMap(tasks);
 	const topLevelTasks = getTopLevelConductorTasks(tasks);
 	const rolledUpStatuses = topLevelTasks.map((task) =>
-		getConductorTaskRollupStatus(task, childTaskMap, runs)
+		getConductorTaskRollupStatus(task, childTaskMap, runs, MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS)
 	);
 	return {
 		total: topLevelTasks.length,
 		open: rolledUpStatuses.filter((status) => status !== 'done' && status !== 'cancelled').length,
-		running: rolledUpStatuses.filter((status) => status === 'running' || status === 'planning').length,
+		running: rolledUpStatuses.filter((status) => status === 'running' || status === 'planning')
+			.length,
 		attention: rolledUpStatuses.filter((status) =>
 			['needs_input', 'needs_proof', 'needs_revision', 'blocked', 'needs_review'].includes(status)
 		).length,
@@ -143,19 +150,29 @@ export function buildWorkspaceSummaries(
 			const groupTasks = sortConductorTasks(
 				getTopLevelConductorTasks(tasks.filter((task) => task.groupId === group.id))
 			);
-			const childTaskMap = buildConductorChildTaskMap(tasks.filter((task) => task.groupId === group.id));
+			const childTaskMap = buildConductorChildTaskMap(
+				tasks.filter((task) => task.groupId === group.id)
+			);
 			const rolledUpStatuses = groupTasks.map((task) =>
-				getConductorTaskRollupStatus(task, childTaskMap, runs)
+				getConductorTaskRollupStatus(
+					task,
+					childTaskMap,
+					runs,
+					MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+				)
 			);
 			return {
 				group,
 				tasks: groupTasks,
-				openCount: rolledUpStatuses.filter((status) => status !== 'done' && status !== 'cancelled').length,
+				openCount: rolledUpStatuses.filter((status) => status !== 'done' && status !== 'cancelled')
+					.length,
 				runningCount: rolledUpStatuses.filter(
 					(status) => status === 'running' || status === 'planning'
 				).length,
 				attentionCount: rolledUpStatuses.filter((status) =>
-					['needs_input', 'needs_proof', 'needs_revision', 'blocked', 'needs_review'].includes(status)
+					['needs_input', 'needs_proof', 'needs_revision', 'blocked', 'needs_review'].includes(
+						status
+					)
 				).length,
 				doneCount: rolledUpStatuses.filter((status) => status === 'done').length,
 			};
@@ -190,7 +207,13 @@ export function buildConductorHoldReason(
 	const latestRun = runs.find((run) => run.groupId === conductor.groupId) || null;
 	const childTaskMap = buildConductorChildTaskMap(tasks);
 	const revisionEntry = tasks.find(
-		(task) => getConductorTaskRollupStatus(task, childTaskMap, runs) === 'needs_revision'
+		(task) =>
+			getConductorTaskRollupStatus(
+				task,
+				childTaskMap,
+				runs,
+				MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+			) === 'needs_revision'
 	);
 	if (revisionEntry) {
 		const followUpTasks = getConductorTaskOpenFollowUps(revisionEntry, childTaskMap);
@@ -199,7 +222,9 @@ export function buildConductorHoldReason(
 		}
 		return `${revisionEntry.title}: agents are revising reviewer feedback.`;
 	}
-	const qaBlockedEntry = tasks.find((task) => getConductorTaskQaFailureState(task, runs).isQuarantined);
+	const qaBlockedEntry = tasks.find(
+		(task) => getConductorTaskQaFailureState(task, runs).isQuarantined
+	);
 	if (qaBlockedEntry) {
 		const qaFailureState = getConductorTaskQaFailureState(qaBlockedEntry, runs);
 		return `${qaBlockedEntry.title}: QA is paused after ${qaFailureState.malformedFailureCount} malformed reviewer response${qaFailureState.malformedFailureCount === 1 ? '' : 's'}.`;
@@ -207,7 +232,11 @@ export function buildConductorHoldReason(
 	const openAttentionEntry = tasks
 		.map((task) => ({
 			task,
-			attentionRequest: getEffectiveConductorTaskAttentionRequest(task, runs),
+			attentionRequest: getEffectiveConductorTaskAttentionRequest(
+				task,
+				runs,
+				MOBILE_LIVE_CONDUCTOR_STATE_OPTIONS
+			),
 		}))
 		.find(({ attentionRequest }) => attentionRequest?.status === 'open');
 
@@ -219,7 +248,10 @@ export function buildConductorHoldReason(
 		return formatConductorOperatorMessage(openAttentionEntry.attentionRequest.requestedAction);
 	}
 
-	if (latestRun?.summary && (conductor.status === 'blocked' || conductor.status === 'attention_required')) {
+	if (
+		latestRun?.summary &&
+		(conductor.status === 'blocked' || conductor.status === 'attention_required')
+	) {
 		return formatConductorOperatorMessage(latestRun.summary);
 	}
 

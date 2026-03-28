@@ -123,12 +123,14 @@ describe('MobileDemoViewer', () => {
 		const originalCreateElement = document.createElement.bind(document);
 		const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(() => fakeAnchor);
 		const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation(() => fakeAnchor);
-		const createElementSpy = vi.spyOn(document, 'createElement').mockImplementation((tagName: string) => {
-			if (tagName.toLowerCase() === 'a') {
-				return fakeAnchor;
-			}
-			return originalCreateElement(tagName);
-		});
+		const createElementSpy = vi
+			.spyOn(document, 'createElement')
+			.mockImplementation((tagName: string) => {
+				if (tagName.toLowerCase() === 'a') {
+					return fakeAnchor;
+				}
+				return originalCreateElement(tagName);
+			});
 		const createObjectUrlSpy = vi
 			.spyOn(URL, 'createObjectURL')
 			.mockReturnValue('blob:http://localhost/demo');
@@ -207,7 +209,9 @@ describe('MobileDemoViewer', () => {
 		await screen.findByText('Example.com');
 		fireEvent.click((await screen.findAllByRole('button', { name: /tap to zoom/i }))[0]);
 
-		const zoomedImage = (await screen.findAllByAltText('Example Domain loaded')).at(-1) as HTMLImageElement;
+		const zoomedImage = (await screen.findAllByAltText('Example Domain loaded')).at(
+			-1
+		) as HTMLImageElement;
 		const gestureSurface = zoomedImage.parentElement as HTMLElement;
 
 		fireEvent.touchEnd(gestureSurface, {

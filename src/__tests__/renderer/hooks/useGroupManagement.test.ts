@@ -4,7 +4,7 @@
  *
  * Tests cover:
  * - Group collapse toggling
- * - Rename flow (trim + uppercase, empty name guard)
+ * - Workspace rename modal flow and inline rename trimming
  * - Create group modal open state
  * - Drag-and-drop session grouping
  */
@@ -14,15 +14,28 @@ import { renderHook, act } from '@testing-library/react';
 import { useGroupManagement, type UseGroupManagementDeps } from '../../../renderer/hooks';
 import type { Group, Session } from '../../../renderer/types';
 
+const modalActions = vi.hoisted(() => ({
+	setRenameGroupModalOpen: vi.fn(),
+	setRenameGroupId: vi.fn(),
+	setRenameGroupValue: vi.fn(),
+	setRenameGroupEmoji: vi.fn(),
+	setRenameGroupProjectRoot: vi.fn(),
+}));
+
+vi.mock('../../../renderer/stores/modalStore', () => ({
+	getModalActions: () => modalActions,
+}));
+
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
 const createMockGroup = (overrides: Partial<Group> = {}): Group => ({
 	id: 'group-1',
-	name: 'ALPHA',
+	name: 'Alpha',
 	emoji: '📁',
 	collapsed: false,
+	projectRoot: '/test/project',
 	...overrides,
 });
 
@@ -91,7 +104,7 @@ describe('useGroupManagement', () => {
 		expect(updated[0].collapsed).toBe(true);
 	});
 
-	it('starts group rename by setting editingGroupId', () => {
+	it('starts group rename by opening the rename workspace modal with group data', () => {
 		const deps = createDeps();
 		const { result } = renderHook(() => useGroupManagement(deps));
 
@@ -99,10 +112,15 @@ describe('useGroupManagement', () => {
 			result.current.startRenamingGroup('group-1');
 		});
 
-		expect(deps.setEditingGroupId).toHaveBeenCalledWith('group-1');
+		expect(deps.setEditingGroupId).toHaveBeenCalledWith(null);
+		expect(modalActions.setRenameGroupId).toHaveBeenCalledWith('group-1');
+		expect(modalActions.setRenameGroupValue).toHaveBeenCalledWith('Alpha');
+		expect(modalActions.setRenameGroupEmoji).toHaveBeenCalledWith('📁');
+		expect(modalActions.setRenameGroupProjectRoot).toHaveBeenCalledWith('/test/project');
+		expect(modalActions.setRenameGroupModalOpen).toHaveBeenCalledWith(true);
 	});
 
-	it('finishes group rename with trimmed uppercase value', () => {
+	it('finishes group rename with trimmed value', () => {
 		const deps = createDeps();
 		const { result } = renderHook(() => useGroupManagement(deps));
 
@@ -115,7 +133,7 @@ describe('useGroupManagement', () => {
 
 		const updater = deps.setGroups.mock.calls[0][0];
 		const updated = updater(deps.groups);
-		expect(updated[0].name).toBe('NEW NAME');
+		expect(updated[0].name).toBe('new name');
 	});
 
 	it('ignores empty group rename values', () => {

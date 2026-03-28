@@ -127,9 +127,7 @@ export function useKeyboardNavigation(
 			if (navTargets.length === 0) return true;
 
 			const currentTarget =
-				navTargets[
-					Math.min(Math.max(currentIndex, 0), Math.max(navTargets.length - 1, 0))
-				];
+				navTargets[Math.min(Math.max(currentIndex, 0), Math.max(navTargets.length - 1, 0))];
 
 			// ArrowLeft / Space: collapse the current workspace when possible
 			if ((e.key === 'ArrowLeft' || e.key === ' ') && currentTarget) {
@@ -169,8 +167,7 @@ export function useKeyboardNavigation(
 			// ArrowUp/ArrowDown: navigate through visible thread rows
 			if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
 				const totalTargets = navTargets.length;
-				const normalizedIndex =
-					currentIndex >= 0 && currentIndex < totalTargets ? currentIndex : 0;
+				const normalizedIndex = currentIndex >= 0 && currentIndex < totalTargets ? currentIndex : 0;
 				const nextIndex =
 					e.key === 'ArrowDown'
 						? (normalizedIndex + 1) % totalTargets

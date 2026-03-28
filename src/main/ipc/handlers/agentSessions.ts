@@ -73,7 +73,14 @@ export interface AgentSessionsHandlerDependencies {
 			string,
 			Record<
 				string,
-				'user' | 'auto' | { origin: 'user' | 'auto'; sessionName?: string; starred?: boolean; contextUsage?: number }
+				| 'user'
+				| 'auto'
+				| {
+						origin: 'user' | 'auto';
+						sessionName?: string;
+						starred?: boolean;
+						contextUsage?: number;
+				  }
 			>
 		>;
 	}>;
@@ -128,6 +135,24 @@ interface RecoverableAgentSession {
 	slug?: string;
 }
 
+const MAX_RECOVERABLE_CLAUDE_SCAN_FILES = 96;
+const MAX_RECOVERABLE_CLAUDE_HEAD_BYTES = 64 * 1024;
+
+interface ClaudeSessionScanCandidate {
+	filePath: string;
+	sessionId: string;
+	mtimeMs: number;
+}
+
+interface ClaudeSessionPreview {
+	projectPath: string;
+	firstUserMessage: string;
+	gitBranch?: string;
+	slug?: string;
+	firstTimestamp?: number;
+	conversationMessageCount: number;
+}
+
 function extractClaudeTextContent(content: unknown): string {
 	if (!content) return '';
 	if (typeof content === 'string') return content;
@@ -158,21 +183,12 @@ function isRecoverableClaudePrompt(firstUserMessage: string, projectPath: string
 	return true;
 }
 
-async function discoverRecoverableClaudeSessions(
-	claudeSessionOriginsStore?: AgentSessionsHandlerDependencies['claudeSessionOriginsStore']
-): Promise<RecoverableAgentSession[]> {
-	const homeDir = os.homedir();
-	const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
-	const recoverable: RecoverableAgentSession[] = [];
-	const allOrigins = claudeSessionOriginsStore?.get('origins', {}) || {};
-
-	try {
-		await fs.access(claudeProjectsDir);
-	} catch {
-		return recoverable;
-	}
-
+async function collectRecentClaudeSessionFiles(
+	claudeProjectsDir: string
+): Promise<ClaudeSessionScanCandidate[]> {
+	const candidates: ClaudeSessionScanCandidate[] = [];
 	const projectDirs = await fs.readdir(claudeProjectsDir);
+
 	for (const projectDir of projectDirs) {
 		const projectDirPath = path.join(claudeProjectsDir, projectDir);
 		try {
@@ -188,101 +204,175 @@ async function discoverRecoverableClaudeSessions(
 
 		for (const filename of sessionFiles) {
 			const filePath = path.join(projectDirPath, filename);
-			const sessionId = filename.replace(/\.jsonl$/, '');
-
 			try {
-				const content = await fs.readFile(filePath, 'utf8');
-				const lines = content.split('\n').filter((line) => line.trim());
-				if (lines.length === 0) continue;
-
-				let projectPath = '';
-				let firstUserMessage = '';
-				let gitBranch: string | undefined;
-				let slug: string | undefined;
-				let firstTimestamp = 0;
-				let lastTimestamp = 0;
-				let conversationMessageCount = 0;
-
-				for (const line of lines) {
-					let entry: Record<string, unknown>;
-					try {
-						entry = JSON.parse(line) as Record<string, unknown>;
-					} catch {
-						continue;
-					}
-
-					if (!projectPath && typeof entry.cwd === 'string') {
-						projectPath = entry.cwd;
-					}
-					if (!gitBranch && typeof entry.gitBranch === 'string') {
-						gitBranch = entry.gitBranch;
-					}
-					if (!slug && typeof entry.slug === 'string') {
-						slug = entry.slug;
-					}
-
-					const timestampValue =
-						typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
-					if (!Number.isNaN(timestampValue)) {
-						if (!firstTimestamp) firstTimestamp = timestampValue;
-						lastTimestamp = Math.max(lastTimestamp, timestampValue);
-					}
-
-					const message = entry.message as Record<string, unknown> | undefined;
-					if (!message) continue;
-					const role =
-						typeof message.role === 'string'
-							? message.role
-							: typeof entry.type === 'string'
-								? entry.type
-								: undefined;
-					const text = extractClaudeTextContent(message.content).trim();
-					if (!text) continue;
-
-					if (role === 'user' && !firstUserMessage) {
-						firstUserMessage = text;
-					}
-					if (role === 'user' || role === 'assistant') {
-						conversationMessageCount += 1;
-					}
-				}
-
-				if (!projectPath || conversationMessageCount === 0) continue;
-				if (!isRecoverableClaudePrompt(firstUserMessage, projectPath)) continue;
-
-				const originEntry = allOrigins[projectPath]?.[sessionId];
-				const origin =
-					typeof originEntry === 'string'
-						? originEntry
-						: originEntry && typeof originEntry.origin === 'string'
-							? originEntry.origin
-							: undefined;
-				const sessionName =
-					originEntry && typeof originEntry === 'object' ? originEntry.sessionName : undefined;
-				const starred =
-					originEntry && typeof originEntry === 'object' ? originEntry.starred : undefined;
-				const contextUsage =
-					originEntry && typeof originEntry === 'object'
-						? originEntry.contextUsage
-						: undefined;
-
-				recoverable.push({
-					agentId: 'claude-code',
-					sessionId,
-					projectPath,
-					timestamp: new Date(firstTimestamp || lastTimestamp || Date.now()).toISOString(),
-					modifiedAt: new Date(lastTimestamp || firstTimestamp || Date.now()).toISOString(),
-					firstMessage: firstUserMessage,
-					sessionName,
-					starred,
-					contextUsage,
-					origin,
-					gitBranch,
-					slug,
+				const fileStat = await fs.stat(filePath);
+				if (!fileStat.isFile()) continue;
+				candidates.push({
+					filePath,
+					sessionId: filename.replace(/\.jsonl$/, ''),
+					mtimeMs: fileStat.mtimeMs,
 				});
-			} catch (error) {
-				logger.warn(`Failed to inspect Claude session file ${filePath}: ${error}`, LOG_CONTEXT);
+			} catch {
+				continue;
 			}
+		}
+	}
+
+	candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+	return candidates.slice(0, MAX_RECOVERABLE_CLAUDE_SCAN_FILES);
+}
+
+async function readClaudeSessionHead(filePath: string): Promise<string> {
+	const fileHandle = await fs.open(filePath, 'r');
+	try {
+		const stat = await fileHandle.stat();
+		const byteLength = Math.min(stat.size, MAX_RECOVERABLE_CLAUDE_HEAD_BYTES);
+		if (byteLength <= 0) return '';
+
+		const buffer = Buffer.alloc(byteLength);
+		const { bytesRead } = await fileHandle.read(buffer, 0, byteLength, 0);
+		if (bytesRead <= 0) return '';
+
+		let text = buffer.subarray(0, bytesRead).toString('utf8');
+		if (bytesRead === byteLength && stat.size > byteLength) {
+			const lastNewlineIndex = text.lastIndexOf('\n');
+			if (lastNewlineIndex >= 0) {
+				text = text.slice(0, lastNewlineIndex);
+			}
+		}
+
+		return text;
+	} finally {
+		await fileHandle.close();
+	}
+}
+
+function parseClaudeSessionPreview(content: string): ClaudeSessionPreview | null {
+	if (!content.trim()) return null;
+
+	let projectPath = '';
+	let firstUserMessage = '';
+	let gitBranch: string | undefined;
+	let slug: string | undefined;
+	let firstTimestamp = 0;
+	let conversationMessageCount = 0;
+
+	for (const line of content.split('\n')) {
+		if (!line.trim()) continue;
+
+		let entry: Record<string, unknown>;
+		try {
+			entry = JSON.parse(line) as Record<string, unknown>;
+		} catch {
+			continue;
+		}
+
+		if (!projectPath && typeof entry.cwd === 'string') {
+			projectPath = entry.cwd;
+		}
+		if (!gitBranch && typeof entry.gitBranch === 'string') {
+			gitBranch = entry.gitBranch;
+		}
+		if (!slug && typeof entry.slug === 'string') {
+			slug = entry.slug;
+		}
+
+		const timestampValue = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN;
+		if (!Number.isNaN(timestampValue) && !firstTimestamp) {
+			firstTimestamp = timestampValue;
+		}
+
+		const message = entry.message as Record<string, unknown> | undefined;
+		if (!message) continue;
+		const role =
+			typeof message.role === 'string'
+				? message.role
+				: typeof entry.type === 'string'
+					? entry.type
+					: undefined;
+		const text = extractClaudeTextContent(message.content).trim();
+		if (!text) continue;
+
+		if (role === 'user' && !firstUserMessage) {
+			firstUserMessage = text;
+		}
+		if (role === 'user' || role === 'assistant') {
+			conversationMessageCount += 1;
+		}
+	}
+
+	if (!projectPath || conversationMessageCount === 0) {
+		return null;
+	}
+
+	return {
+		projectPath,
+		firstUserMessage,
+		gitBranch,
+		slug,
+		firstTimestamp: firstTimestamp || undefined,
+		conversationMessageCount,
+	};
+}
+
+async function discoverRecoverableClaudeSessions(
+	claudeSessionOriginsStore?: AgentSessionsHandlerDependencies['claudeSessionOriginsStore']
+): Promise<RecoverableAgentSession[]> {
+	const homeDir = os.homedir();
+	const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+	const recoverable: RecoverableAgentSession[] = [];
+	const allOrigins = claudeSessionOriginsStore?.get('origins', {}) || {};
+
+	try {
+		await fs.access(claudeProjectsDir);
+	} catch {
+		return recoverable;
+	}
+
+	const sessionFiles = await collectRecentClaudeSessionFiles(claudeProjectsDir);
+	for (const sessionFile of sessionFiles) {
+		try {
+			const content = await readClaudeSessionHead(sessionFile.filePath);
+			const preview = parseClaudeSessionPreview(content);
+			if (!preview) continue;
+			if (!isRecoverableClaudePrompt(preview.firstUserMessage, preview.projectPath)) continue;
+
+			const originEntry = allOrigins[preview.projectPath]?.[sessionFile.sessionId];
+			const origin =
+				typeof originEntry === 'string'
+					? originEntry
+					: originEntry && typeof originEntry.origin === 'string'
+						? originEntry.origin
+						: undefined;
+			const sessionName =
+				originEntry && typeof originEntry === 'object' ? originEntry.sessionName : undefined;
+			const starred =
+				originEntry && typeof originEntry === 'object' ? originEntry.starred : undefined;
+			const contextUsage =
+				originEntry && typeof originEntry === 'object' ? originEntry.contextUsage : undefined;
+			const modifiedAt = new Date(sessionFile.mtimeMs || Date.now()).toISOString();
+
+			recoverable.push({
+				agentId: 'claude-code',
+				sessionId: sessionFile.sessionId,
+				projectPath: preview.projectPath,
+				timestamp: new Date(
+					preview.firstTimestamp || sessionFile.mtimeMs || Date.now()
+				).toISOString(),
+				modifiedAt,
+				firstMessage: preview.firstUserMessage,
+				sessionName,
+				starred,
+				contextUsage,
+				origin,
+				gitBranch: preview.gitBranch,
+				slug: preview.slug,
+			});
+		} catch (error) {
+			logger.warn(
+				`Failed to inspect Claude session file ${sessionFile.filePath}: ${error}`,
+				LOG_CONTEXT
+			);
 		}
 	}
 
@@ -294,6 +384,12 @@ async function discoverRecoverableClaudeSessions(
 
 	return recoverable;
 }
+
+export const __agentSessionsTestables = {
+	collectRecentClaudeSessionFiles,
+	parseClaudeSessionPreview,
+	isRecoverableClaudePrompt,
+};
 
 /**
  * Parse a Claude Code session file and extract stats

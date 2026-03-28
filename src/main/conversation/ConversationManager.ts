@@ -41,27 +41,28 @@ function canLoadClaudeAgentSdk(): Promise<boolean> {
 }
 
 export class ConversationManager extends EventEmitter {
-	private claudeAuthFailure:
-		| {
-				message: string;
-				expiresAt: number;
-		  }
-		| null = null;
+	private claudeAuthFailure: {
+		message: string;
+		expiresAt: number;
+	} | null = null;
 
 	constructor(private deps: ConversationManagerDependencies) {
 		super();
 
-		this.deps.processManager.on('conversation-event', (sessionId: string, event: ConversationEvent) => {
-			const process = this.deps.processManager.get(sessionId);
-			if (
-				process?.toolType === 'claude-code' &&
-				process.conversationRuntime === 'live' &&
-				event.type === 'runtime_ready'
-			) {
-				this.claudeAuthFailure = null;
+		this.deps.processManager.on(
+			'conversation-event',
+			(sessionId: string, event: ConversationEvent) => {
+				const process = this.deps.processManager.get(sessionId);
+				if (
+					process?.toolType === 'claude-code' &&
+					process.conversationRuntime === 'live' &&
+					event.type === 'runtime_ready'
+				) {
+					this.claudeAuthFailure = null;
+				}
+				this.emit('conversation-event', sessionId, event);
 			}
-			this.emit('conversation-event', sessionId, event);
-		});
+		);
 		this.deps.processManager.on('agent-error', (sessionId: string, error) => {
 			const process = this.deps.processManager.get(sessionId);
 			if (
@@ -104,7 +105,8 @@ export class ConversationManager extends EventEmitter {
 				supportsLiveRuntimeOverSsh: false,
 				defaultRuntimeKind: 'batch',
 				steerMode: 'interrupt-fallback',
-				fallbackReason: 'Claude live runtime is unavailable because the Claude Code CLI was not detected locally.',
+				fallbackReason:
+					'Claude live runtime is unavailable because the Claude Code CLI was not detected locally.',
 			};
 		}
 
@@ -170,7 +172,11 @@ export class ConversationManager extends EventEmitter {
 			};
 		}
 
-		if (request.toolType === 'claude-code' && !isSsh && (isInteractiveUserTurn || prefersLiveRuntime)) {
+		if (
+			request.toolType === 'claude-code' &&
+			!isSsh &&
+			(isInteractiveUserTurn || prefersLiveRuntime)
+		) {
 			return this.getClaudeLiveCapabilities();
 		}
 

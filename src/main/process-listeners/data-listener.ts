@@ -101,7 +101,7 @@ export function setupDataListener(
 			: sessionId;
 		const artifactTabId = managedProcess?.demoCaptureContext
 			? managedProcess.demoCaptureContext.tabId
-			: managedProcess?.tabId ?? null;
+			: (managedProcess?.tabId ?? null);
 		if (managedProcess) {
 			if (event.type === 'artifact_created' || event.type === 'step_created') {
 				managedProcess.demoCaptureArtifactSeen = true;

@@ -67,7 +67,12 @@ function getStatusMeta(
 			return {
 				label: 'Idle',
 				color: theme.colors.success,
-				icon: <span className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.colors.success }} />,
+				icon: (
+					<span
+						className="w-2 h-2 rounded-full"
+						style={{ backgroundColor: theme.colors.success }}
+					/>
+				),
 			};
 	}
 }
@@ -83,6 +88,16 @@ export function ConductorTeamPanel({
 
 	const activeCount = members.filter(isActiveMember).length;
 	const visibleMembers = filter === 'active' ? members.filter(isActiveMember) : members;
+	const handleMemberKeyDown = (
+		event: React.KeyboardEvent<HTMLDivElement>,
+		member: ConductorTeamMember
+	) => {
+		if (event.key !== 'Enter' && event.key !== ' ') {
+			return;
+		}
+		event.preventDefault();
+		onOpenMember(member);
+	};
 
 	return (
 		<div
@@ -93,10 +108,7 @@ export function ConductorTeamPanel({
 			}}
 		>
 			{/* Tab bar */}
-			<div
-				className="flex"
-				style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}
-			>
+			<div className="flex" style={{ backgroundColor: 'rgba(255,255,255,0.03)' }}>
 				{(['active', 'all'] as const).map((tab) => {
 					const isSelected = filter === tab;
 					const label = tab === 'active' ? `Active (${activeCount})` : `All (${members.length})`;
@@ -128,10 +140,12 @@ export function ConductorTeamPanel({
 					{visibleMembers.map((member) => {
 						const statusMeta = getStatusMeta(theme, member.status);
 						return (
-							<button
+							<div
 								key={member.sessionId}
-								type="button"
+								role="button"
+								tabIndex={0}
 								onClick={() => onOpenMember(member)}
+								onKeyDown={(event) => handleMemberKeyDown(event, member)}
 								className="w-full px-3 py-2 text-left transition-colors hover:bg-white/[0.03]"
 							>
 								<div className="flex items-center gap-2 min-w-0">
@@ -140,7 +154,10 @@ export function ConductorTeamPanel({
 									</span>
 									<div className="min-w-0 flex-1">
 										<div className="flex items-center gap-1.5">
-											<span className="text-xs font-medium truncate" style={{ color: theme.colors.textMain }}>
+											<span
+												className="text-xs font-medium truncate"
+												style={{ color: theme.colors.textMain }}
+											>
 												{member.name}
 											</span>
 											<span
@@ -189,7 +206,7 @@ export function ConductorTeamPanel({
 										)}
 									</div>
 								</div>
-							</button>
+							</div>
 						);
 					})}
 				</div>

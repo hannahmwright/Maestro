@@ -92,7 +92,9 @@ describe('conductorUtils', () => {
 			attention: 1,
 			done: 1,
 		});
-		expect(summaries.map((summary) => [summary.group.id, summary.openCount, summary.doneCount])).toEqual([
+		expect(
+			summaries.map((summary) => [summary.group.id, summary.openCount, summary.doneCount])
+		).toEqual([
 			['workspace-a', 1, 1],
 			['workspace-b', 1, 0],
 		]);

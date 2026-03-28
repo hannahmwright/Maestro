@@ -1,4 +1,9 @@
-import type { ConductorTask, ConductorTaskPriority, Session } from '../types';
+import type {
+	ConductorTask,
+	ConductorTaskEvidenceItem,
+	ConductorTaskPriority,
+	Session,
+} from '../types';
 import { CONDUCTOR_MAX_WORKER_FOLLOW_UP_TASKS } from '../../shared/conductorLimits';
 import {
 	buildConductorNativeSubmissionInstruction,
@@ -15,6 +20,7 @@ export interface ConductorWorkerResult {
 	outcome: 'completed' | 'blocked';
 	summary: string;
 	changedPaths: string[];
+	evidence: ConductorTaskEvidenceItem[];
 	followUpTasks: ConductorWorkerFollowUpDraft[];
 	blockedReason?: string;
 }
@@ -23,6 +29,7 @@ interface RawWorkerResponse {
 	outcome?: unknown;
 	summary?: unknown;
 	changedPaths?: unknown;
+	evidence?: unknown;
 	followUpTasks?: unknown;
 	blockedReason?: unknown;
 }
@@ -31,6 +38,16 @@ interface RawFollowUpTask {
 	title?: unknown;
 	description?: unknown;
 	priority?: unknown;
+}
+
+interface RawEvidenceItem {
+	kind?: unknown;
+	label?: unknown;
+	summary?: unknown;
+	path?: unknown;
+	url?: unknown;
+	demoId?: unknown;
+	captureRunId?: unknown;
 }
 
 const PRIORITY_ORDER: ConductorTaskPriority[] = ['low', 'medium', 'high', 'critical'];
@@ -57,19 +74,122 @@ function normalizeStringArray(value: unknown): string[] {
 		.filter(Boolean);
 }
 
+function normalizeEvidenceItems(value: unknown): ConductorTaskEvidenceItem[] {
+	if (!Array.isArray(value)) {
+		return [];
+	}
+
+	return value
+		.map((rawItem): ConductorTaskEvidenceItem | null => {
+			const item = rawItem as RawEvidenceItem;
+			const label = typeof item.label === 'string' ? item.label.trim() : '';
+			if (!label) {
+				return null;
+			}
+
+			const kind =
+				typeof item.kind === 'string' &&
+				['demo', 'file', 'url', 'note'].includes(item.kind.trim().toLowerCase())
+					? (item.kind.trim().toLowerCase() as ConductorTaskEvidenceItem['kind'])
+					: 'note';
+
+			return {
+				kind,
+				label,
+				summary: typeof item.summary === 'string' ? item.summary.trim() || undefined : undefined,
+				path: typeof item.path === 'string' ? item.path.trim() || undefined : undefined,
+				url: typeof item.url === 'string' ? item.url.trim() || undefined : undefined,
+				demoId: typeof item.demoId === 'string' ? item.demoId.trim() || undefined : undefined,
+				captureRunId:
+					typeof item.captureRunId === 'string'
+						? item.captureRunId.trim() || undefined
+						: undefined,
+			};
+		})
+		.filter((item): item is ConductorTaskEvidenceItem => Boolean(item));
+}
+
 function extractJsonBlock(text: string): string {
 	const fencedMatch = text.match(/```json\s*([\s\S]*?)```/i);
 	if (fencedMatch?.[1]) {
 		return fencedMatch[1].trim();
 	}
 
-	const firstBrace = text.indexOf('{');
-	const lastBrace = text.lastIndexOf('}');
-	if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+	const candidates: string[] = [];
+	let startIndex = -1;
+	let depth = 0;
+	let inString = false;
+	let isEscaped = false;
+
+	for (let index = 0; index < text.length; index += 1) {
+		const char = text[index];
+		if (inString) {
+			if (isEscaped) {
+				isEscaped = false;
+				continue;
+			}
+			if (char === '\\') {
+				isEscaped = true;
+				continue;
+			}
+			if (char === '"') {
+				inString = false;
+			}
+			continue;
+		}
+
+		if (char === '"') {
+			inString = true;
+			continue;
+		}
+
+		if (char === '{') {
+			if (depth === 0) {
+				startIndex = index;
+			}
+			depth += 1;
+			continue;
+		}
+
+		if (char !== '}' || depth === 0) {
+			continue;
+		}
+
+		depth -= 1;
+		if (depth === 0 && startIndex >= 0) {
+			candidates.push(text.slice(startIndex, index + 1).trim());
+			startIndex = -1;
+		}
+	}
+
+	if (candidates.length === 0) {
 		throw new Error('Worker did not return a JSON object.');
 	}
 
-	return text.slice(firstBrace, lastBrace + 1).trim();
+	let firstParseError: Error | null = null;
+	for (const candidate of candidates) {
+		try {
+			const parsed = JSON.parse(candidate) as RawWorkerResponse;
+			const hasWorkerShape =
+				typeof parsed.outcome === 'string' ||
+				'changedPaths' in parsed ||
+				'followUpTasks' in parsed ||
+				'blockedReason' in parsed;
+			if (hasWorkerShape || candidates.length === 1) {
+				return candidate;
+			}
+		} catch (error) {
+			if (!firstParseError && error instanceof Error) {
+				firstParseError = error;
+			}
+		}
+	}
+
+	if (firstParseError) {
+		throw firstParseError;
+	}
+
+	return candidates[candidates.length - 1];
 }
 
 export function buildConductorWorkerPrompt(
@@ -122,6 +242,7 @@ Instructions:
 - Perform the task in the repository if you can complete it safely.
 - Keep changes scoped to the task.
 - If you cannot complete it, explain the blocker clearly.
+- Report concrete evidence of completion whenever you have it. For browser, UI, or verification tasks, include the URL, demo capture, artifact paths, or other workspace-visible proof instead of a vague claim.
 - Suggest follow-up subtasks only for genuinely separate net-new work, not for polish needed to finish this same task.
 - Do not invent more than ${CONDUCTOR_MAX_WORKER_FOLLOW_UP_TASKS} follow-up subtasks.
 
@@ -132,6 +253,17 @@ If you need the JSON fallback, return ONLY valid JSON with this exact shape:
   "outcome": "completed | blocked",
   "summary": "short outcome summary",
   "changedPaths": ["path/to/file"],
+  "evidence": [
+    {
+      "kind": "demo | file | url | note",
+      "label": "short evidence label",
+      "summary": "optional details",
+      "path": "optional workspace path",
+      "url": "optional URL",
+      "demoId": "optional demo id",
+      "captureRunId": "optional capture run id"
+    }
+  ],
   "followUpTasks": [
     {
       "title": "small follow-up task",
@@ -158,6 +290,7 @@ function normalizeConductorWorkerResult(parsed: {
 	outcome?: unknown;
 	summary?: unknown;
 	changedPaths?: unknown;
+	evidence?: unknown;
 	followUpTasks?: unknown;
 	blockedReason?: unknown;
 }): ConductorWorkerResult {
@@ -190,6 +323,7 @@ function normalizeConductorWorkerResult(parsed: {
 					? 'Task blocked during execution.'
 					: 'Task completed.',
 		changedPaths: normalizeStringArray(parsed.changedPaths),
+		evidence: normalizeEvidenceItems(parsed.evidence),
 		followUpTasks,
 		blockedReason:
 			typeof parsed.blockedReason === 'string' && parsed.blockedReason.trim()

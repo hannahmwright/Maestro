@@ -47,9 +47,7 @@ function buildContextLabel(
 		case 'task':
 			return input.tasksById.get(context.taskId)?.title || 'Task';
 		case 'update':
-			return (
-				input.updates.find((update) => update.id === context.updateId)?.summary || 'Update'
-			);
+			return input.updates.find((update) => update.id === context.updateId)?.summary || 'Update';
 		case 'member': {
 			const member = input.teamMembers.find((item) => item.name === context.memberName);
 			return member ? `${member.emoji} ${member.name}` : context.memberName;
@@ -130,7 +128,17 @@ export function MobileOrchestratorChat({
 		requestAnimationFrame(() => {
 			inputRef.current?.focus();
 		});
-	}, [isOpen, context, groupName, conductor, tasksById, childTasksByParentId, runs, updates, teamSnapshots]);
+	}, [
+		isOpen,
+		context,
+		groupName,
+		conductor,
+		tasksById,
+		childTasksByParentId,
+		runs,
+		updates,
+		teamSnapshots,
+	]);
 
 	useEffect(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -189,7 +197,9 @@ export function MobileOrchestratorChat({
 			role="button"
 			tabIndex={-1}
 			onClick={onClose}
-			onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+			onKeyDown={(e) => {
+				if (e.key === 'Escape') onClose();
+			}}
 			style={{
 				position: 'fixed',
 				inset: 0,
@@ -200,7 +210,6 @@ export function MobileOrchestratorChat({
 				justifyContent: 'center',
 			}}
 		>
-			{/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
 			<div
 				onClick={(e) => e.stopPropagation()}
 				style={{
@@ -517,9 +526,7 @@ export function MobileOrchestratorChat({
 														backgroundColor: isAccent
 															? `${colors.accent}12`
 															: 'rgba(255,255,255,0.03)',
-														color: isAccent
-															? colors.accent
-															: colors.textMain,
+														color: isAccent ? colors.accent : colors.textMain,
 														cursor: 'pointer',
 													}}
 												>

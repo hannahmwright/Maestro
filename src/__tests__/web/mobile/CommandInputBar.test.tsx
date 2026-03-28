@@ -242,10 +242,9 @@ describe('CommandInputBar', () => {
 			expect(sendButton).toBeInTheDocument();
 		});
 
-		it('renders expanded interrupt button when session is busy in AI mode', async () => {
+		it('renders the inline stop button when session is busy in compact AI mode', () => {
 			renderComponent({ inputMode: 'ai', isSessionBusy: true });
-			await focusAiComposer();
-			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
+			const interruptButton = screen.getByRole('button', { name: /stop the current response/i });
 			expect(interruptButton).toBeInTheDocument();
 		});
 
@@ -451,8 +450,7 @@ describe('CommandInputBar', () => {
 			const onInterrupt = vi.fn();
 			renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt });
 
-			await focusAiComposer();
-			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
+			const interruptButton = screen.getByRole('button', { name: /stop the current response/i });
 			fireEvent.click(interruptButton);
 
 			expect(onInterrupt).toHaveBeenCalled();
@@ -462,8 +460,7 @@ describe('CommandInputBar', () => {
 			const onInterrupt = vi.fn();
 			renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt });
 
-			await focusAiComposer();
-			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
+			const interruptButton = screen.getByRole('button', { name: /stop the current response/i });
 			fireEvent.click(interruptButton);
 
 			expect(navigator.vibrate).toHaveBeenCalledWith(50); // 'strong' = 50ms
@@ -683,7 +680,9 @@ describe('CommandInputBar', () => {
 			fireEvent.focus(textarea);
 			const focusedTextarea = screen.getByRole('textbox') as HTMLTextAreaElement;
 			expect(focusedTextarea.style.minHeight).toBe('88px');
-			expect(screen.queryAllByRole('button', { name: /start voice recording/i }).length).toBeLessThanOrEqual(1);
+			expect(
+				screen.queryAllByRole('button', { name: /start voice recording/i }).length
+			).toBeLessThanOrEqual(1);
 			expect(screen.getByRole('button', { name: /send message/i })).toBeInTheDocument();
 		});
 
@@ -714,7 +713,7 @@ describe('CommandInputBar', () => {
 	describe('Touch Feedback on Buttons', () => {
 		it('scales down send button on touch', () => {
 			renderComponent({ value: 'test' });
-			const sendButton = screen.getByRole('button', { name: /send command/i });
+			const sendButton = screen.getByRole('button', { name: /send message/i });
 
 			fireEvent.touchStart(sendButton, {
 				touches: [{ clientX: 0, clientY: 0 }],
@@ -726,7 +725,7 @@ describe('CommandInputBar', () => {
 
 		it('scales back up on touch end', () => {
 			renderComponent({ value: 'test' });
-			const sendButton = screen.getByRole('button', { name: /send command/i });
+			const sendButton = screen.getByRole('button', { name: /send message/i });
 
 			fireEvent.touchStart(sendButton, {
 				touches: [{ clientX: 0, clientY: 0 }],
@@ -741,8 +740,7 @@ describe('CommandInputBar', () => {
 
 		it('interrupt button changes color on touch', async () => {
 			renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt: vi.fn() });
-			await focusAiComposer();
-			const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
+			const interruptButton = screen.getByRole('button', { name: /stop the current response/i });
 
 			fireEvent.touchStart(interruptButton, {
 				touches: [{ clientX: 0, clientY: 0 }],
@@ -824,8 +822,7 @@ describe('triggerHapticFeedback helper', () => {
 	it('triggers strong haptic (50ms) on interrupt', async () => {
 		renderComponent({ inputMode: 'ai', isSessionBusy: true, onInterrupt: vi.fn() });
 
-		await focusAiComposer();
-		const interruptButton = screen.getByRole('button', { name: /cancel running ai query/i });
+		const interruptButton = screen.getByRole('button', { name: /stop the current response/i });
 		fireEvent.click(interruptButton);
 
 		expect(navigator.vibrate).toHaveBeenCalledWith(50);

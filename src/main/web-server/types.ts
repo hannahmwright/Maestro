@@ -215,6 +215,7 @@ export interface UpdateConductorTaskInput {
 	attentionRequest?: ConductorTaskAttentionRequest | null;
 	completionProofRequirement?: ConductorTask['completionProofRequirement'];
 	completionProof?: ConductorTask['completionProof'];
+	evidence?: ConductorTask['evidence'];
 }
 
 /**
@@ -337,9 +338,7 @@ export type GetSessionProviderUsageCallback = (
 	sessionId: string,
 	forceRefresh?: boolean
 ) => Promise<ProviderUsageSnapshot | null> | ProviderUsageSnapshot | null;
-export type GetConductorSnapshotCallback = () =>
-	| Promise<ConductorSnapshot>
-	| ConductorSnapshot;
+export type GetConductorSnapshotCallback = () => Promise<ConductorSnapshot> | ConductorSnapshot;
 export type TranscribeAudioCallback = (
 	request: WebVoiceTranscriptionRequest
 ) => Promise<WebVoiceTranscriptionResponse>;
@@ -467,14 +466,13 @@ export type ReorderTabCallback = (
 	toIndex: number
 ) => Promise<boolean>;
 export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
-export type CreateConductorTaskCallback = (
-	input: CreateConductorTaskInput
-) => Promise<boolean>;
+export type CreateConductorTaskCallback = (input: CreateConductorTaskInput) => Promise<boolean>;
 export type UpdateConductorTaskCallback = (
 	taskId: string,
 	updates: UpdateConductorTaskInput
 ) => Promise<boolean>;
 export type DeleteConductorTaskCallback = (taskId: string) => Promise<boolean>;
+export type OpenConductorWorkspaceCallback = (groupId: string) => Promise<boolean>;
 
 /**
  * Callback type for fetching current theme.

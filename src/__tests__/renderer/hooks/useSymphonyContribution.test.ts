@@ -327,7 +327,7 @@ describe('useSymphonyContribution', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'error',
-					title: 'Agent Creation Failed',
+					title: 'Thread Creation Failed',
 					message: 'Duplicate session for this path',
 				})
 			);
@@ -351,8 +351,8 @@ describe('useSymphonyContribution', () => {
 			expect(notifyToast).toHaveBeenCalledWith(
 				expect.objectContaining({
 					type: 'error',
-					title: 'Agent Creation Failed',
-					message: 'Cannot create duplicate agent',
+					title: 'Thread Creation Failed',
+					message: 'Cannot create duplicate thread',
 				})
 			);
 		});

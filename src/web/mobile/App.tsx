@@ -2465,22 +2465,22 @@ export default function MobileApp() {
 		[mutateConductorTask]
 	);
 
-		const handleUpdateConductorTask = useCallback(
-			async (
-				taskId: string,
-				updates: {
-					title?: string;
-					description?: string;
-					priority?: ConductorTaskPriority;
-					status?: ConductorTaskStatus;
-					acceptanceCriteria?: string[];
-					attentionRequest?: ConductorTask['attentionRequest'] | null;
-					completionProofRequirement?: ConductorTask['completionProofRequirement'];
-					completionProof?: ConductorTask['completionProof'];
-				}
-			) => {
-				await mutateConductorTask(`/conductor/tasks/${encodeURIComponent(taskId)}`, {
-					method: 'POST',
+	const handleUpdateConductorTask = useCallback(
+		async (
+			taskId: string,
+			updates: {
+				title?: string;
+				description?: string;
+				priority?: ConductorTaskPriority;
+				status?: ConductorTaskStatus;
+				acceptanceCriteria?: string[];
+				attentionRequest?: ConductorTask['attentionRequest'] | null;
+				completionProofRequirement?: ConductorTask['completionProofRequirement'];
+				completionProof?: ConductorTask['completionProof'];
+			}
+		) => {
+			await mutateConductorTask(`/conductor/tasks/${encodeURIComponent(taskId)}`, {
+				method: 'POST',
 				headers: {
 					'Content-Type': 'application/json',
 				},
@@ -3188,17 +3188,17 @@ export default function MobileApp() {
 							overflow: 'hidden',
 						}}
 					>
-							<MessageHistory
-								logs={chatLogs}
-								sessionId={activeSessionId}
-								inputMode={activeSession.inputMode as 'ai' | 'terminal'}
-								toolLogs={toolLogs}
-								isSessionBusy={activeSession.state === 'busy'}
-								autoScroll={true}
-								maxHeight="none"
-								onMessageTap={handleMessageTap}
-								jumpToMessageKey={pendingTurnJumpKey}
-								onJumpHandled={() => setPendingTurnJumpKey(null)}
+						<MessageHistory
+							logs={chatLogs}
+							sessionId={activeSessionId}
+							inputMode={activeSession.inputMode as 'ai' | 'terminal'}
+							toolLogs={toolLogs}
+							isSessionBusy={activeSession.state === 'busy'}
+							autoScroll={true}
+							maxHeight="none"
+							onMessageTap={handleMessageTap}
+							jumpToMessageKey={pendingTurnJumpKey}
+							onJumpHandled={() => setPendingTurnJumpKey(null)}
 							onVisibleUserTurnChange={(messageKey) => {
 								if (!messageKey) {
 									return;
@@ -3212,19 +3212,19 @@ export default function MobileApp() {
 		);
 	};
 
-		const containerStyle: React.CSSProperties = {
-			display: 'flex',
-			flexDirection: 'column',
-			height: '100%',
-			minHeight: '100%',
-			maxHeight: '100%',
-			overflow: 'hidden',
-			backgroundColor: colors.bgMain,
-			color: colors.textMain,
-		};
-		const searchableSessions = useMemo(
-			() => sessions.filter((session) => (session.aiTabs?.length || 0) > 0),
-			[sessions]
+	const containerStyle: React.CSSProperties = {
+		display: 'flex',
+		flexDirection: 'column',
+		height: '100%',
+		minHeight: '100%',
+		maxHeight: '100%',
+		overflow: 'hidden',
+		backgroundColor: colors.bgMain,
+		color: colors.textMain,
+	};
+	const searchableSessions = useMemo(
+		() => sessions.filter((session) => (session.aiTabs?.length || 0) > 0),
+		[sessions]
 	);
 	const canOpenTabSearch = searchableSessions.length > 0;
 

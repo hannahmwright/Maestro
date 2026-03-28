@@ -340,6 +340,28 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].aiTabs[0].logs).toHaveLength(50);
 			});
+
+			it('should truncate session-level shell and ai logs to 100 entries', () => {
+				const shellLogs = Array.from({ length: 140 }, (_, i) => ({
+					...makeLog(`shell-${i}`),
+					source: 'stdout' as const,
+				}));
+				const aiLogs = Array.from({ length: 135 }, (_, i) => makeLog(`ai-${i}`));
+				const session = makeSession({ shellLogs, aiLogs });
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].shellLogs).toHaveLength(100);
+				expect(persisted[0].shellLogs[0].id).toBe('shell-40');
+				expect(persisted[0].aiLogs).toHaveLength(100);
+				expect(persisted[0].aiLogs[0].id).toBe('ai-35');
+			});
 		});
 
 		describe('tab runtime state reset', () => {
@@ -654,6 +676,78 @@ describe('useDebouncedPersistence', () => {
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].statusMessage).toBeUndefined();
+			});
+
+			it('should clear executionQueue', () => {
+				const session = makeSession({
+					executionQueue: [
+						{
+							id: 'queued-1',
+							timestamp: Date.now(),
+							tabId: 'default-tab',
+							type: 'message',
+							text: 'hello',
+							images: ['data:image/png;base64,' + 'a'.repeat(1024)],
+						},
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].executionQueue).toEqual([]);
+			});
+		});
+
+		describe('conductor helper persistence', () => {
+			it('should persist conductor helper sessions in a lightweight form', () => {
+				const helperTab = makeTab({
+					id: 'helper-tab',
+					logs: Array.from({ length: 25 }, (_, i) => makeLog(`tab-${i}`)),
+					inputValue: 'draft',
+					stagedImages: ['data:image/png;base64,' + 'b'.repeat(256)],
+				});
+				const session = makeSession({
+					aiTabs: [helperTab],
+					activeTabId: 'helper-tab',
+					shellLogs: Array.from({ length: 30 }, (_, i) => ({
+						...makeLog(`shell-${i}`),
+						source: 'stdout' as const,
+					})),
+					aiLogs: Array.from({ length: 20 }, (_, i) => makeLog(`ai-${i}`)),
+					workLog: Array.from({ length: 12 }, (_, i) => ({
+						id: `work-${i}`,
+						title: `Work ${i}`,
+						description: 'helper detail',
+						timestamp: Date.now() + i,
+					})),
+					conductorMetadata: {
+						isConductorSession: true,
+						groupId: 'group-1',
+						role: 'worker',
+						createdAt: Date.now(),
+					},
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].aiTabs[0].logs).toEqual([]);
+				expect(persisted[0].aiTabs[0].inputValue).toBe('');
+				expect(persisted[0].aiTabs[0].stagedImages).toEqual([]);
+				expect(persisted[0].shellLogs).toEqual([]);
+				expect(persisted[0].aiLogs).toEqual([]);
+				expect(persisted[0].workLog).toEqual([]);
 			});
 		});
 

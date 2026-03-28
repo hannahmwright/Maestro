@@ -16,7 +16,7 @@ describe('appendDemoCaptureInstructions', () => {
 		expect(prompt).toContain('Do not silently skip demo capture');
 		expect(prompt).toContain('Maestro will treat the run as failed');
 		expect(prompt).toContain('require artifacts');
-		expect(prompt).toContain('at least one screenshot or video artifact');
+		expect(prompt).toContain('at least one screenshot step or the automatic video');
 		expect(prompt).not.toContain('.codex/skills/playwright');
 	});
 });

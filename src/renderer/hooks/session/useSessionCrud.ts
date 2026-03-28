@@ -52,24 +52,24 @@ export interface UseSessionCrudReturn {
 	/** Opens the new instance modal */
 	addNewSession: () => void;
 	/** Core session creation logic */
-		createNewSession: (
-			agentId: string,
-			workingDir: string,
+	createNewSession: (
+		agentId: string,
+		workingDir: string,
 		name: string,
 		nudgeMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
-			customContextWindow?: number,
-			customProviderPath?: string,
-			sessionSshRemoteConfig?: {
-				enabled: boolean;
-				remoteId: string | null;
-				workingDirOverride?: string;
-			},
-			workspaceId?: string
-		) => Promise<void>;
+		customContextWindow?: number,
+		customProviderPath?: string,
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		},
+		workspaceId?: string
+	) => Promise<void>;
 	/** Opens the delete agent confirmation modal */
 	deleteSession: (id: string) => void;
 	/** Deletes entire worktree group and all its agents */
@@ -190,7 +190,10 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				}
 
 				const currentDefaults = useSettingsStore.getState();
-				const normalizedWorkingDir = workingDir.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+				const normalizedWorkingDir = workingDir
+					.replace(/\\/g, '/')
+					.replace(/\/+$/, '')
+					.toLowerCase();
 				const existingWorkspace = useSessionStore
 					.getState()
 					.groups.find(

@@ -82,7 +82,9 @@ describe('buildConductorOrchestratorReply', () => {
 
 		expect(reply.title).toBe('Task summary');
 		expect(reply.body).toContain('sitting in QA');
-		expect(reply.bullets).toContain('Latest update: QA helper could not produce a clean review update.');
+		expect(reply.bullets).toContain(
+			'Latest update: QA helper could not produce a clean review update.'
+		);
 		expect(reply.actions?.[0]).toEqual({
 			type: 'open_task',
 			label: 'Open task',

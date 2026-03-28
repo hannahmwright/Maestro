@@ -35,8 +35,7 @@ export function buildCodexApprovalResponse(
 ): CodexApprovalResponse | null {
 	switch (method) {
 		case 'item/fileChange/requestApproval': {
-			const approved =
-				canApproveInteractiveTools && canApproveFileChangeRequest(params, cwd);
+			const approved = canApproveInteractiveTools && canApproveFileChangeRequest(params, cwd);
 			return {
 				approved,
 				result: {
@@ -45,8 +44,7 @@ export function buildCodexApprovalResponse(
 			};
 		}
 		case 'applyPatchApproval': {
-			const approved =
-				canApproveInteractiveTools && canApproveFileChangeRequest(params, cwd);
+			const approved = canApproveInteractiveTools && canApproveFileChangeRequest(params, cwd);
 			return {
 				approved,
 				result: {
@@ -55,8 +53,7 @@ export function buildCodexApprovalResponse(
 			};
 		}
 		case 'item/commandExecution/requestApproval': {
-			const approved =
-				canApproveInteractiveTools && canApproveCommandExecutionRequest(params);
+			const approved = canApproveInteractiveTools && canApproveCommandExecutionRequest(params);
 			return {
 				approved,
 				result: {
@@ -113,9 +110,7 @@ function canApproveCommandExecutionRequest(params: JsonRecord | null): boolean {
 	return !hasRequestedAdditionalPermissions(asRecord(params.additionalPermissions));
 }
 
-function hasRequestedAdditionalPermissions(
-	permissions: JsonRecord | null
-): boolean {
+function hasRequestedAdditionalPermissions(permissions: JsonRecord | null): boolean {
 	if (!permissions) {
 		return false;
 	}
@@ -134,9 +129,7 @@ function hasRequestedAdditionalPermissions(
 	}
 
 	const macos = asRecord(permissions.macos);
-	return !!(
-		macos && Object.values(macos).some((value) => value !== null && value !== false)
-	);
+	return !!(macos && Object.values(macos).some((value) => value !== null && value !== false));
 }
 
 function pickCommandExecutionDecision(availableDecisions: unknown[], approved: boolean): unknown {

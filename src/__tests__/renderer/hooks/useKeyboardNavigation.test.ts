@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useKeyboardNavigation, UseKeyboardNavigationDeps } from '../../../renderer/hooks';
-import type { Session, Group, FocusArea } from '../../../renderer/types';
+import type { Session, Group, FocusArea, SidebarNavTarget } from '../../../renderer/types';
 
 // Create a mock session
 const createMockSession = (overrides: Partial<Session> = {}): Session => ({
@@ -40,25 +40,67 @@ const createMockSession = (overrides: Partial<Session> = {}): Session => ({
 	...overrides,
 });
 
+const createThreadNavTarget = (
+	sessionId: string,
+	workspaceId = 'workspace-1'
+): SidebarNavTarget => ({
+	type: 'thread',
+	id: sessionId,
+	thread: {
+		id: sessionId,
+		threadId: sessionId,
+		sessionId,
+		runtimeId: `runtime-${sessionId}`,
+		workspaceId,
+		tabId: null,
+	},
+});
+
 // Create mock dependencies
 const createMockDeps = (
-	overrides: Partial<UseKeyboardNavigationDeps> = {}
-): UseKeyboardNavigationDeps => ({
-	sortedSessions: [],
-	selectedSidebarIndex: 0,
-	setSelectedSidebarIndex: vi.fn(),
-	activeSessionId: null,
-	setActiveSessionId: vi.fn(),
-	activeFocus: 'main',
-	setActiveFocus: vi.fn(),
-	groups: [],
-	setGroups: vi.fn(),
-	bookmarksCollapsed: false,
-	setBookmarksCollapsed: vi.fn(),
-	inputRef: { current: null },
-	terminalOutputRef: { current: null },
-	...overrides,
-});
+	overrides: Partial<UseKeyboardNavigationDeps> & {
+		sortedSessions?: Session[];
+		activeSessionId?: string | null;
+		setActiveSessionId?: ReturnType<typeof vi.fn>;
+	} = {}
+): UseKeyboardNavigationDeps => {
+	const {
+		sortedSessions = [],
+		activeSessionId = null,
+		setActiveSessionId = vi.fn(),
+		sidebarNavTargets = sortedSessions.map((session) =>
+			createThreadNavTarget(session.id, session.groupId || 'workspace-1')
+		),
+		activeSidebarNavTargetId = activeSessionId,
+		openSidebarNavTarget = vi.fn((target: SidebarNavTarget) => {
+			if (target.type === 'thread') {
+				setActiveSessionId(target.thread.sessionId);
+			}
+		}),
+		selectedSidebarIndex = 0,
+		setSelectedSidebarIndex = vi.fn(),
+		activeFocus = 'main',
+		setActiveFocus = vi.fn(),
+		groups = [],
+		setGroups = vi.fn(),
+		inputRef = { current: null },
+		terminalOutputRef = { current: null },
+	} = overrides;
+
+	return {
+		sidebarNavTargets,
+		selectedSidebarIndex,
+		setSelectedSidebarIndex,
+		activeSidebarNavTargetId,
+		openSidebarNavTarget,
+		activeFocus,
+		setActiveFocus,
+		groups,
+		setGroups,
+		inputRef,
+		terminalOutputRef,
+	};
+};
 
 describe('useKeyboardNavigation', () => {
 	beforeEach(() => {
@@ -110,15 +152,13 @@ describe('useKeyboardNavigation', () => {
 			expect(setSelectedSidebarIndex).toHaveBeenCalledWith(1);
 		});
 
-		it('should collapse bookmarks section with ArrowLeft when session is bookmarked', () => {
-			const session1 = createMockSession({ id: 's1', bookmarked: true });
-			const setBookmarksCollapsed = vi.fn();
+		it('should collapse the current workspace with ArrowLeft', () => {
 			const deps = createMockDeps({
 				activeFocus: 'sidebar',
-				sortedSessions: [session1],
+				sidebarNavTargets: [createThreadNavTarget('s1', 'g1')],
 				selectedSidebarIndex: 0,
-				bookmarksCollapsed: false,
-				setBookmarksCollapsed,
+				groups: [{ id: 'g1', name: 'Group 1', collapsed: false }],
+				setGroups: vi.fn(),
 			});
 			const { result } = renderHook(() => useKeyboardNavigation(deps));
 
@@ -126,18 +166,16 @@ describe('useKeyboardNavigation', () => {
 			const handled = result.current.handleSidebarNavigation(event);
 
 			expect(handled).toBe(true);
-			expect(setBookmarksCollapsed).toHaveBeenCalledWith(true);
+			expect(deps.setGroups).toHaveBeenCalled();
 		});
 
-		it('should expand bookmarks section with ArrowRight when collapsed', () => {
-			const session1 = createMockSession({ id: 's1', bookmarked: true });
-			const setBookmarksCollapsed = vi.fn();
+		it('should expand the current workspace with ArrowRight', () => {
 			const deps = createMockDeps({
 				activeFocus: 'sidebar',
-				sortedSessions: [session1],
+				sidebarNavTargets: [createThreadNavTarget('s1', 'g1')],
 				selectedSidebarIndex: 0,
-				bookmarksCollapsed: true,
-				setBookmarksCollapsed,
+				groups: [{ id: 'g1', name: 'Group 1', collapsed: true }],
+				setGroups: vi.fn(),
 			});
 			const { result } = renderHook(() => useKeyboardNavigation(deps));
 
@@ -145,7 +183,7 @@ describe('useKeyboardNavigation', () => {
 			const handled = result.current.handleSidebarNavigation(event);
 
 			expect(handled).toBe(true);
-			expect(setBookmarksCollapsed).toHaveBeenCalledWith(false);
+			expect(deps.setGroups).toHaveBeenCalled();
 		});
 
 		it('should collapse group with ArrowLeft when session is in expanded group', () => {
@@ -306,12 +344,12 @@ describe('useKeyboardNavigation', () => {
 		it('should activate selected session on Enter', () => {
 			const session1 = createMockSession({ id: 's1' });
 			const session2 = createMockSession({ id: 's2' });
-			const setActiveSessionId = vi.fn();
+			const openSidebarNavTarget = vi.fn();
 			const deps = createMockDeps({
 				activeFocus: 'sidebar',
 				sortedSessions: [session1, session2],
 				selectedSidebarIndex: 1,
-				setActiveSessionId,
+				openSidebarNavTarget,
 			});
 			const { result } = renderHook(() => useKeyboardNavigation(deps));
 
@@ -319,7 +357,7 @@ describe('useKeyboardNavigation', () => {
 			const handled = result.current.handleEnterToActivate(event);
 
 			expect(handled).toBe(true);
-			expect(setActiveSessionId).toHaveBeenCalledWith('s2');
+			expect(openSidebarNavTarget).toHaveBeenCalledWith(deps.sidebarNavTargets[1]);
 		});
 
 		it('should skip input events from textareas', () => {
@@ -414,7 +452,11 @@ describe('useKeyboardNavigation', () => {
 			});
 
 			const { rerender } = renderHook(
-				({ activeSessionId }) => useKeyboardNavigation({ ...deps, activeSessionId }),
+				({ activeSessionId }) =>
+					useKeyboardNavigation({
+						...deps,
+						activeSidebarNavTargetId: activeSessionId,
+					}),
 				{ initialProps: { activeSessionId: 's1' } }
 			);
 
@@ -434,7 +476,6 @@ describe('useKeyboardNavigation', () => {
 			const session2 = createMockSession({ id: 's2' }); // ungrouped
 			const setGroups = vi.fn();
 			const setSelectedSidebarIndex = vi.fn();
-			const setActiveSessionId = vi.fn();
 			const deps = createMockDeps({
 				activeFocus: 'sidebar',
 				sortedSessions: [session1, session2],
@@ -442,7 +483,6 @@ describe('useKeyboardNavigation', () => {
 				groups: [group1],
 				setGroups,
 				setSelectedSidebarIndex,
-				setActiveSessionId,
 			});
 			const { result } = renderHook(() => useKeyboardNavigation(deps));
 
@@ -451,8 +491,7 @@ describe('useKeyboardNavigation', () => {
 
 			expect(handled).toBe(true);
 			expect(setGroups).toHaveBeenCalled();
-			expect(setSelectedSidebarIndex).toHaveBeenCalledWith(1);
-			expect(setActiveSessionId).toHaveBeenCalledWith('s2');
+			expect(setSelectedSidebarIndex).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -104,7 +104,8 @@ export function createGitApi() {
 			createdCommit?: boolean;
 			currentBranch?: string;
 			error?: string;
-		}> => ipcRenderer.invoke('git:initializeRepo', cwd, createInitialCommit, sshRemoteId, remoteCwd),
+		}> =>
+			ipcRenderer.invoke('git:initializeRepo', cwd, createInitialCommit, sshRemoteId, remoteCwd),
 
 		/**
 		 * Get git diff numstat

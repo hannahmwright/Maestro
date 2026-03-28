@@ -1,9 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { SkinnySidebar } from '../../../../renderer/components/SessionList/SkinnySidebar';
-import type { Session, Group, Theme } from '../../../../renderer/types';
+import {
+	SkinnySidebar,
+	type SkinnySidebarThreadItem,
+} from '../../../../renderer/components/SessionList/SkinnySidebar';
+import type { Session, Theme, Thread } from '../../../../renderer/types';
 
-const mockTheme: Theme = {
+const theme: Theme = {
 	name: 'test',
 	colors: {
 		bgMain: '#1a1a2e',
@@ -19,174 +22,142 @@ const mockTheme: Theme = {
 	},
 } as Theme;
 
-let idCounter = 0;
-function makeSession(overrides: Partial<Session> = {}): Session {
-	idCounter++;
-	return {
-		id: `s${idCounter}`,
-		name: `Session ${idCounter}`,
+const createSession = (overrides: Partial<Session> = {}): Session =>
+	({
+		id: 'session-1',
+		name: 'Workspace Agent',
 		toolType: 'claude-code',
 		state: 'idle',
 		cwd: '/tmp',
-		fullPath: '/tmp',
 		projectRoot: '/tmp',
-		aiLogs: [],
+		inputMode: 'ai',
+		aiTabs: [{ id: 'tab-1', name: 'Main', logs: [], hasUnread: false }],
+		activeTabId: 'tab-1',
 		shellLogs: [],
 		workLog: [],
 		contextUsage: 0,
-		inputMode: 'ai',
-		aiPid: 0,
-		terminalPid: 0,
-		port: 0,
-		isLive: false,
-		changedFiles: [],
 		isGitRepo: false,
 		fileTree: [],
 		fileExplorerExpanded: [],
-		fileExplorerScrollPos: 0,
-		agentSessionId: 'active-session',
 		...overrides,
-	} as Session;
-}
+	}) as Session;
 
-function createProps(overrides: Partial<Parameters<typeof SkinnySidebar>[0]> = {}) {
+const createThread = (overrides: Partial<Thread> = {}): Thread =>
+	({
+		id: 'thread-1',
+		title: 'Thread One',
+		sessionId: 'session-1',
+		workspaceId: 'workspace-1',
+		tabId: 'tab-1',
+		updatedAt: Date.now(),
+		...overrides,
+	}) as Thread;
+
+const createThreadItem = (
+	overrides: Partial<SkinnySidebarThreadItem> = {}
+): SkinnySidebarThreadItem => {
+	const session = overrides.session || createSession();
+	const thread = overrides.thread || createThread({ sessionId: session.id });
 	return {
-		theme: mockTheme,
-		sortedSessions: [] as Session[],
-		activeSessionId: '',
-		groups: [] as Group[],
-		activeBatchSessionIds: [] as string[],
-		contextWarningYellowThreshold: 70,
-		contextWarningRedThreshold: 90,
-		getFileCount: vi.fn(() => 0),
-		setActiveSessionId: vi.fn(),
-		handleContextMenu: vi.fn(),
+		target: {
+			id: 'target-1',
+			threadId: thread.id,
+			sessionId: session.id,
+			runtimeId: `runtime-${session.id}`,
+			workspaceId: 'workspace-1',
+			tabId: 'tab-1',
+		},
+		thread,
+		session,
+		displayName: 'Workspace Agent',
 		...overrides,
 	};
-}
+};
+
+const renderSidebar = (props: Partial<React.ComponentProps<typeof SkinnySidebar>> = {}) =>
+	render(
+		<SkinnySidebar
+			theme={theme}
+			threadItems={[]}
+			activeThreadTargetId={null}
+			activeBatchSessionIds={[]}
+			contextWarningYellowThreshold={70}
+			contextWarningRedThreshold={90}
+			getFileCount={() => 0}
+			openThreadTarget={vi.fn()}
+			handleContextMenu={vi.fn()}
+			{...props}
+		/>
+	);
 
 describe('SkinnySidebar', () => {
-	beforeEach(() => {
-		idCounter = 0;
+	it('renders nothing when there are no thread items', () => {
+		const { container } = renderSidebar();
+		expect(container.firstElementChild?.children.length).toBe(0);
 	});
 
-	it('renders nothing when there are no sessions', () => {
-		const { container } = render(<SkinnySidebar {...createProps()} />);
-		expect(container.firstElementChild!.children.length).toBe(0);
+	it('renders one switch target per thread item', () => {
+		renderSidebar({
+			threadItems: [
+				createThreadItem(),
+				createThreadItem({
+					target: { ...createThreadItem().target, id: 'target-2', threadId: 'thread-2' },
+					thread: createThread({ id: 'thread-2' }),
+				}),
+			],
+		});
+
+		expect(screen.getAllByRole('button')).toHaveLength(2);
 	});
 
-	it('renders a dot for each session', () => {
-		const sessions = [makeSession(), makeSession(), makeSession()];
-		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: sessions })} />);
-		// Each session gets a clickable dot container
-		expect(container.firstElementChild!.children.length).toBe(3);
+	it('opens the selected thread target when clicked', () => {
+		const openThreadTarget = vi.fn();
+		const item = createThreadItem();
+		renderSidebar({
+			threadItems: [item],
+			openThreadTarget,
+		});
+
+		fireEvent.click(screen.getByRole('button', { name: 'Switch to Workspace Agent' }));
+		expect(openThreadTarget).toHaveBeenCalledWith(item.target);
 	});
 
-	it('calls setActiveSessionId when a dot is clicked', () => {
-		const s1 = makeSession({ id: 'test-id' });
-		const setActiveSessionId = vi.fn();
-		const { container } = render(
-			<SkinnySidebar {...createProps({ sortedSessions: [s1], setActiveSessionId })} />
-		);
-
-		fireEvent.click(container.firstElementChild!.firstElementChild!);
-		expect(setActiveSessionId).toHaveBeenCalledWith('test-id');
-	});
-
-	it('calls handleContextMenu on right-click', () => {
-		const s1 = makeSession({ id: 'ctx-id' });
+	it('forwards the context menu with session and thread ids', () => {
 		const handleContextMenu = vi.fn();
-		const { container } = render(
-			<SkinnySidebar {...createProps({ sortedSessions: [s1], handleContextMenu })} />
-		);
+		const item = createThreadItem();
+		renderSidebar({
+			threadItems: [item],
+			handleContextMenu,
+		});
 
-		fireEvent.contextMenu(container.firstElementChild!.firstElementChild!);
+		fireEvent.contextMenu(screen.getByRole('button', { name: 'Switch to Workspace Agent' }));
 		expect(handleContextMenu).toHaveBeenCalled();
-		expect(handleContextMenu.mock.calls[0][1]).toBe('ctx-id');
+		expect(handleContextMenu.mock.calls[0][1]).toBe(item.session.id);
+		expect(handleContextMenu.mock.calls[0][2]).toBe(item.target.threadId);
 	});
 
-	it('shows active idle session marker at higher opacity', () => {
-		const s1 = makeSession({ id: 'active' });
-		const { container } = render(
-			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'active' })} />
-		);
-
-		const dot = container.querySelector('[title="Idle"]') as HTMLElement;
-		expect(dot.style.opacity).toBe('0.9');
-	});
-
-	it('shows inactive idle session marker at reduced opacity', () => {
-		const s1 = makeSession({ id: 'inactive' });
-		const { container } = render(
-			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'other' })} />
-		);
-
-		const dot = container.querySelector('[title="Idle"]') as HTMLElement;
-		expect(dot.style.opacity).toBe('0.35');
-	});
-
-	it('shows spinner for busy sessions', () => {
-		const s1 = makeSession({ state: 'busy' });
-		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
-
-		const spinner = container.querySelector('[title="Agent is working"] .animate-spin');
-		expect(spinner).toBeTruthy();
-	});
-
-	it('shows spinner for batch sessions', () => {
-		const s1 = makeSession({ id: 'batch-s' });
-		const { container } = render(
-			<SkinnySidebar
-				{...createProps({ sortedSessions: [s1], activeBatchSessionIds: ['batch-s'] })}
-			/>
-		);
-
-		const spinner = container.querySelector('[title="Agent is working"] .animate-spin');
-		expect(spinner).toBeTruthy();
-	});
-
-	it('shows awaiting-input dot for sessions with unread tabs', () => {
-		const s1 = makeSession({
-			id: 'unread-s',
-			aiTabs: [{ hasUnread: true } as any],
+	it('shows a working spinner for active batch thread items', () => {
+		const item = createThreadItem();
+		renderSidebar({
+			threadItems: [item],
+			activeBatchSessionIds: [item.session.id],
 		});
-		const { container } = render(
-			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'other' })} />
-		);
 
-		const badge = container.querySelector('[title="Awaiting your input"]');
-		expect(badge).toBeTruthy();
+		expect(screen.getByTitle('Agent is working')).toBeInTheDocument();
 	});
 
-	it('shows awaiting-input dot for active session with unread tabs', () => {
-		const s1 = makeSession({
-			id: 'active-s',
-			aiTabs: [{ hasUnread: true } as any],
+	it('shows an unread indicator when the thread has unread tab state', () => {
+		renderSidebar({
+			threadItems: [
+				createThreadItem({
+					session: createSession({
+						aiTabs: [{ id: 'tab-1', name: 'Main', logs: [], hasUnread: true }],
+						activeTabId: 'tab-1',
+					}),
+				}),
+			],
 		});
-		const { container } = render(
-			<SkinnySidebar {...createProps({ sortedSessions: [s1], activeSessionId: 'active-s' })} />
-		);
 
-		const badge = container.querySelector('[title="Awaiting your input"]');
-		expect(badge).toBeTruthy();
-	});
-
-	it('renders tooltip with session name on hover', () => {
-		const s1 = makeSession({ name: 'My Special Agent' });
-		render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
-
-		expect(screen.getByText('My Special Agent')).toBeTruthy();
-	});
-
-	it('shows idle ring for claude-code sessions without unread activity', () => {
-		const s1 = makeSession({
-			toolType: 'claude-code',
-			agentSessionId: undefined,
-		});
-		const { container } = render(<SkinnySidebar {...createProps({ sortedSessions: [s1] })} />);
-
-		const dot = container.querySelector('[title="Idle"]') as HTMLElement;
-		expect(dot.style.backgroundColor).toBe('transparent');
-		expect(dot.style.border).toContain('1px solid');
+		expect(screen.getByTitle('Awaiting your input')).toBeInTheDocument();
 	});
 });

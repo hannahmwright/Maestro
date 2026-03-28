@@ -60,8 +60,8 @@ describe('stores/instances', () => {
 		it('should initialize all stores', () => {
 			const result = initializeStores({ productionDataPath: '/mock/production/path' });
 
-			// Should create 9 stores
-			expect(mockStoreConstructorCalls).toHaveLength(9);
+			// Should create 10 stores
+			expect(mockStoreConstructorCalls).toHaveLength(10);
 
 			// Should return syncPath and bootstrapStore
 			expect(result.syncPath).toBe('/mock/user/data');

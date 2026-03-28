@@ -246,7 +246,7 @@ function buildReprioritizationReply(input: {
 								lowerPriority: 'low',
 								summary: `Raised ${focusPhrase} and lowered ${otherPhrase}.`,
 							},
-					  ]
+						]
 					: [],
 		};
 	}
@@ -349,7 +349,11 @@ function buildTaskReply(input: {
 	const progress = getConductorTaskProgress(task, childTasksByParentId);
 	const attentionBlockers = getConductorTaskAttentionBlockers(task, childTasksByParentId, runs);
 	const latestUpdate = updates.find((update) => update.taskId === task.id);
-	const operatorActionRequired = isConductorTaskOperatorActionRequired(task, childTasksByParentId, runs);
+	const operatorActionRequired = isConductorTaskOperatorActionRequired(
+		task,
+		childTasksByParentId,
+		runs
+	);
 	const runnableByAgent = isConductorTaskRunnableByAgent(task, childTasksByParentId, runs);
 
 	let body = `${task.title} is currently ${formatTaskStatusLabel(rollupStatus).toLowerCase()}.`;
@@ -386,7 +390,9 @@ function buildTaskReply(input: {
 		bullets.push(`Latest update: ${latestUpdate.summary}`);
 	}
 
-	const actions: ConductorOrchestratorAction[] = [{ type: 'open_task', label: 'Open task', taskId: task.id }];
+	const actions: ConductorOrchestratorAction[] = [
+		{ type: 'open_task', label: 'Open task', taskId: task.id },
+	];
 	const nextPriority = getNextPriority(task.priority);
 	if (nextPriority && rollupStatus !== 'done' && rollupStatus !== 'cancelled') {
 		actions.push({
@@ -443,7 +449,7 @@ function buildUpdateReply(input: {
 					childTasksByParentId: input.childTasksByParentId,
 					runs: input.runs,
 					updates: [],
-			  }).actions
+				}).actions
 			: [],
 	};
 }
@@ -498,11 +504,10 @@ function buildWhatNeedsMeReply(input: {
 	childTasksByParentId: Map<string, ConductorTask[]>;
 	runs: ConductorRun[];
 }): ConductorOrchestratorReply {
-	const waiting = input.topLevelTasks.filter(
-		(task) =>
-			['needs_input', 'needs_proof'].includes(
-				getConductorTaskRollupStatus(task, input.childTasksByParentId, input.runs)
-			)
+	const waiting = input.topLevelTasks.filter((task) =>
+		['needs_input', 'needs_proof'].includes(
+			getConductorTaskRollupStatus(task, input.childTasksByParentId, input.runs)
+		)
 	);
 	if (waiting.length === 0) {
 		return {
@@ -518,7 +523,9 @@ function buildWhatNeedsMeReply(input: {
 		body: `${waiting.length} top-level task${waiting.length === 1 ? '' : 's'} currently need your guidance.`,
 		bullets: waiting.slice(0, 4).map((task) => task.title),
 		relatedTaskId: waiting[0]?.id,
-		actions: waiting[0] ? [{ type: 'open_task', label: 'Open first task', taskId: waiting[0].id }] : [],
+		actions: waiting[0]
+			? [{ type: 'open_task', label: 'Open first task', taskId: waiting[0].id }]
+			: [],
 	};
 }
 
@@ -546,7 +553,9 @@ function buildWhatChangedReply(updates: ConductorOrchestratorUpdate[]): Conducto
 	};
 }
 
-function buildWhatIsMovingReply(team: ConductorOrchestratorTeamSnapshot[]): ConductorOrchestratorReply {
+function buildWhatIsMovingReply(
+	team: ConductorOrchestratorTeamSnapshot[]
+): ConductorOrchestratorReply {
 	const activeTeam = team.filter((member) => member.status === 'working');
 	if (activeTeam.length === 0) {
 		return {
@@ -561,10 +570,14 @@ function buildWhatIsMovingReply(team: ConductorOrchestratorTeamSnapshot[]): Cond
 		title: 'Active teammates',
 		body: `${activeTeam.length} teammate${activeTeam.length === 1 ? '' : 's'} are actively working right now.`,
 		bullets: activeTeam.map((member) =>
-			member.parentTaskTitle ? `${member.emoji} ${member.name}: ${member.parentTaskTitle}` : `${member.emoji} ${member.name}`
+			member.parentTaskTitle
+				? `${member.emoji} ${member.name}: ${member.parentTaskTitle}`
+				: `${member.emoji} ${member.name}`
 		),
 		relatedTaskId: activeTeam[0]?.parentTaskId,
-		actions: [{ type: 'open_member', label: `Open ${activeTeam[0].name}`, memberName: activeTeam[0].name }],
+		actions: [
+			{ type: 'open_member', label: `Open ${activeTeam[0].name}`, memberName: activeTeam[0].name },
+		],
 	};
 }
 
@@ -589,7 +602,9 @@ function buildBlockedReply(input: {
 			title: 'Nothing major is blocked',
 			body: 'I do not see a current top-level blocker on the board.',
 			bullets: [],
-			actions: input.conductor?.isPaused ? [{ type: 'resume_board', label: 'Resume conductor' }] : [],
+			actions: input.conductor?.isPaused
+				? [{ type: 'resume_board', label: 'Resume conductor' }]
+				: [],
 		};
 	}
 
@@ -610,7 +625,9 @@ function buildBlockedReply(input: {
 		bullets,
 		relatedTaskId: blocked[0]?.id,
 		actions: [
-			...(blocked[0] ? [{ type: 'open_task' as const, label: 'Open top blocker', taskId: blocked[0].id }] : []),
+			...(blocked[0]
+				? [{ type: 'open_task' as const, label: 'Open top blocker', taskId: blocked[0].id }]
+				: []),
 			input.conductor?.isPaused
 				? { type: 'resume_board' as const, label: 'Resume conductor' }
 				: { type: 'pause_board' as const, label: 'Pause conductor' },
@@ -660,7 +677,9 @@ function buildBoardReply(input: {
 			input.conductor?.isPaused
 				? { type: 'resume_board' as const, label: 'Resume conductor' }
 				: { type: 'pause_board' as const, label: 'Pause conductor' },
-			...(nextReadyTask ? [{ type: 'open_task' as const, label: 'Open next task', taskId: nextReadyTask.id }] : []),
+			...(nextReadyTask
+				? [{ type: 'open_task' as const, label: 'Open next task', taskId: nextReadyTask.id }]
+				: []),
 		],
 	};
 }
@@ -685,7 +704,7 @@ export function buildConductorOrchestratorReply(input: {
 				topLevelTasks,
 				childTasksByParentId: input.childTasksByParentId,
 				runs: input.runs,
-		  })
+			})
 		: null;
 
 	if (reprioritizationReply) {
@@ -715,7 +734,7 @@ export function buildConductorOrchestratorReply(input: {
 	if (
 		normalizedQuestion.includes('what is moving') ||
 		normalizedQuestion.includes('who is working') ||
-		normalizedQuestion.includes('who\'s working')
+		normalizedQuestion.includes("who's working")
 	) {
 		return buildWhatIsMovingReply(input.team);
 	}

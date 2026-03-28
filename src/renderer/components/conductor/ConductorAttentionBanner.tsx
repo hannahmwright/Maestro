@@ -82,11 +82,12 @@ export function ConductorAttentionBanner({
 							border: '1px solid rgba(255,255,255,0.06)',
 						}}
 					>
-						<div style={{ color: theme.colors.warning }}>
-							{getKindIcon(item.kind)}
-						</div>
+						<div style={{ color: theme.colors.warning }}>{getKindIcon(item.kind)}</div>
 						<div className="flex-1 min-w-0">
-							<div className="text-sm font-medium truncate" style={{ color: theme.colors.textMain }}>
+							<div
+								className="text-sm font-medium truncate"
+								style={{ color: theme.colors.textMain }}
+							>
 								{item.title}
 							</div>
 							{item.summary && (

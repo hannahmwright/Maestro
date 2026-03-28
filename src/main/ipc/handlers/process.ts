@@ -82,53 +82,50 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
 	ipcMain.handle(
 		'process:spawn',
-		withIpcErrorLogging(
-			handlerOpts('spawn'),
-			async (config: SpawnDispatchRequest) => {
-				const processManager = requireProcessManager(getProcessManager);
-				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
-				const spawnTaskContract =
-					isCoreUpgradesEnabled() && config.toolType !== 'terminal'
-						? coreUpgradeOrchestrator.createTaskContract({
-								goal:
-									config.taskContractInput?.goal || `Execute task for session ${config.sessionId}`,
-								repo_root: config.taskContractInput?.repo_root || config.cwd,
-								language_profile: config.taskContractInput?.language_profile || 'ts_js',
-								risk_level: config.taskContractInput?.risk_level || 'medium',
-								allowed_commands: config.taskContractInput?.allowed_commands || [
-									config.command,
-									'npm test',
-									'npm run lint',
-									'npm run build',
-								],
-								done_gate_profile: config.taskContractInput?.done_gate_profile,
-								max_changed_files: config.taskContractInput?.max_changed_files,
-								metadata: {
-									session_id: config.sessionId,
-									tool_type: config.toolType,
-									...(config.taskContractInput?.metadata || {}),
-								},
-							})
-						: undefined;
-				return dispatchProcessSpawn(
-					{
-						processManager,
-						agentDetector,
-						agentConfigsStore,
-						settingsStore,
-						getMainWindow,
+		withIpcErrorLogging(handlerOpts('spawn'), async (config: SpawnDispatchRequest) => {
+			const processManager = requireProcessManager(getProcessManager);
+			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+			const spawnTaskContract =
+				isCoreUpgradesEnabled() && config.toolType !== 'terminal'
+					? coreUpgradeOrchestrator.createTaskContract({
+							goal:
+								config.taskContractInput?.goal || `Execute task for session ${config.sessionId}`,
+							repo_root: config.taskContractInput?.repo_root || config.cwd,
+							language_profile: config.taskContractInput?.language_profile || 'ts_js',
+							risk_level: config.taskContractInput?.risk_level || 'medium',
+							allowed_commands: config.taskContractInput?.allowed_commands || [
+								config.command,
+								'npm test',
+								'npm run lint',
+								'npm run build',
+							],
+							done_gate_profile: config.taskContractInput?.done_gate_profile,
+							max_changed_files: config.taskContractInput?.max_changed_files,
+							metadata: {
+								session_id: config.sessionId,
+								tool_type: config.toolType,
+								...(config.taskContractInput?.metadata || {}),
+							},
+						})
+					: undefined;
+			return dispatchProcessSpawn(
+				{
+					processManager,
+					agentDetector,
+					agentConfigsStore,
+					settingsStore,
+					getMainWindow,
+				},
+				config,
+				{
+					logContext: LOG_CONTEXT,
+					spawnConfigOverrides: {
+						taskContractInput: config.taskContractInput,
+						taskContract: spawnTaskContract,
 					},
-					config,
-					{
-						logContext: LOG_CONTEXT,
-						spawnConfigOverrides: {
-							taskContractInput: config.taskContractInput,
-							taskContract: spawnTaskContract,
-						},
-					}
-				);
-			}
-		)
+				}
+			);
+		})
 	);
 
 	// Write data to a process

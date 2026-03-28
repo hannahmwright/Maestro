@@ -154,12 +154,8 @@ describe('ArtifactsDB', () => {
 
 		expect(mockExec.mock.calls[0]?.[0]).toContain('CREATE TABLE IF NOT EXISTS capture_runs');
 		expect(mockExec.mock.calls[0]?.[0]).not.toContain('idx_capture_runs_turn');
-		expect(mockExec).toHaveBeenCalledWith(
-			'ALTER TABLE capture_runs ADD COLUMN turn_id TEXT'
-		);
-		expect(mockExec).toHaveBeenCalledWith(
-			'ALTER TABLE capture_runs ADD COLUMN turn_token TEXT'
-		);
+		expect(mockExec).toHaveBeenCalledWith('ALTER TABLE capture_runs ADD COLUMN turn_id TEXT');
+		expect(mockExec).toHaveBeenCalledWith('ALTER TABLE capture_runs ADD COLUMN turn_token TEXT');
 		expect(mockExec).toHaveBeenCalledWith(
 			expect.stringContaining('CREATE UNIQUE INDEX IF NOT EXISTS idx_capture_runs_turn')
 		);

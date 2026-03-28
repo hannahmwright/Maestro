@@ -20,6 +20,8 @@ function createMockContext(overrides: Record<string, unknown> = {}) {
 		isShortcut: () => false,
 		isTabShortcut: () => false,
 		sessions: [],
+		sidebarThreadTargets: [],
+		openSidebarThreadTarget: vi.fn(),
 		activeSession: null,
 		activeSessionId: null,
 		activeGroupChatId: null,
@@ -699,13 +701,38 @@ describe('useMainKeyboardHandler', () => {
 		it('should jump to session by number (Alt+Cmd+1)', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockSetActiveSessionId = vi.fn();
+			const mockOpenSidebarThreadTarget = vi.fn();
 			const mockSetLeftSidebarOpen = vi.fn();
-			const visibleSessions = [{ id: 'session-1' }, { id: 'session-2' }, { id: 'session-3' }];
+			const sidebarThreadTargets = [
+				{
+					id: 'target-1',
+					threadId: 'thread-1',
+					sessionId: 'session-1',
+					runtimeId: 'runtime-1',
+					workspaceId: 'workspace-1',
+					tabId: null,
+				},
+				{
+					id: 'target-2',
+					threadId: 'thread-2',
+					sessionId: 'session-2',
+					runtimeId: 'runtime-2',
+					workspaceId: 'workspace-1',
+					tabId: null,
+				},
+				{
+					id: 'target-3',
+					threadId: 'thread-3',
+					sessionId: 'session-3',
+					runtimeId: 'runtime-3',
+					workspaceId: 'workspace-1',
+					tabId: null,
+				},
+			];
 
 			result.current.keyboardHandlerRef.current = createMockContext({
-				visibleSessions,
-				setActiveSessionId: mockSetActiveSessionId,
+				sidebarThreadTargets,
+				openSidebarThreadTarget: mockOpenSidebarThreadTarget,
 				leftSidebarOpen: true,
 				setLeftSidebarOpen: mockSetLeftSidebarOpen,
 			});
@@ -722,19 +749,28 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(mockSetActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(mockOpenSidebarThreadTarget).toHaveBeenCalledWith(sidebarThreadTargets[0]);
 		});
 
 		it('should expand sidebar when jumping to session', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockSetActiveSessionId = vi.fn();
+			const mockOpenSidebarThreadTarget = vi.fn();
 			const mockSetLeftSidebarOpen = vi.fn();
-			const visibleSessions = [{ id: 'session-1' }];
+			const sidebarThreadTargets = [
+				{
+					id: 'target-1',
+					threadId: 'thread-1',
+					sessionId: 'session-1',
+					runtimeId: 'runtime-1',
+					workspaceId: 'workspace-1',
+					tabId: null,
+				},
+			];
 
 			result.current.keyboardHandlerRef.current = createMockContext({
-				visibleSessions,
-				setActiveSessionId: mockSetActiveSessionId,
+				sidebarThreadTargets,
+				openSidebarThreadTarget: mockOpenSidebarThreadTarget,
 				leftSidebarOpen: false, // Sidebar is closed
 				setLeftSidebarOpen: mockSetLeftSidebarOpen,
 			});
@@ -751,20 +787,26 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
+			expect(mockOpenSidebarThreadTarget).toHaveBeenCalledWith(sidebarThreadTargets[0]);
 			expect(mockSetLeftSidebarOpen).toHaveBeenCalledWith(true);
 		});
 
 		it('should use 0 as 10th session', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());
 
-			const mockSetActiveSessionId = vi.fn();
-			const visibleSessions = Array.from({ length: 10 }, (_, i) => ({
-				id: `session-${i + 1}`,
+			const mockOpenSidebarThreadTarget = vi.fn();
+			const sidebarThreadTargets = Array.from({ length: 10 }, (_, i) => ({
+				id: `target-${i + 1}`,
+				threadId: `thread-${i + 1}`,
+				sessionId: `session-${i + 1}`,
+				runtimeId: `runtime-${i + 1}`,
+				workspaceId: 'workspace-1',
+				tabId: null,
 			}));
 
 			result.current.keyboardHandlerRef.current = createMockContext({
-				visibleSessions,
-				setActiveSessionId: mockSetActiveSessionId,
+				sidebarThreadTargets,
+				openSidebarThreadTarget: mockOpenSidebarThreadTarget,
 				leftSidebarOpen: true,
 				setLeftSidebarOpen: vi.fn(),
 			});
@@ -781,7 +823,7 @@ describe('useMainKeyboardHandler', () => {
 				);
 			});
 
-			expect(mockSetActiveSessionId).toHaveBeenCalledWith('session-10');
+			expect(mockOpenSidebarThreadTarget).toHaveBeenCalledWith(sidebarThreadTargets[9]);
 		});
 	});
 

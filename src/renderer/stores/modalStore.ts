@@ -472,8 +472,7 @@ export function getModalActions() {
 				: closeModal('newInstance'),
 		setDuplicatingSessionId: (id: string | null) =>
 			updateModalData('newInstance', { duplicatingSessionId: id }),
-		setNewInstanceMode: (mode: 'workspace' | 'thread') =>
-			updateModalData('newInstance', { mode }),
+		setNewInstanceMode: (mode: 'workspace' | 'thread') => updateModalData('newInstance', { mode }),
 		setNewInstanceWorkspaceId: (workspaceId: string | null) =>
 			updateModalData('newInstance', { workspaceId }),
 		setNewInstanceFixedWorkingDir: (fixedWorkingDir: string | null) =>

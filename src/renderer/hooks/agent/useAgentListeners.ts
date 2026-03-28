@@ -55,6 +55,13 @@ import type { RightPanelHandle } from '../../components/RightPanel';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { preserveTrailingReasoningAndAppend } from '../../utils/preservedReasoning';
 import { persistTabNameMetadata } from '../../utils/tabNamePersistence';
+import {
+	appendConductorHelperText,
+	capConductorHelperLogs,
+	isConductorHelperSession,
+	sanitizeConductorToolStateForLog,
+	truncateConductorHelperText,
+} from '../../services/conductorSessionLogPolicy';
 
 // ============================================================================
 // Types
@@ -770,12 +777,24 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
 			deps.batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
 		};
+		const shouldRetainLiveConductorLogs = (sessionId: string): boolean => {
+			const session = getSessions().find((candidate) => candidate.id === sessionId);
+			if (!isConductorHelperSession(session)) {
+				return true;
+			}
+
+			return sessionId === getActiveSessionId();
+		};
 		const broadcastSessionLogEntry = (
 			sessionId: string,
 			tabId: string | null,
 			inputMode: 'ai' | 'terminal',
 			logEntry: LogEntry
 		) => {
+			if (!shouldRetainLiveConductorLogs(sessionId)) {
+				return;
+			}
+
 			const webLogEntry: WebRemoteLogEntry = {
 				id: logEntry.id,
 				timestamp: logEntry.timestamp,
@@ -882,6 +901,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 			// For terminal output, use batched append to shell logs
 			if (!isFromAi) {
+				if (!shouldRetainLiveConductorLogs(actualSessionId)) {
+					return;
+				}
 				deps.batchedUpdater.appendLog(actualSessionId, null, false, data);
 				return;
 			}
@@ -905,6 +927,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 				return;
 			}
 
+			if (!shouldRetainLiveConductorLogs(actualSessionId)) {
+				return;
+			}
+
 			// Batch the log append, delivery mark, unread mark, and byte tracking
 			deps.batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
 			markAiOutputActivity(actualSessionId, targetTabId, data.length);
@@ -920,6 +946,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
+				if (!shouldRetainLiveConductorLogs(actualSessionId)) return;
 				const bufferKey = `${actualSessionId}:${tabId}`;
 				const bufferedEvents = assistantStreamBufferRef.current.get(bufferKey) || [];
 				assistantStreamBufferRef.current.set(bufferKey, [...bufferedEvents, event]);
@@ -938,6 +965,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							prev.map((session) => {
 								let updatedTabs = session.aiTabs;
 								let sessionChanged = false;
+								const isConductorHelper = isConductorHelperSession(session);
 
 								for (const [key, streamEvents] of bufferedAssistantEvents) {
 									const [eventSessionId, eventTabId] = key.split(':');
@@ -992,7 +1020,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 												id: generateId(),
 												timestamp: Date.now(),
 												source: 'ai',
-												text,
+												text: isConductorHelper
+													? truncateConductorHelperText(text)
+													: text,
 											};
 											updatedLogs = [...preservedLogs, newLog];
 											activeLogId = newLog.id;
@@ -1002,7 +1032,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 										}
 
 										const existingLog = updatedLogs[activeLogIndex];
-										const nextText = streamEvent.mode === 'append' ? existingLog.text + text : text;
+										const nextText =
+											streamEvent.mode === 'append'
+												? isConductorHelper
+													? appendConductorHelperText(existingLog.text, text)
+													: existingLog.text + text
+												: isConductorHelper
+													? truncateConductorHelperText(text)
+													: text;
 										if (nextText !== existingLog.text) {
 											const updatedLog: LogEntry = {
 												...existingLog,
@@ -1019,7 +1056,14 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									if (!tabChanged) continue;
 
 									updatedTabs = updatedTabs.map((tab) =>
-										tab.id === eventTabId ? { ...tab, logs: updatedLogs } : tab
+										tab.id === eventTabId
+											? {
+													...tab,
+													logs: isConductorHelper
+														? capConductorHelperLogs(updatedLogs)
+														: updatedLogs,
+												}
+											: tab
 									);
 									sessionChanged = true;
 								}
@@ -1942,6 +1986,10 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		);
 
 		const unsubscribeTaskStatus = window.maestro.process.onTaskStatus?.((sessionId, status) => {
+			const parsed = parseSessionId(sessionId);
+			if (!shouldRetainLiveConductorLogs(parsed.baseSessionId)) {
+				return;
+			}
 			appendTaskLifecycleLog(
 				sessionId,
 				`Task status: ${status.status} (attempts=${status.attempt_count}, fullSuite=${status.full_suite_required}, blocked=${status.blocking_reasons.length})`
@@ -1954,6 +2002,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		const unsubscribeUsage = window.maestro.process.onUsage((sessionId: string, usageStats) => {
 			const parsed = parseSessionId(sessionId);
 			const { actualSessionId, tabId, baseSessionId } = parsed;
+			if (!shouldRetainLiveConductorLogs(baseSessionId)) {
+				return;
+			}
 
 			const sessionForUsage = getSessions().find((s) => s.id === baseSessionId);
 			const agentToolType = sessionForUsage?.toolType;
@@ -2208,6 +2259,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
+				if (!shouldRetainLiveConductorLogs(actualSessionId)) return;
 				const bufferKey = `${actualSessionId}:${tabId}`;
 
 				const existingContent = thinkingChunkBufferRef.current.get(bufferKey) || '';
@@ -2242,6 +2294,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								if (!hasChanges) return s;
 
 								let updatedTabs = s.aiTabs;
+								if (isConductorHelperSession(s)) {
+									return s;
+								}
 								for (const [key, bufferedContent] of chunksToProcess) {
 									const [chunkSessionId, chunkTabId] = key.split(':');
 									if (chunkSessionId !== s.id) continue;
@@ -2421,6 +2476,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
+				if (!shouldRetainLiveConductorLogs(actualSessionId)) return;
 				const toolName = toolEvent.toolName || 'tool';
 				const isWebSearch = isWebSearchTool(toolName);
 				const incomingState =
@@ -2448,6 +2504,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 
 						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab?.showThinking || targetTab.showThinking === 'off') return s;
+						const isConductorHelper = isConductorHelperSession(s);
 
 						// Prefer in-place updates so RUN -> DONE/ERROR appears as one timeline card.
 						let openToolLogIndex = -1;
@@ -2548,6 +2605,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 											: existingState.output,
 								};
 							}
+							if (isConductorHelper) {
+								mergedState = sanitizeConductorToolStateForLog(mergedState) as ToolState;
+							}
 
 							updatedLogs = [...targetTab.logs];
 							const updatedToolLog: LogEntry = {
@@ -2582,19 +2642,33 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								source: 'tool',
 								text: toolName,
 								metadata: {
-									toolState: {
-										...incomingState,
-										id: incomingToolId,
-										status: isWebSearch
-											? getWebSearchAggregateStatus(webSearchEntries, fallbackStatus)
-											: fallbackStatus,
-										...(isWebSearch
-											? {
-													mode: 'web_search_batch',
-													searches: webSearchEntries,
-												}
-											: {}),
-									} as NonNullable<LogEntry['metadata']>['toolState'],
+									toolState: (isConductorHelper
+										? sanitizeConductorToolStateForLog({
+												...incomingState,
+												id: incomingToolId,
+												status: isWebSearch
+													? getWebSearchAggregateStatus(webSearchEntries, fallbackStatus)
+													: fallbackStatus,
+												...(isWebSearch
+													? {
+															mode: 'web_search_batch',
+															searches: webSearchEntries,
+														}
+													: {}),
+										  })
+										: {
+												...incomingState,
+												id: incomingToolId,
+												status: isWebSearch
+													? getWebSearchAggregateStatus(webSearchEntries, fallbackStatus)
+													: fallbackStatus,
+												...(isWebSearch
+													? {
+															mode: 'web_search_batch',
+															searches: webSearchEntries,
+														}
+													: {}),
+										  }) as NonNullable<LogEntry['metadata']>['toolState'],
 								},
 							};
 							updatedLogs = [...targetTab.logs, toolLog];
@@ -2607,7 +2681,9 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								tab.id === tabId
 									? {
 											...tab,
-											logs: updatedLogs,
+											logs: isConductorHelper
+												? capConductorHelperLogs(updatedLogs)
+												: updatedLogs,
 										}
 									: tab
 							),

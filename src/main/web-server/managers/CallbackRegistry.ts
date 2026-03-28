@@ -40,6 +40,7 @@ import type {
 	CreateConductorTaskCallback,
 	UpdateConductorTaskCallback,
 	DeleteConductorTaskCallback,
+	OpenConductorWorkspaceCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -85,6 +86,7 @@ export interface WebServerCallbacks {
 	createConductorTask: CreateConductorTaskCallback | null;
 	updateConductorTask: UpdateConductorTaskCallback | null;
 	deleteConductorTask: DeleteConductorTaskCallback | null;
+	openConductorWorkspace: OpenConductorWorkspaceCallback | null;
 	getHistory: GetHistoryCallback | null;
 }
 
@@ -124,6 +126,7 @@ export class CallbackRegistry {
 		createConductorTask: null,
 		updateConductorTask: null,
 		deleteConductorTask: null,
+		openConductorWorkspace: null,
 		getHistory: null,
 	};
 
@@ -326,9 +329,7 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
-	async createConductorTask(
-		input: Parameters<CreateConductorTaskCallback>[0]
-	): Promise<boolean> {
+	async createConductorTask(input: Parameters<CreateConductorTaskCallback>[0]): Promise<boolean> {
 		if (!this.callbacks.createConductorTask) return false;
 		return this.callbacks.createConductorTask(input);
 	}
@@ -344,6 +345,11 @@ export class CallbackRegistry {
 	async deleteConductorTask(taskId: string): Promise<boolean> {
 		if (!this.callbacks.deleteConductorTask) return false;
 		return this.callbacks.deleteConductorTask(taskId);
+	}
+
+	async openConductorWorkspace(groupId: string): Promise<boolean> {
+		if (!this.callbacks.openConductorWorkspace) return false;
+		return this.callbacks.openConductorWorkspace(groupId);
 	}
 
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
@@ -493,6 +499,10 @@ export class CallbackRegistry {
 
 	setDeleteConductorTaskCallback(callback: DeleteConductorTaskCallback): void {
 		this.callbacks.deleteConductorTask = callback;
+	}
+
+	setOpenConductorWorkspaceCallback(callback: OpenConductorWorkspaceCallback): void {
+		this.callbacks.openConductorWorkspace = callback;
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

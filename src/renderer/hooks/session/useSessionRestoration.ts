@@ -23,10 +23,16 @@ import { generateId } from '../../utils/ids';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
 import {
 	migrateWorkspacesAndThreads,
+	equalWorkspaceThreads,
+	pruneDormantConductorSessions,
+	pruneOrphanConductorArtifacts,
+	pruneStartupPassiveSessions,
 	recoverMissingProviderThreads,
 	reconcileThreadsWithSessions,
+	convertStoredMessagesToLogs,
 } from '../../utils/workspaceThreads';
 import { pruneInactiveFileTabContent } from '../../utils/tabHelpers';
+import { compactConductorHelperSession } from '../../services/conductorSessionLogPolicy';
 
 // ============================================================================
 // Return type
@@ -50,6 +56,7 @@ export interface SessionRestorationReturn {
 // ============================================================================
 
 export function useSessionRestoration(): SessionRestorationReturn {
+	const activeSessionId = useSessionStore((s) => s.activeSessionId);
 	// --- Store actions (stable, non-reactive) ---
 	// Extract action references once via useMemo so they can be called inside
 	// useCallback/useEffect without appearing in dependency arrays. Zustand
@@ -238,6 +245,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 
+			correctedSession = compactConductorHelperSession(correctedSession);
+
 			// Get agent definitions for both processes
 			const agent = await window.maestro.agents.get(aiAgentType);
 			if (!agent) {
@@ -362,35 +371,59 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				const savedSessions = await window.maestro.sessions.getAll();
 				const savedGroups = await window.maestro.groups.getAll();
 				const savedThreads = await window.maestro.threads.getAll();
-				const savedConductors = window.maestro.conductors
+				const savedConductorData = window.maestro.conductors
 					? await window.maestro.conductors.getAll()
 					: { conductors: [], tasks: [], runs: [] };
+				const conductorStartupPrune = pruneOrphanConductorArtifacts({
+					sessions: savedSessions || [],
+					groups: (savedGroups || []).map((group) => ({
+						...group,
+						archived: group.archived ?? false,
+					})),
+					threads: savedThreads || [],
+					conductors: savedConductorData?.conductors || [],
+					tasks: savedConductorData?.tasks || [],
+					runs: savedConductorData?.runs || [],
+				});
+				const prunedSavedSessions = conductorStartupPrune.sessions;
+				const prunedSavedGroups = conductorStartupPrune.groups;
+				const prunedSavedThreads = conductorStartupPrune.threads;
+				const prunedSavedConductors = {
+					conductors: conductorStartupPrune.conductors,
+					tasks: conductorStartupPrune.tasks,
+					runs: conductorStartupPrune.runs,
+				};
+				const dormantConductorSessionPrune = pruneDormantConductorSessions({
+					sessions: prunedSavedSessions,
+					threads: prunedSavedThreads,
+					conductors: prunedSavedConductors.conductors,
+					runs: prunedSavedConductors.runs,
+				});
+				const startupSavedSessions = dormantConductorSessionPrune.sessions;
+				const startupSavedThreads = dormantConductorSessionPrune.threads;
 
 				let restoredSessions: Session[] = [];
-				let nextGroups = (savedGroups || []).map((group) => ({
-					...group,
-					archived: group.archived ?? false,
-				}));
-				let nextThreads = savedThreads || [];
+				let nextGroups = prunedSavedGroups;
+				let nextThreads = startupSavedThreads;
 
 				// Handle sessions
-				if (savedSessions && savedSessions.length > 0) {
-					restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
+				if (startupSavedSessions && startupSavedSessions.length > 0) {
+					restoredSessions = await Promise.all(startupSavedSessions.map((s) => restoreSession(s)));
 
 					const needsWorkspaceThreadMigration =
-						!Array.isArray(savedThreads) ||
-						savedThreads.length === 0 ||
+						!Array.isArray(startupSavedThreads) ||
+						startupSavedThreads.length === 0 ||
 						restoredSessions.some(
 							(session) =>
 								(!session.parentSessionId && (!session.threadId || !session.workspaceId)) ||
 								!session.groupId
 						) ||
-						(savedGroups || []).some((group: { projectRoot?: string }) => !group.projectRoot);
+						prunedSavedGroups.some((group: { projectRoot?: string }) => !group.projectRoot);
 
 					if (needsWorkspaceThreadMigration) {
 						const migration = migrateWorkspacesAndThreads(
 							restoredSessions,
-							savedGroups || [],
+							prunedSavedGroups || [],
 							useSessionStore.getState().activeSessionId
 						);
 						restoredSessions = migration.sessions;
@@ -398,21 +431,18 @@ export function useSessionRestoration(): SessionRestorationReturn {
 						nextThreads = migration.threads;
 					} else {
 						const threadIdBySessionId = new Map(
-							(savedThreads || []).map((thread: { sessionId: string; id: string }) => [
+							(startupSavedThreads || []).map((thread: { sessionId: string; id: string }) => [
 								thread.sessionId,
 								thread.id,
 							])
 						);
 						const sessionById = new Map(restoredSessions.map((session) => [session.id, session]));
-						nextThreads = (savedThreads || []).map((thread) => {
+						nextThreads = (startupSavedThreads || []).map((thread) => {
 							const owningSession = sessionById.get(thread.sessionId);
 							return {
 								...thread,
 								runtimeId: thread.runtimeId || thread.sessionId,
-								tabId:
-									thread.tabId ||
-									owningSession?.activeTabId ||
-									owningSession?.aiTabs?.[0]?.id,
+								tabId: thread.tabId || owningSession?.activeTabId || owningSession?.aiTabs?.[0]?.id,
 							};
 						});
 						restoredSessions = restoredSessions.map((session) => ({
@@ -434,15 +464,37 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				restoredSessions = recovery.sessions;
 				nextGroups = recovery.groups;
 				nextThreads = recovery.threads;
+				const startupPrune = pruneStartupPassiveSessions({
+					sessions: restoredSessions,
+					threads: nextThreads,
+					groups: nextGroups,
+					activeSessionId: useSessionStore.getState().activeSessionId,
+				});
+				restoredSessions = startupPrune.sessions;
+				nextGroups = startupPrune.groups;
+				nextThreads = startupPrune.threads;
 				const reconciledThreads = reconcileThreadsWithSessions(nextThreads, restoredSessions);
-				const threadsWerePruned =
-					JSON.stringify(reconciledThreads) !== JSON.stringify(nextThreads);
+				const threadsWerePruned = !equalWorkspaceThreads(reconciledThreads, nextThreads);
 				nextThreads = reconciledThreads;
 
-				if (recovery.recoveredCount > 0 || threadsWerePruned) {
+				if (
+					conductorStartupPrune.prunedSessionIds.length > 0 ||
+					conductorStartupPrune.prunedGroupIds.length > 0 ||
+					dormantConductorSessionPrune.prunedSessionIds.length > 0 ||
+					recovery.recoveredCount > 0 ||
+					startupPrune.prunedCount > 0 ||
+					threadsWerePruned
+				) {
 					window.maestro.sessions.setAll(restoredSessions);
 					window.maestro.groups.setAll(nextGroups);
 					window.maestro.threads.setAll(nextThreads);
+					if (window.maestro.conductors) {
+						window.maestro.conductors.setAll({
+							conductors: prunedSavedConductors.conductors,
+							tasks: prunedSavedConductors.tasks,
+							runs: prunedSavedConductors.runs,
+						});
+					}
 				}
 
 				setSessions(restoredSessions);
@@ -468,9 +520,9 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					}
 				}
 
-				setConductors(savedConductors?.conductors || []);
-				setTasks(savedConductors?.tasks || []);
-				setRuns(savedConductors?.runs || []);
+				setConductors(prunedSavedConductors.conductors || []);
+				setTasks(prunedSavedConductors.tasks || []);
+				setRuns(prunedSavedConductors.runs || []);
 				syncWithGroups(useSessionStore.getState().groups || []);
 
 				// Load group chats
@@ -500,6 +552,105 @@ export function useSessionRestoration(): SessionRestorationReturn {
 		};
 		loadSessionsAndGroups();
 	}, []);
+
+	useEffect(() => {
+		if (!initialLoadComplete.current) return;
+		if (!activeSessionId) return;
+
+		const currentSession = useSessionStore
+			.getState()
+			.sessions.find((session) => session.id === activeSessionId);
+		const hydration = currentSession?.providerHistoryHydration;
+		if (!currentSession || !hydration || hydration.status !== 'stub') {
+			return;
+		}
+
+		const targetTab =
+			currentSession.aiTabs.find((tab) => tab.agentSessionId === hydration.agentSessionId) ||
+			currentSession.aiTabs.find((tab) => tab.id === currentSession.activeTabId);
+		if (!targetTab) {
+			return;
+		}
+
+		setSessions((prev) =>
+			prev.map((session) =>
+				session.id === currentSession.id
+					? {
+							...session,
+							providerHistoryHydration: {
+								...hydration,
+								status: 'loading',
+							},
+						}
+					: session
+			)
+		);
+
+		let cancelled = false;
+		(async () => {
+			try {
+				const readResult = await window.maestro.agentSessions.read(
+					hydration.agentId,
+					hydration.projectPath,
+					hydration.agentSessionId,
+					{ offset: 0, limit: 100 }
+				);
+				if (cancelled) return;
+
+				const logs = convertStoredMessagesToLogs(readResult.messages);
+				setSessions((prev) =>
+					prev.map((session) => {
+						if (session.id !== currentSession.id) return session;
+						return {
+							...session,
+							providerHistoryHydration: {
+								...hydration,
+								status: 'loaded',
+							},
+							aiTabs: session.aiTabs.map((tab) =>
+								tab.id === targetTab.id
+									? {
+											...tab,
+											logs:
+												logs.length > 0
+													? logs
+													: [
+															{
+																id: generateId(),
+																timestamp: Date.now(),
+																source: 'system',
+																text: 'No provider history messages were available for this session.',
+															},
+														],
+										}
+									: tab
+							),
+						};
+					})
+				);
+			} catch (error) {
+				if (cancelled) return;
+				console.warn('[useSessionRestoration] Failed to hydrate recovered provider history:', error);
+				setSessions((prev) =>
+					prev.map((session) =>
+						session.id === currentSession.id
+							? {
+									...session,
+									providerHistoryHydration: {
+										...hydration,
+										status: 'error',
+									},
+								}
+							: session
+					)
+				);
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [activeSessionId, initialLoadComplete, setSessions]);
 
 	return {
 		initialLoadComplete,

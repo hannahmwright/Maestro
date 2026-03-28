@@ -1,5 +1,6 @@
 import type { ConductorTask, ConductorTaskPriority, Session } from '../types';
 import { CONDUCTOR_MAX_REVIEW_FOLLOW_UP_TASKS } from '../../shared/conductorLimits';
+import { requiresConductorTaskExplicitEvidence } from '../../shared/conductorTasks';
 import {
 	buildConductorNativeSubmissionInstruction,
 	type ConductorReviewToolInput,
@@ -82,6 +83,31 @@ export function buildConductorReviewerPrompt(
 		task.changedPaths && task.changedPaths.length > 0
 			? task.changedPaths.map((path) => `- ${path}`).join('\n')
 			: '- Changed paths were not reported.';
+	const evidenceLines =
+		task.evidence && task.evidence.length > 0
+			? task.evidence
+					.map((item) => {
+						const details = [
+							item.summary,
+							item.path ? `path: ${item.path}` : null,
+							item.url ? `url: ${item.url}` : null,
+							item.demoId ? `demo: ${item.demoId}` : null,
+						]
+							.filter(Boolean)
+							.join(' | ');
+						return details
+							? `- [${item.kind}] ${item.label} (${details})`
+							: `- [${item.kind}] ${item.label}`;
+					})
+					.join('\n')
+			: '- No explicit worker evidence was reported.';
+	const browserEvidenceInstruction =
+		requiresConductorTaskExplicitEvidence(task)
+			? `
+- For browser, navigation, screenshot, video, or demo-style tasks, require concrete proof in the workspace before approving.
+- Do not treat \`.maestro/demo-runtime/contexts/*.json\` or other capture scaffolding as proof by itself. Those files only show that a browser capture context was configured.
+- Accept browser completion only when you can point to concrete evidence such as files under \`output/playwright/\`, attached demo artifacts, reported changed paths, or another clear workspace-visible result that demonstrates the task really happened.`
+			: '';
 
 	return `You are reviewing one Conductor task for the Maestro group "${groupName}".
 
@@ -101,6 +127,9 @@ ${acceptanceCriteria}
 Reported changed paths:
 ${changedPaths}
 
+Reported evidence:
+${evidenceLines}
+
 Instructions:
 - Review the workspace as it currently exists.
 - Approve only if the task appears complete and acceptance criteria are satisfied.
@@ -108,6 +137,7 @@ Instructions:
 - When the same task just needs another pass, leave "followUpTasks" empty and put the requested fixes in "reviewNotes".
 - Only return followUpTasks when the remaining work truly splits into separate independent child tasks.
 - Do not suggest more than ${CONDUCTOR_MAX_REVIEW_FOLLOW_UP_TASKS} follow-up subtasks.
+${browserEvidenceInstruction}
 
 ${buildConductorNativeSubmissionInstruction('reviewer')}
 

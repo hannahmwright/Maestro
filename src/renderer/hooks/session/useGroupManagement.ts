@@ -131,9 +131,7 @@ export function useGroupManagement(deps: UseGroupManagementDeps): UseGroupManage
 				setEditingGroupId(null);
 				return;
 			}
-			setGroups((prev) =>
-				prev.map((g) => (g.id === groupId ? { ...g, name: trimmedName } : g))
-			);
+			setGroups((prev) => prev.map((g) => (g.id === groupId ? { ...g, name: trimmedName } : g)));
 			setEditingGroupId(null);
 		},
 		[setGroups, setEditingGroupId]

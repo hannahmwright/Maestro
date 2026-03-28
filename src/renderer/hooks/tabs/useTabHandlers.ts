@@ -170,7 +170,10 @@ export function useTabHandlers(): TabHandlersReturn {
 	const updateSessionFileTabs = useCallback(
 		(
 			sessionId: string,
-			updater: (tabs: FilePreviewTab[], activeFileTabId: string | null) => {
+			updater: (
+				tabs: FilePreviewTab[],
+				activeFileTabId: string | null
+			) => {
 				tabs: FilePreviewTab[];
 				activeFileTabId?: string | null;
 			}
@@ -184,7 +187,10 @@ export function useTabHandlers(): TabHandlersReturn {
 						result.activeFileTabId !== undefined ? result.activeFileTabId : session.activeFileTabId;
 					const nextTabs = pruneInactiveFileTabContent(result.tabs, nextActiveFileTabId);
 
-					if (nextTabs === session.filePreviewTabs && nextActiveFileTabId === session.activeFileTabId) {
+					if (
+						nextTabs === session.filePreviewTabs &&
+						nextActiveFileTabId === session.activeFileTabId
+					) {
 						return session;
 					}
 
@@ -218,7 +224,9 @@ export function useTabHandlers(): TabHandlersReturn {
 					return;
 				}
 
-				const nextLastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
+				const nextLastModified = stat?.modifiedAt
+					? new Date(stat.modifiedAt).getTime()
+					: Date.now();
 				updateSessionFileTabs(sessionId, (tabs, activeFileTabId) => ({
 					tabs: tabs.map((tab) =>
 						tab.id === tabId
@@ -598,92 +606,98 @@ export function useTabHandlers(): TabHandlersReturn {
 		);
 	}, []);
 
-	const handleReloadFileTab = useCallback(async (tabId: string) => {
-		const { sessions, activeSessionId } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
-		if (!currentSession) return;
+	const handleReloadFileTab = useCallback(
+		async (tabId: string) => {
+			const { sessions, activeSessionId } = useSessionStore.getState();
+			const currentSession = sessions.find((s) => s.id === activeSessionId);
+			if (!currentSession) return;
 
-		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
-		if (!fileTab) return;
+			const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
+			if (!fileTab) return;
 
-		try {
-			const [content, stat] = await Promise.all([
-				window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId),
-				window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId),
-			]);
-			if (content === null) return;
-			const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
+			try {
+				const [content, stat] = await Promise.all([
+					window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId),
+					window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId),
+				]);
+				if (content === null) return;
+				const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
 
-			updateSessionFileTabs(currentSession.id, (tabs, activeFileTabId) => ({
-				tabs: tabs.map((tab) =>
-					tab.id === tabId
-						? {
-								...tab,
-								content,
-								lastModified: newMtime,
-								editContent: undefined,
-							}
-						: tab
-				),
-				activeFileTabId,
-			}));
-		} catch (error) {
-			console.debug('[handleReloadFileTab] Failed to reload:', error);
-		}
-	}, [updateSessionFileTabs]);
+				updateSessionFileTabs(currentSession.id, (tabs, activeFileTabId) => ({
+					tabs: tabs.map((tab) =>
+						tab.id === tabId
+							? {
+									...tab,
+									content,
+									lastModified: newMtime,
+									editContent: undefined,
+								}
+							: tab
+					),
+					activeFileTabId,
+				}));
+			} catch (error) {
+				console.debug('[handleReloadFileTab] Failed to reload:', error);
+			}
+		},
+		[updateSessionFileTabs]
+	);
 
 	/**
 	 * Select a file preview tab. If fileTabAutoRefreshEnabled, checks if file changed on disk.
 	 */
-	const handleSelectFileTab = useCallback(async (tabId: string) => {
-		const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
-		const currentSession = sessions.find((s) => s.id === activeSessionId);
-		if (!currentSession) return;
+	const handleSelectFileTab = useCallback(
+		async (tabId: string) => {
+			const { sessions, activeSessionId, setSessions } = useSessionStore.getState();
+			const currentSession = sessions.find((s) => s.id === activeSessionId);
+			if (!currentSession) return;
 
-		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
-		if (!fileTab) return;
+			const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
+			if (!fileTab) return;
 
-		// Set the tab as active immediately
-		setSessions((prev: Session[]) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				return {
-					...s,
-					activeFileTabId: tabId,
-					filePreviewTabs: pruneInactiveFileTabContent(s.filePreviewTabs, tabId),
-				};
-			})
-		);
+			// Set the tab as active immediately
+			setSessions((prev: Session[]) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionId) return s;
+					return {
+						...s,
+						activeFileTabId: tabId,
+						filePreviewTabs: pruneInactiveFileTabContent(s.filePreviewTabs, tabId),
+					};
+				})
+			);
 
-		if (fileTab.content === null && fileTab.editContent === undefined) {
-			await loadFileTabContent(currentSession.id, tabId, fileTab.path, fileTab.sshRemoteId);
-			return;
-		}
-
-		// Auto-refresh if enabled and tab has no pending edits
-		const { fileTabAutoRefreshEnabled } = useSettingsStore.getState();
-		if (fileTabAutoRefreshEnabled && !fileTab.editContent) {
-			try {
-				const stat = await window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId);
-				if (!stat || !stat.modifiedAt) return;
-
-				const currentMtime = new Date(stat.modifiedAt).getTime();
-
-				if (currentMtime > fileTab.lastModified) {
-					const content = await window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId);
-					if (content === null) return;
-					updateSessionFileTabs(currentSession.id, (tabs, activeFileTabId) => ({
-						tabs: tabs.map((tab) =>
-							tab.id === tabId ? { ...tab, content, lastModified: currentMtime } : tab
-						),
-						activeFileTabId: activeFileTabId ?? tabId,
-					}));
-				}
-			} catch (error) {
-				console.debug('[handleSelectFileTab] Auto-refresh failed:', error);
+			if (fileTab.content === null && fileTab.editContent === undefined) {
+				await loadFileTabContent(currentSession.id, tabId, fileTab.path, fileTab.sshRemoteId);
+				return;
 			}
-		}
-	}, [loadFileTabContent, updateSessionFileTabs]);
+
+			// Auto-refresh if enabled and tab has no pending edits
+			const { fileTabAutoRefreshEnabled } = useSettingsStore.getState();
+			if (fileTabAutoRefreshEnabled && !fileTab.editContent) {
+				try {
+					const stat = await window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId);
+					if (!stat || !stat.modifiedAt) return;
+
+					const currentMtime = new Date(stat.modifiedAt).getTime();
+
+					if (currentMtime > fileTab.lastModified) {
+						const content = await window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId);
+						if (content === null) return;
+						updateSessionFileTabs(currentSession.id, (tabs, activeFileTabId) => ({
+							tabs: tabs.map((tab) =>
+								tab.id === tabId ? { ...tab, content, lastModified: currentMtime } : tab
+							),
+							activeFileTabId: activeFileTabId ?? tabId,
+						}));
+					}
+				} catch (error) {
+					console.debug('[handleSelectFileTab] Auto-refresh failed:', error);
+				}
+			}
+		},
+		[loadFileTabContent, updateSessionFileTabs]
+	);
 
 	const handleUnifiedTabReorder = useCallback((fromIndex: number, toIndex: number) => {
 		const { setSessions, activeSessionId } = useSessionStore.getState();

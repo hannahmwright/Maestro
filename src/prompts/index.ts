@@ -14,6 +14,7 @@ export {
 	wizardDocumentGenerationPrompt,
 
 	// Inline Wizard
+	conductorPlanDiscoveryPrompt,
 	wizardInlineSystemPrompt,
 	wizardInlineIteratePrompt,
 	wizardInlineNewPrompt,

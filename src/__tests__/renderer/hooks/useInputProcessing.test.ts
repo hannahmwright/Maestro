@@ -883,7 +883,7 @@ describe('useInputProcessing', () => {
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {
-				await result.current.processInput();
+				await result.current.queueInput();
 			});
 
 			expect(mockSetSessions).toHaveBeenCalled();
@@ -923,7 +923,7 @@ describe('useInputProcessing', () => {
 			const { result } = renderHook(() => useInputProcessing(deps));
 
 			await act(async () => {
-				await result.current.processInput();
+				await result.current.queueInput();
 			});
 
 			expect(mockSetSessions).toHaveBeenCalled();

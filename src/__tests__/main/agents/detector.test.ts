@@ -1024,8 +1024,8 @@ describe('agent-detector', () => {
 
 			const models = await detector.discoverModels('claude-code');
 			expect(models).toEqual([]);
-			expect(logger.debug).toHaveBeenCalledWith(
-				expect.stringContaining('does not support model selection'),
+			expect(logger.debug).toHaveBeenLastCalledWith(
+				'No model discovery implemented for claude-code',
 				'AgentDetector'
 			);
 		});

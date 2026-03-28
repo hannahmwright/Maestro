@@ -3,6 +3,7 @@ release/
 node_modules/
 coverage/
 .playwright-cli/
+.maestro/
 .vitest-full.json
 *.min.js
 .gitignore

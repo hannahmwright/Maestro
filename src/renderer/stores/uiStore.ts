@@ -89,9 +89,7 @@ export interface UIStoreActions {
 	// Session sidebar selection
 	setSelectedSidebarIndex: (index: number | ((prev: number) => number)) => void;
 	setSidebarThreadTargets: (
-		targets:
-			| SidebarThreadTarget[]
-			| ((prev: SidebarThreadTarget[]) => SidebarThreadTarget[])
+		targets: SidebarThreadTarget[] | ((prev: SidebarThreadTarget[]) => SidebarThreadTarget[])
 	) => void;
 	setSidebarNavTargets: (
 		targets: SidebarNavTarget[] | ((prev: SidebarNavTarget[]) => SidebarNavTarget[])
@@ -131,6 +129,47 @@ export type UIStore = UIStoreState & UIStoreActions;
  */
 function resolve<T>(valOrFn: T | ((prev: T) => T), prev: T): T {
 	return typeof valOrFn === 'function' ? (valOrFn as (prev: T) => T)(prev) : valOrFn;
+}
+
+function equalSidebarThreadTarget(left: SidebarThreadTarget, right: SidebarThreadTarget): boolean {
+	return (
+		left.id === right.id &&
+		left.threadId === right.threadId &&
+		left.sessionId === right.sessionId &&
+		left.runtimeId === right.runtimeId &&
+		left.workspaceId === right.workspaceId &&
+		left.tabId === right.tabId
+	);
+}
+
+function equalSidebarNavTarget(left: SidebarNavTarget, right: SidebarNavTarget): boolean {
+	if (left.type !== right.type || left.id !== right.id) {
+		return false;
+	}
+
+	if (left.type === 'thread' && right.type === 'thread') {
+		return equalSidebarThreadTarget(left.thread, right.thread);
+	}
+
+	if (left.type === 'workspace' && right.type === 'workspace') {
+		return (
+			left.workspace.id === right.workspace.id &&
+			left.workspace.workspaceId === right.workspace.workspaceId
+		);
+	}
+
+	return false;
+}
+
+function equalSidebarThreadTargets(left: SidebarThreadTarget[], right: SidebarThreadTarget[]): boolean {
+	return (
+		left.length === right.length &&
+		left.every((item, index) => equalSidebarThreadTarget(item, right[index]))
+	);
+}
+
+function equalSidebarNavTargets(left: SidebarNavTarget[], right: SidebarNavTarget[]): boolean {
+	return left.length === right.length && left.every((item, index) => equalSidebarNavTarget(item, right[index]));
 }
 
 export const useUIStore = create<UIStore>()((set) => ({
@@ -202,8 +241,17 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setSelectedSidebarIndex: (v) =>
 		set((s) => ({ selectedSidebarIndex: resolve(v, s.selectedSidebarIndex) })),
 	setSidebarThreadTargets: (v) =>
-		set((s) => ({ sidebarThreadTargets: resolve(v, s.sidebarThreadTargets) })),
-	setSidebarNavTargets: (v) => set((s) => ({ sidebarNavTargets: resolve(v, s.sidebarNavTargets) })),
+		set((s) => {
+			const nextTargets = resolve(v, s.sidebarThreadTargets);
+			return equalSidebarThreadTargets(nextTargets, s.sidebarThreadTargets)
+				? s
+				: { sidebarThreadTargets: nextTargets };
+		}),
+	setSidebarNavTargets: (v) =>
+		set((s) => {
+			const nextTargets = resolve(v, s.sidebarNavTargets);
+			return equalSidebarNavTargets(nextTargets, s.sidebarNavTargets) ? s : { sidebarNavTargets: nextTargets };
+		}),
 
 	setFlashNotification: (v) => set((s) => ({ flashNotification: resolve(v, s.flashNotification) })),
 	setSuccessFlashNotification: (v) =>

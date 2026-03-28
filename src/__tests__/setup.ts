@@ -213,6 +213,10 @@ const mockMaestro = {
 		save: vi.fn().mockResolvedValue(undefined),
 		setAll: vi.fn().mockResolvedValue(undefined),
 	},
+	threads: {
+		getAll: vi.fn().mockResolvedValue([]),
+		setAll: vi.fn().mockResolvedValue(undefined),
+	},
 	groups: {
 		get: vi.fn().mockResolvedValue([]),
 		getAll: vi.fn().mockResolvedValue([]),
@@ -339,6 +343,30 @@ const mockMaestro = {
 		updateSessionStarred: vi.fn().mockResolvedValue(undefined),
 		registerSessionOrigin: vi.fn().mockResolvedValue(undefined),
 	},
+	conversation: {
+		getCapabilities: vi.fn().mockResolvedValue({
+			supported: false,
+			canInterrupt: false,
+			canSteer: false,
+			canRespondToUserInput: false,
+			canResume: false,
+		}),
+		sendTurn: vi.fn().mockResolvedValue({
+			dispatched: true,
+			sessionId: null,
+			turnId: null,
+			warnings: [],
+		}),
+		steerTurn: vi.fn().mockResolvedValue({
+			dispatched: true,
+			sessionId: null,
+			turnId: null,
+			warnings: [],
+		}),
+		interruptTurn: vi.fn().mockResolvedValue(true),
+		respondToUserInput: vi.fn().mockResolvedValue(true),
+		onEvent: vi.fn().mockReturnValue(() => {}),
+	},
 	// Generic agent sessions API (preferred over claude.*)
 	agentSessions: {
 		list: vi.fn().mockResolvedValue([]),
@@ -348,6 +376,7 @@ const mockMaestro = {
 			totalCount: 0,
 			nextCursor: null,
 		}),
+		discoverRecoverable: vi.fn().mockResolvedValue([]),
 		read: vi.fn().mockResolvedValue({
 			messages: [],
 			total: 0,

@@ -742,6 +742,22 @@ export function createProcessApi() {
 			ipcRenderer.send(responseChannel, success);
 		},
 
+		onRemoteOpenConductorWorkspace: (
+			callback: (groupId: string, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, groupId: string, responseChannel: string) =>
+				callback(groupId, responseChannel);
+			ipcRenderer.on('remote:openConductorWorkspace', handler);
+			return () => ipcRenderer.removeListener('remote:openConductorWorkspace', handler);
+		},
+
+		sendRemoteOpenConductorWorkspaceResponse: (
+			responseChannel: string,
+			success: boolean
+		): void => {
+			ipcRenderer.send(responseChannel, success);
+		},
+
 		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */

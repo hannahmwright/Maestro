@@ -166,8 +166,29 @@ describe('serviceWorker', () => {
 				configurable: true,
 			});
 
-			// Clear any __MAESTRO_CONFIG__
-			delete (window as unknown as { __MAESTRO_CONFIG__?: unknown }).__MAESTRO_CONFIG__;
+			(
+				window as unknown as {
+					__MAESTRO_CONFIG__: {
+						basePath: string;
+						sessionId: null;
+						tabId: null;
+						apiBase: string;
+						wsUrl: string;
+						authMode: string;
+						clientInstanceId: string;
+						webPush: { enabled: boolean };
+					};
+				}
+			).__MAESTRO_CONFIG__ = {
+				basePath: '/app',
+				sessionId: null,
+				tabId: null,
+				apiBase: '/app/api',
+				wsUrl: '/app/ws',
+				authMode: 'cloudflare-access',
+				clientInstanceId: 'test-client',
+				webPush: { enabled: false },
+			};
 		});
 
 		it('should return undefined when service workers not supported', async () => {
@@ -816,13 +837,13 @@ describe('serviceWorker', () => {
 				configurable: true,
 			});
 
-			await registerServiceWorker();
+			const result = await registerServiceWorker();
 
-			expect(mockServiceWorkerContainer.register).toHaveBeenCalledWith(
-				'/app/sw.js?v=dev-local-test',
-				{
-					scope: '/app/',
-				}
+			expect(result).toBeUndefined();
+			expect(mockServiceWorkerContainer.register).not.toHaveBeenCalled();
+			expect(mockWebLogger.debug).toHaveBeenCalledWith(
+				'Skipping service worker registration in standalone web dev mode',
+				'ServiceWorker'
 			);
 		});
 

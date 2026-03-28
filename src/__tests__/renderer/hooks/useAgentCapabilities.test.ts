@@ -7,6 +7,7 @@ import {
 } from '../../../renderer/hooks';
 
 const baseCapabilities = {
+	...DEFAULT_CAPABILITIES,
 	supportsResume: true,
 	supportsReadOnlyMode: true,
 	supportsJsonOutput: true,
@@ -81,7 +82,7 @@ describe('useAgentCapabilities', () => {
 	});
 
 	it('clears error state when agentId is unset', async () => {
-		vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValueOnce(new Error('boom'));
+		vi.mocked(window.maestro.agents.getCapabilities).mockRejectedValue(new Error('boom'));
 
 		const { result, rerender } = renderHook(
 			({ agentId }: { agentId?: string }) => useAgentCapabilities(agentId),

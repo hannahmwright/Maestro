@@ -260,6 +260,18 @@ export interface ConductorTaskCompletionProof {
 	rejectedAt?: number;
 }
 
+export type ConductorTaskEvidenceKind = 'demo' | 'file' | 'url' | 'note';
+
+export interface ConductorTaskEvidenceItem {
+	kind: ConductorTaskEvidenceKind;
+	label: string;
+	summary?: string;
+	path?: string;
+	url?: string;
+	demoId?: string;
+	captureRunId?: string;
+}
+
 export type ConductorView =
 	| {
 			scope: 'home';
@@ -273,6 +285,10 @@ export interface Conductor {
 	groupId: string;
 	status: ConductorStatus;
 	resourceProfile: ConductorResourceProfile;
+	currentPlanningRunId?: string | null;
+	currentExecutionRunId?: string | null;
+	currentReviewRunId?: string | null;
+	currentIntegrationRunId?: string | null;
 	autoExecuteOnPlanCreation?: boolean;
 	isPaused?: boolean;
 	holdReason?: string | null;
@@ -301,6 +317,7 @@ export interface ConductorTask {
 	attentionRequest?: ConductorTaskAttentionRequest | null;
 	completionProofRequirement?: ConductorTaskCompletionProofRequirement;
 	completionProof?: ConductorTaskCompletionProof;
+	evidence?: ConductorTaskEvidenceItem[];
 	agentHistory?: ConductorTaskAgentHistoryEntry[];
 	plannerSessionId?: string;
 	plannerSessionName?: string;

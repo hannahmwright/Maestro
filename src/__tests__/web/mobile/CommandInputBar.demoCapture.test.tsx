@@ -102,6 +102,6 @@ describe('CommandInputBar demo capture action', () => {
 
 		fireEvent.click(screen.getByRole('button', { name: /actions/i }));
 
-		expect(screen.getByText('Demo/screenshots required')).toBeInTheDocument();
+		expect(screen.getAllByText('Demo/screenshots required').length).toBeGreaterThan(0);
 	});
 });

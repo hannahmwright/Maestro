@@ -1,5 +1,8 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'events';
+import { tmpdir } from 'os';
+import path from 'path';
 
 vi.mock('../../../main/utils/logger', () => ({
 	logger: {
@@ -10,7 +13,10 @@ vi.mock('../../../main/utils/logger', () => ({
 	},
 }));
 
-import { CodexAppServerBridge } from '../../../main/process-manager/CodexAppServerBridge';
+import {
+	CodexAppServerBridge,
+	getCodexWorkspaceWriteRoots,
+} from '../../../main/process-manager/CodexAppServerBridge';
 import type { ManagedProcess } from '../../../main/process-manager/types';
 
 function createManagedProcess(overrides: Partial<ManagedProcess> = {}): ManagedProcess {
@@ -41,6 +47,40 @@ describe('CodexAppServerBridge', () => {
 	beforeEach(() => {
 		emitter = new EventEmitter();
 		bridge = new CodexAppServerBridge(new Map(), emitter);
+	});
+
+	it('includes git worktree metadata roots in workspace-write mode', () => {
+		const cwd = mkdtempSync(path.join(tmpdir(), 'maestro-codex-worktree-'));
+		const gitDir = path.join(cwd, '..', '.git', 'worktrees', 'demo-worktree');
+		const commonDir = path.join(cwd, '..', '.git');
+		mkdirSync(gitDir, { recursive: true });
+		writeFileSync(path.join(cwd, '.git'), `gitdir: ${gitDir}\n`);
+		writeFileSync(path.join(gitDir, 'commondir'), '../../');
+
+		try {
+			expect(getCodexWorkspaceWriteRoots(cwd)).toEqual([
+				path.resolve(cwd),
+				path.resolve(gitDir),
+				path.resolve(commonDir),
+			]);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+			rmSync(path.join(cwd, '..', '.git'), { recursive: true, force: true });
+		}
+	});
+
+	it('keeps plain repo roots writable when .git is a directory', () => {
+		const cwd = mkdtempSync(path.join(tmpdir(), 'maestro-codex-repo-'));
+		mkdirSync(path.join(cwd, '.git'), { recursive: true });
+
+		try {
+			expect(getCodexWorkspaceWriteRoots(cwd)).toEqual([
+				path.resolve(cwd),
+				path.resolve(path.join(cwd, '.git')),
+			]);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
 	});
 
 	it('should stream final-answer deltas as assistant-stream append events', () => {

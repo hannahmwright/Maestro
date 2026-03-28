@@ -333,6 +333,7 @@ describe('Process Preload API', () => {
 				undefined,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 		});

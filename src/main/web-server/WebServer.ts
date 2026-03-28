@@ -88,6 +88,7 @@ import type {
 	CreateConductorTaskCallback,
 	UpdateConductorTaskCallback,
 	DeleteConductorTaskCallback,
+	OpenConductorWorkspaceCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -404,6 +405,10 @@ export class WebServer {
 		this.callbackRegistry.setDeleteConductorTaskCallback(callback);
 	}
 
+	setOpenConductorWorkspaceCallback(callback: OpenConductorWorkspaceCallback): void {
+		this.callbackRegistry.setOpenConductorWorkspaceCallback(callback);
+	}
+
 	setGetHistoryCallback(callback: GetHistoryCallback): void {
 		this.callbackRegistry.setGetHistoryCallback(callback);
 	}
@@ -425,6 +430,25 @@ export class WebServer {
 	// ============ Server Setup ============
 
 	private async setupMiddleware(): Promise<void> {
+		this.server.addHook('onRequest', (request, reply, done) => {
+			const rawUrl = request.raw.url;
+			if (typeof rawUrl === 'string' && /^\/https?:\/\//i.test(rawUrl)) {
+				try {
+					const embeddedUrl = new URL(rawUrl.slice(1));
+					const normalizedPath = `${embeddedUrl.pathname}${embeddedUrl.search}`;
+					logger.debug('Normalized malformed absolute web request path', LOG_CONTEXT, {
+						rawUrl,
+						normalizedPath,
+					});
+					void reply.redirect(normalizedPath, 307);
+					return;
+				} catch {
+					// Leave invalid URLs untouched so Fastify can handle them normally.
+				}
+			}
+			done();
+		});
+
 		// Enable CORS for web access
 		await this.server.register(cors, {
 			origin: true,
@@ -522,8 +546,9 @@ export class WebServer {
 			createConductorTask: async (input) => this.callbackRegistry.createConductorTask(input),
 			updateConductorTask: async (taskId, updates) =>
 				this.callbackRegistry.updateConductorTask(taskId, updates),
-			deleteConductorTask: async (taskId) =>
-				this.callbackRegistry.deleteConductorTask(taskId),
+			deleteConductorTask: async (taskId) => this.callbackRegistry.deleteConductorTask(taskId),
+			openConductorWorkspace: async (groupId) =>
+				this.callbackRegistry.openConductorWorkspace(groupId),
 			getHistory: (projectPath, sessionId) =>
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),

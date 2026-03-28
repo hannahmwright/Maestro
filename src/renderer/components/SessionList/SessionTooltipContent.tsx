@@ -36,7 +36,7 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 					{groupName}
 				</div>
 			)}
-				<div className="flex items-center gap-2 mb-2">
+			<div className="flex items-center gap-2 mb-2">
 				<span className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
 					{displayName || session.name}
 				</span>
